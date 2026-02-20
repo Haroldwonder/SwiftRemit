@@ -2526,3 +2526,121 @@ fn test_whitelist_edge_case_many_tokens() {
         }
     }
 }
+
+
+#[test]
+fn test_simulate_settlement_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+
+    // Whitelist token
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+
+    // Mint and create remittance
+    token.mint(&sender, &10000);
+    let remittance_id = contract.create_remittance(&sender, &agent, &10000, &None);
+
+    // Simulate settlement
+    let simulation = contract.simulate_settlement(&remittance_id);
+
+    assert_eq!(simulation.would_succeed, true);
+    assert_eq!(simulation.payout_amount, 9750); // 10000 - 250 (2.5% fee)
+    assert_eq!(simulation.fee, 250);
+    assert_eq!(simulation.error_message, None);
+}
+
+#[test]
+fn test_simulate_settlement_invalid_status() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+
+    // Whitelist token
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+
+    // Mint and create remittance
+    token.mint(&sender, &10000);
+    let remittance_id = contract.create_remittance(&sender, &agent, &10000, &None);
+
+    // Complete the remittance
+    contract.confirm_payout(&remittance_id);
+
+    // Simulate settlement on completed remittance
+    let simulation = contract.simulate_settlement(&remittance_id);
+
+    assert_eq!(simulation.would_succeed, false);
+    assert_eq!(simulation.error_message, Some(7)); // InvalidStatus error code
+}
+
+#[test]
+fn test_simulate_settlement_nonexistent() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+
+    // Whitelist token
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+
+    // Simulate non-existent remittance
+    let simulation = contract.simulate_settlement(&999);
+
+    assert_eq!(simulation.would_succeed, false);
+    assert_eq!(simulation.error_message, Some(6)); // RemittanceNotFound error code
+}
+
+#[test]
+fn test_simulate_settlement_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+
+    // Whitelist token
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+
+    // Mint and create remittance
+    token.mint(&sender, &10000);
+    let remittance_id = contract.create_remittance(&sender, &agent, &10000, &None);
+
+    // Pause contract
+    contract.pause();
+
+    // Simulate settlement while paused
+    let simulation = contract.simulate_settlement(&remittance_id);
+
+    assert_eq!(simulation.would_succeed, false);
+    assert_eq!(simulation.error_message, Some(13)); // ContractPaused error code
+}

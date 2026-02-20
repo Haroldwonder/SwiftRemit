@@ -41,3 +41,18 @@ pub struct BatchSettlementResult {
     /// List of successfully settled remittance IDs
     pub settled_ids: Vec<u64>,
 }
+
+/// Result of a settlement simulation.
+/// Predicts the outcome without executing state changes.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettlementSimulation {
+    /// Whether the settlement would succeed
+    pub would_succeed: bool,
+    /// The payout amount the agent would receive (amount - fee)
+    pub payout_amount: i128,
+    /// The platform fee that would be collected
+    pub fee: i128,
+    /// Error message if would_succeed is false
+    pub error_message: Option<u32>,
+}

@@ -330,6 +330,95 @@ impl SwiftRemitContract {
         Ok(())
     }
 
+    pub fn simulate_settlement(env: Env, remittance_id: u64) -> SettlementSimulation {
+        // Check if paused
+        if is_paused(&env) {
+            return SettlementSimulation {
+                would_succeed: false,
+                payout_amount: 0,
+                fee: 0,
+                error_message: Some(ContractError::ContractPaused as u32),
+            };
+        }
+
+        // Get remittance
+        let remittance = match get_remittance(&env, remittance_id) {
+            Ok(r) => r,
+            Err(e) => {
+                return SettlementSimulation {
+                    would_succeed: false,
+                    payout_amount: 0,
+                    fee: 0,
+                    error_message: Some(e as u32),
+                };
+            }
+        };
+
+        // Check status
+        if remittance.status != RemittanceStatus::Pending {
+            return SettlementSimulation {
+                would_succeed: false,
+                payout_amount: 0,
+                fee: remittance.fee,
+                error_message: Some(ContractError::InvalidStatus as u32),
+            };
+        }
+
+        // Check for duplicate settlement
+        if has_settlement_hash(&env, remittance_id) {
+            return SettlementSimulation {
+                would_succeed: false,
+                payout_amount: 0,
+                fee: remittance.fee,
+                error_message: Some(ContractError::DuplicateSettlement as u32),
+            };
+        }
+
+        // Check expiry
+        if let Some(expiry_time) = remittance.expiry {
+            let current_time = env.ledger().timestamp();
+            if current_time > expiry_time {
+                return SettlementSimulation {
+                    would_succeed: false,
+                    payout_amount: 0,
+                    fee: remittance.fee,
+                    error_message: Some(ContractError::SettlementExpired as u32),
+                };
+            }
+        }
+
+        // Validate agent address
+        if let Err(e) = validate_address(&remittance.agent) {
+            return SettlementSimulation {
+                would_succeed: false,
+                payout_amount: 0,
+                fee: remittance.fee,
+                error_message: Some(e as u32),
+            };
+        }
+
+        // Calculate payout amount
+        let payout_amount = match remittance.amount.checked_sub(remittance.fee) {
+            Some(amount) => amount,
+            None => {
+                return SettlementSimulation {
+                    would_succeed: false,
+                    payout_amount: 0,
+                    fee: remittance.fee,
+                    error_message: Some(ContractError::Overflow as u32),
+                };
+            }
+        };
+
+        // Success case
+        SettlementSimulation {
+            would_succeed: true,
+            payout_amount,
+            fee: remittance.fee,
+            error_message: None,
+        }
+    }
+
     pub fn get_remittance(env: Env, remittance_id: u64) -> Result<Remittance, ContractError> {
         get_remittance(&env, remittance_id)
     }
