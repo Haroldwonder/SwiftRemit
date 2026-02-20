@@ -187,4 +187,18 @@ pub fn emit_settlement_completed(
     );
 }
 
-```
+// ── Rate Limit Events ──────────────────────────────────────────────
+
+pub fn emit_rate_limit_updated(env: &Env, admin: Address, old_cooldown: u64, new_cooldown: u64) {
+    env.events().publish(
+        (symbol_short!("rate"), symbol_short!("updated")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            admin,
+            old_cooldown,
+            new_cooldown,
+        ),
+    );
+}

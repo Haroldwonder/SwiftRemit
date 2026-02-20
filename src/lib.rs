@@ -7,6 +7,9 @@ mod storage;
 mod types;
 mod validation;
 
+#[cfg(test)]
+mod test;
+
 use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
 pub use debug::*;
@@ -26,6 +29,7 @@ impl SwiftRemitContract {
         admin: Address,
         usdc_token: Address,
         fee_bps: u32,
+        rate_limit_cooldown: u64,
     ) -> Result<(), ContractError> {
         if has_admin(&env) {
             return Err(ContractError::AlreadyInitialized);
@@ -40,6 +44,7 @@ impl SwiftRemitContract {
         set_platform_fee_bps(&env, fee_bps);
         set_remittance_counter(&env, 0);
         set_accumulated_fees(&env, 0);
+        set_rate_limit_cooldown(&env, rate_limit_cooldown);
 
         log_initialize(&env, &admin, &usdc_token, fee_bps);
 
@@ -164,6 +169,9 @@ impl SwiftRemitContract {
             }
         }
 
+        // Check rate limit for sender
+        check_rate_limit(&env, &remittance.sender)?;
+
         // Validate the agent address before transfer
         validate_address(&remittance.agent)?;
 
@@ -191,6 +199,10 @@ impl SwiftRemitContract {
 
         // Mark settlement as executed to prevent duplicates
         set_settlement_hash(&env, remittance_id);
+        
+        // Update last settlement time for rate limiting
+        let current_time = env.ledger().timestamp();
+        set_last_settlement_time(&env, &remittance.sender, current_time);
 
         emit_remittance_completed(&env, remittance_id, remittance.sender.clone(), remittance.agent.clone(), usdc_token.clone(), payout_amount);
         
@@ -297,5 +309,25 @@ impl SwiftRemitContract {
 
     pub fn is_paused(env: Env) -> bool {
         is_paused(&env)
+    }
+    
+    pub fn update_rate_limit(env: Env, cooldown_seconds: u64) -> Result<(), ContractError> {
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+
+        let old_cooldown = get_rate_limit_cooldown(&env)?;
+        set_rate_limit_cooldown(&env, cooldown_seconds);
+        
+        emit_rate_limit_updated(&env, admin, old_cooldown, cooldown_seconds);
+
+        Ok(())
+    }
+    
+    pub fn get_rate_limit_cooldown(env: Env) -> Result<u64, ContractError> {
+        get_rate_limit_cooldown(&env)
+    }
+    
+    pub fn get_last_settlement_time(env: Env, sender: Address) -> Option<u64> {
+        get_last_settlement_time(&env, &sender)
     }
 }

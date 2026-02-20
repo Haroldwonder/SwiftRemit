@@ -49,6 +49,14 @@ enum DataKey {
     // Keys for preventing duplicate settlement execution
     /// Settlement hash for duplicate detection (persistent storage)
     SettlementHash(u64),
+    
+    // === Rate Limiting ===
+    // Keys for preventing abuse through rate limiting
+    /// Cooldown period in seconds between settlements per sender
+    RateLimitCooldown,
+    
+    /// Last settlement timestamp for a sender address (persistent storage)
+    LastSettlementTime(Address),
 }
 
 pub fn has_admin(env: &Env) -> bool {
@@ -163,4 +171,49 @@ pub fn is_paused(env: &Env) -> bool {
 
 pub fn set_paused(env: &Env, paused: bool) {
     env.storage().instance().set(&DataKey::Paused, &paused);
+}
+
+pub fn set_rate_limit_cooldown(env: &Env, cooldown_seconds: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::RateLimitCooldown, &cooldown_seconds);
+}
+
+pub fn get_rate_limit_cooldown(env: &Env) -> Result<u64, ContractError> {
+    env.storage()
+        .instance()
+        .get(&DataKey::RateLimitCooldown)
+        .ok_or(ContractError::NotInitialized)
+}
+
+pub fn set_last_settlement_time(env: &Env, sender: &Address, timestamp: u64) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::LastSettlementTime(sender.clone()), &timestamp);
+}
+
+pub fn get_last_settlement_time(env: &Env, sender: &Address) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::LastSettlementTime(sender.clone()))
+}
+
+pub fn check_rate_limit(env: &Env, sender: &Address) -> Result<(), ContractError> {
+    let cooldown = get_rate_limit_cooldown(env)?;
+    
+    // If cooldown is 0, rate limiting is disabled
+    if cooldown == 0 {
+        return Ok(());
+    }
+    
+    if let Some(last_time) = get_last_settlement_time(env, sender) {
+        let current_time = env.ledger().timestamp();
+        let elapsed = current_time.saturating_sub(last_time);
+        
+        if elapsed < cooldown {
+            return Err(ContractError::RateLimitExceeded);
+        }
+    }
+    
+    Ok(())
 }
