@@ -177,7 +177,10 @@ impl SwiftRemitContract {
         // Mark settlement as executed to prevent duplicates
         set_settlement_hash(&env, remittance_id);
 
+        // Emit events for settlement completion
         emit_remittance_completed(&env, remittance_id, remittance.agent.clone(), payout_amount);
+        
+        // Emit detailed settlement event with all transaction details
         emit_settlement_completed(
             &env,
             remittance.sender,
