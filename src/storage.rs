@@ -14,8 +14,14 @@ use crate::{ContractError, Remittance};
 enum DataKey {
     // === Contract Configuration ===
     // Core contract settings stored in instance storage
-    /// Contract administrator address with privileged access
+    /// Contract administrator address with privileged access (deprecated - use AdminRole)
     Admin,
+    
+    /// Admin role status indexed by address (persistent storage)
+    AdminRole(Address),
+    
+    /// Counter for tracking number of admins
+    AdminCount,
 
     /// USDC token contract address used for all remittance transactions
     UsdcToken,
@@ -163,4 +169,40 @@ pub fn is_paused(env: &Env) -> bool {
 
 pub fn set_paused(env: &Env, paused: bool) {
     env.storage().instance().set(&DataKey::Paused, &paused);
+}
+
+// === Admin Role Management ===
+
+pub fn is_admin(env: &Env, address: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AdminRole(address.clone()))
+        .unwrap_or(false)
+}
+
+pub fn set_admin_role(env: &Env, address: &Address, is_admin: bool) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::AdminRole(address.clone()), &is_admin);
+}
+
+pub fn get_admin_count(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::AdminCount)
+        .unwrap_or(0)
+}
+
+pub fn set_admin_count(env: &Env, count: u32) {
+    env.storage().instance().set(&DataKey::AdminCount, &count);
+}
+
+pub fn require_admin(env: &Env, address: &Address) -> Result<(), ContractError> {
+    address.require_auth();
+    
+    if !is_admin(env, address) {
+        return Err(ContractError::Unauthorized);
+    }
+    
+    Ok(())
 }

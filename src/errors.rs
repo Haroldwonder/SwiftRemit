@@ -60,15 +60,19 @@ pub enum ContractError {
     /// Cause: Attempting confirm_payout() while contract is in paused state.
     ContractPaused = 13,
     
-    /// Batch settlement is empty. At least one settlement is required.
-    /// Cause: Calling batch_settle() with an empty vector.
-    EmptyBatchSettlement = 14,
+    /// Caller is not authorized to perform admin operations.
+    /// Cause: Non-admin attempting to perform admin-only operations.
+    Unauthorized = 14,
     
-    /// Batch settlement contains too many entries.
-    /// Cause: Exceeding maximum batch size for a single transaction.
-    BatchTooLarge = 15,
+    /// Admin address already exists in the system.
+    /// Cause: Attempting to add an admin that is already registered.
+    AdminAlreadyExists = 15,
     
-    /// Batch settlement validation failed for one or more entries.
-    /// Cause: Invalid remittance ID, status, or duplicate in the batch.
-    BatchValidationFailed = 16,
+    /// Admin address does not exist in the system.
+    /// Cause: Attempting to remove an admin that is not registered.
+    AdminNotFound = 16,
+    
+    /// Cannot remove the last admin from the system.
+    /// Cause: Attempting to remove the only remaining admin.
+    CannotRemoveLastAdmin = 17,
 }
