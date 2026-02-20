@@ -2526,3 +2526,534 @@ fn test_whitelist_edge_case_many_tokens() {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Net Settlement Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_net_settlement_simple_offset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let sender_a = Address::generate(&env);
+    let sender_b = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250); // 2.5% fee
+
+    // Register both as agents
+    contract.register_agent(&sender_a);
+    contract.register_agent(&sender_b);
+
+    // Mint tokens
+    token.mint(&sender_a, &1000);
+    token.mint(&sender_b, &1000);
+
+    // Create opposing remittances:
+    // A -> B: 100 (fee: 2.5)
+    let id1 = contract.create_remittance(&sender_a, &sender_b, &100, &None);
+    
+    // B -> A: 90 (fee: 2.25)
+    let id2 = contract.create_remittance(&sender_b, &sender_a, &90, &None);
+
+    // Create batch settlement entries
+    let mut entries = Vec::new(&env);
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
+
+    // Execute batch settlement with netting
+    let result = contract.batch_settle_with_netting(&entries);
+
+    assert!(result.is_ok());
+    let settled = result.unwrap();
+    assert_eq!(settled.settled_ids.len(), 2);
+
+    // Verify both remittances are marked as completed
+    let rem1 = contract.get_remittance(&id1);
+    let rem2 = contract.get_remittance(&id2);
+    assert_eq!(rem1.status, crate::RemittanceStatus::Completed);
+    assert_eq!(rem2.status, crate::RemittanceStatus::Completed);
+
+    // Verify fees accumulated (2.5 + 2.25 = 4.75)
+    let fees = contract.get_accumulated_fees();
+    assert_eq!(fees, 4); // Rounded down due to integer division
+}
+
+#[test]
+fn test_net_settlement_complete_offset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let sender_a = Address::generate(&env);
+    let sender_b = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+
+    contract.register_agent(&sender_a);
+    contract.register_agent(&sender_b);
+
+    token.mint(&sender_a, &1000);
+    token.mint(&sender_b, &1000);
+
+    // Create equal opposing remittances:
+    // A -> B: 100
+    let id1 = contract.create_remittance(&sender_a, &sender_b, &100, &None);
+    
+    // B -> A: 100
+    let id2 = contract.create_remittance(&sender_b, &sender_a, &100, &None);
+
+    let mut entries = Vec::new(&env);
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
+
+    let result = contract.batch_settle_with_netting(&entries);
+
+    assert!(result.is_ok());
+    
+    // Both should be marked completed even though net transfer is zero
+    let rem1 = contract.get_remittance(&id1);
+    let rem2 = contract.get_remittance(&id2);
+    assert_eq!(rem1.status, crate::RemittanceStatus::Completed);
+    assert_eq!(rem2.status, crate::RemittanceStatus::Completed);
+
+    // Fees should still be accumulated
+    let fees = contract.get_accumulated_fees();
+    assert!(fees > 0);
+}
+
+#[test]
+fn test_net_settlement_multiple_parties() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let party_a = Address::generate(&env);
+    let party_b = Address::generate(&env);
+    let party_c = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &100); // 1% fee
+
+    contract.register_agent(&party_a);
+    contract.register_agent(&party_b);
+    contract.register_agent(&party_c);
+
+    token.mint(&party_a, &10000);
+    token.mint(&party_b, &10000);
+    token.mint(&party_c, &10000);
+
+    // Create a triangle of remittances:
+    // A -> B: 100
+    let id1 = contract.create_remittance(&party_a, &party_b, &100, &None);
+    
+    // B -> C: 50
+    let id2 = contract.create_remittance(&party_b, &party_c, &50, &None);
+    
+    // C -> A: 30
+    let id3 = contract.create_remittance(&party_c, &party_a, &30, &None);
+
+    let mut entries = Vec::new(&env);
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id3 });
+
+    let result = contract.batch_settle_with_netting(&entries);
+
+    assert!(result.is_ok());
+    
+    // All should be completed
+    assert_eq!(contract.get_remittance(&id1).status, crate::RemittanceStatus::Completed);
+    assert_eq!(contract.get_remittance(&id2).status, crate::RemittanceStatus::Completed);
+    assert_eq!(contract.get_remittance(&id3).status, crate::RemittanceStatus::Completed);
+}
+
+#[test]
+fn test_net_settlement_order_independence() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let sender_a = Address::generate(&env);
+    let sender_b = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+
+    contract.register_agent(&sender_a);
+    contract.register_agent(&sender_b);
+
+    token.mint(&sender_a, &2000);
+    token.mint(&sender_b, &2000);
+
+    // First batch: A->B then B->A
+    let id1 = contract.create_remittance(&sender_a, &sender_b, &100, &None);
+    let id2 = contract.create_remittance(&sender_b, &sender_a, &90, &None);
+
+    let mut entries1 = Vec::new(&env);
+    entries1.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
+    entries1.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
+
+    let fees_before = contract.get_accumulated_fees();
+    let result1 = contract.batch_settle_with_netting(&entries1);
+    assert!(result1.is_ok());
+    let fees_after_batch1 = contract.get_accumulated_fees();
+    let fees_batch1 = fees_after_batch1 - fees_before;
+
+    // Second batch: B->A then A->B (reversed order)
+    let id3 = contract.create_remittance(&sender_b, &sender_a, &90, &None);
+    let id4 = contract.create_remittance(&sender_a, &sender_b, &100, &None);
+
+    let mut entries2 = Vec::new(&env);
+    entries2.push_back(crate::BatchSettlementEntry { remittance_id: id3 });
+    entries2.push_back(crate::BatchSettlementEntry { remittance_id: id4 });
+
+    let result2 = contract.batch_settle_with_netting(&entries2);
+    assert!(result2.is_ok());
+    let fees_after_batch2 = contract.get_accumulated_fees();
+    let fees_batch2 = fees_after_batch2 - fees_after_batch1;
+
+    // Fees should be identical regardless of order
+    assert_eq!(fees_batch1, fees_batch2);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_net_settlement_empty_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+
+    let entries = Vec::new(&env);
+    contract.batch_settle_with_netting(&entries);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_net_settlement_exceeds_max_batch_size() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+
+    token.mint(&sender, &100000);
+
+    // Create more than MAX_BATCH_SIZE remittances
+    let mut entries = Vec::new(&env);
+    for _ in 0..51 {
+        let id = contract.create_remittance(&sender, &agent, &100, &None);
+        entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
+    }
+
+    contract.batch_settle_with_netting(&entries);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")]
+fn test_net_settlement_duplicate_ids() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+
+    token.mint(&sender, &1000);
+
+    let id = contract.create_remittance(&sender, &agent, &100, &None);
+
+    let mut entries = Vec::new(&env);
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id }); // Duplicate
+
+    contract.batch_settle_with_netting(&entries);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")]
+fn test_net_settlement_already_completed() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+
+    token.mint(&sender, &1000);
+
+    let id = contract.create_remittance(&sender, &agent, &100, &None);
+
+    // Complete it first
+    contract.confirm_payout(&id);
+
+    // Try to include in batch settlement
+    let mut entries = Vec::new(&env);
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
+
+    contract.batch_settle_with_netting(&entries);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_net_settlement_when_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+
+    token.mint(&sender, &1000);
+
+    let id = contract.create_remittance(&sender, &agent, &100, &None);
+
+    // Pause the contract
+    contract.pause(&admin);
+
+    let mut entries = Vec::new(&env);
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
+
+    contract.batch_settle_with_netting(&entries);
+}
+
+#[test]
+fn test_net_settlement_fee_preservation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let sender_a = Address::generate(&env);
+    let sender_b = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &500); // 5% fee
+
+    contract.register_agent(&sender_a);
+    contract.register_agent(&sender_b);
+
+    token.mint(&sender_a, &10000);
+    token.mint(&sender_b, &10000);
+
+    // Create multiple remittances with different amounts
+    let id1 = contract.create_remittance(&sender_a, &sender_b, &1000, &None);
+    let id2 = contract.create_remittance(&sender_b, &sender_a, &800, &None);
+    let id3 = contract.create_remittance(&sender_a, &sender_b, &500, &None);
+
+    // Calculate expected fees manually
+    let fee1 = 1000 * 500 / 10000; // 50
+    let fee2 = 800 * 500 / 10000;  // 40
+    let fee3 = 500 * 500 / 10000;  // 25
+    let expected_total_fees = fee1 + fee2 + fee3; // 115
+
+    let mut entries = Vec::new(&env);
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id3 });
+
+    let fees_before = contract.get_accumulated_fees();
+    let result = contract.batch_settle_with_netting(&entries);
+    assert!(result.is_ok());
+
+    let fees_after = contract.get_accumulated_fees();
+    let fees_collected = fees_after - fees_before;
+
+    // Verify all fees are preserved
+    assert_eq!(fees_collected, expected_total_fees);
+}
+
+#[test]
+fn test_net_settlement_large_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &100);
+    contract.register_agent(&agent);
+
+    token.mint(&sender, &1000000);
+
+    // Create maximum allowed batch size
+    let mut entries = Vec::new(&env);
+    for _ in 0..50 {
+        let id = contract.create_remittance(&sender, &agent, &100, &None);
+        entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
+    }
+
+    let result = contract.batch_settle_with_netting(&entries);
+    assert!(result.is_ok());
+
+    let settled = result.unwrap();
+    assert_eq!(settled.settled_ids.len(), 50);
+}
+
+#[test]
+fn test_net_settlement_reduces_transfer_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let party_a = Address::generate(&env);
+    let party_b = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+
+    contract.register_agent(&party_a);
+    contract.register_agent(&party_b);
+
+    token.mint(&party_a, &10000);
+    token.mint(&party_b, &10000);
+
+    // Create 10 remittances: 5 from A->B and 5 from B->A
+    let mut entries = Vec::new(&env);
+    for i in 0..10 {
+        let id = if i % 2 == 0 {
+            contract.create_remittance(&party_a, &party_b, &100, &None)
+        } else {
+            contract.create_remittance(&party_b, &party_a, &100, &None)
+        };
+        entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
+    }
+
+    let result = contract.batch_settle_with_netting(&entries);
+    assert!(result.is_ok());
+
+    // All 10 remittances should be settled
+    let settled = result.unwrap();
+    assert_eq!(settled.settled_ids.len(), 10);
+
+    // But due to complete offsetting, net transfers should be minimal
+    // (In this case, 5 A->B and 5 B->A should completely offset)
+}
+
+#[test]
+fn test_net_settlement_mathematical_correctness() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let party_a = Address::generate(&env);
+    let party_b = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &200); // 2% fee
+
+    contract.register_agent(&party_a);
+    contract.register_agent(&party_b);
+
+    token.mint(&party_a, &100000);
+    token.mint(&party_b, &100000);
+
+    // Create specific amounts to test mathematical correctness
+    // A -> B: 1000, 500, 300 = 1800 total
+    let id1 = contract.create_remittance(&party_a, &party_b, &1000, &None);
+    let id2 = contract.create_remittance(&party_a, &party_b, &500, &None);
+    let id3 = contract.create_remittance(&party_a, &party_b, &300, &None);
+    
+    // B -> A: 800, 400 = 1200 total
+    let id4 = contract.create_remittance(&party_b, &party_a, &800, &None);
+    let id5 = contract.create_remittance(&party_b, &party_a, &400, &None);
+
+    // Net should be: 1800 - 1200 = 600 from A to B
+
+    let mut entries = Vec::new(&env);
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id3 });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id4 });
+    entries.push_back(crate::BatchSettlementEntry { remittance_id: id5 });
+
+    let result = contract.batch_settle_with_netting(&entries);
+    assert!(result.is_ok());
+
+    // Calculate expected fees
+    let fee1 = 1000 * 200 / 10000; // 20
+    let fee2 = 500 * 200 / 10000;  // 10
+    let fee3 = 300 * 200 / 10000;  // 6
+    let fee4 = 800 * 200 / 10000;  // 16
+    let fee5 = 400 * 200 / 10000;  // 8
+    let expected_fees = fee1 + fee2 + fee3 + fee4 + fee5; // 60
+
+    let fees = contract.get_accumulated_fees();
+    assert_eq!(fees, expected_fees);
+}

@@ -3,6 +3,7 @@ mod debug;
 mod errors;
 mod events;
 mod hashing;
+mod netting;
 mod storage;
 mod types;
 mod validation;
@@ -13,6 +14,7 @@ pub use debug::*;
 pub use errors::ContractError;
 pub use events::*;
 pub use hashing::*;
+pub use netting::*;
 pub use storage::*;
 pub use types::*;
 pub use validation::*;
@@ -104,7 +106,7 @@ impl SwiftRemitContract {
         require_admin(&env, &caller)?;
 
         set_agent_registered(&env, &agent, true);
-        emit_agent_registered(&env, agent, admin.clone());
+        emit_agent_registered(&env, agent.clone(), caller.clone());
 
         Ok(())
     }
@@ -114,7 +116,7 @@ impl SwiftRemitContract {
         require_admin(&env, &caller)?;
 
         set_agent_registered(&env, &agent, false);
-        emit_agent_removed(&env, agent, admin.clone());
+        emit_agent_removed(&env, agent.clone(), caller.clone());
 
         Ok(())
     }
@@ -350,6 +352,175 @@ impl SwiftRemitContract {
 
     pub fn get_version(env: Env) -> soroban_sdk::String {
         soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Batch settle multiple remittances with net settlement optimization.
+    /// 
+    /// This function processes multiple remittances in a single transaction and applies
+    /// net settlement logic to offset opposing transfers between the same parties.
+    /// Only the net difference is executed on-chain, reducing total token transfers.
+    /// 
+    /// # Benefits
+    /// - Reduces on-chain transfer count by offsetting opposing flows
+    /// - Preserves all fees and accounting integrity
+    /// - Deterministic and order-independent results
+    /// - Gas-efficient batch processing
+    /// 
+    /// # Example
+    /// If batch contains:
+    /// - Remittance 1: A -> B: 100 USDC (fee: 2)
+    /// - Remittance 2: B -> A: 90 USDC (fee: 1.8)
+    /// 
+    /// Result: Single transfer of 10 USDC from A to B, total fees: 3.8
+    /// 
+    /// # Parameters
+    /// - `entries`: Vector of BatchSettlementEntry containing remittance IDs to settle
+    /// 
+    /// # Returns
+    /// BatchSettlementResult with list of successfully settled remittance IDs
+    /// 
+    /// # Errors
+    /// - ContractPaused: Contract is in paused state
+    /// - InvalidAmount: Batch size exceeds MAX_BATCH_SIZE or is empty
+    /// - RemittanceNotFound: One or more remittance IDs don't exist
+    /// - InvalidStatus: One or more remittances are not in Pending status
+    /// - DuplicateSettlement: Duplicate remittance IDs in batch
+    /// - Overflow: Arithmetic overflow in calculations
+    pub fn batch_settle_with_netting(
+        env: Env,
+        entries: Vec<BatchSettlementEntry>,
+    ) -> Result<BatchSettlementResult, ContractError> {
+        if is_paused(&env) {
+            return Err(ContractError::ContractPaused);
+        }
+
+        // Validate batch size
+        let batch_size = entries.len();
+        if batch_size == 0 {
+            return Err(ContractError::InvalidAmount);
+        }
+        if batch_size > MAX_BATCH_SIZE {
+            return Err(ContractError::InvalidAmount);
+        }
+
+        // Load all remittances and validate
+        let mut remittances = Vec::new(&env);
+        let mut seen_ids = Vec::new(&env);
+
+        for i in 0..batch_size {
+            let entry = entries.get_unchecked(i);
+            let remittance_id = entry.remittance_id;
+
+            // Check for duplicate IDs in batch
+            for j in 0..seen_ids.len() {
+                if seen_ids.get_unchecked(j) == remittance_id {
+                    return Err(ContractError::DuplicateSettlement);
+                }
+            }
+            seen_ids.push_back(remittance_id);
+
+            // Load and validate remittance
+            let remittance = get_remittance(&env, remittance_id)?;
+
+            // Verify remittance is pending
+            if remittance.status != RemittanceStatus::Pending {
+                return Err(ContractError::InvalidStatus);
+            }
+
+            // Check for duplicate settlement execution
+            if has_settlement_hash(&env, remittance_id) {
+                return Err(ContractError::DuplicateSettlement);
+            }
+
+            // Check expiry
+            if let Some(expiry_time) = remittance.expiry {
+                let current_time = env.ledger().timestamp();
+                if current_time > expiry_time {
+                    return Err(ContractError::SettlementExpired);
+                }
+            }
+
+            // Validate addresses
+            validate_address(&remittance.agent)?;
+
+            remittances.push_back(remittance);
+        }
+
+        // Compute net settlements
+        let net_transfers = compute_net_settlements(&remittances);
+
+        // Validate net settlement calculations
+        validate_net_settlement(&remittances, &net_transfers)?;
+
+        // Execute net transfers
+        let usdc_token = get_usdc_token(&env)?;
+        let token_client = token::Client::new(&env, &usdc_token);
+
+        for i in 0..net_transfers.len() {
+            let transfer = net_transfers.get_unchecked(i);
+
+            // Determine actual sender and recipient based on net_amount sign
+            let (from, to, amount) = if transfer.net_amount > 0 {
+                // Positive: party_a -> party_b
+                (transfer.party_a.clone(), transfer.party_b.clone(), transfer.net_amount)
+            } else if transfer.net_amount < 0 {
+                // Negative: party_b -> party_a
+                (transfer.party_b.clone(), transfer.party_a.clone(), -transfer.net_amount)
+            } else {
+                // Zero: complete offset, no transfer needed
+                continue;
+            };
+
+            // Calculate payout amount (net amount minus fees)
+            let payout_amount = amount
+                .checked_sub(transfer.total_fees)
+                .ok_or(ContractError::Overflow)?;
+
+            // Execute the net transfer from contract to recipient
+            // Note: The sender's funds are already in the contract from create_remittance
+            token_client.transfer(
+                &env.current_contract_address(),
+                &to,
+                &payout_amount,
+            );
+
+            // Accumulate fees
+            let current_fees = get_accumulated_fees(&env)?;
+            let new_fees = current_fees
+                .checked_add(transfer.total_fees)
+                .ok_or(ContractError::Overflow)?;
+            set_accumulated_fees(&env, new_fees);
+
+            // Emit settlement event
+            emit_settlement_completed(&env, from, to, usdc_token.clone(), payout_amount);
+        }
+
+        // Mark all remittances as completed and set settlement hashes
+        let mut settled_ids = Vec::new(&env);
+
+        for i in 0..remittances.len() {
+            let mut remittance = remittances.get_unchecked(i);
+            remittance.status = RemittanceStatus::Completed;
+            set_remittance(&env, remittance.id, &remittance);
+            set_settlement_hash(&env, remittance.id);
+            settled_ids.push_back(remittance.id);
+
+            // Emit individual remittance completion event
+            let payout_amount = remittance
+                .amount
+                .checked_sub(remittance.fee)
+                .ok_or(ContractError::Overflow)?;
+            emit_remittance_completed(
+                &env,
+                remittance.id,
+                remittance.sender.clone(),
+                remittance.agent.clone(),
+                usdc_token.clone(),
+                payout_amount,
+            );
+        }
+
+        Ok(BatchSettlementResult { settled_ids })
     }
 
     /// Add a token to the whitelist. Only admins can call this.
