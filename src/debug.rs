@@ -86,6 +86,12 @@ pub fn log_withdraw_fees(env: &Env, to: &soroban_sdk::Address, fees: i128) {
     soroban_sdk::log!(env, "Withdraw fees: to={}, fees={}", to, fees);
 }
 
+/// Logs batch settlement in debug mode.
+#[cfg(feature = "debug-log")]
+pub fn log_batch_settle(env: &Env, total_count: u32, success_count: u32, total_payout: i128) {
+    soroban_sdk::log!(env, "Batch settle: total={}, success={}, total_payout={}", total_count, success_count, total_payout);
+}
+
 // Non-feature-gated stubs for compile-time compatibility
 
 /// Logs contract initialization - no-op in release.
@@ -119,3 +125,7 @@ pub fn log_cancel_remittance(_env: &Env, _remittance_id: u64) {}
 /// Logs fee withdrawal - no-op in release.
 #[cfg(not(feature = "debug-log"))]
 pub fn log_withdraw_fees(_env: &Env, _to: &soroban_sdk::Address, _fees: i128) {}
+
+/// Logs batch settlement - no-op in release.
+#[cfg(not(feature = "debug-log"))]
+pub fn log_batch_settle(_env: &Env, _total_count: u32, _success_count: u32, _total_payout: i128) {}

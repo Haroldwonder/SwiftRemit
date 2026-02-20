@@ -16,4 +16,7 @@ pub enum ContractError {
     InvalidAddress = 10,
     SettlementExpired = 11,
     DuplicateSettlement = 12,
+    BatchEmpty = 13,
+    BatchValidationFailed = 14,
+    BatchPartialFailure = 15,
 }

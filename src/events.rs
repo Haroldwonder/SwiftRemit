@@ -75,6 +75,58 @@ pub fn emit_remittance_cancelled(
     );
 }
 
+// ── Batch Settlement Events ─────────────────────────────────────────
+
+pub fn emit_batch_settlement_started(env: &Env, batch_size: u32) {
+    env.events().publish(
+        (symbol_short!("batch"), symbol_short!("start")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            batch_size,
+        ),
+    );
+}
+
+pub fn emit_batch_settlement_completed(
+    env: &Env,
+    total_count: u32,
+    success_count: u32,
+    total_payout: i128,
+) {
+    env.events().publish(
+        (symbol_short!("batch"), symbol_short!("complete")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            total_count,
+            success_count,
+            total_payout,
+        ),
+    );
+}
+
+pub fn emit_batch_settlement_failed(
+    env: &Env,
+    failed_at_index: u32,
+    remittance_id: u64,
+    reason: u32,
+) {
+    env.events().publish(
+        (symbol_short!("batch"), symbol_short!("failed")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            failed_at_index,
+            remittance_id,
+            reason,
+        ),
+    );
+}
+
 // ── Agent Events ───────────────────────────────────────────────────
 
 pub fn emit_agent_registered(env: &Env, agent: Address, admin: Address) {

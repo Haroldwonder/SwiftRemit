@@ -7,7 +7,7 @@ mod storage;
 mod types;
 mod validation;
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env};
+use soroban_sdk::{contract, contractimpl, token, Address, Env, Vec};
 
 pub use debug::*;
 pub use errors::ContractError;
@@ -264,5 +264,156 @@ impl SwiftRemitContract {
 
     pub fn get_platform_fee_bps(env: Env) -> Result<u32, ContractError> {
         get_platform_fee_bps(&env)
+    }
+
+    /// Batch settle multiple remittances in a single transaction.
+    /// 
+    /// This function processes multiple settlement requests atomically - 
+    /// either all succeed or all fail. This ensures data consistency and 
+    /// reduces the number of transactions required.
+    /// 
+    /// # Arguments
+    /// * `settlements` - Vector of BatchSettleEntry containing remittance IDs to settle
+    /// 
+    /// # Returns
+    /// * `Vec<BatchSettleResult>` - Results for each settlement
+    /// 
+    /// # Errors
+    /// Returns error if:
+    /// * The batch is empty
+    /// * Any entry fails validation
+    /// * Any settlement fails during execution
+    /// 
+    /// # Notes
+    /// - Uses snapshot-based atomic execution: validates all entries first,
+    ///   then executes all at once to prevent partial state writes
+    /// - Duplicate settlement detection is performed per entry
+    /// - Expiry checks are performed for each remittance
+    pub fn batch_settle(
+        env: Env,
+        settlements: Vec<BatchSettleEntry>,
+    ) -> Result<Vec<BatchSettleResult>, ContractError> {
+        // Check for empty batch
+        if settlements.is_empty() {
+            return Err(ContractError::BatchEmpty);
+        }
+
+        let batch_size = settlements.len();
+        emit_batch_settlement_started(&env, batch_size);
+
+        // Pre-validate all entries before execution (fail-fast approach)
+        // This ensures atomic execution: all valid or all fail
+        let usdc_token = get_usdc_token(&env)?;
+        let token_client = token::Client::new(&env, &usdc_token);
+        let mut validated_settlements: Vec<ValidatedSettlement> = Vec::new(&env);
+
+        // Phase 1: Validate all entries
+        for i in 0..settlements.len() {
+            let entry = settlements.get(i).unwrap();
+            
+            // Fetch and validate remittance
+            let remittance = match get_remittance(&env, entry.remittance_id) {
+                Ok(r) => r,
+                Err(_e) => {
+                    emit_batch_settlement_failed(&env, i, entry.remittance_id, 6); // RemittanceNotFound
+                    return Err(ContractError::BatchValidationFailed);
+                }
+            };
+
+            // Validate status is Pending
+            if remittance.status != RemittanceStatus::Pending {
+                emit_batch_settlement_failed(&env, i, entry.remittance_id, 7); // InvalidStatus
+                return Err(ContractError::BatchValidationFailed);
+            }
+
+            // Check for duplicate settlement
+            if has_settlement_hash(&env, entry.remittance_id) {
+                emit_batch_settlement_failed(&env, i, entry.remittance_id, 12); // DuplicateSettlement
+                return Err(ContractError::BatchValidationFailed);
+            }
+
+            // Check for expiry
+            if let Some(expiry_time) = remittance.expiry {
+                let current_time = env.ledger().timestamp();
+                if current_time > expiry_time {
+                    emit_batch_settlement_failed(&env, i, entry.remittance_id, 11); // SettlementExpired
+                    return Err(ContractError::BatchValidationFailed);
+                }
+            }
+
+            // Validate agent address
+            if let Err(_e) = validate_address(&remittance.agent) {
+                emit_batch_settlement_failed(&env, i, entry.remittance_id, 10); // InvalidAddress
+                return Err(ContractError::BatchValidationFailed);
+            }
+
+            // Calculate payout amount
+            let payout_amount = match remittance.amount.checked_sub(remittance.fee) {
+                Some(amt) => amt,
+                None => {
+                    emit_batch_settlement_failed(&env, i, entry.remittance_id, 8); // Overflow
+                    return Err(ContractError::BatchValidationFailed);
+                }
+            };
+
+            // Store validated data for execution phase
+            validated_settlements.push_back(ValidatedSettlement {
+                remittance_id: entry.remittance_id,
+                agent: remittance.agent.clone(),
+                payout_amount,
+                fee: remittance.fee,
+                sender: remittance.sender.clone(),
+            });
+        }
+
+        // Phase 2: Execute all validated settlements (atomic commit)
+        let mut results: Vec<BatchSettleResult> = Vec::new(&env);
+        let mut success_count: u32 = 0;
+        let mut total_payout: i128 = 0;
+
+        for i in 0..validated_settlements.len() {
+            let settlement = validated_settlements.get(i).unwrap();
+            
+            // Execute the transfer
+            token_client.transfer(
+                &env.current_contract_address(),
+                &settlement.agent,
+                &settlement.payout_amount,
+            );
+
+            // Update accumulated fees
+            let current_fees = get_accumulated_fees(&env)?;
+            let new_fees = current_fees
+                .checked_add(settlement.fee)
+                .ok_or(ContractError::Overflow)?;
+            set_accumulated_fees(&env, new_fees);
+
+            // Update remittance status
+            let mut remittance = get_remittance(&env, settlement.remittance_id)?;
+            remittance.status = RemittanceStatus::Completed;
+            set_remittance(&env, settlement.remittance_id, &remittance);
+
+            // Mark settlement as executed
+            set_settlement_hash(&env, settlement.remittance_id);
+
+            // Emit completion event
+            emit_remittance_completed(&env, settlement.remittance_id, settlement.sender.clone(), settlement.agent.clone(), usdc_token.clone(), settlement.payout_amount);
+
+            success_count += 1;
+            total_payout = total_payout.checked_add(settlement.payout_amount).ok_or(ContractError::Overflow)?;
+
+            results.push_back(BatchSettleResult {
+                remittance_id: settlement.remittance_id,
+                success: true,
+                payout_amount: settlement.payout_amount,
+            });
+        }
+
+        // Emit batch completion event
+        emit_batch_settlement_completed(&env, batch_size, success_count, total_payout);
+
+        log_batch_settle(&env, batch_size, success_count, total_payout);
+
+        Ok(results)
     }
 }

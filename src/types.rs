@@ -19,3 +19,30 @@ pub struct Remittance {
     pub status: RemittanceStatus,
     pub expiry: Option<u64>,
 }
+
+/// Entry for batch settlement operation
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BatchSettleEntry {
+    pub remittance_id: u64,
+}
+
+/// Result of a single settlement in a batch operation
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct BatchSettleResult {
+    pub remittance_id: u64,
+    pub success: bool,
+    pub payout_amount: i128,
+}
+
+/// Internal struct to hold validated settlement data during batch processing
+#[contracttype]
+#[derive(Clone)]
+pub struct ValidatedSettlement {
+    pub remittance_id: u64,
+    pub agent: Address,
+    pub payout_amount: i128,
+    pub fee: i128,
+    pub sender: Address,
+}
