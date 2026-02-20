@@ -206,7 +206,7 @@ impl SwiftRemitContract {
         Ok(remittance_id)
     }
 
-    pub fn confirm_payout(env: Env, remittance_id: u64) -> Result<(), ContractError> {
+    pub fn confirm_payout(env: Env, remittance_id: u64) -> Result<u64, ContractError> {
         if is_paused(&env) {
             return Err(ContractError::ContractPaused);
         }
@@ -270,7 +270,7 @@ impl SwiftRemitContract {
 
         log_confirm_payout(&env, remittance_id, payout_amount);
 
-        Ok(())
+        Ok(remittance_id)
     }
 
     pub fn cancel_remittance(env: Env, remittance_id: u64) -> Result<(), ContractError> {

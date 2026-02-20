@@ -2644,3 +2644,123 @@ fn test_simulate_settlement_when_paused() {
     assert_eq!(simulation.would_succeed, false);
     assert_eq!(simulation.error_message, Some(13)); // ContractPaused error code
 }
+
+
+#[test]
+fn test_settlement_id_returned() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+
+    token.mint(&sender, &10000);
+    let remittance_id = contract.create_remittance(&sender, &agent, &10000, &None);
+
+    // Confirm payout should return the settlement ID
+    let settlement_id = contract.confirm_payout(&remittance_id);
+    
+    assert_eq!(settlement_id, remittance_id);
+    
+    // Should be able to query settlement using the ID
+    let settlement = contract.get_settlement(&settlement_id);
+    assert_eq!(settlement.id, settlement_id);
+    assert_eq!(settlement.status, crate::RemittanceStatus::Completed);
+}
+
+#[test]
+fn test_settlement_ids_sequential() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+
+    token.mint(&sender, &100000);
+
+    // Create multiple remittances and verify IDs are sequential
+    let id1 = contract.create_remittance(&sender, &agent, &10000, &None);
+    let id2 = contract.create_remittance(&sender, &agent, &10000, &None);
+    let id3 = contract.create_remittance(&sender, &agent, &10000, &None);
+
+    assert_eq!(id1, 1);
+    assert_eq!(id2, 2);
+    assert_eq!(id3, 3);
+
+    // Settle and verify settlement IDs match remittance IDs
+    let settlement_id1 = contract.confirm_payout(&id1);
+    let settlement_id2 = contract.confirm_payout(&id2);
+    let settlement_id3 = contract.confirm_payout(&id3);
+
+    assert_eq!(settlement_id1, id1);
+    assert_eq!(settlement_id2, id2);
+    assert_eq!(settlement_id3, id3);
+
+    // Verify all settlements can be queried
+    let s1 = contract.get_settlement(&settlement_id1);
+    let s2 = contract.get_settlement(&settlement_id2);
+    let s3 = contract.get_settlement(&settlement_id3);
+
+    assert_eq!(s1.id, 1);
+    assert_eq!(s2.id, 2);
+    assert_eq!(s3.id, 3);
+}
+
+#[test]
+fn test_settlement_id_uniqueness() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender1 = Address::generate(&env);
+    let sender2 = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+
+    contract.whitelist_token(&admin, &token.address);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+
+    token.mint(&sender1, &50000);
+    token.mint(&sender2, &50000);
+
+    // Create remittances from different senders
+    let id1 = contract.create_remittance(&sender1, &agent, &10000, &None);
+    let id2 = contract.create_remittance(&sender2, &agent, &10000, &None);
+    let id3 = contract.create_remittance(&sender1, &agent, &10000, &None);
+
+    // All IDs should be unique
+    assert_ne!(id1, id2);
+    assert_ne!(id1, id3);
+    assert_ne!(id2, id3);
+
+    // Settle and verify unique settlement IDs
+    let settlement_id1 = contract.confirm_payout(&id1);
+    let settlement_id2 = contract.confirm_payout(&id2);
+    let settlement_id3 = contract.confirm_payout(&id3);
+
+    assert_ne!(settlement_id1, settlement_id2);
+    assert_ne!(settlement_id1, settlement_id3);
+    assert_ne!(settlement_id2, settlement_id3);
+}
