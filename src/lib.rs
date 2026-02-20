@@ -1,5 +1,6 @@
 #![no_std]
 
+mod debug;
 mod errors;
 mod events;
 mod storage;
@@ -8,6 +9,7 @@ mod validation;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
+pub use debug::*;
 pub use errors::ContractError;
 pub use events::*;
 pub use storage::*;
@@ -39,6 +41,8 @@ impl SwiftRemitContract {
         set_remittance_counter(&env, 0);
         set_accumulated_fees(&env, 0);
 
+        log_initialize(&env, &admin, &usdc_token, fee_bps);
+
         Ok(())
     }
 
@@ -47,7 +51,9 @@ impl SwiftRemitContract {
         admin.require_auth();
 
         set_agent_registered(&env, &agent, true);
-        emit_agent_registered(&env, agent);
+        emit_agent_registered(&env, agent.clone(), admin.clone());
+
+        log_register_agent(&env, &agent);
 
         Ok(())
     }
@@ -57,7 +63,9 @@ impl SwiftRemitContract {
         admin.require_auth();
 
         set_agent_registered(&env, &agent, false);
-        emit_agent_removed(&env, agent);
+        emit_agent_removed(&env, agent.clone(), admin.clone());
+
+        log_remove_agent(&env, &agent);
 
         Ok(())
     }
@@ -71,7 +79,10 @@ impl SwiftRemitContract {
         }
 
         set_platform_fee_bps(&env, fee_bps);
-        emit_fee_updated(&env, fee_bps);
+        let old_fee = get_platform_fee_bps(&env)?;
+        emit_fee_updated(&env, admin.clone(), old_fee, fee_bps);
+
+        log_update_fee(&env, fee_bps);
 
         Ok(())
     }
@@ -122,7 +133,9 @@ impl SwiftRemitContract {
         set_remittance(&env, remittance_id, &remittance);
         set_remittance_counter(&env, remittance_id);
 
-        emit_remittance_created(&env, remittance_id, sender, agent, amount, fee);
+        emit_remittance_created(&env, remittance_id, sender.clone(), agent.clone(), usdc_token.clone(), amount, fee);
+
+        log_create_remittance(&env, remittance_id, &sender, &agent, amount, fee);
 
         Ok(remittance_id)
     }
@@ -177,7 +190,9 @@ impl SwiftRemitContract {
         // Mark settlement as executed to prevent duplicates
         set_settlement_hash(&env, remittance_id);
 
-        emit_remittance_completed(&env, remittance_id, remittance.agent, payout_amount);
+        emit_remittance_completed(&env, remittance_id, remittance.sender.clone(), remittance.agent.clone(), usdc_token.clone(), payout_amount);
+
+        log_confirm_payout(&env, remittance_id, payout_amount);
 
         Ok(())
     }
@@ -202,7 +217,9 @@ impl SwiftRemitContract {
         remittance.status = RemittanceStatus::Cancelled;
         set_remittance(&env, remittance_id, &remittance);
 
-        emit_remittance_cancelled(&env, remittance_id, remittance.sender, remittance.amount);
+        emit_remittance_cancelled(&env, remittance_id, remittance.sender.clone(), remittance.agent.clone(), usdc_token.clone(), remittance.amount);
+
+        log_cancel_remittance(&env, remittance_id);
 
         Ok(())
     }
@@ -226,7 +243,9 @@ impl SwiftRemitContract {
 
         set_accumulated_fees(&env, 0);
 
-        emit_fees_withdrawn(&env, to, fees);
+        emit_fees_withdrawn(&env, admin.clone(), to.clone(), usdc_token.clone(), fees);
+
+        log_withdraw_fees(&env, &to, fees);
 
         Ok(())
     }
