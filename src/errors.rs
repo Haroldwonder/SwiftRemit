@@ -36,6 +36,10 @@ pub enum ContractError {
     /// Cause: Confirming/cancelling already completed or cancelled remittance.
     InvalidStatus = 7,
 
+    /// Invalid state transition attempted.
+    /// Cause: Attempting to transition remittance to an invalid state.
+    InvalidStateTransition = 24,
+
     /// Arithmetic operation resulted in overflow.
     /// Cause: Fee calculation or amount operations exceeded i128 limits.
     Overflow = 8,
@@ -47,6 +51,11 @@ pub enum ContractError {
     /// Address validation failed.
     /// Cause: Invalid or malformed address provided.
     InvalidAddress = 10,
+
+    /// Rate limit exceeded for this address.
+    /// Cause: Too many requests within the configured time window.
+    /// Action: Wait for the rate limit window to reset (default: 60 seconds).
+    RateLimitExceeded = 23,
 
     /// Settlement window has expired.
     /// Cause: Attempting confirm_payout() after expiry timestamp.

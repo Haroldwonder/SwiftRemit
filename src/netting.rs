@@ -1,10 +1,11 @@
-use soroban_sdk::{Address, Env, Map, Vec};
+use soroban_sdk::{contracttype, Address, Env, Map, Vec};
 
 use crate::{ContractError, Remittance, RemittanceStatus};
 
 /// Represents a net transfer between two parties after offsetting opposing flows.
 /// This structure ensures deterministic ordering by always placing the party
 /// with the lexicographically smaller address as party_a.
+#[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetTransfer {
     /// The party with the lexicographically smaller address (deterministic ordering)
@@ -18,6 +19,7 @@ pub struct NetTransfer {
 }
 
 /// Represents a directional flow between two parties before netting.
+#[contracttype]
 #[derive(Clone, Debug)]
 struct DirectionalFlow {
     from: Address,
@@ -47,12 +49,13 @@ struct DirectionalFlow {
 /// Result: Single net transfer of 10 from A to B with total fees of 3.8
 /// 
 /// # Parameters
+/// - `env`: Environment reference
 /// - `remittances`: Vector of remittances to net
 /// 
 /// # Returns
 /// Vector of NetTransfer structs representing the minimal set of transfers needed
-pub fn compute_net_settlements(remittances: &Vec<Remittance>) -> Vec<NetTransfer> {
-    let mut flows: Vec<DirectionalFlow> = Vec::new();
+pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Vec<NetTransfer> {
+    let mut flows: Vec<DirectionalFlow> = Vec::new(env);
     
     // Extract all directional flows from remittances
     for i in 0..remittances.len() {
@@ -91,7 +94,7 @@ pub fn compute_net_settlements(remittances: &Vec<Remittance>) -> Vec<NetTransfer
     }
     
     // Convert map to vector of NetTransfer structs
-    let mut result: Vec<NetTransfer> = Vec::new();
+    let mut result: Vec<NetTransfer> = Vec::new(env);
     let keys = net_map.keys();
     
     for i in 0..keys.len() {

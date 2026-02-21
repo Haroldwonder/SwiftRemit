@@ -5,6 +5,7 @@ mod events;
 mod hashing;
 mod migration;
 mod netting;
+mod rate_limit;
 mod storage;
 mod types;
 mod validation;
@@ -19,6 +20,7 @@ pub use events::*;
 pub use hashing::*;
 pub use migration::*;
 pub use netting::*;
+pub use rate_limit::*;
 pub use storage::*;
 pub use types::*;
 pub use validation::*;
@@ -48,6 +50,9 @@ impl SwiftRemitContract {
         set_platform_fee_bps(&env, fee_bps);
         set_remittance_counter(&env, 0);
         set_accumulated_fees(&env, 0);
+
+        // Initialize rate limiting with default configuration
+        init_rate_limit(&env);
 
         log_initialize(&env, &admin, &usdc_token, fee_bps);
 
@@ -257,12 +262,6 @@ impl SwiftRemitContract {
         set_remittance(&env, remittance_id, &remittance);
 
         Ok(())
-    }
-
-    pub fn confirm_payout(env: Env, remittance_id: u64) -> Result<(), ContractError> {
-        // Alias for settle_remittance to maintain backward compatibility if desired,
-        // but enforcing the state machine.
-        Self::settle_remittance(env, remittance_id)
     }
 
     pub fn cancel_remittance(env: Env, remittance_id: u64) -> Result<(), ContractError> {
@@ -573,7 +572,7 @@ impl SwiftRemitContract {
         }
 
         // Compute net settlements
-        let net_transfers = compute_net_settlements(&remittances);
+        let net_transfers = compute_net_settlements(&env, &remittances);
 
         // Validate net settlement calculations
         validate_net_settlement(&remittances, &net_transfers)?;
@@ -626,7 +625,7 @@ impl SwiftRemitContract {
 
         for i in 0..remittances.len() {
             let mut remittance = remittances.get_unchecked(i);
-            remittance.status = RemittanceStatus::Completed;
+            remittance.status = RemittanceStatus::Settled;
             set_remittance(&env, remittance.id, &remittance);
             set_settlement_hash(&env, remittance.id);
             settled_ids.push_back(remittance.id);
@@ -690,6 +689,61 @@ impl SwiftRemitContract {
     /// Check if a token is whitelisted.
     pub fn is_token_whitelisted(env: Env, token: Address) -> bool {
         is_token_whitelisted(&env, &token)
+    }
+
+    /// Update rate limit configuration. Only admins can call this.
+    /// 
+    /// # Parameters
+    /// - `caller`: Admin address (must be authorized)
+    /// - `max_requests`: Maximum number of requests allowed per window
+    /// - `window_seconds`: Time window in seconds
+    /// - `enabled`: Whether rate limiting is enabled
+    /// 
+    /// # Example
+    /// ```ignore
+    /// // Set rate limit to 50 requests per 30 seconds
+    /// contract.update_rate_limit(&admin, 50, 30, true)?;
+    /// ```
+    pub fn update_rate_limit(
+        env: Env,
+        caller: Address,
+        max_requests: u32,
+        window_seconds: u64,
+        enabled: bool,
+    ) -> Result<(), ContractError> {
+        require_admin(&env, &caller)?;
+
+        let config = RateLimitConfig {
+            max_requests,
+            window_seconds,
+            enabled,
+        };
+
+        set_rate_limit_config(&env, config);
+
+        log_update_rate_limit(&env, max_requests, window_seconds, enabled);
+
+        Ok(())
+    }
+
+    /// Get current rate limit configuration
+    /// 
+    /// # Returns
+    /// Tuple of (max_requests, window_seconds, enabled)
+    pub fn get_rate_limit_config(env: Env) -> (u32, u64, bool) {
+        let config = get_rate_limit_config(&env);
+        (config.max_requests, config.window_seconds, config.enabled)
+    }
+
+    /// Get rate limit status for a specific address
+    /// 
+    /// # Parameters
+    /// - `address`: Address to check
+    /// 
+    /// # Returns
+    /// Tuple of (current_requests, max_requests, window_seconds)
+    pub fn get_rate_limit_status(env: Env, address: Address) -> (u32, u32, u64) {
+        get_rate_limit_status(&env, &address)
     }
 }
 

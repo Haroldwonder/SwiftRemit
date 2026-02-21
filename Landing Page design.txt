@@ -1,0 +1,20 @@
+Project: Swift Remit — Decentralized Finance Interface
+The Design Vision
+I designed the Swift Remit landing page to bridge the gap between complex blockchain protocols and an intuitive user experience. The goal was to create a "Trust-First" visual language that balances high-performance technology with community-driven governance.
+
+Key UI Features I Developed:
+The Security & Privacy Control Center: I conceptualized a centralized dashboard that gives users granular control over their digital footprint, featuring custom-designed toggles for Biometric Locks and Stealth Mode.
+
+Real-time Activity Log: Designed a high-density data table that maintains readability while tracking live mainnet events, successful logins, and API rotations.
+
+Ecosystem Pillar Cards: Created a modular "Pillar" system to highlight the core strengths of the protocol—Security, Modern Tech, and Community Leadership—using a consistent iconography and grid system.
+
+Performance Metrics: Integrated a sleek footer data-strip to visualize $4.2B+ in protected assets and 0.0ms settlement delay, reinforcing the platform's reliability.
+
+Technical Execution
+Visual Style: Deep-space dark mode with a primary "Electric Violet" accent to signify innovation and premium security.
+
+Typography & Hierarchy: Leveraged bold, high-contrast headings to guide the user from the "Future of Finance" value proposition down to the Discord community conversion point.
+also worked on the Mobile version
+
+figma link https://www.figma.com/design/2wymodr5O54BzxyjNw8jrG/Swift-Remit-UI?node-id=10-15&t=iffnEBNaS5DOq9O1-0

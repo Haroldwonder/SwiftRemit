@@ -219,3 +219,19 @@ pub fn log_whitelist_token(_env: &Env, _token: &soroban_sdk::Address) {}
 /// Logs token whitelist removal - no-op in release.
 #[cfg(not(feature = "debug-log"))]
 pub fn log_remove_whitelisted_token(_env: &Env, _token: &soroban_sdk::Address) {}
+
+/// Logs rate limit configuration update in debug mode.
+#[cfg(feature = "debug-log")]
+pub fn log_update_rate_limit(env: &Env, max_requests: u32, window_seconds: u64, enabled: bool) {
+    soroban_sdk::log!(
+        env,
+        "Update rate limit: max_requests={}, window_seconds={}, enabled={}",
+        max_requests,
+        window_seconds,
+        enabled
+    );
+}
+
+/// Logs rate limit configuration update - no-op in release.
+#[cfg(not(feature = "debug-log"))]
+pub fn log_update_rate_limit(_env: &Env, _max_requests: u32, _window_seconds: u64, _enabled: bool) {}
