@@ -1,5 +1,6 @@
 #![no_std]
 mod debug;
+mod error_handler;
 mod errors;
 mod events;
 mod hashing;
@@ -14,6 +15,7 @@ mod test;
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
 
 pub use debug::*;
+pub use error_handler::*;
 pub use errors::ContractError;
 pub use events::*;
 pub use hashing::*;

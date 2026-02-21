@@ -4401,3 +4401,312 @@ fn test_daily_limit_exact_limit() {
     let remittance_id = contract.create_remittance(&sender, &agent, &10000, &currency, &country, &None);
     assert_eq!(remittance_id, 1);
 }
+
+
+// ============================================================================
+// Centralized Error Handling Tests
+// ============================================================================
+
+#[test]
+fn test_error_handler_validation_errors() {
+    let env = Env::default();
+    
+    // Test InvalidAmount
+    let response = crate::error_handler::ErrorHandler::handle_error(&env, crate::ContractError::InvalidAmount);
+    assert_eq!(response.code, 3);
+    assert_eq!(response.category, crate::error_handler::ErrorCategory::Validation);
+    assert_eq!(response.severity, crate::error_handler::ErrorSeverity::Low);
+    
+    // Test InvalidFeeBps
+    let response = crate::error_handler::ErrorHandler::handle_error(&env, crate::ContractError::InvalidFeeBps);
+    assert_eq!(response.code, 4);
+    assert_eq!(response.category, crate::error_handler::ErrorCategory::Validation);
+    
+    // Test InvalidAddress
+    let response = crate::error_handler::ErrorHandler::handle_error(&env, crate::ContractError::InvalidAddress);
+    assert_eq!(response.code, 10);
+    assert_eq!(response.category, crate::error_handler::ErrorCategory::Validation);
+}
+
+#[test]
+fn test_error_handler_authorization_errors() {
+    let env = Env::default();
+    
+    let response = crate::error_handler::ErrorHandler::handle_error(&env, crate::ContractError::Unauthorized);
+    assert_eq!(response.code, 14);
+    assert_eq!(response.category, crate::error_handler::ErrorCategory::Authorization);
+    assert_eq!(response.severity, crate::error_handler::ErrorSeverity::Medium);
+}
+
+#[test]
+fn test_error_handler_state_errors() {
+    let env = Env::default();
+    
+    // Test ContractPaused
+    let response = crate::error_handler::ErrorHandler::handle_error(&env, crate::ContractError::ContractPaused);
+    assert_eq!(response.code, 13);
+    assert_eq!(response.category, crate::error_handler::ErrorCategory::State);
+    assert_eq!(response.severity, crate::error_handler::ErrorSeverity::Low);
+    
+    // Test DuplicateSettlement
+    let response = crate::error_handler::ErrorHandler::handle_error(&env, crate::ContractError::DuplicateSettlement);
+    assert_eq!(response.code, 12);
+    assert_eq!(response.category, crate::error_handler::ErrorCategory::State);
+    assert_eq!(response.severity, crate::error_handler::ErrorSeverity::Medium);
+}
+
+#[test]
+fn test_error_handler_resource_errors() {
+    let env = Env::default();
+    
+    // Test RemittanceNotFound
+    let response = crate::error_handler::ErrorHandler::handle_error(&env, crate::ContractError::RemittanceNotFound);
+    assert_eq!(response.code, 6);
+    assert_eq!(response.category, crate::error_handler::ErrorCategory::Resource);
+    assert_eq!(response.severity, crate::error_handler::ErrorSeverity::Low);
+    
+    // Test AgentNotRegistered
+    let response = crate::error_handler::ErrorHandler::handle_error(&env, crate::ContractError::AgentNotRegistered);
+    assert_eq!(response.code, 5);
+    assert_eq!(response.category, crate::error_handler::ErrorCategory::Resource);
+}
+
+#[test]
+fn test_error_handler_system_errors() {
+    let env = Env::default();
+    
+    let response = crate::error_handler::ErrorHandler::handle_error(&env, crate::ContractError::Overflow);
+    assert_eq!(response.code, 8);
+    assert_eq!(response.category, crate::error_handler::ErrorCategory::System);
+    assert_eq!(response.severity, crate::error_handler::ErrorSeverity::High);
+}
+
+#[test]
+fn test_error_handler_all_errors_have_unique_codes() {
+    let env = Env::default();
+    
+    let errors = vec![
+        crate::ContractError::AlreadyInitialized,
+        crate::ContractError::NotInitialized,
+        crate::ContractError::InvalidAmount,
+        crate::ContractError::InvalidFeeBps,
+        crate::ContractError::AgentNotRegistered,
+        crate::ContractError::RemittanceNotFound,
+        crate::ContractError::InvalidStatus,
+        crate::ContractError::Overflow,
+        crate::ContractError::NoFeesToWithdraw,
+        crate::ContractError::InvalidAddress,
+        crate::ContractError::SettlementExpired,
+        crate::ContractError::DuplicateSettlement,
+        crate::ContractError::ContractPaused,
+        crate::ContractError::Unauthorized,
+        crate::ContractError::AdminAlreadyExists,
+        crate::ContractError::AdminNotFound,
+        crate::ContractError::CannotRemoveLastAdmin,
+        crate::ContractError::TokenNotWhitelisted,
+        crate::ContractError::TokenAlreadyWhitelisted,
+    ];
+    
+    let mut codes = std::collections::HashSet::new();
+    for error in errors {
+        let response = crate::error_handler::ErrorHandler::handle_error(&env, error);
+        assert!(codes.insert(response.code), "Duplicate error code found: {}", response.code);
+    }
+    
+    assert_eq!(codes.len(), 19, "Expected 19 unique error codes");
+}
+
+#[test]
+fn test_error_handler_messages_are_user_friendly() {
+    let env = Env::default();
+    
+    let errors = vec![
+        crate::ContractError::InvalidAmount,
+        crate::ContractError::AgentNotRegistered,
+        crate::ContractError::Overflow,
+    ];
+    
+    for error in errors {
+        let response = crate::error_handler::ErrorHandler::handle_error(&env, error);
+        let message = response.message.to_string();
+        
+        // Messages should not contain technical jargon
+        assert!(!message.contains("panic"), "Message contains 'panic': {}", message);
+        assert!(!message.contains("stack"), "Message contains 'stack': {}", message);
+        assert!(!message.contains("trace"), "Message contains 'trace': {}", message);
+        assert!(!message.contains("0x"), "Message contains hex address: {}", message);
+        
+        // Messages should be non-empty
+        assert!(!message.is_empty(), "Error message is empty");
+    }
+}
+
+#[test]
+fn test_error_handler_get_error_category() {
+    use crate::error_handler::{ErrorHandler, ErrorCategory};
+    
+    assert_eq!(ErrorHandler::get_error_category(crate::ContractError::InvalidAmount), ErrorCategory::Validation);
+    assert_eq!(ErrorHandler::get_error_category(crate::ContractError::Unauthorized), ErrorCategory::Authorization);
+    assert_eq!(ErrorHandler::get_error_category(crate::ContractError::ContractPaused), ErrorCategory::State);
+    assert_eq!(ErrorHandler::get_error_category(crate::ContractError::RemittanceNotFound), ErrorCategory::Resource);
+    assert_eq!(ErrorHandler::get_error_category(crate::ContractError::Overflow), ErrorCategory::System);
+}
+
+#[test]
+fn test_error_handler_get_error_severity() {
+    use crate::error_handler::{ErrorHandler, ErrorSeverity};
+    
+    // Low severity
+    assert_eq!(ErrorHandler::get_error_severity(crate::ContractError::InvalidAmount), ErrorSeverity::Low);
+    assert_eq!(ErrorHandler::get_error_severity(crate::ContractError::AgentNotRegistered), ErrorSeverity::Low);
+    
+    // Medium severity
+    assert_eq!(ErrorHandler::get_error_severity(crate::ContractError::Unauthorized), ErrorSeverity::Medium);
+    assert_eq!(ErrorHandler::get_error_severity(crate::ContractError::DuplicateSettlement), ErrorSeverity::Medium);
+    
+    // High severity
+    assert_eq!(ErrorHandler::get_error_severity(crate::ContractError::Overflow), ErrorSeverity::High);
+}
+
+#[test]
+fn test_error_handler_is_retryable() {
+    use crate::error_handler::ErrorHandler;
+    
+    // Retryable errors
+    assert!(ErrorHandler::is_retryable(crate::ContractError::ContractPaused));
+    
+    // Non-retryable errors
+    assert!(!ErrorHandler::is_retryable(crate::ContractError::InvalidAmount));
+    assert!(!ErrorHandler::is_retryable(crate::ContractError::RemittanceNotFound));
+    assert!(!ErrorHandler::is_retryable(crate::ContractError::Overflow));
+    assert!(!ErrorHandler::is_retryable(crate::ContractError::Unauthorized));
+}
+
+#[test]
+fn test_error_handler_get_user_message() {
+    let env = Env::default();
+    use crate::error_handler::ErrorHandler;
+    
+    let message = ErrorHandler::get_user_message(&env, crate::ContractError::InvalidAmount);
+    assert_eq!(message.to_string(), "Amount must be greater than zero");
+    
+    let message = ErrorHandler::get_user_message(&env, crate::ContractError::Unauthorized);
+    assert_eq!(message.to_string(), "Unauthorized: admin access required");
+}
+
+#[test]
+fn test_error_handler_get_error_code() {
+    use crate::error_handler::ErrorHandler;
+    
+    assert_eq!(ErrorHandler::get_error_code(crate::ContractError::InvalidAmount), 3);
+    assert_eq!(ErrorHandler::get_error_code(crate::ContractError::Unauthorized), 14);
+    assert_eq!(ErrorHandler::get_error_code(crate::ContractError::Overflow), 8);
+}
+
+#[test]
+fn test_error_handler_integration_with_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250);
+    contract.register_agent(&agent);
+    
+    // Test that errors are properly handled through the system
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        contract.create_remittance(&sender, &agent, &0, &None);
+    }));
+    
+    assert!(result.is_err(), "Should fail with InvalidAmount error");
+}
+
+#[test]
+fn test_error_handler_no_information_leakage() {
+    let env = Env::default();
+    use crate::error_handler::ErrorHandler;
+    
+    // Test that error messages don't leak sensitive information
+    let errors = vec![
+        crate::ContractError::RemittanceNotFound,
+        crate::ContractError::AdminNotFound,
+        crate::ContractError::AgentNotRegistered,
+    ];
+    
+    for error in errors {
+        let response = ErrorHandler::handle_error(&env, error);
+        let message = response.message.to_string();
+        
+        // Should not contain addresses
+        assert!(!message.contains("G"), "Message may contain Stellar address");
+        
+        // Should not contain storage keys
+        assert!(!message.contains("storage"), "Message contains 'storage'");
+        assert!(!message.contains("key"), "Message contains 'key'");
+        
+        // Should not contain internal paths
+        assert!(!message.contains("src/"), "Message contains source path");
+        assert!(!message.contains(".rs"), "Message contains file extension");
+    }
+}
+
+#[test]
+fn test_error_handler_consistency_across_categories() {
+    let env = Env::default();
+    use crate::error_handler::{ErrorHandler, ErrorCategory};
+    
+    // All validation errors should be Low severity
+    let validation_errors = vec![
+        crate::ContractError::InvalidAmount,
+        crate::ContractError::InvalidFeeBps,
+        crate::ContractError::InvalidAddress,
+    ];
+    
+    for error in validation_errors {
+        let response = ErrorHandler::handle_error(&env, error);
+        assert_eq!(response.category, ErrorCategory::Validation);
+        assert_eq!(response.severity, crate::error_handler::ErrorSeverity::Low);
+    }
+}
+
+#[test]
+fn test_error_handler_high_severity_errors() {
+    let env = Env::default();
+    use crate::error_handler::{ErrorHandler, ErrorSeverity};
+    
+    // Only Overflow should be High severity
+    let response = ErrorHandler::handle_error(&env, crate::ContractError::Overflow);
+    assert_eq!(response.severity, ErrorSeverity::High);
+    
+    // Verify it's the only High severity error
+    let all_errors = vec![
+        crate::ContractError::AlreadyInitialized,
+        crate::ContractError::NotInitialized,
+        crate::ContractError::InvalidAmount,
+        crate::ContractError::InvalidFeeBps,
+        crate::ContractError::AgentNotRegistered,
+        crate::ContractError::RemittanceNotFound,
+        crate::ContractError::InvalidStatus,
+        crate::ContractError::NoFeesToWithdraw,
+        crate::ContractError::InvalidAddress,
+        crate::ContractError::SettlementExpired,
+        crate::ContractError::DuplicateSettlement,
+        crate::ContractError::ContractPaused,
+        crate::ContractError::Unauthorized,
+        crate::ContractError::AdminAlreadyExists,
+        crate::ContractError::AdminNotFound,
+        crate::ContractError::CannotRemoveLastAdmin,
+        crate::ContractError::TokenNotWhitelisted,
+        crate::ContractError::TokenAlreadyWhitelisted,
+    ];
+    
+    for error in all_errors {
+        let response = ErrorHandler::handle_error(&env, error);
+        assert_ne!(response.severity, ErrorSeverity::High, "Unexpected High severity for {:?}", error);
+    }
+}
