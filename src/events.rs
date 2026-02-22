@@ -1,3 +1,16 @@
+//! Event emission functions for the SwiftRemit contract.
+//!
+//! This module provides functions to emit structured events for all significant
+//! contract operations. Events include schema versioning and ledger metadata
+//! for comprehensive audit trails.
+
+use soroban_sdk::{symbol_short, Address, Env};
+
+/// Schema version for event structure compatibility
+const SCHEMA_VERSION: u32 = 1;
+
+// ── Admin Events ───────────────────────────────────────────────────
+
 /// Emits an event when the contract is paused by an admin.
 ///
 /// # Arguments
@@ -211,3 +224,39 @@ pub fn emit_fees_withdrawn(env: &Env, to: Address, amount: i128) {
         ),
     );
 }
+
+// ── Settlement Events ──────────────────────────────────────────────
+
+/// Emits an event when a settlement is created and executed.
+///
+/// This event is fired when a settlement transaction is completed, allowing
+/// off-chain services to track settlement activity without scanning storage.
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `sender` - Address of the sender
+/// * `receiver` - Address of the receiver (agent)
+/// * `asset` - Address of the token contract (e.g., USDC)
+/// * `amount` - Settlement amount transferred
+pub fn emit_settlement_completed(
+    env: &Env,
+    sender: Address,
+    receiver: Address,
+    asset: Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (symbol_short!("settle"), symbol_short!("complete")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            sender,
+            receiver,
+            asset,
+            amount,
+        ),
+    );
+}
+

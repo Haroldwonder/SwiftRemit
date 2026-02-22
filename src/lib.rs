@@ -1061,4 +1061,3 @@ impl SwiftRemitContract {
         get_daily_limit(&env, &currency, &country)
     }
 }
-    }
