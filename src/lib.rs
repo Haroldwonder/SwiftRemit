@@ -354,13 +354,27 @@ impl SwiftRemitContract {
         let current_time = env.ledger().timestamp();
         set_last_settlement_time(&env, &remittance.sender, current_time);
 
+        // Increment settlement counter atomically after successful finalization
+        increment_settlement_counter(&env);
+
+        // Emit settlement completion event exactly once
+        // This event is emitted after all state transitions are committed
+        // and includes safeguards to prevent duplicate emission
+        if !has_settlement_event_emitted(&env, remittance_id) {
+            emit_settlement_completed(
+                &env,
+                remittance_id,
+                remittance.sender.clone(),
+                remittance.agent.clone(),
+                usdc_token.clone(),
+                payout_amount
+            );
+            set_settlement_event_emitted(&env, remittance_id);
+        }
+
         // Event: Remittance completed - Fires when agent confirms fiat payout and USDC is released
         // Used by off-chain systems to track successful settlements and update transaction status
         emit_remittance_completed(&env, remittance_id, remittance.sender.clone(), remittance.agent.clone(), usdc_token.clone(), payout_amount);
-        
-        // Event: Settlement completed - Fires with final executed settlement values
-        // Used by off-chain systems for reconciliation and audit trails of completed transactions
-        emit_settlement_completed(&env, remittance.sender.clone(), remittance.agent.clone(), usdc_token.clone(), payout_amount);
 
         log_confirm_payout(&env, remittance_id, payout_amount);
 
@@ -527,6 +541,43 @@ impl SwiftRemitContract {
     /// * `Err(ContractError::NotInitialized)` - Contract not initialized
     pub fn get_platform_fee_bps(env: Env) -> Result<u32, ContractError> {
         get_platform_fee_bps(&env)
+    }
+
+    /// Retrieves the total number of successfully finalized settlements.
+    ///
+    /// This is a read-only method that performs an O(1) constant-time read directly
+    /// from instance storage without iteration or recomputation. The counter is
+    /// incremented atomically each time a settlement is successfully finalized.
+    ///
+    /// # Arguments
+    ///
+    /// * `env` - The contract execution environment
+    ///
+    /// # Returns
+    ///
+    /// * `u64` - Total number of settlements processed (0 if none)
+    ///
+    /// # Performance
+    ///
+    /// - O(1) constant-time operation
+    /// - Single storage read
+    /// - No iteration or computation
+    ///
+    /// # Guarantees
+    ///
+    /// - Read-only: Cannot modify storage
+    /// - Deterministic: Always returns same value for same state
+    /// - Consistent: Reflects all successfully finalized settlements
+    /// - Cannot be modified externally (no public setter)
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let total = contract.get_total_settlements_count(&env);
+    /// println!("Total settlements processed: {}", total);
+    /// ```
+    pub fn get_total_settlements_count(env: Env) -> u64 {
+        get_settlement_counter(&env)
     }
 
     pub fn pause(env: Env) -> Result<(), ContractError> {
@@ -711,9 +762,6 @@ impl SwiftRemitContract {
                 .checked_add(transfer.total_fees)
                 .ok_or(ContractError::Overflow)?;
             set_accumulated_fees(&env, new_fees);
-
-            // Emit settlement event
-            emit_settlement_completed(&env, from, to, usdc_token.clone(), payout_amount);
         }
 
         // Mark all remittances as completed and set settlement hashes
@@ -726,11 +774,30 @@ impl SwiftRemitContract {
             set_settlement_hash(&env, remittance.id);
             settled_ids.push_back(remittance.id);
 
-            // Emit individual remittance completion event
+            // Increment settlement counter atomically for each successful settlement
+            increment_settlement_counter(&env);
+
+            // Calculate payout amount for this remittance
             let payout_amount = remittance
                 .amount
                 .checked_sub(remittance.fee)
                 .ok_or(ContractError::Overflow)?;
+
+            // Emit settlement completion event exactly once per remittance
+            // This ensures each finalized settlement has exactly one completion event
+            if !has_settlement_event_emitted(&env, remittance.id) {
+                emit_settlement_completed(
+                    &env,
+                    remittance.id,
+                    remittance.sender.clone(),
+                    remittance.agent.clone(),
+                    usdc_token.clone(),
+                    payout_amount,
+                );
+                set_settlement_event_emitted(&env, remittance.id);
+            }
+
+            // Emit individual remittance completion event
             emit_remittance_completed(
                 &env,
                 remittance.id,
