@@ -1,3 +1,38 @@
+/// Emits an event when the contract is paused by an admin.
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `admin` - Address of the admin who paused the contract
+pub fn emit_paused(env: &Env, admin: Address) {
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("paused")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            admin,
+        ),
+    );
+}
+
+/// Emits an event when the contract is unpaused by an admin.
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `admin` - Address of the admin who unpaused the contract
+pub fn emit_unpaused(env: &Env, admin: Address) {
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("unpaused")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            admin,
+        ),
+    );
+}
 //! Event emission functions for the SwiftRemit contract.
 //!
 //! This module provides functions to emit structured events for all significant

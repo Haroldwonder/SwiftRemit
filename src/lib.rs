@@ -240,8 +240,10 @@ impl SwiftRemitContract {
         expiry: Option<u64>,
     ) -> Result<u64, ContractError> {
         // Centralized validation before business logic
+        if is_paused(env.clone()) {
+            return Err(ContractError::ContractPaused);
+        }
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
-        
         sender.require_auth();
 
         let fee_bps = get_platform_fee_bps(&env)?;
@@ -540,11 +542,7 @@ impl SwiftRemitContract {
         require_admin(&env, &caller)?;
 
         set_paused(&env, true);
-        
-        // Event: Paused - Fires when admin pauses the contract to prevent new payouts
-        // Used by off-chain systems to halt operations during emergencies or maintenance
         emit_paused(&env, caller);
-
         Ok(())
     }
 
@@ -553,11 +551,7 @@ impl SwiftRemitContract {
         require_admin(&env, &caller)?;
 
         set_paused(&env, false);
-        
-        // Event: Unpaused - Fires when admin resumes contract operations after pause
-        // Used by off-chain systems to resume normal payout processing
         emit_unpaused(&env, caller);
-
         Ok(())
     }
 
