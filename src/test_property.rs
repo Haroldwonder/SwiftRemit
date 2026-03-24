@@ -19,12 +19,12 @@ use soroban_sdk::{token, Address, Env, Vec as SorobanVec};
 // Test Helpers
 // ============================================================================
 
-fn create_token_contract(env: &Env, admin: &Address) -> token::StellarAssetClient {
+fn create_token_contract<'a>(env: &'a Env, admin: &Address) -> token::StellarAssetClient<'a> {
     let address = env.register_stellar_asset_contract_v2(admin.clone()).address();
     token::StellarAssetClient::new(env, &address)
 }
 
-fn create_swiftremit_contract(env: &Env) -> SwiftRemitContractClient {
+fn create_swiftremit_contract<'a>(env: &'a Env) -> SwiftRemitContractClient<'a> {
     SwiftRemitContractClient::new(env, &env.register_contract(None, SwiftRemitContract {}))
 }
 

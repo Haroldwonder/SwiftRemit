@@ -30,9 +30,6 @@ fn test_percentage_strategy() {
     let contract_id = env.register_contract(None, SwiftRemitContract);
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
-    // Whitelist token first
-    client.whitelist_token(&admin, &token.address);
-
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
 
     // Set percentage strategy: 5%
@@ -63,7 +60,6 @@ fn test_flat_strategy() {
     let contract_id = env.register_contract(None, SwiftRemitContract);
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
-    client.whitelist_token(&admin, &token.address);
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
 
     // Set flat fee: 100 units
@@ -96,7 +92,6 @@ fn test_dynamic_strategy() {
     let contract_id = env.register_contract(None, SwiftRemitContract);
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
-    client.whitelist_token(&admin, &token.address);
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
 
     // Set dynamic strategy: 4% base
@@ -133,7 +128,6 @@ fn test_strategy_switch_without_redeployment() {
     let contract_id = env.register_contract(None, SwiftRemitContract);
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
-    client.whitelist_token(&admin, &token.address);
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
     client.register_agent(&agent);
 
@@ -166,7 +160,6 @@ fn test_get_fee_strategy() {
     let contract_id = env.register_contract(None, SwiftRemitContract);
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
-    client.whitelist_token(&admin, &token.address);
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
 
     // Default should be Percentage(250)
@@ -194,8 +187,6 @@ fn test_backwards_compatibility() {
     let contract_id = env.register_contract(None, SwiftRemitContract);
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
-    client.whitelist_token(&admin, &token.address);
-    
     // Initialize with old fee_bps parameter (250 = 2.5%)
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
     client.register_agent(&agent);
@@ -207,7 +198,7 @@ fn test_backwards_compatibility() {
     // Old update_fee should still work (updates percentage strategy)
     client.update_fee(&500); // 5%
     
-    // Verify strategy is still percentage-based
+    // Verify strategy updated to new percentage
     let strategy = client.get_fee_strategy();
-    assert_eq!(strategy, FeeStrategy::Percentage(250)); // Still default, update_fee doesn't change strategy
+    assert_eq!(strategy, FeeStrategy::Percentage(500));
 }

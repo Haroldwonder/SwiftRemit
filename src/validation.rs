@@ -130,11 +130,6 @@ pub fn validate_initialize_request(
         return Err(ContractError::AlreadyInitialized);
     }
     
-    // Check if token is whitelisted
-    if !crate::is_token_whitelisted(env, token) {
-        return Err(ContractError::TokenNotWhitelisted);
-    }
-    
     Ok(())
 }
 

@@ -948,7 +948,7 @@ fn test_settlement_with_future_expiry() {
 contract.register_agent(&agent);
 
     // Set expiry to 1 hour in the future
-    env.ledger(, &0, &admin).set(soroban_sdk::testutils::LedgerInfo { timestamp: 10000, ..env.ledger().get() });
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo { timestamp: 10000, ..env.ledger().get() });
     let current_time = env.ledger().timestamp();
     let expiry_time = current_time + 3600;
 
@@ -983,7 +983,7 @@ fn test_settlement_with_past_expiry() {
 contract.register_agent(&agent);
 
     // Set expiry to 1 hour in the past
-    env.ledger(, &0, &admin).set(soroban_sdk::testutils::LedgerInfo { timestamp: 10000, ..env.ledger().get() });
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo { timestamp: 10000, ..env.ledger().get() });
     let current_time = env.ledger().timestamp();
     let expiry_time = current_time.saturating_sub(3600);
 
@@ -1157,7 +1157,7 @@ fn test_settlement_completed_event() {
     let contract = create_swiftremit_contract(&env);
     contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
 contract.register_agent(&agent);
-    env.ledger(, &0, &admin).set(soroban_sdk::testutils::LedgerInfo { timestamp: 10000, ..env.ledger().get() });
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo { timestamp: 10000, ..env.ledger().get() });
     let current_time = env.ledger().timestamp();
     let expiry_time = current_time + 3600;
 
@@ -1189,14 +1189,12 @@ fn test_pause_unpause() {
 
     assert!(!contract.is_paused());
 
-    // Verify event topic
-    assert_eq!(
-        settlement_event.topics,
-        (symbol_short!("settled"),).into_val(&env)
-    );
+    contract.pause();
+    assert!(contract.is_paused());
 
     contract.unpause();
-    assert!(!contract.is_paused(, &0, &admin), &0, &admin);}
+    assert!(!contract.is_paused());
+}
 
 #[test]
 fn test_duplicate_prevention_with_expiry() {
@@ -1827,8 +1825,8 @@ fn test_multiple_tokens_different_contracts() {
     contract2.register_agent(&agent);
 
     // Create remittances with different tokens
-    let remittance_id1 = contract1.create_remittance(&sender, &agent, &1000, &default_currency(&env)), &None);
-    let remittance_id2 = contract2.create_remittance(&sender, &agent, &2000, &default_currency(&env)), &None);
+    let remittance_id1 = contract1.create_remittance(&sender, &agent, &1000, &None);
+    let remittance_id2 = contract2.create_remittance(&sender, &agent, &2000, &None);
 
     // Confirm payouts
     contract1.confirm_payout(&remittance_id1);
@@ -1883,10 +1881,10 @@ fn test_multi_token_balance_isolation() {
     contract3.register_agent(&agent2);
 
     // Create multiple remittances across different tokens
-    let rem1 = contract1.create_remittance(&sender1, &agent1, &5000, &default_currency(&env)), &None);
-    let rem2 = contract2.create_remittance(&sender1, &agent1, &3000, &default_currency(&env)), &None);
-    let rem3 = contract2.create_remittance(&sender2, &agent2, &4000, &default_currency(&env)), &None);
-    let rem4 = contract3.create_remittance(&sender2, &agent2, &6000, &default_currency(&env)), &None);
+    let rem1 = contract1.create_remittance(&sender1, &agent1, &5000, &None);
+    let rem2 = contract2.create_remittance(&sender1, &agent1, &3000, &None);
+    let rem3 = contract2.create_remittance(&sender2, &agent2, &4000, &None);
+    let rem4 = contract3.create_remittance(&sender2, &agent2, &6000, &None);
 
     // Confirm all payouts
     contract1.confirm_payout(&rem1);
@@ -1947,12 +1945,12 @@ fn test_multi_token_fee_withdrawal() {
 
     // Create and complete multiple remittances
     for _ in 0..3 {
-        let rem1 = contract1.create_remittance(&sender, &agent, &1000, &default_currency(&env)), &None);
+        let rem1 = contract1.create_remittance(&sender, &agent, &1000, &None);
         contract1.confirm_payout(&rem1);
     }
     
     for _ in 0..2 {
-        let rem2 = contract2.create_remittance(&sender, &agent, &2000, &default_currency(&env)), &None);
+        let rem2 = contract2.create_remittance(&sender, &agent, &2000, &None);
         contract2.confirm_payout(&rem2);
     }
 
@@ -2002,9 +2000,9 @@ fn test_multi_token_cancellation_refunds() {
     contract2.register_agent(&agent);
 
     // Create remittances
-    let rem1 = contract1.create_remittance(&sender, &agent, &2000, &default_currency(&env)), &None);
-    let rem2 = contract2.create_remittance(&sender, &agent, &3000, &default_currency(&env)), &None);
-    let rem3 = contract1.create_remittance(&sender, &agent, &1500, &default_currency(&env)), &None);
+    let rem1 = contract1.create_remittance(&sender, &agent, &2000, &None);
+    let rem2 = contract2.create_remittance(&sender, &agent, &3000, &None);
+    let rem3 = contract1.create_remittance(&sender, &agent, &1500, &None);
 
     // Cancel some remittances
     contract1.cancel_remittance(&rem1);
@@ -2053,8 +2051,8 @@ fn test_multi_token_state_transitions() {
     contract2.register_agent(&agent);
 
     // Create remittances in both tokens
-    let rem1 = contract1.create_remittance(&sender, &agent, &1000, &default_currency(&env)), &None);
-    let rem2 = contract2.create_remittance(&sender, &agent, &1000, &default_currency(&env)), &None);
+    let rem1 = contract1.create_remittance(&sender, &agent, &1000, &None);
+    let rem2 = contract2.create_remittance(&sender, &agent, &1000, &None);
 
     // Verify initial state
     let remittance1 = contract1.get_remittance(&rem1);
@@ -2112,8 +2110,8 @@ fn test_multi_token_concurrent_operations() {
     contract2.register_agent(&agent2);
 
     // Create multiple concurrent remittances
-    let rem1_1 = contract1.create_remittance(&sender1, &agent1, &1000, &default_currency(&env)), &None);
-    let rem1_2 = contract1.create_remittance(&sender2, &agent2, &2000, &default_currency(&env)), &None);
+    let rem1_1 = contract1.create_remittance(&sender1, &agent1, &1000, &None);
+    let rem1_2 = contract1.create_remittance(&sender2, &agent2, &2000, &None);
     let rem2_1 = contract2.create_remittance(&sender1, &agent2, &1500, &None);
     let rem2_2 = contract2.create_remittance(&sender2);
 
@@ -2160,8 +2158,8 @@ fn test_multi_token_edge_case_zero_fee() {
     contract1.register_agent(&agent);
     contract2.register_agent(&agent);
 
-    let rem1 = contract1.create_remittance(&sender, &agent, &1000, &default_currency(&env)), &None);
-    let rem2 = contract2.create_remittance(&sender, &agent, &1000, &default_currency(&env)), &None);
+    let rem1 = contract1.create_remittance(&sender, &agent, &1000, &None);
+    let rem2 = contract2.create_remittance(&sender, &agent, &1000, &None);
 
     contract1.confirm_payout(&rem1);
     contract2.confirm_payout(&rem2);
@@ -2290,8 +2288,8 @@ fn test_multi_token_pause_independence() {
     contract1.register_agent(&agent);
     contract2.register_agent(&agent);
 
-    let rem1 = contract1.create_remittance(&sender, &agent, &1000, &default_currency(&env)), &None);
-    let rem2 = contract2.create_remittance(&sender, &agent, &1000, &default_currency(&env)), &None);
+    let rem1 = contract1.create_remittance(&sender, &agent, &1000, &None);
+    let rem2 = contract2.create_remittance(&sender, &agent, &1000, &None);
 
     // Pause only contract1
     contract1.pause();
@@ -2398,8 +2396,8 @@ fn test_multi_token_mixed_success_failure() {
     contract2.register_agent(&agent);
 
     // Create remittances
-    let rem1 = contract1.create_remittance(&sender, &agent, &1000, &default_currency(&env)), &None);
-    let rem2 = contract2.create_remittance(&sender, &agent, &1000, &default_currency(&env)), &None);
+    let rem1 = contract1.create_remittance(&sender, &agent, &1000, &None);
+    let rem2 = contract2.create_remittance(&sender, &agent, &1000, &None);
 
     // Complete first
     contract1.confirm_payout(&rem1);
@@ -3651,7 +3649,7 @@ fn test_validation_prevents_operations_on_nonexistent_remittance() {
     contract1.register_agent(&agent);
 
     token.mint(&sender, &1000);
-    let id = contract1.create_remittance(&sender, &agent, &100, &default_currency(&env)), &None);
+    let id = contract1.create_remittance(&sender, &agent, &100, &None);
 
     // Export state
     let snapshot = contract1.export_migration_state(&admin).unwrap();
@@ -3826,7 +3824,7 @@ fn test_import_migration_batch() {
 
     // Create 5 remittances
     for _ in 0..5 {
-        contract1.create_remittance(&sender, &agent, &100, &default_currency(&env)), &None);
+        contract1.create_remittance(&sender, &agent, &100, &None);
     }
 
     // Export batch
@@ -3889,7 +3887,7 @@ fn test_validation_prevents_withdraw_with_no_fees() {
 
     // Create remittances
     for _ in 0..5 {
-        contract1.create_remittance(&sender, &agent, &100, &default_currency(&env)), &None);
+        contract1.create_remittance(&sender, &agent, &100, &None);
     }
 
     // Export batch
@@ -3932,7 +3930,7 @@ fn test_migration_preserves_all_data() {
     token.mint(&sender, &1000);
 
     // Create remittance and complete it
-    let id = contract1.create_remittance(&sender, &agent, &100, &default_currency(&env)), &None);
+    let id = contract1.create_remittance(&sender, &agent, &100, &None);
     contract1.confirm_payout(&id);
 
     // Export state
@@ -4072,10 +4070,10 @@ fn test_validation_allows_valid_operations() {
     token.mint(&sender, &10000);
 
     // Create remittances with different statuses
-    let id1 = contract1.create_remittance(&sender, &agent, &100, &default_currency(&env)), &None); // Pending
-    let id2 = contract1.create_remittance(&sender, &agent, &100, &default_currency(&env)), &None);
+    let id1 = contract1.create_remittance(&sender, &agent, &100, &None); // Pending
+    let id2 = contract1.create_remittance(&sender, &agent, &100, &None);
     contract1.confirm_payout(&id2); // Completed
-    let id3 = contract1.create_remittance(&sender, &agent, &100, &default_currency(&env)), &None);
+    let id3 = contract1.create_remittance(&sender, &agent, &100, &None);
     contract1.cancel_remittance(&id3); // Cancelled
 
     // Export and import

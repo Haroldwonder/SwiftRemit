@@ -153,9 +153,13 @@ pub fn is_terminal_status(status: &RemittanceStatus) -> bool {
 pub fn get_valid_next_states(status: &RemittanceStatus) -> soroban_sdk::Vec<RemittanceStatus> {
     let env = Env::default();
     let mut result = soroban_sdk::Vec::new(&env);
-    
-    for next_status in status.next_valid_states() {
-        result.push_back(next_status);
+
+    match status {
+        RemittanceStatus::Pending => {
+            result.push_back(RemittanceStatus::Completed);
+            result.push_back(RemittanceStatus::Cancelled);
+        }
+        RemittanceStatus::Completed | RemittanceStatus::Cancelled => {}
     }
     
     result
@@ -172,114 +176,55 @@ pub fn get_valid_next_states(status: &RemittanceStatus) -> soroban_sdk::Vec<Remi
 /// * `from` - Current status
 /// * `to` - Target status
 fn log_transition(env: &Env, remittance_id: u64, from: &RemittanceStatus, to: &RemittanceStatus) {
-    #[cfg(any(test, feature = "testutils"))]
-    {
-        use crate::debug::log_info;
-        log_info(
-            env,
-            &format!(
-                "Remittance {} transition: {:?} → {:?}",
-                remittance_id, from, to
-            ),
-        );
-    }
-    
-    // Suppress unused variable warnings in production
-    #[cfg(not(any(test, feature = "testutils")))]
-    {
-        let _ = (env, remittance_id, from, to);
-    }
+    let _ = (env, remittance_id, from, to);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Valid Transition Tests
-    // ═══════════════════════════════════════════════════════════════════════════
+    use soroban_sdk::testutils::Address as _;
 
     #[test]
-    fn test_valid_transition_initiated_to_submitted() {
+    fn test_valid_transition_pending_to_completed() {
         assert!(validate_transition(
-            &RemittanceStatus::Initiated,
-            &RemittanceStatus::Submitted
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn test_valid_transition_initiated_to_failed() {
-        assert!(validate_transition(
-            &RemittanceStatus::Initiated,
-            &RemittanceStatus::Failed
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn test_valid_transition_submitted_to_pending_anchor() {
-        assert!(validate_transition(
-            &RemittanceStatus::Submitted,
-            &RemittanceStatus::PendingAnchor
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn test_valid_transition_submitted_to_failed() {
-        assert!(validate_transition(
-            &RemittanceStatus::Submitted,
-            &RemittanceStatus::Failed
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn test_valid_transition_pending_anchor_to_completed() {
-        assert!(validate_transition(
-            &RemittanceStatus::PendingAnchor,
+            &RemittanceStatus::Pending,
             &RemittanceStatus::Completed
         )
         .is_ok());
     }
 
     #[test]
-    fn test_valid_transition_pending_anchor_to_failed() {
+    fn test_valid_transition_pending_to_cancelled() {
         assert!(validate_transition(
-            &RemittanceStatus::PendingAnchor,
-            &RemittanceStatus::Failed
-        )
-        .is_ok());
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Idempotent Transition Tests (Same State → Same State)
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_idempotent_transition_initiated() {
-        assert!(validate_transition(
-            &RemittanceStatus::Initiated,
-            &RemittanceStatus::Initiated
+            &RemittanceStatus::Pending,
+            &RemittanceStatus::Cancelled
         )
         .is_ok());
     }
 
     #[test]
-    fn test_idempotent_transition_submitted() {
+    fn test_invalid_transition_completed_to_pending() {
         assert!(validate_transition(
-            &RemittanceStatus::Submitted,
-            &RemittanceStatus::Submitted
+            &RemittanceStatus::Completed,
+            &RemittanceStatus::Pending
         )
-        .is_ok());
+        .is_err());
     }
 
     #[test]
-    fn test_idempotent_transition_pending_anchor() {
+    fn test_invalid_transition_cancelled_to_pending() {
         assert!(validate_transition(
-            &RemittanceStatus::PendingAnchor,
-            &RemittanceStatus::PendingAnchor
+            &RemittanceStatus::Cancelled,
+            &RemittanceStatus::Pending
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_idempotent_transition_pending() {
+        assert!(validate_transition(
+            &RemittanceStatus::Pending,
+            &RemittanceStatus::Pending
         )
         .is_ok());
     }
@@ -294,177 +239,13 @@ mod tests {
     }
 
     #[test]
-    fn test_idempotent_transition_failed() {
+    fn test_idempotent_transition_cancelled() {
         assert!(validate_transition(
-            &RemittanceStatus::Failed,
-            &RemittanceStatus::Failed
+            &RemittanceStatus::Cancelled,
+            &RemittanceStatus::Cancelled
         )
         .is_ok());
     }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Invalid Transition Tests - From INITIATED
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_invalid_transition_initiated_to_pending_anchor() {
-        let result = validate_transition(
-            &RemittanceStatus::Initiated,
-            &RemittanceStatus::PendingAnchor,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    #[test]
-    fn test_invalid_transition_initiated_to_completed() {
-        let result = validate_transition(
-            &RemittanceStatus::Initiated,
-            &RemittanceStatus::Completed,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Invalid Transition Tests - From SUBMITTED
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_invalid_transition_submitted_to_initiated() {
-        let result = validate_transition(
-            &RemittanceStatus::Submitted,
-            &RemittanceStatus::Initiated,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    #[test]
-    fn test_invalid_transition_submitted_to_completed() {
-        let result = validate_transition(
-            &RemittanceStatus::Submitted,
-            &RemittanceStatus::Completed,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Invalid Transition Tests - From PENDING_ANCHOR
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_invalid_transition_pending_anchor_to_initiated() {
-        let result = validate_transition(
-            &RemittanceStatus::PendingAnchor,
-            &RemittanceStatus::Initiated,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    #[test]
-    fn test_invalid_transition_pending_anchor_to_submitted() {
-        let result = validate_transition(
-            &RemittanceStatus::PendingAnchor,
-            &RemittanceStatus::Submitted,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Terminal State Protection Tests - COMPLETED
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_terminal_completed_cannot_transition_to_initiated() {
-        let result = validate_transition(
-            &RemittanceStatus::Completed,
-            &RemittanceStatus::Initiated,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    #[test]
-    fn test_terminal_completed_cannot_transition_to_submitted() {
-        let result = validate_transition(
-            &RemittanceStatus::Completed,
-            &RemittanceStatus::Submitted,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    #[test]
-    fn test_terminal_completed_cannot_transition_to_pending_anchor() {
-        let result = validate_transition(
-            &RemittanceStatus::Completed,
-            &RemittanceStatus::PendingAnchor,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    #[test]
-    fn test_terminal_completed_cannot_transition_to_failed() {
-        let result = validate_transition(
-            &RemittanceStatus::Completed,
-            &RemittanceStatus::Failed,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Terminal State Protection Tests - FAILED
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_terminal_failed_cannot_transition_to_initiated() {
-        let result = validate_transition(
-            &RemittanceStatus::Failed,
-            &RemittanceStatus::Initiated,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    #[test]
-    fn test_terminal_failed_cannot_transition_to_submitted() {
-        let result = validate_transition(
-            &RemittanceStatus::Failed,
-            &RemittanceStatus::Submitted,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    #[test]
-    fn test_terminal_failed_cannot_transition_to_pending_anchor() {
-        let result = validate_transition(
-            &RemittanceStatus::Failed,
-            &RemittanceStatus::PendingAnchor,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    #[test]
-    fn test_terminal_failed_cannot_transition_to_completed() {
-        let result = validate_transition(
-            &RemittanceStatus::Failed,
-            &RemittanceStatus::Completed,
-        );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Terminal Status Check Tests
-    // ═══════════════════════════════════════════════════════════════════════════
 
     #[test]
     fn test_is_terminal_status_completed() {
@@ -472,88 +253,54 @@ mod tests {
     }
 
     #[test]
-    fn test_is_terminal_status_failed() {
-        assert!(is_terminal_status(&RemittanceStatus::Failed));
+    fn test_is_terminal_status_cancelled() {
+        assert!(is_terminal_status(&RemittanceStatus::Cancelled));
     }
 
     #[test]
-    fn test_is_not_terminal_status_initiated() {
-        assert!(!is_terminal_status(&RemittanceStatus::Initiated));
+    fn test_is_not_terminal_status_pending() {
+        assert!(!is_terminal_status(&RemittanceStatus::Pending));
     }
 
     #[test]
-    fn test_is_not_terminal_status_submitted() {
-        assert!(!is_terminal_status(&RemittanceStatus::Submitted));
-    }
-
-    #[test]
-    fn test_is_not_terminal_status_pending_anchor() {
-        assert!(!is_terminal_status(&RemittanceStatus::PendingAnchor));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Valid Next States Tests
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_valid_next_states_from_initiated() {
-        let next_states = get_valid_next_states(&RemittanceStatus::Initiated);
-        assert_eq!(next_states.len(), 2);
-        assert!(next_states.contains(&RemittanceStatus::Submitted));
-        assert!(next_states.contains(&RemittanceStatus::Failed));
-    }
-
-    #[test]
-    fn test_valid_next_states_from_submitted() {
-        let next_states = get_valid_next_states(&RemittanceStatus::Submitted);
-        assert_eq!(next_states.len(), 2);
-        assert!(next_states.contains(&RemittanceStatus::PendingAnchor));
-        assert!(next_states.contains(&RemittanceStatus::Failed));
-    }
-
-    #[test]
-    fn test_valid_next_states_from_pending_anchor() {
-        let next_states = get_valid_next_states(&RemittanceStatus::PendingAnchor);
+    fn test_valid_next_states_from_pending() {
+        let next_states = get_valid_next_states(&RemittanceStatus::Pending);
         assert_eq!(next_states.len(), 2);
         assert!(next_states.contains(&RemittanceStatus::Completed));
-        assert!(next_states.contains(&RemittanceStatus::Failed));
+        assert!(next_states.contains(&RemittanceStatus::Cancelled));
     }
 
     #[test]
     fn test_valid_next_states_from_completed() {
         let next_states = get_valid_next_states(&RemittanceStatus::Completed);
-        assert_eq!(next_states.len(), 0); // Terminal state has no valid transitions
+        assert_eq!(next_states.len(), 0);
     }
 
     #[test]
-    fn test_valid_next_states_from_failed() {
-        let next_states = get_valid_next_states(&RemittanceStatus::Failed);
-        assert_eq!(next_states.len(), 0); // Terminal state has no valid transitions
+    fn test_valid_next_states_from_cancelled() {
+        let next_states = get_valid_next_states(&RemittanceStatus::Cancelled);
+        assert_eq!(next_states.len(), 0);
     }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Atomic Transition Tests
-    // ═══════════════════════════════════════════════════════════════════════════
 
     #[test]
     fn test_transition_status_valid() {
         let env = Env::default();
         let sender = soroban_sdk::Address::generate(&env);
         let agent = soroban_sdk::Address::generate(&env);
-        
+
         let mut remittance = crate::Remittance {
             id: 1,
             sender,
             agent,
             amount: 100,
             fee: 2,
-            status: RemittanceStatus::Initiated,
+            status: RemittanceStatus::Pending,
             expiry: None,
         };
 
-        let result = transition_status(&env, &mut remittance, RemittanceStatus::Submitted);
+        let result = transition_status(&env, &mut remittance, RemittanceStatus::Completed);
         assert!(result.is_ok());
-        assert_eq!(remittance.status, RemittanceStatus::Submitted);
+        assert_eq!(remittance.status, RemittanceStatus::Completed);
     }
 
     #[test]
@@ -561,22 +308,21 @@ mod tests {
         let env = Env::default();
         let sender = soroban_sdk::Address::generate(&env);
         let agent = soroban_sdk::Address::generate(&env);
-        
+
         let mut remittance = crate::Remittance {
             id: 1,
             sender,
             agent,
             amount: 100,
             fee: 2,
-            status: RemittanceStatus::Initiated,
+            status: RemittanceStatus::Completed,
             expiry: None,
         };
 
-        let result = transition_status(&env, &mut remittance, RemittanceStatus::Completed);
+        let result = transition_status(&env, &mut remittance, RemittanceStatus::Pending);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ContractError::InvalidStateTransition);
-        // Status should remain unchanged after failed transition
-        assert_eq!(remittance.status, RemittanceStatus::Initiated);
+        assert_eq!(remittance.status, RemittanceStatus::Completed);
     }
 
     #[test]
@@ -584,20 +330,19 @@ mod tests {
         let env = Env::default();
         let sender = soroban_sdk::Address::generate(&env);
         let agent = soroban_sdk::Address::generate(&env);
-        
+
         let mut remittance = crate::Remittance {
             id: 1,
             sender,
             agent,
             amount: 100,
             fee: 2,
-            status: RemittanceStatus::Submitted,
+            status: RemittanceStatus::Pending,
             expiry: None,
         };
 
-        // Transitioning to same state should succeed (idempotent)
-        let result = transition_status(&env, &mut remittance, RemittanceStatus::Submitted);
+        let result = transition_status(&env, &mut remittance, RemittanceStatus::Pending);
         assert!(result.is_ok());
-        assert_eq!(remittance.status, RemittanceStatus::Submitted);
+        assert_eq!(remittance.status, RemittanceStatus::Pending);
     }
 }

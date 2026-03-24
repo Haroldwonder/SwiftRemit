@@ -321,6 +321,12 @@ impl ErrorHandler {
                 ErrorCategory::Validation,
                 ErrorSeverity::Medium,
             ),
+            _ => (
+                999,
+                SorobanString::from_str(env, "Unknown error"),
+                ErrorCategory::System,
+                ErrorSeverity::High,
+            ),
         }
     }
     
@@ -329,42 +335,8 @@ impl ErrorHandler {
     /// Logs are only available in debug builds and never exposed to clients.
     /// This prevents stack traces and sensitive information from leaking.
     fn log_error(env: &Env, error: ContractError, severity: ErrorSeverity) {
-        #[cfg(any(test, feature = "testutils"))]
-        {
-            use crate::debug::log_error as debug_log;
-            let severity_str = match severity {
-                ErrorSeverity::Low => "LOW",
-                ErrorSeverity::Medium => "MEDIUM",
-                ErrorSeverity::High => "HIGH",
-            };
-            debug_log(env, &format!("[{}] Error: {:?}", severity_str, error));
-        }
-        
-        // In production, errors are not logged to prevent information leakage
-        #[cfg(not(any(test, feature = "testutils")))]
-        {
-            let _ = (env, error, severity); // Suppress unused variable warnings
-        }
+        let _ = (env, error, severity);
     }
-}
-
-/// Helper macro for consistent error handling in contract functions
-/// 
-/// Usage:
-/// ```
-/// handle_contract_error!(env, operation_result)
-/// ```
-#[macro_export]
-macro_rules! handle_contract_error {
-    ($env:expr, $result:expr) => {
-        match $result {
-            Ok(value) => Ok(value),
-            Err(error) => {
-                let _response = $crate::error_handler::ErrorHandler::handle_error($env, error);
-                Err(error)
-            }
-        }
-    };
 }
 
 /// Result type alias for contract operations

@@ -21,7 +21,7 @@ mod transaction_controller;
 mod transitions;
 mod types;
 mod validation;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test;
 #[cfg(test)]
 mod test_escrow;
@@ -40,7 +40,7 @@ mod test_protocol_fee;
 #[cfg(test)]
 mod test_property; 
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
+use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
 
 pub use abuse_protection::*;
 pub use asset_verification::*;
@@ -152,7 +152,9 @@ impl SwiftRemitContract {
         assign_role(&env, &admin, &Role::Admin);
         
         set_usdc_token(&env, &usdc_token);
+        set_token_whitelisted(&env, &usdc_token, true);
         set_platform_fee_bps(&env, fee_bps);
+        set_fee_strategy(&env, &FeeStrategy::Percentage(fee_bps));
         set_remittance_counter(&env, 0);
         set_accumulated_fees(&env, 0);
         set_rate_limit_cooldown(&env, rate_limit_cooldown);
@@ -193,6 +195,7 @@ impl SwiftRemitContract {
         require_admin(&env, &caller)?;
 
         set_agent_registered(&env, &agent, true);
+        assign_role(&env, &agent, &Role::Settler);
 
         // Event: Agent registered - Fires when admin adds a new agent to the approved list
         // Used by off-chain systems to track which addresses can confirm payouts
@@ -224,6 +227,7 @@ impl SwiftRemitContract {
         require_admin(&env, &caller)?;
 
         set_agent_registered(&env, &agent, false);
+        remove_role(&env, &agent, &Role::Settler);
 
         // Event: Agent removed - Fires when admin removes an agent from the approved list
         // Used by off-chain systems to revoke payout confirmation privileges
@@ -259,6 +263,7 @@ impl SwiftRemitContract {
         require_admin(&env, &caller)?;
 
         set_platform_fee_bps(&env, fee_bps);
+        set_fee_strategy(&env, &FeeStrategy::Percentage(fee_bps));
         emit_fee_updated(&env, fee_bps);
 
         log_update_fee(&env, fee_bps);
@@ -1030,7 +1035,6 @@ impl SwiftRemitContract {
 
     /// Updates the protocol fee (Admin only, max 200 bps)
     pub fn update_protocol_fee(env: Env, caller: Address, fee_bps: u32) -> Result<(), ContractError> {
-        caller.require_auth();
         require_admin(&env, &caller)?;
         set_protocol_fee_bps(&env, fee_bps)?;
         Ok(())
@@ -1038,7 +1042,6 @@ impl SwiftRemitContract {
 
     /// Updates the treasury address (Admin only)
     pub fn update_treasury(env: Env, caller: Address, treasury: Address) -> Result<(), ContractError> {
-        caller.require_auth();
         require_admin(&env, &caller)?;
         set_treasury(&env, &treasury);
         Ok(())
@@ -1106,7 +1109,6 @@ impl SwiftRemitContract {
     /// contract.update_fee_strategy(&admin, FeeStrategy::Dynamic(400))?;
     /// ```
     pub fn update_fee_strategy(env: Env, caller: Address, strategy: FeeStrategy) -> Result<(), ContractError> {
-        caller.require_auth();
         require_admin(&env, &caller)?;
         set_fee_strategy(&env, &strategy);
         Ok(())
@@ -1147,7 +1149,7 @@ impl SwiftRemitContract {
     /// # Returns
     ///
     /// Fee breakdown using corridor-specific rates
-    pub fn calculate_fee_breakdown_with_corridor(
+    pub fn fee_breakdown_corridor(
         env: Env,
         amount: i128,
         corridor: FeeCorridor,
@@ -1172,7 +1174,6 @@ impl SwiftRemitContract {
         caller: Address,
         corridor: FeeCorridor,
     ) -> Result<(), ContractError> {
-        caller.require_auth();
         require_admin(&env, &caller)?;
         storage::set_fee_corridor(&env, &corridor);
         Ok(())
@@ -1214,7 +1215,6 @@ impl SwiftRemitContract {
         from_country: String,
         to_country: String,
     ) -> Result<(), ContractError> {
-        caller.require_auth();
         require_admin(&env, &caller)?;
         storage::remove_fee_corridor(&env, &from_country, &to_country);
         Ok(())

@@ -25,6 +25,8 @@
 //! - On-chain storage for rate limit counters
 //! - Blockchain events for logging and monitoring
 
+use core::convert::TryInto;
+
 use soroban_sdk::{contracttype, Address, Env, Map, Vec};
 use crate::errors::ContractError;
 
@@ -155,7 +157,7 @@ pub fn check_rate_limit(
     
     // Clean up old timestamps outside the window
     let window_start = current_time.saturating_sub(RATE_LIMIT_WINDOW);
-    entry.timestamps = filter_timestamps_in_window(&entry.timestamps, window_start);
+    entry.timestamps = filter_timestamps_in_window(env, &entry.timestamps, window_start);
     entry.request_count = entry.timestamps.len();
     entry.window_start = window_start;
     
@@ -330,9 +332,8 @@ fn get_cooldown_period(action_type: &ActionType) -> u64 {
 }
 
 /// Filters timestamps to only include those within the window.
-fn filter_timestamps_in_window(timestamps: &Vec<u64>, window_start: u64) -> Vec<u64> {
-    let env = Env::default();
-    let mut filtered = Vec::new(&env);
+fn filter_timestamps_in_window(env: &Env, timestamps: &Vec<u64>, window_start: u64) -> Vec<u64> {
+    let mut filtered = Vec::new(env);
     
     for i in 0..timestamps.len() {
         let timestamp = timestamps.get_unchecked(i);
@@ -388,9 +389,10 @@ fn save_rate_limit_entry(env: &Env, entry: &RateLimitEntry) {
         .set(&key, entry);
     
     // Extend TTL to 2x window size
-    env.storage()
-        .temporary()
-        .extend_ttl(&key, RATE_LIMIT_WINDOW * 2, RATE_LIMIT_WINDOW * 2);
+    let ttl = (RATE_LIMIT_WINDOW * 2)
+        .try_into()
+        .unwrap_or(u32::MAX);
+    env.storage().temporary().extend_ttl(&key, ttl, ttl);
 }
 
 /// Gets a cooldown entry for an address and action type.
@@ -413,9 +415,10 @@ fn save_cooldown_entry(env: &Env, entry: &CooldownEntry) {
         .set(&key, entry);
     
     let cooldown_period = get_cooldown_period(&entry.action_type);
-    env.storage()
-        .temporary()
-        .extend_ttl(&key, cooldown_period * 2, cooldown_period * 2);
+    let ttl = (cooldown_period * 2)
+        .try_into()
+        .unwrap_or(u32::MAX);
+    env.storage().temporary().extend_ttl(&key, ttl, ttl);
 }
 
 /// Creates a storage key for rate limit entries.
@@ -424,7 +427,7 @@ fn create_rate_limit_key(address: &Address, action_type: &ActionType) -> (Addres
 }
 
 /// Creates a storage key for cooldown entries.
-fn create_cooldown_key(address: &Address, action_type: &ActionType) -> (Address, ActionType, u8) {
+fn create_cooldown_key(address: &Address, action_type: &ActionType) -> (Address, ActionType, u32) {
     (address.clone(), action_type.clone(), 1) // 1 = cooldown marker
 }
 
@@ -465,7 +468,7 @@ fn emit_rate_limit_exceeded(
             env.ledger().sequence(),
             env.ledger().timestamp(),
             address,
-            action_type,
+            action_type.clone(),
             request_count,
         ),
     );
@@ -484,7 +487,7 @@ fn emit_cooldown_violation(
             env.ledger().sequence(),
             env.ledger().timestamp(),
             address,
-            action_type,
+            action_type.clone(),
             time_since_last,
         ),
     );
@@ -503,7 +506,7 @@ fn emit_rapid_retries(
             env.ledger().sequence(),
             env.ledger().timestamp(),
             address,
-            action_type,
+            action_type.clone(),
             retry_count,
         ),
     );
@@ -522,7 +525,7 @@ fn emit_action_recorded(
             env.ledger().sequence(),
             timestamp,
             address,
-            action_type,
+            action_type.clone(),
         ),
     );
 }
@@ -530,126 +533,151 @@ fn emit_action_recorded(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SwiftRemitContract;
     use soroban_sdk::{testutils::Address as _, Env};
 
     #[test]
     fn test_rate_limit_allows_within_limit() {
         let env = Env::default();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
         let address = Address::generate(&env);
         
         // Should allow up to MAX_TRANSFERS_PER_WINDOW requests
-        for _ in 0..MAX_TRANSFERS_PER_WINDOW {
-            let result = check_rate_limit(&env, &address, ActionType::Transfer);
-            assert!(result.is_ok());
-        }
+        env.as_contract(&contract_id, || {
+            for _ in 0..MAX_TRANSFERS_PER_WINDOW {
+                let result = check_rate_limit(&env, &address, ActionType::Transfer);
+                assert!(result.is_ok());
+            }
+        });
     }
 
     #[test]
     fn test_rate_limit_blocks_excess_requests() {
         let env = Env::default();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
         let address = Address::generate(&env);
         
         // Fill up the limit
-        for _ in 0..MAX_TRANSFERS_PER_WINDOW {
-            check_rate_limit(&env, &address, ActionType::Transfer).unwrap();
-        }
-        
-        // Next request should be blocked
-        let result = check_rate_limit(&env, &address, ActionType::Transfer);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::RateLimitExceeded);
+        env.as_contract(&contract_id, || {
+            for _ in 0..MAX_TRANSFERS_PER_WINDOW {
+                check_rate_limit(&env, &address, ActionType::Transfer).unwrap();
+            }
+
+            // Next request should be blocked
+            let result = check_rate_limit(&env, &address, ActionType::Transfer);
+            assert!(result.is_err());
+            assert_eq!(result.unwrap_err(), ContractError::RateLimitExceeded);
+        });
     }
 
     #[test]
     fn test_cooldown_enforced() {
         let env = Env::default();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
         let address = Address::generate(&env);
         
         // First action should succeed
-        assert!(check_cooldown(&env, &address, ActionType::Transfer).is_ok());
-        record_action(&env, &address, ActionType::Transfer);
-        
-        // Immediate retry should fail
-        let result = check_cooldown(&env, &address, ActionType::Transfer);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::CooldownActive);
+        env.as_contract(&contract_id, || {
+            assert!(check_cooldown(&env, &address, ActionType::Transfer).is_ok());
+            record_action(&env, &address, ActionType::Transfer);
+
+            // Immediate retry should fail
+            let result = check_cooldown(&env, &address, ActionType::Transfer);
+            assert!(result.is_err());
+            assert_eq!(result.unwrap_err(), ContractError::CooldownActive);
+        });
     }
 
     #[test]
     fn test_different_addresses_independent_limits() {
         let env = Env::default();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
         let address1 = Address::generate(&env);
         let address2 = Address::generate(&env);
         
         // Fill limit for address1
-        for _ in 0..MAX_TRANSFERS_PER_WINDOW {
-            check_rate_limit(&env, &address1, ActionType::Transfer).unwrap();
-        }
-        
-        // address1 should be blocked
-        assert!(check_rate_limit(&env, &address1, ActionType::Transfer).is_err());
-        
-        // address2 should still be allowed
-        assert!(check_rate_limit(&env, &address2, ActionType::Transfer).is_ok());
+        env.as_contract(&contract_id, || {
+            for _ in 0..MAX_TRANSFERS_PER_WINDOW {
+                check_rate_limit(&env, &address1, ActionType::Transfer).unwrap();
+            }
+
+            // address1 should be blocked
+            assert!(check_rate_limit(&env, &address1, ActionType::Transfer).is_err());
+
+            // address2 should still be allowed
+            assert!(check_rate_limit(&env, &address2, ActionType::Transfer).is_ok());
+        });
     }
 
     #[test]
     fn test_different_action_types_independent_limits() {
         let env = Env::default();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
         let address = Address::generate(&env);
         
         // Fill transfer limit
-        for _ in 0..MAX_TRANSFERS_PER_WINDOW {
-            check_rate_limit(&env, &address, ActionType::Transfer).unwrap();
-        }
-        
-        // Transfer should be blocked
-        assert!(check_rate_limit(&env, &address, ActionType::Transfer).is_err());
-        
-        // Cancellation should still be allowed (different limit)
-        assert!(check_rate_limit(&env, &address, ActionType::Cancellation).is_ok());
+        env.as_contract(&contract_id, || {
+            for _ in 0..MAX_TRANSFERS_PER_WINDOW {
+                check_rate_limit(&env, &address, ActionType::Transfer).unwrap();
+            }
+
+            // Transfer should be blocked
+            assert!(check_rate_limit(&env, &address, ActionType::Transfer).is_err());
+
+            // Cancellation should still be allowed (different limit)
+            assert!(check_rate_limit(&env, &address, ActionType::Cancellation).is_ok());
+        });
     }
 
     #[test]
     fn test_rapid_retry_detection() {
         let env = Env::default();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
         let address = Address::generate(&env);
         
         // Make rapid requests
-        for _ in 0..5 {
-            let _ = check_rate_limit(&env, &address, ActionType::Transfer);
-        }
-        
-        // Should detect rapid retries
-        let is_rapid = detect_rapid_retries(&env, &address, &ActionType::Transfer, 3, 10);
-        assert!(is_rapid);
+        env.as_contract(&contract_id, || {
+            for _ in 0..5 {
+                let _ = check_rate_limit(&env, &address, ActionType::Transfer);
+            }
+
+            // Should detect rapid retries
+            let is_rapid = detect_rapid_retries(&env, &address, &ActionType::Transfer, 3, 10);
+            assert!(is_rapid);
+        });
     }
 
     #[test]
     fn test_admin_actions_no_rate_limit() {
         let env = Env::default();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
         let address = Address::generate(&env);
         
         // Admin actions should never be rate limited
-        for _ in 0..1000 {
-            let result = check_rate_limit(&env, &address, ActionType::Admin);
-            assert!(result.is_ok());
-        }
+        env.as_contract(&contract_id, || {
+            for _ in 0..1000 {
+                let result = check_rate_limit(&env, &address, ActionType::Admin);
+                assert!(result.is_ok());
+            }
+        });
     }
 
     #[test]
     fn test_query_actions_higher_limit() {
         let env = Env::default();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
         let address = Address::generate(&env);
         
         // Queries have higher limit (100 vs 10 for transfers)
-        for _ in 0..MAX_QUERIES_PER_WINDOW {
+        env.as_contract(&contract_id, || {
+            for _ in 0..MAX_QUERIES_PER_WINDOW {
+                let result = check_rate_limit(&env, &address, ActionType::Query);
+                assert!(result.is_ok());
+            }
+
+            // Should block after limit
             let result = check_rate_limit(&env, &address, ActionType::Query);
-            assert!(result.is_ok());
-        }
-        
-        // Should block after limit
-        let result = check_rate_limit(&env, &address, ActionType::Query);
-        assert!(result.is_err());
+            assert!(result.is_err());
+        });
     }
 }

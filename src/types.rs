@@ -6,8 +6,6 @@
 
 use soroban_sdk::{contracttype, Address, String, Vec};
 
-use soroban_sdk::{contracttype, Address, Vec, String};
-
 /// Role types for authorization
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

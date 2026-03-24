@@ -254,7 +254,7 @@ mod tests {
             expiry: None,
         });
 
-        let net_transfers = compute_net_settlements(&remittances);
+        let net_transfers = compute_net_settlements(&env, &remittances);
 
         assert_eq!(net_transfers.len(), 1);
         let transfer = net_transfers.get_unchecked(0);
@@ -300,7 +300,7 @@ mod tests {
             expiry: None,
         });
 
-        let net_transfers = compute_net_settlements(&remittances);
+        let net_transfers = compute_net_settlements(&env, &remittances);
 
         // Complete offset should result in no transfers
         assert_eq!(net_transfers.len(), 0);
@@ -348,7 +348,7 @@ mod tests {
             expiry: None,
         });
 
-        let net_transfers = compute_net_settlements(&remittances);
+        let net_transfers = compute_net_settlements(&env, &remittances);
 
         // Should have 3 net transfers (one for each pair)
         assert_eq!(net_transfers.len(), 3);
@@ -389,7 +389,7 @@ mod tests {
             expiry: None,
         });
 
-        let net_transfers = compute_net_settlements(&remittances);
+        let net_transfers = compute_net_settlements(&env, &remittances);
 
         assert!(validate_net_settlement(&remittances, &net_transfers).is_ok());
     }
@@ -442,8 +442,8 @@ mod tests {
             expiry: None,
         });
 
-        let net1 = compute_net_settlements(&remittances1);
-        let net2 = compute_net_settlements(&remittances2);
+        let net1 = compute_net_settlements(&env, &remittances1);
+        let net2 = compute_net_settlements(&env, &remittances2);
 
         // Results should be identical regardless of input order
         assert_eq!(net1.len(), net2.len());

@@ -74,7 +74,7 @@ enum DataKey {
 
     // === Settlement Deduplication ===
     // Keys for preventing duplicate settlement execution
-    /// Settlement hash for duplicate detection (persistent storage)
+    /// Settlement hash for duplicate detection (legacy persistent storage)
     SettlementHash(u64),
     
     // === User Management ===
@@ -96,9 +96,13 @@ enum DataKey {
     /// Anchor transaction mapping (persistent storage)
     AnchorTransaction(u64),
 
-    /// Combined settlement metadata (persistent storage)
+    /// Combined settlement metadata (legacy persistent storage)
     /// Contains flags that were previously stored separately to reduce reads.
     SettlementData(u64),
+
+    /// Packed settlement flags (persistent storage)
+    /// Replaces scattered settlement keys with a compact bitfield.
+    SettlementPacked(u64),
     
     // === Rate Limiting ===
     // Keys for preventing abuse through rate limiting
@@ -121,7 +125,7 @@ enum DataKey {
     /// Token whitelist status indexed by token address (persistent storage)
     TokenWhitelisted(Address),
     
-    /// Settlement completion event emission tracking (persistent storage)
+    /// Settlement completion event emission tracking (legacy persistent storage)
     /// Tracks whether the completion event has been emitted for a settlement
     SettlementEventEmitted(u64),
 
@@ -369,23 +373,78 @@ pub fn get_accumulated_fees(env: &Env) -> Result<i128, ContractError> {
 ///
 /// * `true` - Settlement has been executed
 /// * `false` - Settlement has not been executed
+const SETTLEMENT_EXECUTED_FLAG: u32 = 1;
+const SETTLEMENT_EVENT_EMITTED_FLAG: u32 = 1 << 1;
+
 #[contracttype]
 #[derive(Clone)]
-pub struct SettlementData {
+pub struct LegacySettlementData {
     pub executed: bool,
     pub event_emitted: bool,
 }
 
-/// Internal helper: load or migrate settlement metadata into a single key.
-fn load_or_migrate_settlement_data(env: &Env, remittance_id: u64) -> SettlementData {
-    let key = DataKey::SettlementData(remittance_id);
-    
-    // Try combined key first
-    if let Some(data) = env.storage().persistent().get(&key) {
+#[contracttype]
+#[derive(Clone)]
+pub struct SettlementPacked {
+    pub flags: u32,
+}
+
+impl SettlementPacked {
+    fn new(executed: bool, event_emitted: bool) -> Self {
+        let mut flags = 0;
+        if executed {
+            flags |= SETTLEMENT_EXECUTED_FLAG;
+        }
+        if event_emitted {
+            flags |= SETTLEMENT_EVENT_EMITTED_FLAG;
+        }
+        Self { flags }
+    }
+
+    fn executed(&self) -> bool {
+        (self.flags & SETTLEMENT_EXECUTED_FLAG) != 0
+    }
+
+    fn event_emitted(&self) -> bool {
+        (self.flags & SETTLEMENT_EVENT_EMITTED_FLAG) != 0
+    }
+
+    fn set_executed(&mut self, value: bool) {
+        if value {
+            self.flags |= SETTLEMENT_EXECUTED_FLAG;
+        } else {
+            self.flags &= !SETTLEMENT_EXECUTED_FLAG;
+        }
+    }
+
+    fn set_event_emitted(&mut self, value: bool) {
+        if value {
+            self.flags |= SETTLEMENT_EVENT_EMITTED_FLAG;
+        } else {
+            self.flags &= !SETTLEMENT_EVENT_EMITTED_FLAG;
+        }
+    }
+}
+
+/// Internal helper: load or migrate settlement metadata into a packed key.
+fn load_or_migrate_settlement_packed(env: &Env, remittance_id: u64) -> SettlementPacked {
+    let packed_key = DataKey::SettlementPacked(remittance_id);
+
+    if let Some(data) = env.storage().persistent().get(&packed_key) {
         return data;
     }
 
-    // Fallback: read legacy keys and migrate
+    if let Some(legacy) = env
+        .storage()
+        .persistent()
+        .get::<DataKey, LegacySettlementData>(&DataKey::SettlementData(remittance_id))
+    {
+        let packed = SettlementPacked::new(legacy.executed, legacy.event_emitted);
+        env.storage().persistent().set(&packed_key, &packed);
+        env.storage().persistent().remove(&DataKey::SettlementData(remittance_id));
+        return packed;
+    }
+
     let executed = env
         .storage()
         .persistent()
@@ -397,30 +456,29 @@ fn load_or_migrate_settlement_data(env: &Env, remittance_id: u64) -> SettlementD
         .get(&DataKey::SettlementEventEmitted(remittance_id))
         .unwrap_or(false);
 
-    let data = SettlementData { executed, event_emitted };
+    let packed = SettlementPacked::new(executed, event_emitted);
 
-    // Write migrated combined key and remove legacy keys to reduce future reads
-    env.storage().persistent().set(&key, &data);
+    env.storage().persistent().set(&packed_key, &packed);
     env.storage().persistent().remove(&DataKey::SettlementHash(remittance_id));
     env.storage().persistent().remove(&DataKey::SettlementEventEmitted(remittance_id));
 
-    data
+    packed
 }
 
 /// Checks if a settlement has already been executed (duplicate detection).
 pub fn has_settlement_hash(env: &Env, remittance_id: u64) -> bool {
-    let data = load_or_migrate_settlement_data(env, remittance_id);
-    data.executed
+    let data = load_or_migrate_settlement_packed(env, remittance_id);
+    data.executed()
 }
 
 /// Marks a settlement as executed for duplicate prevention.
 pub fn set_settlement_hash(env: &Env, remittance_id: u64) {
-    let key = DataKey::SettlementData(remittance_id);
-    let mut data = load_or_migrate_settlement_data(env, remittance_id);
-    if data.executed {
+    let key = DataKey::SettlementPacked(remittance_id);
+    let mut data = load_or_migrate_settlement_packed(env, remittance_id);
+    if data.executed() {
         return; // Skip write if already set
     }
-    data.executed = true;
+    data.set_executed(true);
     env.storage().persistent().set(&key, &data);
 }
 
@@ -675,8 +733,8 @@ pub fn set_token_whitelisted(env: &Env, token: &Address, whitelisted: bool) {
 /// * `true` - Event has been emitted for this settlement
 /// * `false` - Event has not been emitted yet
 pub fn has_settlement_event_emitted(env: &Env, remittance_id: u64) -> bool {
-    let data = load_or_migrate_settlement_data(env, remittance_id);
-    data.event_emitted
+    let data = load_or_migrate_settlement_packed(env, remittance_id);
+    data.event_emitted()
 }
 
 /// Marks that the settlement completion event has been emitted for a remittance.
@@ -696,13 +754,63 @@ pub fn has_settlement_event_emitted(env: &Env, remittance_id: u64) -> bool {
 /// - Persistent: Survives contract upgrades and restarts
 /// - Deterministic: Always produces the same result for the same input
 pub fn set_settlement_event_emitted(env: &Env, remittance_id: u64) {
-    let key = DataKey::SettlementData(remittance_id);
-    let mut data = load_or_migrate_settlement_data(env, remittance_id);
-    if data.event_emitted {
+    let key = DataKey::SettlementPacked(remittance_id);
+    let mut data = load_or_migrate_settlement_packed(env, remittance_id);
+    if data.event_emitted() {
         return; // Skip write if already set
     }
-    data.event_emitted = true;
+    data.set_event_emitted(true);
     env.storage().persistent().set(&key, &data);
+}
+
+#[cfg(feature = "benchmarks")]
+pub fn bench_settlement_scattered_write(
+    env: &Env,
+    remittance_id: u64,
+    executed: bool,
+    event_emitted: bool,
+) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::SettlementHash(remittance_id), &executed);
+    env.storage()
+        .persistent()
+        .set(&DataKey::SettlementEventEmitted(remittance_id), &event_emitted);
+}
+
+#[cfg(feature = "benchmarks")]
+pub fn bench_settlement_scattered_read(env: &Env, remittance_id: u64) -> (bool, bool) {
+    let executed = env
+        .storage()
+        .persistent()
+        .get(&DataKey::SettlementHash(remittance_id))
+        .unwrap_or(false);
+    let event_emitted = env
+        .storage()
+        .persistent()
+        .get(&DataKey::SettlementEventEmitted(remittance_id))
+        .unwrap_or(false);
+    (executed, event_emitted)
+}
+
+#[cfg(feature = "benchmarks")]
+pub fn bench_settlement_packed_write(
+    env: &Env,
+    remittance_id: u64,
+    executed: bool,
+    event_emitted: bool,
+) {
+    let key = DataKey::SettlementPacked(remittance_id);
+    let packed = SettlementPacked::new(executed, event_emitted);
+    env.storage().persistent().set(&key, &packed);
+}
+
+#[cfg(feature = "benchmarks")]
+pub fn bench_settlement_packed_read(env: &Env, remittance_id: u64) -> SettlementPacked {
+    env.storage()
+        .persistent()
+        .get(&DataKey::SettlementPacked(remittance_id))
+        .unwrap_or(SettlementPacked::new(false, false))
 }
 
 

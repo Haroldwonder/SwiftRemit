@@ -259,7 +259,7 @@ mod tests {
         let amount = 10000i128;
 
         let fee = calculate_fee_by_strategy(amount, &strategy).unwrap();
-        assert_eq!(fee, 25); // 10000 * 250 / 10000 = 25
+        assert_eq!(fee, 250); // 10000 * 250 / 10000 = 250
     }
 
     #[test]
@@ -307,7 +307,7 @@ mod tests {
         let protocol_fee_bps = 50u32; // 0.5%
 
         let fee = calculate_protocol_fee(amount, protocol_fee_bps).unwrap();
-        assert_eq!(fee, 5); // 10000 * 50 / 10000 = 5
+        assert_eq!(fee, 50); // 10000 * 50 / 10000 = 50
     }
 
     #[test]

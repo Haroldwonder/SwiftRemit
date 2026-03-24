@@ -13,9 +13,9 @@ pub enum TransactionState {
     /// KYC approval confirmed
     KycConfirmed,
     /// Soroban contract called successfully
-    ContractCalled { remittance_id: u64 },
+    ContractCalled(u64),
     /// Anchor withdrawal/deposit initiated
-    AnchorInitiated { anchor_tx_id: u64 },
+    AnchorInitiated(u64),
     /// Transaction record stored
     RecordStored,
     /// Transaction completed successfully
@@ -148,12 +148,12 @@ impl TransactionController {
             expiry,
         )?;
         record.remittance_id = Some(remittance_id);
-        record.state = TransactionState::ContractCalled { remittance_id };
+        record.state = TransactionState::ContractCalled(remittance_id);
 
         // Step 4: Initiate anchor withdrawal/deposit
         let anchor_tx_id = Self::initiate_anchor_operation(env, remittance_id, record.amount)?;
         record.anchor_tx_id = Some(anchor_tx_id);
-        record.state = TransactionState::AnchorInitiated { anchor_tx_id };
+        record.state = TransactionState::AnchorInitiated(anchor_tx_id);
 
         // Step 5: Store transaction record
         Self::store_transaction_record(env, record)?;
@@ -288,7 +288,7 @@ impl TransactionController {
     ) -> Result<(), ContractError> {
         // Rollback based on current state
         match &record.state {
-            TransactionState::RecordStored | TransactionState::AnchorInitiated { .. } => {
+            TransactionState::RecordStored | TransactionState::AnchorInitiated(_) => {
                 // Cancel anchor operation if initiated
                 if let Some(anchor_tx_id) = record.anchor_tx_id {
                     let _ = Self::cancel_anchor_operation(env, anchor_tx_id);
@@ -296,7 +296,7 @@ impl TransactionController {
                 // Fall through to cancel remittance
                 Self::rollback_contract_call(env, record)?;
             }
-            TransactionState::ContractCalled { .. } => {
+            TransactionState::ContractCalled(_) => {
                 Self::rollback_contract_call(env, record)?;
             }
             _ => {
