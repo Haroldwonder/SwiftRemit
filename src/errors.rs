@@ -225,3 +225,84 @@ pub enum ContractError {
     /// Cause: Result of arithmetic operation is below minimum.
     Underflow = 48,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_codes_are_unique() {
+        let error_codes = [
+            ContractError::AlreadyInitialized as u32,
+            ContractError::NotInitialized as u32,
+            ContractError::InvalidAmount as u32,
+            ContractError::InvalidFeeBps as u32,
+            ContractError::AgentNotRegistered as u32,
+            ContractError::RemittanceNotFound as u32,
+            ContractError::InvalidStatus as u32,
+            ContractError::InvalidStateTransition as u32,
+            ContractError::NoFeesToWithdraw as u32,
+            ContractError::InvalidAddress as u32,
+            ContractError::SettlementExpired as u32,
+            ContractError::DuplicateSettlement as u32,
+            ContractError::AssetNotFound as u32,
+            ContractError::InvalidReputationScore as u32,
+            ContractError::SuspiciousAsset as u32,
+            ContractError::ContractPaused as u32,
+            ContractError::UserBlacklisted as u32,
+            ContractError::KycNotApproved as u32,
+            ContractError::KycExpired as u32,
+            ContractError::TransactionNotFound as u32,
+            ContractError::AnchorTransactionFailed as u32,
+            ContractError::RateLimitExceeded as u32,
+            ContractError::Unauthorized as u32,
+            ContractError::AdminAlreadyExists as u32,
+            ContractError::AdminNotFound as u32,
+            ContractError::CannotRemoveLastAdmin as u32,
+            ContractError::TokenNotWhitelisted as u32,
+            ContractError::TokenAlreadyWhitelisted as u32,
+            ContractError::InvalidMigrationHash as u32,
+            ContractError::MigrationInProgress as u32,
+            ContractError::InvalidMigrationBatch as u32,
+            ContractError::DailySendLimitExceeded as u32,
+            ContractError::CooldownActive as u32,
+            ContractError::SuspiciousActivity as u32,
+            ContractError::ActionBlocked as u32,
+            ContractError::Overflow as u32,
+            ContractError::NetSettlementValidationFailed as u32,
+            ContractError::EscrowNotFound as u32,
+            ContractError::InvalidEscrowStatus as u32,
+            ContractError::SettlementCounterOverflow as u32,
+            ContractError::InvalidBatchSize as u32,
+            ContractError::DataCorruption as u32,
+            ContractError::IndexOutOfBounds as u32,
+            ContractError::EmptyCollection as u32,
+            ContractError::KeyNotFound as u32,
+            ContractError::StringConversionFailed as u32,
+            ContractError::InvalidSymbol as u32,
+            ContractError::Underflow as u32,
+        ];
+
+        // Check for duplicates
+        for i in 0..error_codes.len() {
+            for j in (i + 1)..error_codes.len() {
+                assert_ne!(
+                    error_codes[i], error_codes[j],
+                    "Duplicate error code {} found at indices {} and {}",
+                    error_codes[i], i, j
+                );
+            }
+        }
+
+        // Check sequential ordering (1-48)
+        for (idx, &code) in error_codes.iter().enumerate() {
+            assert_eq!(
+                code, (idx + 1) as u32,
+                "Error code at index {} should be {}, but got {}",
+                idx,
+                idx + 1,
+                code
+            );
+        }
+    }
+}
