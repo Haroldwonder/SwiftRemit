@@ -206,9 +206,68 @@
   }
 }
 
+.history-pagination-info {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+  color: #5e6e85;
+}
+
+.history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e0e8f4;
+}
+
+.history-pagination button {
+  border: 1px solid #bfd0e8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #20467e;
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.history-pagination button:hover:not(:disabled) {
+  background: #dce9ff;
+  border-color: #a8c5e0;
+}
+
+.history-pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pagination-info {
+  font-size: 0.9rem;
+  color: #4e6382;
+  font-weight: 600;
+  min-width: 120px;
+  text-align: center;
+}
+
 @media (max-width: 560px) {
   .transaction-history-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .history-pagination {
+    gap: 0.5rem;
+  }
+
+  .history-pagination button {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.85rem;
+  }
+
+  .pagination-info {
+    font-size: 0.8rem;
+    min-width: auto;
   }
 }
