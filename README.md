@@ -167,6 +167,18 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for complete deployment instructions.
 
 For production readiness assessment, see [PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md).
 
+## Environment Validation
+
+A script checks that every env variable consumed in source code is present in the corresponding `.env.example` file. CI fails automatically if any are missing.
+
+Run locally:
+
+```bash
+node scripts/validate-env-examples.js
+```
+
+Covers: root `.env.example`, `api/.env.example`, `backend/.env.example`, `frontend/.env.example`.
+
 ## Configuration
 
 SwiftRemit uses environment variables for configuration. This allows you to easily configure the system for different environments (local development, testnet, mainnet) without modifying code.
