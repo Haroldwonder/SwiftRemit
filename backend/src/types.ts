@@ -54,21 +54,35 @@ export interface FxRateRecord {
   created_at: Date;
 }
 
-export enum KycStatus {
-  Pending = 'pending',
-  Approved = 'approved',
-  Rejected = 'rejected',
-  Expired = 'expired',
+export type KycStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+
+export type KycLevel = 'basic' | 'intermediate' | 'advanced';
+
+export interface KycRecord {
+  user_id: string;
+  anchor_id: string;
+  kyc_status: KycStatus;
+  kyc_level?: KycLevel;
+  rejection_reason?: string;
+  verified_at: Date;
+  expires_at?: Date;
+}
+
+export interface AnchorKycRecord {
+  anchor_id: string;
+  kyc_status: KycStatus;
+  kyc_level?: KycLevel;
+  verified_at: Date;
+  expires_at?: Date;
+  rejection_reason?: string;
 }
 
 export interface UserKycStatus {
-  user_id: string;
-  anchor_id: string;
-  status: KycStatus;
+  overall_status: KycStatus;
+  can_transfer: boolean;
+  reason?: string;
+  anchors: AnchorKycRecord[];
   last_checked: Date;
-  expires_at?: Date;
-  rejection_reason?: string;
-  verification_data?: any;
 }
 
 export interface AnchorKycConfig {
@@ -77,4 +91,15 @@ export interface AnchorKycConfig {
   auth_token: string;
   polling_interval_minutes: number;
   enabled: boolean;
+}
+
+/** Raw database row from user_kyc_status table */
+export interface DbUserKycStatus {
+  user_id: string;
+  anchor_id: string;
+  status: KycStatus;
+  last_checked: Date;
+  expires_at?: Date;
+  rejection_reason?: string;
+  verification_data?: any;
 }

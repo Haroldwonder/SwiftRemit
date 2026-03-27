@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -11,17 +44,12 @@ const verifier_1 = require("./verifier");
 const database_1 = require("./database");
 const stellar_1 = require("./stellar");
 const types_1 = require("./types");
-const kyc_upsert_service_1 = require("./kyc-upsert-service");
-const transfer_guard_1 = require("./transfer-guard");
 const app = (0, express_1.default)();
 const verifier = new verifier_1.AssetVerifier();
 // Security middleware
 app.use((0, helmet_1.default)());
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
-const pool = (0, database_1.getPool)();
-const kycUpsertService = new kyc_upsert_service_1.KycUpsertService(pool);
-const transferGuard = (0, transfer_guard_1.createTransferGuard)(kycUpsertService);
 // Rate limiting
 const limiter = (0, express_rate_limit_1.default)({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
@@ -38,14 +66,6 @@ function validateAssetParams(req, res, next) {
     if (!issuer || typeof issuer !== 'string' || issuer.length !== 56) {
         return res.status(400).json({ error: 'Invalid issuer address' });
     }
-    next();
-}
-function authMiddleware(req, res, next) {
-    const userId = req.headers['x-user-id'] || '';
-    if (!userId || typeof userId !== 'string') {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    req.user = { id: userId };
     next();
 }
 // Health check
@@ -197,25 +217,6 @@ app.post('/api/verification/batch', async (req, res) => {
         res.status(500).json({ error: 'Batch verification failed' });
     }
 });
-// KYC status endpoint
-app.get('/api/kyc/status', authMiddleware, async (req, res) => {
-    try {
-        const userId = req.user?.id;
-        if (!userId) {
-            return res.status(401).json({ error: 'Unauthorized' });
-        }
-        const status = await kycUpsertService.getStatusForUser(userId);
-        return res.status(200).json(status);
-    }
-    catch (error) {
-        console.error('Error fetching KYC status:', error);
-        return res.status(500).json({ error: 'Internal server error' });
-    }
-});
-// Transfer endpoint (guarded)
-app.post('/api/transfer', authMiddleware, transferGuard, async (req, res) => {
-    return res.status(200).json({ success: true, message: 'Transfer allowed' });
-});
 // Store FX rate for transaction
 app.post('/api/fx-rate', async (req, res) => {
     try {
@@ -263,6 +264,99 @@ app.get('/api/fx-rate/:transactionId', async (req, res) => {
     catch (error) {
         console.error('Error fetching FX rate:', error);
         res.status(500).json({ error: 'Failed to fetch FX rate' });
+    }
+});
+// KYC-related endpoints
+// Configure anchor KYC settings (admin only)
+app.post('/api/kyc/config', async (req, res) => {
+    try {
+        const { anchorId, kycServerUrl, authToken, pollingIntervalMinutes, enabled } = req.body;
+        if (!anchorId || !kycServerUrl || !authToken) {
+            return res.status(400).json({ error: 'Missing required fields: anchorId, kycServerUrl, authToken' });
+        }
+        const config = {
+            anchor_id: anchorId,
+            kyc_server_url: kycServerUrl,
+            auth_token: authToken,
+            polling_interval_minutes: pollingIntervalMinutes || 60,
+            enabled: enabled !== false,
+        };
+        await (0, database_1.saveAnchorKycConfig)(config);
+        res.json({ success: true, message: 'Anchor KYC config saved successfully' });
+    }
+    catch (error) {
+        console.error('Error saving anchor KYC config:', error);
+        res.status(500).json({ error: 'Failed to save anchor KYC config' });
+    }
+});
+// Get user KYC status
+app.get('/api/kyc/status/:userId/:anchorId', async (req, res) => {
+    try {
+        const { userId, anchorId } = req.params;
+        if (!userId || !anchorId) {
+            return res.status(400).json({ error: 'Invalid user ID or anchor ID' });
+        }
+        const kycStatus = await (0, database_1.getUserKycStatus)(userId, anchorId);
+        if (!kycStatus) {
+            return res.status(404).json({ error: 'KYC status not found' });
+        }
+        res.json(kycStatus);
+    }
+    catch (error) {
+        console.error('Error fetching KYC status:', error);
+        res.status(500).json({ error: 'Failed to fetch KYC status' });
+    }
+});
+// Register user for KYC with anchor
+app.post('/api/kyc/register', async (req, res) => {
+    try {
+        const { userId, anchorId } = req.body;
+        if (!userId || !anchorId) {
+            return res.status(400).json({ error: 'Missing required fields: userId, anchorId' });
+        }
+        const kycService = (await Promise.resolve().then(() => __importStar(require('./kyc-service')))).KycService;
+        const service = new kycService();
+        await service.registerUserForKyc(userId, anchorId);
+        res.json({ success: true, message: 'User registered for KYC successfully' });
+    }
+    catch (error) {
+        console.error('Error registering user for KYC:', error);
+        res.status(500).json({ error: 'Failed to register user for KYC' });
+    }
+});
+// Check if user is KYC approved (for transfer validation)
+app.get('/api/kyc/approved/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        if (!userId) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+        const kycService = (await Promise.resolve().then(() => __importStar(require('./kyc-service')))).KycService;
+        const service = new kycService();
+        const isApproved = await service.isUserKycApproved(userId);
+        res.json({ userId, kycApproved: isApproved });
+    }
+    catch (error) {
+        console.error('Error checking KYC approval:', error);
+        res.status(500).json({ error: 'Failed to check KYC approval' });
+    }
+});
+// Simulate settlement — preview fees and payout before confirming
+app.post('/api/simulate-settlement', async (req, res) => {
+    try {
+        const { remittanceId } = req.body;
+        if (remittanceId === undefined ||
+            remittanceId === null ||
+            !Number.isInteger(remittanceId) ||
+            remittanceId <= 0) {
+            return res.status(400).json({ error: 'remittanceId must be a positive integer' });
+        }
+        const simulation = await (0, stellar_1.simulateSettlement)(remittanceId);
+        res.json(simulation);
+    }
+    catch (error) {
+        console.error('Error simulating settlement:', error);
+        res.status(500).json({ error: 'Failed to simulate settlement' });
     }
 });
 exports.default = app;

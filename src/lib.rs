@@ -48,6 +48,7 @@ mod test_treasury;
 mod test_fee_corridor; 
 #[cfg(test)]
 mod test_blacklist;
+mod test_migration;
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
 
@@ -327,6 +328,9 @@ impl SwiftRemitContract {
     idempotency_key: Option<String>,
     settlement_config: Option<SettlementConfig>,
 ) -> Result<u64, ContractError> {
+    if crate::storage::is_migration_in_progress(&env) {
+        return Err(ContractError::MigrationInProgress);
+    }
     validate_create_remittance_request(&env, &sender, &agent, amount)?;
 
     sender.require_auth();
@@ -375,6 +379,12 @@ impl SwiftRemitContract {
     set_remittance(&env, remittance_id, &remittance);
     set_remittance_counter(&env, remittance_id);
 
+    // Index this remittance under the sender for paginated queries
+    append_sender_remittance(&env, &sender, remittance_id);
+
+    // Set initial transfer state
+    set_transfer_state(&env, remittance_id, TransferState::Initiated)?;
+
     // Store idempotency record if key provided
     if let Some(key) = idempotency_key {
         let request_hash = hashing::compute_request_hash(&env, &sender, &agent, amount, expiry);
@@ -388,6 +398,7 @@ impl SwiftRemitContract {
             expires_at,
         };
         storage::set_idempotency_record(&env, &key, &record);
+        storage::set_remittance_idempotency_key(&env, remittance_id, &key);
     }
 
     Ok(remittance_id)
@@ -471,6 +482,9 @@ impl SwiftRemitContract {
         remittance_id: u64,
         proof: Option<ProofData>,
     ) -> Result<(), ContractError> {
+        if crate::storage::is_migration_in_progress(&env) {
+            return Err(ContractError::MigrationInProgress);
+        }
         // Centralized validation before business logic (returns remittance to avoid re-read)
         let mut remittance = validate_confirm_payout_request(&env, remittance_id)?;
 
@@ -550,6 +564,11 @@ impl SwiftRemitContract {
 
         log_confirm_payout(&env, remittance_id, payout_amount);
 
+        // Cleanup: remove idempotency record on terminal state (Completed)
+        if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
+            storage::remove_idempotency_record(&env, &idem_key);
+        }
+
         Ok(())
     }
 
@@ -608,6 +627,11 @@ impl SwiftRemitContract {
         emit_remittance_cancelled(&env, remittance_id, remittance.sender, remittance.agent, usdc_token, remittance.amount);
 
         log_cancel_remittance(&env, remittance_id);
+
+        // Cleanup: remove idempotency record on terminal state (Cancelled)
+        if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
+            storage::remove_idempotency_record(&env, &idem_key);
+        }
 
         Ok(())
     }
@@ -702,6 +726,43 @@ impl SwiftRemitContract {
     pub fn get_remittance(env: Env, remittance_id: u64) -> Result<Remittance, ContractError> {
         get_remittance(&env, remittance_id)
     }
+
+    /// Returns a paginated list of remittance IDs for a given sender.
+    ///
+    /// # Arguments
+    ///
+    /// * `env` - The contract execution environment
+    /// * `sender` - Address of the sender to query
+    /// * `offset` - Zero-based index of the first result to return
+    /// * `limit` - Maximum number of IDs to return (capped at 100)
+    ///
+    /// # Returns
+    ///
+    /// * `Vec<u64>` - Slice of remittance IDs in creation order
+    pub fn get_remittances_by_sender(
+        env: Env,
+        sender: Address,
+        offset: u64,
+        limit: u64,
+    ) -> Vec<u64> {
+        const MAX_PAGE_SIZE: u64 = 100;
+        let limit = limit.min(MAX_PAGE_SIZE);
+
+        let all_ids = get_sender_remittances(&env, &sender);
+        let total = all_ids.len() as u64;
+
+        if offset >= total || limit == 0 {
+            return Vec::new(&env);
+        }
+
+        let end = (offset + limit).min(total);
+        let mut page = Vec::new(&env);
+        for i in offset..end {
+            page.push_back(all_ids.get_unchecked(i as u32));
+        }
+        page
+    }
+
 
     pub fn get_accumulated_fees(env: Env) -> Result<i128, ContractError> {
         get_accumulated_fees(&env)
@@ -1083,25 +1144,6 @@ impl SwiftRemitContract {
                     return Err(ContractError::SettlementExpired);
                 }
             }
-
-            //     // Address validation omitted — the Soroban SDK guarantees that all Address
-            //     // values are structurally valid before contract code runs. The agent address
-            //     // was already accepted when the remittance was created. See validation.rs
-            //     // module-level documentation for the full rationale.
-            //
-            // The surrounding context for locating the line (do not change this part):
-            //
-            //     // Check expiry
-            //     if let Some(expiry_time) = remittance.expiry {
-            //         let current_time = env.ledger().timestamp();
-            //         if current_time > expiry_time {
-            //             return Err(ContractError::SettlementExpired);
-            //         }
-            //     }
-            //
-            //     // ← REMOVE the validate_address call that was here
-            //
-            //     remittances.push_back(remittance);
 
             remittances.push_back(remittance);
         }
@@ -1672,5 +1714,89 @@ impl SwiftRemitContract {
     /// Check if user KYC is approved
     pub fn is_kyc_approved(env: Env, user: Address) -> bool {
         is_kyc_approved(&env, &user) && !is_kyc_expired(&env, &user)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Migration Functions
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Exports a complete snapshot of all contract state for migration purposes.
+    ///
+    /// Sets the `MigrationInProgress` flag, which blocks `create_remittance` and
+    /// `confirm_payout` until the migration is complete. The returned snapshot
+    /// includes a SHA-256 verification hash that must be supplied back to
+    /// `import_migration_batch` for integrity verification.
+    ///
+    /// # Authorization
+    /// Admin only — caller must authenticate.
+    ///
+    /// # Returns
+    /// `MigrationSnapshot` containing all instance and persistent state.
+    ///
+    /// # Errors
+    /// - `NotInitialized` — contract not yet initialized
+    /// - `Unauthorized` — caller is not an admin
+    /// - `MigrationInProgress` — a migration is already active
+    pub fn export_migration_snapshot(env: Env, caller: Address) -> Result<MigrationSnapshot, ContractError> {
+        // Require initialized contract
+        get_admin(&env)?;
+
+        // Admin auth
+        require_admin(&env, &caller)?;
+
+        // Prevent double-export
+        if crate::storage::is_migration_in_progress(&env) {
+            return Err(ContractError::MigrationInProgress);
+        }
+
+        // Lock normal operations
+        crate::storage::set_migration_in_progress(&env, true);
+
+        migration::export_state(&env)
+    }
+
+    /// Imports a single batch of remittances produced by `export_migration_snapshot`.
+    ///
+    /// Each batch carries its own `batch_hash` which is verified before any data is
+    /// written. Batches must be imported in order (0, 1, 2, …). After the final batch
+    /// (`batch_number == total_batches - 1`) the `MigrationInProgress` flag is cleared,
+    /// re-enabling normal operations.
+    ///
+    /// # Authorization
+    /// Admin only — caller must authenticate.
+    ///
+    /// # Parameters
+    /// - `batch` — `MigrationBatch` produced by the off-chain export tooling.
+    ///
+    /// # Errors
+    /// - `NotInitialized` — contract not yet initialized
+    /// - `Unauthorized` — caller is not an admin
+    /// - `InvalidMigrationHash` — batch hash verification failed
+    /// - `InvalidMigrationBatch` — batch_number ≥ total_batches
+    pub fn import_migration_batch(env: Env, caller: Address, batch: MigrationBatch) -> Result<(), ContractError> {
+        // Require initialized contract
+        get_admin(&env)?;
+
+        // Admin auth
+        require_admin(&env, &caller)?;
+
+        // Validate batch metadata
+        if batch.batch_number >= batch.total_batches {
+            return Err(ContractError::InvalidMigrationBatch);
+        }
+
+        // Capture before move
+        let batch_number = batch.batch_number;
+        let total_batches = batch.total_batches;
+
+        // Delegate to migration module (performs hash verification + import)
+        migration::import_batch(&env, batch)?;
+
+        // Clear the lock after the final batch
+        if batch_number == total_batches.saturating_sub(1) {
+            crate::storage::set_migration_in_progress(&env, false);
+        }
+
+        Ok(())
     }
 }

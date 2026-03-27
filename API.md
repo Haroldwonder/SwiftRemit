@@ -2,8 +2,43 @@
 
 Complete API documentation for the SwiftRemit smart contract.
 
-## Contract Functions
+## REST API Endpoints
 
+### POST /api/simulate-settlement
+
+Simulates a settlement to preview fees and payout amount before confirming. No state changes are made.
+
+**Request Body:**
+```json
+{ "remittanceId": 1 }
+```
+
+**Validation:**
+- `remittanceId` must be a positive integer
+
+**Response 200:**
+```json
+{
+  "would_succeed": true,
+  "payout_amount": "9750",
+  "fee": "250",
+  "error_message": null
+}
+```
+
+**Response 400** — invalid input:
+```json
+{ "error": "remittanceId must be a positive integer" }
+```
+
+**Response 500** — contract or network error:
+```json
+{ "error": "Failed to simulate settlement" }
+```
+
+---
+
+## Contract Functions
 ### Administrative Functions
 
 #### `initialize`

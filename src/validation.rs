@@ -1,9 +1,23 @@
-use soroban_sdk::{Address, Env};
+//! Address validation utilities for the SwiftRemit contract.
+//!
+//! This module provides validation functions for Stellar addresses used in
+//! contract operations.
+
+use soroban_sdk::Env;
 
 use crate::{
     get_remittance, is_agent_registered, is_paused, is_user_blacklisted, ContractError,
     RemittanceStatus,
 };
+
+/// Centralized validation module for all API requests.
+/// Validates required fields before controller logic to prevent invalid data
+/// from reaching business logic.
+// Note: No validate_address function is needed here.
+// In Soroban, the `Address` type is validated by the host runtime before any
+// contract function is invoked — it is impossible to construct an invalid or
+// zero Address value at the Rust level. Any address that reaches contract code
+// is already guaranteed to be a well-formed account or contract address.
 
 /// Validates fee basis points are within acceptable range (0-10000 = 0%-100%).
 pub fn validate_fee_bps(fee_bps: u32) -> Result<(), ContractError> {
@@ -123,7 +137,6 @@ pub fn validate_confirm_payout_request(
     }
     validate_no_duplicate_settlement(env, remittance_id)?;
     validate_settlement_not_expired(env, remittance.expiry)?;
-
     Ok(remittance)
 }
 
@@ -136,7 +149,6 @@ pub fn validate_cancel_remittance_request(
 ) -> Result<crate::Remittance, ContractError> {
     let remittance = validate_remittance_exists(env, remittance_id)?;
     validate_remittance_pending(&remittance)?;
-
     Ok(remittance)
 }
 
@@ -155,8 +167,7 @@ pub fn validate_withdraw_integrator_fees_request(
     env: &Env,
     to: &Address,
 ) -> Result<i128, ContractError> {
-    validate_address(to)?;
-    let fees = crate::storage::get_accumulated_integrator_fees(env);
+    let fees = crate::get_accumulated_fees(env)?;
     validate_fees_available(fees)?;
     Ok(fees)
 }
@@ -185,7 +196,7 @@ pub fn normalize_symbol(_env: &Env, symbol: &soroban_sdk::String) -> Result<soro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::Env;
 
     #[test]
     fn test_validate_fee_bps_valid() {

@@ -93,6 +93,72 @@ export async function storeVerificationOnChain(
   console.log(`Stored verification on-chain for ${verification.asset_code}-${verification.issuer}`);
 }
 
+export interface SettlementSimulationResult {
+  would_succeed: boolean;
+  payout_amount: string;
+  fee: string;
+  error_message: number | null;
+}
+
+export async function simulateSettlement(
+  amount: number
+): Promise<SettlementSimulationResult> {
+  const contractId = process.env.CONTRACT_ID;
+  if (!contractId) throw new Error('CONTRACT_ID not configured');
+
+  const contract = new Contract(contractId);
+  const keypair = Keypair.random();
+
+  // Build a minimal source account for simulation (no signing needed)
+  const sourceAccount = {
+    accountId: () => keypair.publicKey(),
+    sequenceNumber: () => '0',
+    incrementSequenceNumber: () => {},
+  } as any;
+
+  const tx = new TransactionBuilder(sourceAccount, {
+    fee: '100',
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      contract.call(
+        'calculate_fee_breakdown',
+        nativeToScVal(amount, { type: 'i128' })
+      )
+    )
+    .setTimeout(30)
+    .build();
+
+  const simulated = await server.simulateTransaction(tx);
+
+  if (SorobanRpc.Api.isSimulationError(simulated)) {
+    return { would_succeed: false, payout_amount: '0', fee: '0', error_message: null };
+  }
+
+  const retval = (simulated as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+  if (!retval) {
+    return { would_succeed: false, payout_amount: '0', fee: '0', error_message: null };
+  }
+
+  try {
+    const entries = retval.map()!;
+    const getI128 = (key: string): bigint => {
+      const entry = entries.find(e => e.key().sym() === key);
+      if (!entry) return BigInt(0);
+      const v = entry.val().i128();
+      return (BigInt(v.hi().toString()) << BigInt(64)) | BigInt(v.lo().toString());
+    };
+    return {
+      would_succeed: true,
+      payout_amount: getI128('net_amount').toString(),
+      fee: getI128('platform_fee').toString(),
+      error_message: null,
+    };
+  } catch {
+    return { would_succeed: false, payout_amount: '0', fee: '0', error_message: null };
+  }
+}
+
 export async function updateKycStatusOnChain(
   userId: string,
   approved: boolean

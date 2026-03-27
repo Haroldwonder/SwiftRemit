@@ -1,5 +1,5 @@
 import axios, { AxiosResponse } from 'axios';
-import { KycStatus, UserKycStatus, AnchorKycConfig } from './types';
+import { KycStatus, DbUserKycStatus, AnchorKycConfig } from './types';
 import { getAnchorKycConfigs, getUsersNeedingKycCheck, saveUserKycStatus, getApprovedUsers } from './database';
 import { updateKycStatusOnChain } from './stellar';
 
@@ -40,7 +40,7 @@ export class KycService {
         const kycResponse = await this.queryAnchorKycStatus(config, userKyc.user_id);
 
         if (kycResponse) {
-          const updatedStatus: UserKycStatus = {
+          const updatedStatus: DbUserKycStatus = {
             ...userKyc,
             status: this.mapSep12StatusToInternal(kycResponse.status),
             last_checked: new Date(),
@@ -52,13 +52,13 @@ export class KycService {
           await saveUserKycStatus(updatedStatus);
 
           // Update on-chain status if approved
-          if (updatedStatus.status === KycStatus.Approved) {
+          if (updatedStatus.status === 'approved') {
             try {
               await updateKycStatusOnChain(userKyc.user_id, true);
             } catch (error) {
               console.error(`Failed to update on-chain KYC status for user ${userKyc.user_id}:`, error);
             }
-          } else if (updatedStatus.status === KycStatus.Rejected) {
+          } else if (updatedStatus.status === 'rejected') {
             try {
               await updateKycStatusOnChain(userKyc.user_id, false);
             } catch (error) {
@@ -104,16 +104,16 @@ export class KycService {
   private mapSep12StatusToInternal(sep12Status: string): KycStatus {
     switch (sep12Status.toLowerCase()) {
       case 'approved':
-        return KycStatus.Approved;
+        return 'approved';
       case 'rejected':
-        return KycStatus.Rejected;
+        return 'rejected';
       case 'pending':
       default:
-        return KycStatus.Pending;
+        return 'pending';
     }
   }
 
-  async getUserKycStatus(userId: string, anchorId: string): Promise<UserKycStatus | null> {
+  async getUserKycStatus(userId: string, anchorId: string): Promise<DbUserKycStatus | null> {
     return await import('./database').then(db => db.getUserKycStatus(userId, anchorId));
   }
 
@@ -124,10 +124,10 @@ export class KycService {
   }
 
   async registerUserForKyc(userId: string, anchorId: string): Promise<void> {
-    const initialStatus: UserKycStatus = {
+    const initialStatus: DbUserKycStatus = {
       user_id: userId,
       anchor_id: anchorId,
-      status: KycStatus.Pending,
+      status: 'pending',
       last_checked: new Date(),
     };
 

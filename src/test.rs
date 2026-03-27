@@ -6257,3 +6257,184 @@ fn test_transaction_unregistered_agent() {
     // Should fail - agent not registered
     contract.execute_transaction(&user, &agent, &1000, &None);
 }
+
+// ============================================================================
+// Issue #228: Idempotency Key Tests
+// ============================================================================
+
+/// Helper: set up a minimal contract environment ready for create_remittance.
+/// Returns (env, contract, token_client, sender, agent).
+fn setup_idempotency_env() -> (
+    Env,
+    SwiftRemitContractClient<'static>,
+    soroban_sdk::token::StellarAssetClient<'static>,
+    Address,
+    Address,
+) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    token.mint(&sender, &100_000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
+    contract.register_agent(&agent);
+
+    // Leak to satisfy 'static lifetime required by the return type.
+    // Safe in tests: env outlives all derived values.
+    let env: Env = unsafe { core::mem::transmute(env) };
+    let contract: SwiftRemitContractClient<'static> = unsafe { core::mem::transmute(contract) };
+    let token: soroban_sdk::token::StellarAssetClient<'static> =
+        unsafe { core::mem::transmute(token) };
+
+    (env, contract, token, sender, agent)
+}
+
+/// Test 1 (Success Path): Calling create_remittance twice with the same idempotency key
+/// must return the same remittance_id and must NOT deduct tokens a second time.
+#[test]
+fn test_idempotency_same_key_returns_same_id_no_double_debit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    token.mint(&sender, &100_000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
+    contract.register_agent(&agent);
+
+    let key = soroban_sdk::String::from_str(&env, "key-A");
+
+    let id1 = contract.create_remittance(
+        &sender,
+        &agent,
+        &1000,
+        &None::<u64>,
+        &Some(key.clone()),
+        &None::<crate::SettlementConfig>,
+    );
+
+    let balance_after_first = get_token_balance(&token, &sender);
+
+    // Second call with the same key — must be a no-op
+    let id2 = contract.create_remittance(
+        &sender,
+        &agent,
+        &1000,
+        &None::<u64>,
+        &Some(key),
+        &None::<crate::SettlementConfig>,
+    );
+
+    assert_eq!(id1, id2, "Same idempotency key must return the same remittance_id");
+    assert_eq!(
+        get_token_balance(&token, &sender),
+        balance_after_first,
+        "Second call must not deduct tokens again"
+    );
+}
+
+/// Test 2 (Collision Avoidance): Two distinct keys must produce two distinct remittances.
+#[test]
+fn test_idempotency_different_keys_create_distinct_remittances() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    token.mint(&sender, &100_000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
+    contract.register_agent(&agent);
+
+    let key_a = soroban_sdk::String::from_str(&env, "key-A");
+    let key_b = soroban_sdk::String::from_str(&env, "key-B");
+
+    let id_a = contract.create_remittance(
+        &sender,
+        &agent,
+        &1000,
+        &None::<u64>,
+        &Some(key_a),
+        &None::<crate::SettlementConfig>,
+    );
+
+    let id_b = contract.create_remittance(
+        &sender,
+        &agent,
+        &1000,
+        &None::<u64>,
+        &Some(key_b),
+        &None::<crate::SettlementConfig>,
+    );
+
+    assert_ne!(id_a, id_b, "Different idempotency keys must produce distinct remittance IDs");
+}
+
+/// Test 3 (Post-Terminal): After a remittance is cancelled (terminal state), the
+/// idempotency key must be cleared, allowing a new remittance to be created with
+/// the same key.
+#[test]
+fn test_idempotency_key_cleared_after_terminal_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    token.mint(&sender, &100_000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
+    contract.register_agent(&agent);
+
+    let key = soroban_sdk::String::from_str(&env, "key-A");
+
+    // First remittance with key-A
+    let id1 = contract.create_remittance(
+        &sender,
+        &agent,
+        &1000,
+        &None::<u64>,
+        &Some(key.clone()),
+        &None::<crate::SettlementConfig>,
+    );
+
+    // Cancel → terminal state → key must be removed
+    contract.cancel_remittance(&id1);
+
+    // Re-use the same key — must create a brand-new remittance
+    let id2 = contract.create_remittance(
+        &sender,
+        &agent,
+        &1000,
+        &None::<u64>,
+        &Some(key),
+        &None::<crate::SettlementConfig>,
+    );
+
+    assert_ne!(
+        id1, id2,
+        "After terminal state, the same key must be allowed to create a new remittance"
+    );
+}

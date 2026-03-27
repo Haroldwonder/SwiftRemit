@@ -74,7 +74,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
       const params = new URLSearchParams();
       if (currency) params.append('currency', currency);
       params.append('status', 'active');
-      const response = await fetch(`\${apiUrl}/api/anchors?\${params}`);
+      const response = await fetch(`${apiUrl}/api/anchors?${params}`);
       const data = await response.json();
       if (data.success) {
         setAnchors(data.data);
@@ -95,7 +95,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
   };
 
   const formatFee = (percent: number, fixed?: number) => 
-    fixed && fixed > 0 ? `\${percent}% + $\${fixed.toFixed(2)}` : `\${percent}%`;
+    fixed && fixed > 0 ? `${percent}% + $${fixed.toFixed(2)}` : `${percent}%`;
 
   const formatAmount = (amount: number) => 
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
@@ -122,7 +122,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
     <div className="anchor-selector">
       <label className="anchor-label">Select Anchor Provider</label>
       <div className="anchor-dropdown">
-        <button className={`anchor-dropdown-trigger \${isOpen ? 'open' : ''}`} onClick={() => setIsOpen(!isOpen)}>
+        <button className={`anchor-dropdown-trigger ${isOpen ? 'open' : ''}`} onClick={() => setIsOpen(!isOpen)}>
           {selectedAnchor ? (
             <div className="selected-anchor">
               {selectedAnchor.logo_url && <img src={selectedAnchor.logo_url} alt="" className="anchor-logo" />}
@@ -137,7 +137,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
         {isOpen && (
           <div className="anchor-dropdown-menu">
             {anchors.map((anchor) => (
-              <div key={anchor.id} className={`anchor-option \${selectedAnchor?.id === anchor.id ? 'selected' : ''}`} onClick={() => handleSelect(anchor)}>
+              <div key={anchor.id} className={`anchor-option ${selectedAnchor?.id === anchor.id ? 'selected' : ''}`} onClick={() => handleSelect(anchor)}>
                 <div className="anchor-option-header">
                   {anchor.logo_url && <img src={anchor.logo_url} alt="" className="anchor-logo" />}
                   <div className="anchor-option-info">
@@ -181,7 +181,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
               <div className="details-section">
                 <h4>Compliance Requirements</h4>
                 <div className="compliance-info">
-                  <div className="detail-item"><span className="detail-label">KYC Level:</span><span className={`kyc-badge \${getKycLevelBadge(selectedAnchor.compliance.kyc_level).class}`}>{getKycLevelBadge(selectedAnchor.compliance.kyc_level).text}</span></div>
+                  <div className="detail-item"><span className="detail-label">KYC Level:</span><span className={`kyc-badge ${getKycLevelBadge(selectedAnchor.compliance.kyc_level).class}`}>{getKycLevelBadge(selectedAnchor.compliance.kyc_level).text}</span></div>
                   <div className="detail-item"><span className="detail-label">Required Documents:</span><ul className="documents-list">{selectedAnchor.compliance.documents_required.map((doc, idx) => <li key={idx}>{doc.replace(/_/g, ' ')}</li>)}</ul></div>
                   <div className="detail-item"><span className="detail-label">Supported Countries:</span><span className="detail-value">{selectedAnchor.compliance.supported_countries.join(', ')}</span></div>
                   {selectedAnchor.compliance.restricted_countries.length > 0 && <div className="detail-item warning"><span className="detail-label">⚠️ Restricted Countries:</span><span className="detail-value">{selectedAnchor.compliance.restricted_countries.join(', ')}</span></div>}

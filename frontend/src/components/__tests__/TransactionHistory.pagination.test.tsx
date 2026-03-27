@@ -1,3 +1,4 @@
+import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TransactionHistory, TransactionHistoryItem } from '../TransactionHistory';
@@ -40,15 +41,20 @@ describe('TransactionHistory Pagination', () => {
   });
 
   it('navigates to previous page', () => {
-    render(
-      <TransactionHistory transactions={mockTransactions} pageSize={10} currentPage={2} />
-    );
+    render(<TransactionHistory transactions={mockTransactions} pageSize={10} />);
 
-    const prevButton = screen.getByLabelText('Previous page');
-    fireEvent.click(prevButton);
+    // Go to page 2 first (uncontrolled)
+    fireEvent.click(screen.getByLabelText('Next page'));
+    expect(screen.getByText(/Page 2 of 3/)).toBeInTheDocument();
 
-    expect(screen.getByText(/Showing 1–10 of 25 transactions/)).toBeInTheDocument();
+    // Now go back
+    fireEvent.click(screen.getByLabelText('Previous page'));
+
     expect(screen.getByText(/Page 1 of 3/)).toBeInTheDocument();
+    // "Showing 1–10 of 25 transactions" is split across elements — use a custom matcher
+    expect(
+      screen.getByText((_, element) => element?.textContent?.replace(/\s+/g, ' ').trim() === 'Showing 1–10 of 25 transactions')
+    ).toBeInTheDocument();
   });
 
   it('disables previous button on first page', () => {
@@ -68,7 +74,7 @@ describe('TransactionHistory Pagination', () => {
   });
 
   it('handles controlled pagination mode', () => {
-    const onPageChange = jest.fn();
+    const onPageChange = vi.fn();
     const { rerender } = render(
       <TransactionHistory
         transactions={mockTransactions}

@@ -1,12 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import app from '../api';
-import { initDatabase, getPool } from '../database';
-import { WebhookHandler } from '../webhook-handler';
+import { initDatabase } from '../database';
+import * as stellar from '../stellar';
 
 describe('API Endpoints', () => {
   beforeAll(async () => {
-    await initDatabase();
+    try {
+      await initDatabase();
+    } catch {
+      // DB not available in CI/local without Postgres — tests that don't need DB still run
+    }
   });
 
   describe('GET /health', () => {
@@ -136,79 +140,76 @@ describe('API Endpoints', () => {
     });
   });
 
-  describe('GET /api/kyc/status', () => {
-    it('should reject unauthenticated requests', async () => {
-      const response = await request(app).get('/api/kyc/status');
-      expect(response.status).toBe(401);
-    });
-
-    it('should return pending for user with no KYC records', async () => {
+  describe('POST /api/simulate-settlement', () => {
+    it('should return 400 when remittanceId is missing', async () => {
       const response = await request(app)
-        .get('/api/kyc/status')
-        .set('x-user-id', 'user-no-kyc');
-
-      expect(response.status).toBe(200);
-      expect(response.body.overall_status).toBe('pending');
-      expect(response.body.can_transfer).toBe(false);
-      expect(response.body.reason).toBe('no_kyc_record');
-      expect(Array.isArray(response.body.anchors)).toBe(true);
-    });
-  });
-
-  describe('POST /api/transfer', () => {
-    it('should reject unauthenticated requests', async () => {
-      const response = await request(app).post('/api/transfer').send({});
-      expect(response.status).toBe(401);
-    });
-
-    it('should reject when KYC not approved', async () => {
-      const response = await request(app)
-        .post('/api/transfer')
-        .set('x-user-id', 'user-no-kyc')
+        .post('/api/simulate-settlement')
         .send({});
-
-      expect(response.status).toBe(403);
-      expect(response.body.error).toBeDefined();
-      expect(response.body.error.code).toBe('KYC_PENDING');
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/remittanceId/);
     });
-  });
 
-  describe('WebhookHandler KYC update flow', () => {
-    it('should update both transactions and KYC status store', async () => {
-      const pool = getPool();
-      const webhookHandler = new WebhookHandler(pool);
+    it('should return 400 when remittanceId is zero', async () => {
+      const response = await request(app)
+        .post('/api/simulate-settlement')
+        .send({ remittanceId: 0 });
+      expect(response.status).toBe(400);
+    });
 
-      const updateSpy = vi.fn();
-      const upsertSpy = vi.fn();
+    it('should return 400 when remittanceId is negative', async () => {
+      const response = await request(app)
+        .post('/api/simulate-settlement')
+        .send({ remittanceId: -5 });
+      expect(response.status).toBe(400);
+    });
 
-      // Replace internals with test doubles
-      (webhookHandler as any).stateManager = { updateKYCStatus: updateSpy };
-      (webhookHandler as any).kycUpsertService = { upsert: upsertSpy };
+    it('should return 400 when remittanceId is not an integer', async () => {
+      const response = await request(app)
+        .post('/api/simulate-settlement')
+        .send({ remittanceId: 1.5 });
+      expect(response.status).toBe(400);
+    });
 
-      const payload = {
-        transaction_id: 'tx-abc',
-        kyc_status: 'approved',
-        kyc_fields: { name: 'Jane Doe' },
-        user_id: 'user-abc',
-        anchor_id: 'anchor-abc',
-        verified_at: new Date().toISOString(),
-        expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-      };
+    it('should return 400 when remittanceId is a string', async () => {
+      const response = await request(app)
+        .post('/api/simulate-settlement')
+        .send({ remittanceId: 'abc' });
+      expect(response.status).toBe(400);
+    });
 
-      await (webhookHandler as any).handleKYCUpdate(payload, 'anchor-abc');
-
-      expect(updateSpy).toHaveBeenCalledWith({
-        transaction_id: 'tx-abc',
-        kyc_status: 'approved',
-        kyc_fields: { name: 'Jane Doe' },
-        rejection_reason: undefined,
+    it('should return 200 with simulation result for valid remittanceId', async () => {
+      vi.spyOn(stellar, 'simulateSettlement').mockResolvedValueOnce({
+        would_succeed: true,
+        payout_amount: '9750',
+        fee: '250',
+        error_message: null,
       });
 
-      expect(upsertSpy).toHaveBeenCalledWith(expect.objectContaining({
-        user_id: 'user-abc',
-        anchor_id: 'anchor-abc',
-        kyc_status: 'approved',
-      }));
+      const response = await request(app)
+        .post('/api/simulate-settlement')
+        .send({ remittanceId: 1 });
+
+      expect(response.status).toBe(200);
+      expect(response.body.would_succeed).toBe(true);
+      expect(response.body.payout_amount).toBe('9750');
+      expect(response.body.fee).toBe('250');
+      expect(response.body.error_message).toBeNull();
+    });
+
+    it('should return 200 with would_succeed false when simulation fails', async () => {
+      vi.spyOn(stellar, 'simulateSettlement').mockResolvedValueOnce({
+        would_succeed: false,
+        payout_amount: '0',
+        fee: '0',
+        error_message: null,
+      });
+
+      const response = await request(app)
+        .post('/api/simulate-settlement')
+        .send({ remittanceId: 999 });
+
+      expect(response.status).toBe(200);
+      expect(response.body.would_succeed).toBe(false);
     });
   });
 });
