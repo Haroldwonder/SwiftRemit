@@ -48,6 +48,7 @@ fi
 
 # Build and Optimize
 echo "🔨 Building and Optimizing Contract..."
+# Note: To enable debug logging for local testing, add: --features debug-log
 cargo build --target wasm32-unknown-unknown --release
 soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 

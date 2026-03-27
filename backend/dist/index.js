@@ -8,6 +8,7 @@ const api_1 = __importDefault(require("./api"));
 const database_1 = require("./database");
 const scheduler_1 = require("./scheduler");
 const webhook_handler_1 = require("./webhook-handler");
+const kyc_service_1 = require("./kyc-service");
 dotenv_1.default.config();
 const PORT = process.env.PORT || 3000;
 async function start() {
@@ -15,6 +16,10 @@ async function start() {
         // Initialize database
         await (0, database_1.initDatabase)();
         console.log('Database initialized');
+        // Initialize KYC service
+        const kycService = new kyc_service_1.KycService();
+        await kycService.initialize();
+        console.log('KYC service initialized');
         // Setup webhook handler
         const pool = (0, database_1.getPool)();
         const webhookHandler = new webhook_handler_1.WebhookHandler(pool);

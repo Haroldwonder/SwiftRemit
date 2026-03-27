@@ -8,19 +8,16 @@ const express_1 = __importDefault(require("express"));
 const webhook_verifier_1 = require("./webhook-verifier");
 const webhook_logger_1 = require("./webhook-logger");
 const transaction_state_1 = require("./transaction-state");
-const kyc_upsert_service_1 = require("./kyc-upsert-service");
 class WebhookHandler {
     pool;
     verifier;
     logger;
     stateManager;
-    kycUpsertService;
     constructor(pool) {
         this.pool = pool;
         this.verifier = new webhook_verifier_1.WebhookVerifier(300); // 5 minute replay window
         this.logger = new webhook_logger_1.WebhookLogger(pool);
         this.stateManager = new transaction_state_1.TransactionStateManager(pool);
-        this.kycUpsertService = new kyc_upsert_service_1.KycUpsertService(pool);
     }
     /**
      * Middleware to capture raw body for signature verification
@@ -94,7 +91,7 @@ class WebhookHandler {
                     await this.handleWithdrawalUpdate(req.body);
                     break;
                 case 'kyc_update':
-                    await this.handleKYCUpdate(req.body, anchorId);
+                    await this.handleKYCUpdate(req.body);
                     break;
                 default:
                     res.status(400).json({ error: 'Unknown event type' });
@@ -166,7 +163,7 @@ class WebhookHandler {
     /**
      * Handle KYC update webhook
      */
-    async handleKYCUpdate(payload, anchorId) {
+    async handleKYCUpdate(payload) {
         const update = {
             transaction_id: payload.transaction_id,
             kyc_status: payload.kyc_status,
@@ -174,29 +171,6 @@ class WebhookHandler {
             rejection_reason: payload.rejection_reason
         };
         await this.stateManager.updateKYCStatus(update);
-        const userId = payload.user_id;
-        const payloadAnchorId = payload.anchor_id || anchorId;
-        if (!userId) {
-            // Cannot update KYC store without user_id; this might indicate an incomplete webhook payload.
-            console.warn(`Skipping KYC store upsert for transaction ${payload.transaction_id}: missing user_id`);
-            return;
-        }
-        if (!payloadAnchorId) {
-            console.warn(`Skipping KYC store upsert for transaction ${payload.transaction_id}: missing anchor_id`);
-            return;
-        }
-        const verifiedAt = payload.verified_at ? new Date(payload.verified_at) : new Date();
-        const expiresAt = payload.expires_at ? new Date(payload.expires_at) : undefined;
-        const kycRecord = {
-            user_id: userId,
-            anchor_id: payloadAnchorId,
-            kyc_status: payload.kyc_status,
-            kyc_level: payload.kyc_level,
-            rejection_reason: payload.rejection_reason,
-            verified_at: verifiedAt,
-            expires_at: expiresAt,
-        };
-        await this.kycUpsertService.upsert(kycRecord);
     }
     /**
      * Log suspicious activity

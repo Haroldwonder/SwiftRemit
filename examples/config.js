@@ -204,8 +204,45 @@ const enableDebugLog = parseBoolean('ENABLE_DEBUG_LOG', true);
 const schemaVersion = 1;
 
 // ============================================
-// EXPORT CONFIGURATION OBJECT
+// EXPORT CONFIGURATION OBJECT AND FUNCTIONS
 // ============================================
+
+/**
+ * SwiftRemit Configuration Object
+ * 
+ * Contains all configuration values loaded from environment variables,
+ * with sensible defaults and validation applied.
+ * 
+ * @typedef {Object} SwiftRemitConfig
+ * @property {string} network - Blockchain network ('testnet' or 'mainnet')
+ * @property {string} networkPassphrase - Stellar network passphrase for signing
+ * @property {string} rpcUrl - RPC endpoint URL (must be HTTPS)
+ * @property {string} contractId - SwiftRemit contract ID on the blockchain
+ * @property {string} usdcTokenId - USDC token contract ID
+ * @property {number} defaultFeeBps - Default fee in basis points (0-10000)
+ * @property {number} maxFeeBps - Maximum allowed fee in basis points (constant: 10000)
+ * @property {number} feeDivisor - Divisor for basis points calculations (constant: 10000)
+ * @property {string} transactionFee - Base transaction fee in stroops (numeric string)
+ * @property {number} transactionTimeout - Transaction timeout in seconds
+ * @property {number} pollIntervalMs - Polling interval in milliseconds
+ * @property {number} usdcDecimals - USDC token decimals
+ * @property {number} usdcMultiplier - Multiplier for USDC calculations (10^decimals)
+ * @property {string|null} adminSecret - Admin keypair secret (optional)
+ * @property {string|null} senderSecret - Sender keypair secret (optional)
+ * @property {string|null} agentSecret - Agent keypair secret (optional)
+ * @property {string} deployerIdentity - Deployer identity name
+ * @property {number} initialFeeBps - Initial fee in basis points (0-10000)
+ * @property {boolean} enableDebugLog - Whether debug logging is enabled
+ * @property {number} schemaVersion - Configuration schema version (constant: 1)
+ * @property {Function} requireEnv - Get required environment variable
+ * @property {Function} getEnv - Get optional environment variable with default
+ * @property {Function} parseNumber - Parse environment variable as number
+ * @property {Function} parseBoolean - Parse environment variable as boolean
+ * @property {Function} validateFeeBps - Validate fee in basis points
+ * @property {Function} validateUrl - Validate URL is HTTPS
+ * @property {Function} validateNetwork - Validate network is testnet or mainnet
+ * @property {Function} validatePositiveNumber - Validate number is positive
+ */
 
 module.exports = {
   // Network Configuration
@@ -245,4 +282,14 @@ module.exports = {
   
   // Constants
   schemaVersion,
+  
+  // Export helper and validation functions for client usage
+  requireEnv,
+  getEnv,
+  parseNumber,
+  parseBoolean,
+  validateFeeBps,
+  validateUrl,
+  validateNetwork,
+  validatePositiveNumber,
 };

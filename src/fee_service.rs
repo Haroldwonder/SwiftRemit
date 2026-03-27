@@ -9,9 +9,9 @@
 //! All fee calculations route through this module to ensure consistency
 //! and prevent calculation errors.
 
-use soroban_sdk::{contracttype, Env, String};
+use soroban_sdk::{ contracttype, Env, String };
 
-use crate::{ContractError, FeeStrategy, get_fee_strategy, get_protocol_fee_bps, storage};
+use crate::{ ContractError, FeeStrategy, get_fee_strategy, get_protocol_fee_bps, storage };
 
 /// Fee divisor for basis points calculations (10000 = 100%)
 const FEE_DIVISOR: i128 = 10000;
@@ -114,7 +114,7 @@ pub fn calculate_platform_fee(env: &Env, amount: i128) -> Result<i128, ContractE
 pub fn calculate_fees_with_breakdown(
     env: &Env,
     amount: i128,
-    corridor: Option<&FeeCorridor>,
+    corridor: Option<&FeeCorridor>
 ) -> Result<FeeBreakdown, ContractError> {
     if amount <= 0 {
         return Err(ContractError::InvalidAmount);
@@ -240,23 +240,22 @@ fn calculate_protocol_fee(amount: i128, protocol_fee_bps: u32) -> Result<i128, C
 ///
 /// Formatted corridor ID (e.g., "US-MX")
 fn format_corridor_id(env: &Env, from_country: &String, to_country: &String) -> String {
-    // Create corridor ID as "FROM-TO" using byte concatenation
-    let from_bytes = from_country.as_bytes();
-    let to_bytes = to_country.as_bytes();
-    let dash = b"-";
-    
-    let mut corridor_bytes = soroban_sdk::Bytes::new(env);
-    corridor_bytes.append(&from_bytes);
-    corridor_bytes.append(&soroban_sdk::Bytes::from_slice(env, dash));
-    corridor_bytes.append(&to_bytes);
-    
-    String::from_utf8(corridor_bytes).unwrap_or_else(|_| String::from_str(env, ""))
+    // Create corridor ID as "FROM-TO" using simple approach
+    // Convert Soroban strings to regular strings for manipulation
+    let from_str = from_country.to_string();
+    let to_str = to_country.to_string();
+
+    // Create the combined string manually
+    let combined = from_str + "-" + &to_str;
+
+    // Convert back to Soroban String
+    String::from_str(env, &combined)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{Env, String};
+    use soroban_sdk::{ Env, String };
 
     #[test]
     fn test_calculate_fee_percentage() {
@@ -368,7 +367,7 @@ mod tests {
         let env = Env::default();
         let from = String::from_str(&env, "US");
         let to = String::from_str(&env, "MX");
-        
+
         let corridor_id = format_corridor_id(&env, &from, &to);
         assert_eq!(corridor_id, String::from_str(&env, "US-MX"));
     }
@@ -378,7 +377,7 @@ mod tests {
         let env = Env::default();
         let from = String::from_str(&env, "MX");
         let to = String::from_str(&env, "US");
-        
+
         let corridor_id = format_corridor_id(&env, &from, &to);
         assert_eq!(corridor_id, String::from_str(&env, "MX-US"));
     }
@@ -388,7 +387,7 @@ mod tests {
         let env = Env::default();
         let from = String::from_str(&env, "GB");
         let to = String::from_str(&env, "NG");
-        
+
         let corridor_id = format_corridor_id(&env, &from, &to);
         assert_eq!(corridor_id, String::from_str(&env, "GB-NG"));
     }

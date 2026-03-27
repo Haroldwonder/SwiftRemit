@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { KycService } from '../kyc-service';
-import { KycStatus } from '../types';
 
 // Mock the database functions
 vi.mock('../database', () => ({
@@ -129,10 +128,10 @@ describe('KycService', () => {
 
   describe('mapSep12StatusToInternal', () => {
     it('should map SEP-12 statuses correctly', () => {
-      expect((kycService as any).mapSep12StatusToInternal('approved')).toBe(KycStatus.Approved);
-      expect((kycService as any).mapSep12StatusToInternal('rejected')).toBe(KycStatus.Rejected);
-      expect((kycService as any).mapSep12StatusToInternal('pending')).toBe(KycStatus.Pending);
-      expect((kycService as any).mapSep12StatusToInternal('unknown')).toBe(KycStatus.Pending);
+      expect((kycService as any).mapSep12StatusToInternal('approved')).toBe('approved');
+      expect((kycService as any).mapSep12StatusToInternal('rejected')).toBe('rejected');
+      expect((kycService as any).mapSep12StatusToInternal('pending')).toBe('pending');
+      expect((kycService as any).mapSep12StatusToInternal('unknown')).toBe('pending');
     });
   });
 
@@ -143,7 +142,7 @@ describe('KycService', () => {
         {
           user_id: 'user123',
           anchor_id: 'anchor-1',
-          status: KycStatus.Approved,
+          status: 'approved',
           last_checked: new Date(),
         },
       ]);

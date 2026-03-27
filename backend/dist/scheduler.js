@@ -8,22 +8,21 @@ const node_cron_1 = __importDefault(require("node-cron"));
 const verifier_1 = require("./verifier");
 const database_1 = require("./database");
 const stellar_1 = require("./stellar");
-const kyc_poller_1 = require("./kyc-poller");
-const kyc_upsert_service_1 = require("./kyc-upsert-service");
+const kyc_service_1 = require("./kyc-service");
 const verifier = new verifier_1.AssetVerifier();
-function startBackgroundJobs() {
-    // Asset revalidation — every 6 hours
+const kycService = new kyc_service_1.KycService();
+async function startBackgroundJobs() {
+    // Initialize KYC service
+    await kycService.initialize();
+    // Run every 6 hours
     node_cron_1.default.schedule('0 */6 * * *', async () => {
         console.log('Starting periodic asset revalidation...');
         await revalidateStaleAssets();
     });
-    // KYC status polling — every 6 hours
-    const pool = (0, database_1.getPool)();
-    const kycUpsertService = new kyc_upsert_service_1.KycUpsertService(pool);
-    const kycPoller = new kyc_poller_1.KycPoller(pool, kycUpsertService);
-    node_cron_1.default.schedule('0 */6 * * *', async () => {
-        console.log('Starting KYC poll cycle...');
-        await kycPoller.runCycle();
+    // Run KYC polling every 30 minutes
+    node_cron_1.default.schedule('*/30 * * * *', async () => {
+        console.log('Starting KYC status polling...');
+        await pollKycStatuses();
     });
     console.log('Background jobs scheduled');
 }
@@ -67,5 +66,14 @@ async function revalidateStaleAssets() {
     }
     catch (error) {
         console.error('Error in revalidation job:', error);
+    }
+}
+async function pollKycStatuses() {
+    try {
+        await kycService.pollAllAnchors();
+        console.log('KYC polling completed');
+    }
+    catch (error) {
+        console.error('Error in KYC polling job:', error);
     }
 }

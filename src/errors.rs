@@ -59,7 +59,7 @@ pub enum ContractError {
     InvalidAddress = 10,
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Settlement Errors (11-15)
+    // Settlement Errors (11-12)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// Settlement window has expired.
@@ -70,96 +70,105 @@ pub enum ContractError {
     /// Cause: Attempting to settle the same remittance twice (duplicate prevention).
     DuplicateSettlement = 12,
 
-    /// Asset verification record not found
-    AssetNotFound = 13,
-
-    /// Reputation score must be between 0 and 100
-    InvalidReputationScore = 14,
-
-    /// Asset has been flagged as suspicious
-    SuspiciousAsset = 15,
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Contract State & User Errors (13-22)
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// Contract is paused. Settlements are temporarily disabled.
     /// Cause: Attempting confirm_payout() while contract is in paused state.
-    ContractPaused = 16,
+    ContractPaused = 13,
+
+    /// Asset verification record not found.
+    AssetNotFound = 14,
 
     /// User is blacklisted and cannot perform transactions.
     /// Cause: User address is on the blacklist.
-    UserBlacklisted = 17,
+    UserBlacklisted = 15,
+
+    /// Reputation score must be between 0 and 100.
+    InvalidReputationScore = 16,
 
     /// User KYC is not approved.
     /// Cause: User has not completed KYC verification.
-    KycNotApproved = 18,
+    KycNotApproved = 17,
 
-    /// User KYC has expired.
-    /// Cause: User's KYC verification has expired and needs renewal.
-    KycExpired = 19,
-
-    /// Transaction record not found.
-    /// Cause: Querying non-existent transaction record.
-    TransactionNotFound = 20,
+    /// Asset has been flagged as suspicious.
+    SuspiciousAsset = 18,
 
     /// Anchor transaction failed.
     /// Cause: Anchor withdrawal/deposit operation failed.
-    AnchorTransactionFailed = 21,
-
-    RateLimitExceeded = 22,
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Authorization Errors (18-21)
-    // ═══════════════════════════════════════════════════════════════════════════
+    AnchorTransactionFailed = 19,
 
     /// Caller is not authorized to perform admin operations.
     /// Cause: Non-admin attempting to perform admin-only operations.
-    Unauthorized = 23,
+    Unauthorized = 20,
+
+    /// Daily send limit exceeded for this user.
+    /// Cause: User's total transfers in the last 24 hours exceed the configured limit.
+    DailySendLimitExceeded = 21,
+
+    /// Token is already whitelisted in the system.
+    /// Cause: Attempting to add a token that is already whitelisted.
+    TokenAlreadyWhitelisted = 22,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // KYC / Transaction Errors (23-25)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// User KYC has expired.
+    /// Cause: User's KYC verification has expired and needs renewal.
+    KycExpired = 23,
+
+    /// Transaction record not found.
+    /// Cause: Querying non-existent transaction record.
+    TransactionNotFound = 24,
+
+    /// Rate limit exceeded.
+    RateLimitExceeded = 25,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Authorization Errors (26-29)
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// Admin address already exists in the system.
     /// Cause: Attempting to add an admin that is already registered.
-    AdminAlreadyExists = 24,
+    AdminAlreadyExists = 26,
 
     /// Admin address does not exist in the system.
     /// Cause: Attempting to remove an admin that is not registered.
-    AdminNotFound = 25,
+    AdminNotFound = 27,
 
     /// Cannot remove the last admin from the system.
     /// Cause: Attempting to remove the only remaining admin.
-    CannotRemoveLastAdmin = 26,
+    CannotRemoveLastAdmin = 28,
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Token Whitelist Errors (22-23)
+    // Token Whitelist Errors (29)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// Token is not whitelisted for use in the system.
     /// Cause: Attempting to initialize contract with non-whitelisted token.
-    TokenNotWhitelisted = 27,
-
-    /// Token is already whitelisted in the system.
-    /// Cause: Attempting to add a token that is already whitelisted.
-    TokenAlreadyWhitelisted = 28,
+    TokenNotWhitelisted = 29,
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Migration Errors (24-26)
+    // Migration Errors (30-32)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// Migration hash verification failed.
     /// Cause: Snapshot hash doesn't match computed hash (data tampering or corruption).
-    InvalidMigrationHash = 29,
+    InvalidMigrationHash = 30,
 
     /// Migration already in progress or completed.
     /// Cause: Attempting to start migration when one is already active.
-    MigrationInProgress = 30,
+    MigrationInProgress = 31,
 
     /// Migration batch out of order or invalid.
     /// Cause: Importing batches in wrong order or invalid batch number.
-    InvalidMigrationBatch = 31,
+    InvalidMigrationBatch = 32,
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Rate Limiting Errors (27)
+    // Rate Limiting / Abuse Errors (33-36)
     // ═══════════════════════════════════════════════════════════════════════════
-
-    /// Daily send limit exceeded for this user.
-    /// Cause: User's total transfers in the last 24 hours exceed the configured limit.
-    DailySendLimitExceeded = 32,
 
     /// Cooldown period is still active.
     /// Cause: Attempting action before cooldown period has elapsed.
@@ -172,6 +181,10 @@ pub enum ContractError {
     /// Action temporarily blocked due to abuse protection.
     /// Cause: Multiple violations or severe abuse detected.
     ActionBlocked = 35,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Arithmetic / Data Errors (36-52)
+    // ═══════════════════════════════════════════════════════════════════════════
 
     /// Arithmetic overflow occurred during calculation.
     /// Cause: Result of arithmetic operation exceeds maximum value.
@@ -232,11 +245,11 @@ pub enum ContractError {
     /// Proof validation failed.
     /// Cause: Signature is invalid or signer doesn't match expected oracle.
     InvalidProof = 50,
-    
+
     /// Proof is required but not provided.
     /// Cause: Settlement requires proof validation but proof parameter is None.
     MissingProof = 51,
-    
+
     /// Oracle address is invalid or not configured.
     /// Cause: Settlement requires proof but oracle_address is None.
     InvalidOracleAddress = 52,
@@ -246,79 +259,96 @@ pub enum ContractError {
 mod tests {
     use super::*;
 
+    /// Test 1 (Unit): Every ContractError variant must map to a unique u32 value.
     #[test]
     fn test_error_codes_are_unique() {
-        let error_codes = [
-            ContractError::AlreadyInitialized as u32,
-            ContractError::NotInitialized as u32,
-            ContractError::InvalidAmount as u32,
-            ContractError::InvalidFeeBps as u32,
-            ContractError::AgentNotRegistered as u32,
-            ContractError::RemittanceNotFound as u32,
-            ContractError::InvalidStatus as u32,
-            ContractError::InvalidStateTransition as u32,
-            ContractError::NoFeesToWithdraw as u32,
-            ContractError::InvalidAddress as u32,
-            ContractError::SettlementExpired as u32,
-            ContractError::DuplicateSettlement as u32,
-            ContractError::AssetNotFound as u32,
-            ContractError::InvalidReputationScore as u32,
-            ContractError::SuspiciousAsset as u32,
-            ContractError::ContractPaused as u32,
-            ContractError::UserBlacklisted as u32,
-            ContractError::KycNotApproved as u32,
-            ContractError::KycExpired as u32,
-            ContractError::TransactionNotFound as u32,
-            ContractError::AnchorTransactionFailed as u32,
-            ContractError::RateLimitExceeded as u32,
-            ContractError::Unauthorized as u32,
-            ContractError::AdminAlreadyExists as u32,
-            ContractError::AdminNotFound as u32,
-            ContractError::CannotRemoveLastAdmin as u32,
-            ContractError::TokenNotWhitelisted as u32,
-            ContractError::TokenAlreadyWhitelisted as u32,
-            ContractError::InvalidMigrationHash as u32,
-            ContractError::MigrationInProgress as u32,
-            ContractError::InvalidMigrationBatch as u32,
-            ContractError::DailySendLimitExceeded as u32,
-            ContractError::CooldownActive as u32,
-            ContractError::SuspiciousActivity as u32,
-            ContractError::ActionBlocked as u32,
-            ContractError::Overflow as u32,
-            ContractError::NetSettlementValidationFailed as u32,
-            ContractError::EscrowNotFound as u32,
-            ContractError::InvalidEscrowStatus as u32,
-            ContractError::SettlementCounterOverflow as u32,
-            ContractError::InvalidBatchSize as u32,
-            ContractError::DataCorruption as u32,
-            ContractError::IndexOutOfBounds as u32,
-            ContractError::EmptyCollection as u32,
-            ContractError::KeyNotFound as u32,
-            ContractError::StringConversionFailed as u32,
-            ContractError::InvalidSymbol as u32,
-            ContractError::Underflow as u32,
+        let variants: &[(ContractError, u32)] = &[
+            (ContractError::AlreadyInitialized,          1),
+            (ContractError::NotInitialized,              2),
+            (ContractError::InvalidAmount,               3),
+            (ContractError::InvalidFeeBps,               4),
+            (ContractError::AgentNotRegistered,          5),
+            (ContractError::RemittanceNotFound,          6),
+            (ContractError::InvalidStatus,               7),
+            (ContractError::InvalidStateTransition,      8),
+            (ContractError::NoFeesToWithdraw,            9),
+            (ContractError::InvalidAddress,              10),
+            (ContractError::SettlementExpired,           11),
+            (ContractError::DuplicateSettlement,         12),
+            (ContractError::ContractPaused,              13),
+            (ContractError::AssetNotFound,               14),
+            (ContractError::UserBlacklisted,             15),
+            (ContractError::InvalidReputationScore,      16),
+            (ContractError::KycNotApproved,              17),
+            (ContractError::SuspiciousAsset,             18),
+            (ContractError::AnchorTransactionFailed,     19),
+            (ContractError::Unauthorized,                20),
+            (ContractError::DailySendLimitExceeded,      21),
+            (ContractError::TokenAlreadyWhitelisted,     22),
+            (ContractError::KycExpired,                  23),
+            (ContractError::TransactionNotFound,         24),
+            (ContractError::RateLimitExceeded,           25),
+            (ContractError::AdminAlreadyExists,          26),
+            (ContractError::AdminNotFound,               27),
+            (ContractError::CannotRemoveLastAdmin,       28),
+            (ContractError::TokenNotWhitelisted,         29),
+            (ContractError::InvalidMigrationHash,        30),
+            (ContractError::MigrationInProgress,         31),
+            (ContractError::InvalidMigrationBatch,       32),
+            (ContractError::CooldownActive,              33),
+            (ContractError::SuspiciousActivity,          34),
+            (ContractError::ActionBlocked,               35),
+            (ContractError::Overflow,                    36),
+            (ContractError::NetSettlementValidationFailed, 37),
+            (ContractError::EscrowNotFound,              38),
+            (ContractError::InvalidEscrowStatus,         39),
+            (ContractError::SettlementCounterOverflow,   40),
+            (ContractError::InvalidBatchSize,            41),
+            (ContractError::DataCorruption,              42),
+            (ContractError::IndexOutOfBounds,            43),
+            (ContractError::EmptyCollection,             44),
+            (ContractError::KeyNotFound,                 45),
+            (ContractError::StringConversionFailed,      46),
+            (ContractError::InvalidSymbol,               47),
+            (ContractError::Underflow,                   48),
+            (ContractError::IdempotencyConflict,         49),
+            (ContractError::InvalidProof,                50),
+            (ContractError::MissingProof,                51),
+            (ContractError::InvalidOracleAddress,        52),
         ];
 
-        // Check for duplicates
-        for i in 0..error_codes.len() {
-            for j in (i + 1)..error_codes.len() {
+        // Assert each variant maps to its expected discriminant.
+        for &(variant, expected) in variants {
+            assert_eq!(
+                variant as u32, expected,
+                "ContractError variant discriminant mismatch: expected {}, got {}",
+                expected, variant as u32
+            );
+        }
+
+        // Assert all discriminants are unique (no two variants share a value).
+        let codes: Vec<u32> = variants.iter().map(|&(_, c)| c).collect();
+        for i in 0..codes.len() {
+            for j in (i + 1)..codes.len() {
                 assert_ne!(
-                    error_codes[i], error_codes[j],
-                    "Duplicate error code {} found at indices {} and {}",
-                    error_codes[i], i, j
+                    codes[i], codes[j],
+                    "Duplicate discriminant {} at indices {} and {}",
+                    codes[i], i, j
                 );
             }
         }
+    }
 
-        // Check sequential ordering (1-48)
-        for (idx, &code) in error_codes.iter().enumerate() {
-            assert_eq!(
-                code, (idx + 1) as u32,
-                "Error code at index {} should be {}, but got {}",
-                idx,
-                idx + 1,
-                code
-            );
-        }
+    /// Test 2 (Integration): Verify ContractPaused == 13 and UserBlacklisted == 15.
+    #[test]
+    fn test_contract_paused_and_user_blacklisted_codes() {
+        assert_eq!(
+            ContractError::ContractPaused as u32, 13,
+            "ContractPaused must be error code 13"
+        );
+        assert_eq!(
+            ContractError::UserBlacklisted as u32, 15,
+            "UserBlacklisted must be error code 15"
+        );
     }
 }

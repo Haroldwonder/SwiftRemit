@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -7,10 +40,15 @@ const vitest_1 = require("vitest");
 const supertest_1 = __importDefault(require("supertest"));
 const api_1 = __importDefault(require("../api"));
 const database_1 = require("../database");
-const webhook_handler_1 = require("../webhook-handler");
+const stellar = __importStar(require("../stellar"));
 (0, vitest_1.describe)('API Endpoints', () => {
     (0, vitest_1.beforeAll)(async () => {
-        await (0, database_1.initDatabase)();
+        try {
+            await (0, database_1.initDatabase)();
+        }
+        catch {
+            // DB not available in CI/local without Postgres — tests that don't need DB still run
+        }
     });
     (0, vitest_1.describe)('GET /health', () => {
         (0, vitest_1.it)('should return health status', async () => {
@@ -116,67 +154,66 @@ const webhook_handler_1 = require("../webhook-handler");
             (0, vitest_1.expect)(response.status).toBe(400);
         });
     });
-    (0, vitest_1.describe)('GET /api/kyc/status', () => {
-        (0, vitest_1.it)('should reject unauthenticated requests', async () => {
-            const response = await (0, supertest_1.default)(api_1.default).get('/api/kyc/status');
-            (0, vitest_1.expect)(response.status).toBe(401);
-        });
-        (0, vitest_1.it)('should return pending for user with no KYC records', async () => {
+    (0, vitest_1.describe)('POST /api/simulate-settlement', () => {
+        (0, vitest_1.it)('should return 400 when remittanceId is missing', async () => {
             const response = await (0, supertest_1.default)(api_1.default)
-                .get('/api/kyc/status')
-                .set('x-user-id', 'user-no-kyc');
-            (0, vitest_1.expect)(response.status).toBe(200);
-            (0, vitest_1.expect)(response.body.overall_status).toBe('pending');
-            (0, vitest_1.expect)(response.body.can_transfer).toBe(false);
-            (0, vitest_1.expect)(response.body.reason).toBe('no_kyc_record');
-            (0, vitest_1.expect)(Array.isArray(response.body.anchors)).toBe(true);
-        });
-    });
-    (0, vitest_1.describe)('POST /api/transfer', () => {
-        (0, vitest_1.it)('should reject unauthenticated requests', async () => {
-            const response = await (0, supertest_1.default)(api_1.default).post('/api/transfer').send({});
-            (0, vitest_1.expect)(response.status).toBe(401);
-        });
-        (0, vitest_1.it)('should reject when KYC not approved', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/transfer')
-                .set('x-user-id', 'user-no-kyc')
+                .post('/api/simulate-settlement')
                 .send({});
-            (0, vitest_1.expect)(response.status).toBe(403);
-            (0, vitest_1.expect)(response.body.error).toBeDefined();
-            (0, vitest_1.expect)(response.body.error.code).toBe('KYC_PENDING');
+            (0, vitest_1.expect)(response.status).toBe(400);
+            (0, vitest_1.expect)(response.body.error).toMatch(/remittanceId/);
         });
-    });
-    (0, vitest_1.describe)('WebhookHandler KYC update flow', () => {
-        (0, vitest_1.it)('should update both transactions and KYC status store', async () => {
-            const pool = (0, database_1.getPool)();
-            const webhookHandler = new webhook_handler_1.WebhookHandler(pool);
-            const updateSpy = vitest_1.vi.fn();
-            const upsertSpy = vitest_1.vi.fn();
-            // Replace internals with test doubles
-            webhookHandler.stateManager = { updateKYCStatus: updateSpy };
-            webhookHandler.kycUpsertService = { upsert: upsertSpy };
-            const payload = {
-                transaction_id: 'tx-abc',
-                kyc_status: 'approved',
-                kyc_fields: { name: 'Jane Doe' },
-                user_id: 'user-abc',
-                anchor_id: 'anchor-abc',
-                verified_at: new Date().toISOString(),
-                expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-            };
-            await webhookHandler.handleKYCUpdate(payload, 'anchor-abc');
-            (0, vitest_1.expect)(updateSpy).toHaveBeenCalledWith({
-                transaction_id: 'tx-abc',
-                kyc_status: 'approved',
-                kyc_fields: { name: 'Jane Doe' },
-                rejection_reason: undefined,
+        (0, vitest_1.it)('should return 400 when remittanceId is zero', async () => {
+            const response = await (0, supertest_1.default)(api_1.default)
+                .post('/api/simulate-settlement')
+                .send({ remittanceId: 0 });
+            (0, vitest_1.expect)(response.status).toBe(400);
+        });
+        (0, vitest_1.it)('should return 400 when remittanceId is negative', async () => {
+            const response = await (0, supertest_1.default)(api_1.default)
+                .post('/api/simulate-settlement')
+                .send({ remittanceId: -5 });
+            (0, vitest_1.expect)(response.status).toBe(400);
+        });
+        (0, vitest_1.it)('should return 400 when remittanceId is not an integer', async () => {
+            const response = await (0, supertest_1.default)(api_1.default)
+                .post('/api/simulate-settlement')
+                .send({ remittanceId: 1.5 });
+            (0, vitest_1.expect)(response.status).toBe(400);
+        });
+        (0, vitest_1.it)('should return 400 when remittanceId is a string', async () => {
+            const response = await (0, supertest_1.default)(api_1.default)
+                .post('/api/simulate-settlement')
+                .send({ remittanceId: 'abc' });
+            (0, vitest_1.expect)(response.status).toBe(400);
+        });
+        (0, vitest_1.it)('should return 200 with simulation result for valid remittanceId', async () => {
+            vitest_1.vi.spyOn(stellar, 'simulateSettlement').mockResolvedValueOnce({
+                would_succeed: true,
+                payout_amount: '9750',
+                fee: '250',
+                error_message: null,
             });
-            (0, vitest_1.expect)(upsertSpy).toHaveBeenCalledWith(vitest_1.expect.objectContaining({
-                user_id: 'user-abc',
-                anchor_id: 'anchor-abc',
-                kyc_status: 'approved',
-            }));
+            const response = await (0, supertest_1.default)(api_1.default)
+                .post('/api/simulate-settlement')
+                .send({ remittanceId: 1 });
+            (0, vitest_1.expect)(response.status).toBe(200);
+            (0, vitest_1.expect)(response.body.would_succeed).toBe(true);
+            (0, vitest_1.expect)(response.body.payout_amount).toBe('9750');
+            (0, vitest_1.expect)(response.body.fee).toBe('250');
+            (0, vitest_1.expect)(response.body.error_message).toBeNull();
+        });
+        (0, vitest_1.it)('should return 200 with would_succeed false when simulation fails', async () => {
+            vitest_1.vi.spyOn(stellar, 'simulateSettlement').mockResolvedValueOnce({
+                would_succeed: false,
+                payout_amount: '0',
+                fee: '0',
+                error_message: null,
+            });
+            const response = await (0, supertest_1.default)(api_1.default)
+                .post('/api/simulate-settlement')
+                .send({ remittanceId: 999 });
+            (0, vitest_1.expect)(response.status).toBe(200);
+            (0, vitest_1.expect)(response.body.would_succeed).toBe(false);
         });
     });
 });

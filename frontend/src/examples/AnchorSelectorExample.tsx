@@ -1,177 +1,203 @@
-import React, { useState } from 'react';
-import { AnchorSelector, AnchorProvider } from '../AnchorSelector';
-
 /**
- * AnchorSelectorExample - Demonstrates how to use the AnchorSelector component
- * 
- * This example shows:
- * - Basic usage with onSelect callback
- * - Currency filtering
- * - Custom API URL configuration
- * - Handling selected anchor data
+ * AnchorSelectorExample
+ *
+ * Minimal working example of AnchorSelector with mock data.
+ * Suitable for Storybook stories or standalone rendering — no live API needed.
+ *
+ * Strategy:
+ *   - On mount, patches window.fetch to intercept /api/anchors calls
+ *   - Returns mock anchor data matching the AnchorProvider shape
+ *   - Supports the `currency` query param for filtering
+ *   - Restores original fetch on unmount
  */
-export const AnchorSelectorExample: React.FC = () => {
-  const [selectedAnchor, setSelectedAnchor] = useState<AnchorProvider | null>(null);
-  const [selectedCurrency, setSelectedCurrency] = useState<string>('USD');
+import React, { useState, useEffect } from 'react';
+import { AnchorSelector, AnchorProvider } from '../components/AnchorSelector';
 
-  // Handle anchor selection
-  const handleAnchorSelect = (anchor: AnchorProvider) => {
-    setSelectedAnchor(anchor);
-    console.log('Selected anchor:', anchor);
+// ---------------------------------------------------------------------------
+// Mock data
+// ---------------------------------------------------------------------------
+const MOCK_ANCHORS: AnchorProvider[] = [
+  {
+    id: 'anchor-1',
+    name: 'MoneyGram Access',
+    domain: 'moneygram.stellar.org',
+    logo_url: 'https://placehold.co/32x32?text=MG',
+    description: 'Global money transfer service with extensive agent network',
+    status: 'active',
+    fees: {
+      deposit_fee_percent: 1.5,
+      deposit_fee_fixed: 0,
+      withdrawal_fee_percent: 2.0,
+      withdrawal_fee_fixed: 1.0,
+      min_fee: 1.0,
+      max_fee: 50.0,
+    },
+    limits: { min_amount: 10, max_amount: 10000, daily_limit: 25000, monthly_limit: 100000 },
+    compliance: {
+      kyc_required: true,
+      kyc_level: 'intermediate',
+      supported_countries: ['US', 'CA', 'MX', 'GB', 'PH', 'IN'],
+      restricted_countries: ['KP', 'IR', 'SY'],
+      documents_required: ['government_id', 'proof_of_address'],
+    },
+    supported_currencies: ['USD', 'EUR', 'GBP', 'PHP', 'INR'],
+    processing_time: '1-3 business days',
+    rating: 4.5,
+    total_transactions: 125000,
+    verified: true,
+  },
+  {
+    id: 'anchor-2',
+    name: 'Circle USDC',
+    domain: 'circle.com',
+    logo_url: 'https://placehold.co/32x32?text=CC',
+    description: 'Leading USDC issuer with instant settlement',
+    status: 'active',
+    fees: {
+      deposit_fee_percent: 0.5,
+      withdrawal_fee_percent: 0.5,
+      min_fee: 0,
+      max_fee: 25.0,
+    },
+    limits: { min_amount: 1, max_amount: 50000, daily_limit: 100000, monthly_limit: 500000 },
+    compliance: {
+      kyc_required: true,
+      kyc_level: 'advanced',
+      supported_countries: ['US', 'CA', 'GB'],
+      restricted_countries: ['KP', 'IR', 'SY', 'CU'],
+      documents_required: ['government_id', 'proof_of_address', 'ssn_or_tax_id'],
+    },
+    supported_currencies: ['USD', 'EUR'],
+    processing_time: 'Instant',
+    rating: 4.8,
+    total_transactions: 500000,
+    verified: true,
+  },
+  {
+    id: 'anchor-3',
+    name: 'AnchorUSD',
+    domain: 'anchorusd.com',
+    logo_url: 'https://placehold.co/32x32?text=AU',
+    description: 'Fast and reliable USD anchor for Stellar network',
+    status: 'active',
+    fees: {
+      deposit_fee_percent: 1.0,
+      deposit_fee_fixed: 0.5,
+      withdrawal_fee_percent: 1.0,
+      withdrawal_fee_fixed: 0.5,
+      min_fee: 0.5,
+      max_fee: 30.0,
+    },
+    limits: { min_amount: 5, max_amount: 25000, daily_limit: 50000 },
+    compliance: {
+      kyc_required: true,
+      kyc_level: 'basic',
+      supported_countries: ['US', 'CA', 'MX', 'BR', 'AR'],
+      restricted_countries: ['KP', 'IR'],
+      documents_required: ['government_id'],
+    },
+    supported_currencies: ['USD'],
+    processing_time: '2-4 hours',
+    rating: 4.2,
+    total_transactions: 75000,
+    verified: true,
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Fetch interceptor
+// ---------------------------------------------------------------------------
+function installMockFetch(): () => void {
+  const original = window.fetch;
+
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+        ? input.href
+        : (input as Request).url;
+
+    if (url.includes('/api/anchors')) {
+      const { searchParams } = new URL(url, 'http://localhost');
+      const currency = searchParams.get('currency');
+
+      const data = currency
+        ? MOCK_ANCHORS.filter((a) => a.supported_currencies.includes(currency))
+        : MOCK_ANCHORS;
+
+      return new Response(
+        JSON.stringify({ success: true, data, count: data.length, timestamp: new Date().toISOString() }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    return original(input, init);
   };
 
-  return (
-    <div style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
-      <h1>Anchor Provider Selection Example</h1>
+  return () => {
+    window.fetch = original;
+  };
+}
 
-      {/* Currency Filter */}
+// ---------------------------------------------------------------------------
+// Example component
+// ---------------------------------------------------------------------------
+export const AnchorSelectorExample: React.FC = () => {
+  const [selectedAnchor, setSelectedAnchor] = useState<AnchorProvider | null>(null);
+  const [currency, setCurrency] = useState<string>('USD');
+
+  useEffect(() => {
+    const restore = installMockFetch();
+    return restore;
+  }, []);
+
+  return (
+    <div style={{ padding: '24px', maxWidth: '560px', margin: '0 auto', fontFamily: 'sans-serif' }}>
+      <h2 style={{ marginBottom: '16px' }}>AnchorSelector — Mock Example</h2>
+
       <div style={{ marginBottom: '20px' }}>
-        <label htmlFor="currency-select" style={{ display: 'block', marginBottom: '8px' }}>
-          Select Currency:
+        <label htmlFor="currency-select" style={{ display: 'block', marginBottom: '6px', fontSize: '14px' }}>
+          Filter by currency
         </label>
         <select
           id="currency-select"
-          value={selectedCurrency}
-          onChange={(e) => setSelectedCurrency(e.target.value)}
-          style={{
-            padding: '8px',
-            borderRadius: '4px',
-            border: '1px solid #ccc',
-            fontSize: '14px',
-          }}
+          value={currency}
+          onChange={(e) => setCurrency(e.target.value)}
+          style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '14px' }}
         >
-          <option value="USD">USD - US Dollar</option>
-          <option value="EUR">EUR - Euro</option>
-          <option value="GBP">GBP - British Pound</option>
-          <option value="MXN">MXN - Mexican Peso</option>
-          <option value="NGN">NGN - Nigerian Naira</option>
+          <option value="USD">USD</option>
+          <option value="EUR">EUR</option>
+          <option value="GBP">GBP</option>
+          <option value="PHP">PHP</option>
+          <option value="INR">INR</option>
         </select>
       </div>
 
-      {/* AnchorSelector Component */}
-      {/* 
-        Props:
-        - onSelect: Callback function triggered when user selects an anchor
-        - currency: Filter anchors by supported currency
-        - apiUrl: Custom API endpoint (defaults to http://localhost:3000)
-        - selectedAnchorId: Pre-select an anchor by ID (optional)
-      */}
       <AnchorSelector
-        onSelect={handleAnchorSelect}
-        currency={selectedCurrency}
+        onSelect={(anchor) => {
+          setSelectedAnchor(anchor);
+          console.log('[AnchorSelectorExample] selected:', anchor);
+        }}
+        currency={currency}
+        selectedAnchorId={selectedAnchor?.id}
         apiUrl="http://localhost:3000"
       />
 
-      {/* Display Selected Anchor Information */}
       {selectedAnchor && (
-        <div
+        <pre
           style={{
-            marginTop: '30px',
-            padding: '20px',
-            backgroundColor: '#f5f5f5',
-            borderRadius: '8px',
-            border: '1px solid #ddd',
+            marginTop: '24px',
+            padding: '16px',
+            background: '#f4f4f4',
+            borderRadius: '6px',
+            fontSize: '12px',
+            overflowX: 'auto',
           }}
         >
-          <h2>Selected Anchor Details</h2>
-
-          <div style={{ marginBottom: '15px' }}>
-            <strong>Name:</strong> {selectedAnchor.name}
-          </div>
-
-          <div style={{ marginBottom: '15px' }}>
-            <strong>Domain:</strong> {selectedAnchor.domain}
-          </div>
-
-          <div style={{ marginBottom: '15px' }}>
-            <strong>Status:</strong>{' '}
-            <span
-              style={{
-                padding: '4px 8px',
-                borderRadius: '4px',
-                backgroundColor:
-                  selectedAnchor.status === 'active' ? '#d4edda' : '#f8d7da',
-                color: selectedAnchor.status === 'active' ? '#155724' : '#721c24',
-              }}
-            >
-              {selectedAnchor.status}
-            </span>
-          </div>
-
-          <div style={{ marginBottom: '15px' }}>
-            <strong>Withdrawal Fee:</strong>{' '}
-            {selectedAnchor.fees.withdrawal_fee_percent}%
-            {selectedAnchor.fees.withdrawal_fee_fixed &&
-              ` + $${selectedAnchor.fees.withdrawal_fee_fixed.toFixed(2)}`}
-          </div>
-
-          <div style={{ marginBottom: '15px' }}>
-            <strong>Transaction Limits:</strong> $
-            {selectedAnchor.limits.min_amount.toLocaleString()} - $
-            {selectedAnchor.limits.max_amount.toLocaleString()}
-          </div>
-
-          <div style={{ marginBottom: '15px' }}>
-            <strong>Processing Time:</strong> {selectedAnchor.processing_time}
-          </div>
-
-          {selectedAnchor.rating && (
-            <div style={{ marginBottom: '15px' }}>
-              <strong>Rating:</strong> ⭐ {selectedAnchor.rating.toFixed(1)}/5.0
-            </div>
-          )}
-
-          <div style={{ marginBottom: '15px' }}>
-            <strong>KYC Required:</strong>{' '}
-            {selectedAnchor.compliance.kyc_required ? 'Yes' : 'No'}
-          </div>
-
-          <div style={{ marginBottom: '15px' }}>
-            <strong>Supported Currencies:</strong>{' '}
-            {selectedAnchor.supported_currencies.join(', ')}
-          </div>
-
-          {/* Action Button Example */}
-          <button
-            onClick={() => {
-              console.log('Proceeding with anchor:', selectedAnchor.name);
-              // Here you would typically proceed with the remittance flow
-            }}
-            style={{
-              marginTop: '15px',
-              padding: '10px 20px',
-              backgroundColor: '#007bff',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '14px',
-            }}
-          >
-            Proceed with {selectedAnchor.name}
-          </button>
-        </div>
+          {JSON.stringify(selectedAnchor, null, 2)}
+        </pre>
       )}
-
-      {/* Help Text */}
-      <div
-        style={{
-          marginTop: '30px',
-          padding: '15px',
-          backgroundColor: '#e7f3ff',
-          borderRadius: '4px',
-          border: '1px solid #b3d9ff',
-          fontSize: '14px',
-        }}
-      >
-        <strong>How to use:</strong>
-        <ul style={{ marginTop: '10px', marginBottom: '0' }}>
-          <li>Select a currency from the dropdown above</li>
-          <li>Click on an anchor provider to view details</li>
-          <li>The selected anchor information will appear below</li>
-          <li>Click "Proceed" to continue with the remittance flow</li>
-        </ul>
-      </div>
     </div>
   );
 };

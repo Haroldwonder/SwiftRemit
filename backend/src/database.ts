@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import { AssetVerification, VerificationStatus, FxRate, FxRateRecord, KycStatus, UserKycStatus, AnchorKycConfig } from './types';
+import { AssetVerification, VerificationStatus, FxRate, FxRateRecord, KycStatus, DbUserKycStatus, AnchorKycConfig } from './types';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -320,7 +320,7 @@ export async function getAnchorKycConfigs(): Promise<AnchorKycConfig[]> {
   }));
 }
 
-export async function saveUserKycStatus(kycStatus: UserKycStatus): Promise<void> {
+export async function saveUserKycStatus(kycStatus: DbUserKycStatus): Promise<void> {
   const query = `
     INSERT INTO user_kyc_status (
       user_id, anchor_id, status, last_checked, expires_at, rejection_reason, verification_data
@@ -346,7 +346,7 @@ export async function saveUserKycStatus(kycStatus: UserKycStatus): Promise<void>
   ]);
 }
 
-export async function getUserKycStatus(userId: string, anchorId: string): Promise<UserKycStatus | null> {
+export async function getUserKycStatus(userId: string, anchorId: string): Promise<DbUserKycStatus | null> {
   const query = `
     SELECT * FROM user_kyc_status 
     WHERE user_id = $1 AND anchor_id = $2
@@ -369,7 +369,7 @@ export async function getUserKycStatus(userId: string, anchorId: string): Promis
   };
 }
 
-export async function getUsersNeedingKycCheck(anchorId: string, minutesSinceLastCheck: number): Promise<UserKycStatus[]> {
+export async function getUsersNeedingKycCheck(anchorId: string, minutesSinceLastCheck: number): Promise<DbUserKycStatus[]> {
   const query = `
     SELECT * FROM user_kyc_status 
     WHERE anchor_id = $1 
@@ -391,7 +391,7 @@ export async function getUsersNeedingKycCheck(anchorId: string, minutesSinceLast
   }));
 }
 
-export async function getApprovedUsers(): Promise<UserKycStatus[]> {
+export async function getApprovedUsers(): Promise<DbUserKycStatus[]> {
   const query = `
     SELECT * FROM user_kyc_status 
     WHERE status = 'approved' 
