@@ -251,8 +251,51 @@ SwiftRemit uses environment variables for configuration. This allows you to easi
 | 5 | AgentNotRegistered | Agent not in approved list |
 | 6 | RemittanceNotFound | Remittance ID does not exist |
 | 7 | InvalidStatus | Operation not allowed in current status |
-| 8 | Overflow | Arithmetic overflow detected |
+| 8 | InvalidStateTransition | Invalid state transition attempted |
 | 9 | NoFeesToWithdraw | No accumulated fees available |
+| 10 | InvalidAddress | Invalid address format or validation failed |
+| 11 | SettlementExpired | Settlement window has expired |
+| 12 | DuplicateSettlement | Settlement already executed |
+| 13 | ContractPaused | Contract is paused; settlements temporarily disabled |
+| 14 | AssetNotFound | Asset verification record not found |
+| 15 | UserBlacklisted | User is blacklisted and cannot perform transactions |
+| 16 | InvalidReputationScore | Reputation score must be between 0 and 100 |
+| 17 | KycNotApproved | User KYC is not approved |
+| 18 | SuspiciousAsset | Asset has been flagged as suspicious |
+| 19 | AnchorTransactionFailed | Anchor withdrawal/deposit operation failed |
+| 20 | Unauthorized | Caller is not authorized to perform this operation |
+| 21 | DailySendLimitExceeded | User's daily send limit exceeded |
+| 22 | TokenAlreadyWhitelisted | Token is already whitelisted |
+| 23 | KycExpired | User KYC has expired and needs renewal |
+| 24 | TransactionNotFound | Transaction record not found |
+| 25 | RateLimitExceeded | Rate limit exceeded |
+| 26 | AdminAlreadyExists | Admin address already registered |
+| 27 | AdminNotFound | Admin address not found |
+| 28 | CannotRemoveLastAdmin | Cannot remove the last admin |
+| 29 | TokenNotWhitelisted | Token is not whitelisted |
+| 30 | InvalidMigrationHash | Migration hash verification failed |
+| 31 | MigrationInProgress | Migration already in progress or completed |
+| 32 | InvalidMigrationBatch | Migration batch out of order or invalid |
+| 33 | CooldownActive | Cooldown period is still active |
+| 34 | SuspiciousActivity | Suspicious activity detected |
+| 35 | ActionBlocked | Action temporarily blocked due to abuse protection |
+| 36 | Overflow | Arithmetic overflow detected |
+| 37 | NetSettlementValidationFailed | Net settlement validation failed |
+| 38 | EscrowNotFound | Escrow record not found |
+| 39 | InvalidEscrowStatus | Invalid escrow status for this operation |
+| 40 | SettlementCounterOverflow | Settlement counter overflow |
+| 41 | InvalidBatchSize | Invalid batch size for batch operations |
+| 42 | DataCorruption | Data corruption detected in stored values |
+| 43 | IndexOutOfBounds | Index out of bounds |
+| 44 | EmptyCollection | Collection is empty |
+| 45 | KeyNotFound | Key not found in map |
+| 46 | StringConversionFailed | String conversion failed |
+| 47 | InvalidSymbol | Invalid or malformed symbol string |
+| 48 | Underflow | Arithmetic underflow occurred |
+| 49 | IdempotencyConflict | Idempotency key conflict with different payload |
+| 50 | InvalidProof | Proof validation failed |
+| 51 | MissingProof | Proof is required but not provided |
+| 52 | InvalidOracleAddress | Oracle address is invalid or not configured |
 
 ## Events
 
