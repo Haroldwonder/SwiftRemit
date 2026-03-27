@@ -81,7 +81,7 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --verbose --lib --features legacy-tests
 
   lint:
     name: Lint Contract
