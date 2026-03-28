@@ -24,7 +24,7 @@
 
 .camera-video {
   width: 100%;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .camera-overlay {
@@ -43,17 +43,17 @@
 .overlay-frame {
   width: 80%;
   height: 60%;
-  border: 2px solid #fff;
-  border-radius: 8px;
+  border: 2px solid var(--text-primary);
+  border-radius: var(--radius-md);
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
 }
 
 .overlay-text {
   margin-top: 10px;
-  color: #fff;
+  color: var(--text-primary);
   background: rgba(0, 0, 0, 0.7);
   padding: 5px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 14px;
 }
 
@@ -63,16 +63,16 @@
   left: 50%;
   transform: translateX(-50%);
   padding: 10px 20px;
-  background: #007bff;
-  color: #fff;
+  background: var(--bg-info);
+  color: var(--text-primary);
   border: none;
-  border-radius: 50px;
+  border-radius: var(--radius-full);
   cursor: pointer;
   font-size: 16px;
 }
 
 .capture-button:hover {
-  background: #0056b3;
+  background: var(--bg-info-light);
 }
 
 .preview-container {
@@ -84,7 +84,7 @@
 .captured-image {
   width: 100%;
   max-width: 400px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   margin-bottom: 20px;
 }
 
@@ -97,30 +97,30 @@
 .release-button {
   padding: 10px 20px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 16px;
 }
 
 .retake-button {
-  background: #6c757d;
-  color: #fff;
+  background: var(--bg-badge);
+  color: var(--text-primary);
 }
 
 .retake-button:hover {
-  background: #545b62;
+  background: var(--bg-badge-hover);
 }
 
 .release-button {
-  background: #28a745;
-  color: #fff;
+  background: var(--bg-success);
+  color: var(--text-primary);
 }
 
 .release-button:hover {
-  background: #218838;
+  background: var(--bg-success-light);
 }
 
 .release-button:disabled {
-  background: #6c757d;
+  background: var(--bg-badge);
   cursor: not-allowed;
 }
