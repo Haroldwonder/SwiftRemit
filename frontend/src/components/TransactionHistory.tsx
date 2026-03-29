@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import type { TransactionProgressStatus } from './TransactionStatusTracker';
 import './TransactionHistory.css';
 
 type HistoryViewMode = 'table' | 'card';
+type PaginationMode = 'page' | 'infinite';
 
 export interface TransactionHistoryItem {
   id: string;
@@ -21,6 +22,11 @@ interface TransactionHistoryProps {
   pageSize?: number;
   currentPage?: number;
   onPageChange?: (page: number) => void;
+  paginationMode?: PaginationMode;
+  onLoadMore?: (page: number) => Promise<void> | void;
+  isLoading?: boolean;
+  hasMore?: boolean;
+  enableInfiniteScroll?: boolean;
 }
 
 function formatAmount(amount: number, asset: string): string {
@@ -37,13 +43,22 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   transactions,
   defaultView = 'table',
   title = 'Transaction History',
-  pageSize = 10,
+  pageSize = 20, // Changed default from 10 to 20
   currentPage: controlledPage,
   onPageChange,
+  paginationMode = 'page',
+  onLoadMore,
+  isLoading = false,
+  hasMore = true,
+  enableInfiniteScroll = false,
 }) => {
   const [view, setView] = useState<HistoryViewMode>(defaultView);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [uncontrolledPage, setUncontrolledPage] = useState(1);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
   const isControlled = controlledPage !== undefined;
   const currentPage = isControlled ? controlledPage : uncontrolledPage;
@@ -90,12 +105,56 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
     setExpandedId((current) => (current === id ? null : id));
   };
 
+  const handleLoadMore = useCallback(async () => {
+    if (onLoadMore && !isLoading && !isFetchingMore && hasMore) {
+      setIsFetchingMore(true);
+      try {
+        await onLoadMore(currentPage + 1);
+      } finally {
+        setIsFetchingMore(false);
+      }
+    }
+  }, [onLoadMore, isLoading, isFetchingMore, hasMore, currentPage]);
+
   // Reset to page 1 when transactions change
   React.useEffect(() => {
     if (!isControlled) {
       setUncontrolledPage(1);
     }
   }, [transactions, isControlled]);
+
+  // Infinite scroll effect
+  useEffect(() => {
+    if (!enableInfiniteScroll || !onLoadMore || !hasMore || isLoading || isFetchingMore) {
+      return;
+    }
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore) {
+          handleLoadMore();
+        }
+      },
+      {
+        root: null,
+        rootMargin: '100px',
+        threshold: 0,
+      }
+    );
+
+    observer.observe(container);
+    observerRef.current = observer;
+
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
+    };
+  }, [enableInfiniteScroll, onLoadMore, hasMore, isLoading, isFetchingMore, handleLoadMore]);
 
   return (
     <section className="transaction-history" aria-label="Transaction history">
@@ -243,27 +302,61 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
             </div>
           )}
 
-          <nav className="history-pagination" aria-label="Pagination">
-            <button
-              type="button"
-              onClick={handlePrevPage}
-              disabled={currentPage === 1}
-              aria-label="Previous page"
-            >
-              Previous
-            </button>
-            <span className="pagination-info" aria-live="polite">
-              Page {currentPage} of {paginationData.totalPages}
-            </span>
-            <button
-              type="button"
-              onClick={handleNextPage}
-              disabled={currentPage === paginationData.totalPages}
-              aria-label="Next page"
-            >
-              Next
-            </button>
-          </nav>
+          {paginationMode === 'page' && (
+            <nav className="history-pagination" aria-label="Pagination">
+              <button
+                type="button"
+                onClick={handlePrevPage}
+                disabled={currentPage === 1}
+                aria-label="Previous page"
+              >
+                Previous
+              </button>
+              <span className="pagination-info" aria-live="polite">
+                Page {currentPage} of {paginationData.totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={handleNextPage}
+                disabled={currentPage === paginationData.totalPages}
+                aria-label="Next page"
+              >
+                Next
+              </button>
+            </nav>
+          )}
+
+          {paginationMode === 'infinite' && onLoadMore && hasMore && (
+            <div className="history-load-more">
+              <button
+                type="button"
+                onClick={handleLoadMore}
+                disabled={isLoading || isFetchingMore || !hasMore}
+                className="load-more-btn"
+                aria-label="Load more transactions"
+              >
+                {isLoading || isFetchingMore ? (
+                  <span className="loading-spinner" aria-hidden="true">
+                    <span className="spinner"></span>
+                    Loading...
+                  </span>
+                ) : (
+                  'Load More'
+                )}
+              </button>
+            </div>
+          )}
+
+          {paginationMode === 'infinite' && enableInfiniteScroll && onLoadMore && hasMore && (
+            <div ref={containerRef} className="infinite-scroll-sentinel" aria-hidden="true">
+              {isLoading || isFetchingMore ? (
+                <div className="loading-spinner">
+                  <span className="spinner"></span>
+                  Loading more transactions...
+                </div>
+              ) : null}
+            </div>
+          )}
         </>
       )}
     </section>
