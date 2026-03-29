@@ -3,13 +3,19 @@ import { AssetVerifier } from './verifier';
 import { getStaleAssets, saveAssetVerification, getPool } from './database';
 import { storeVerificationOnChain } from './stellar';
 import { KycService } from './kyc-service';
+import { Sep24Service } from './sep24-service';
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
+const pool = getPool();
+const sep24Service = new Sep24Service(pool);
 
 export async function startBackgroundJobs() {
   // Initialize KYC service
   await kycService.initialize();
+
+  // Initialize SEP-24 service
+  await sep24Service.initialize();
 
   // Run every 6 hours
   cron.schedule('0 */6 * * *', async () => {
@@ -21,6 +27,12 @@ export async function startBackgroundJobs() {
   cron.schedule('*/30 * * * *', async () => {
     console.log('Starting KYC status polling...');
     await pollKycStatuses();
+  });
+
+  // Run SEP-24 transaction polling every 2 minutes
+  cron.schedule('*/2 * * * *', async () => {
+    console.log('Starting SEP-24 transaction polling...');
+    await pollSep24Transactions();
   });
 
   console.log('Background jobs scheduled');
@@ -80,5 +92,14 @@ async function pollKycStatuses() {
     console.log('KYC polling completed');
   } catch (error) {
     console.error('Error in KYC polling job:', error);
+  }
+}
+
+async function pollSep24Transactions() {
+  try {
+    await sep24Service.pollAllTransactions();
+    console.log('SEP-24 polling completed');
+  } catch (error) {
+    console.error('Error in SEP-24 polling job:', error);
   }
 }

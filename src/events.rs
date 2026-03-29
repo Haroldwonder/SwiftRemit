@@ -20,7 +20,7 @@ use soroban_sdk::{symbol_short, Address, Env, String};
 //   and perform migrations when the event format evolves
 // ============================================================================
 
-const SCHEMA_VERSION: u32 = 1;
+use crate::config::SCHEMA_VERSION;
 
 // ── Admin Events ───────────────────────────────────────────────────
 
@@ -56,6 +56,46 @@ pub fn emit_unpaused(env: &Env, admin: Address) {
             env.ledger().sequence(),
             env.ledger().timestamp(),
             admin,
+        ),
+    );
+}
+
+/// Emits an event when a new admin is added.
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `caller` - Address of the admin who added the new admin
+/// * `new_admin` - Address of the newly added admin
+pub fn emit_admin_added(env: &Env, caller: Address, new_admin: Address) {
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("added")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            caller,
+            new_admin,
+        ),
+    );
+}
+
+/// Emits an event when an admin is removed.
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `caller` - Address of the admin who removed the admin
+/// * `removed_admin` - Address of the removed admin
+pub fn emit_admin_removed(env: &Env, caller: Address, removed_admin: Address) {
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("removed")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            caller,
+            removed_admin,
         ),
     );
 }
@@ -351,118 +391,10 @@ pub fn emit_fees_withdrawn(env: &Env, caller: Address, to: Address, token: Addre
     );
 }
 
-pub fn emit_treasury_updated(env: &Env, admin: Address, old_treasury: Option<Address>, new_treasury: Address) {
-    env.events().publish(
-        (symbol_short!("treasury"), symbol_short!("upd")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            admin,
-            old_treasury,
-            new_treasury,
-        ),
-    );
+pub fn emit_dispute_resolved(env: &Env, id: u64, in_favour_of_sender: bool) {
+    env.events().publish((Symbol::new(env, "dispute_resolved"), id), in_favour_of_sender);
 }
 
-pub fn emit_integrator_fees_withdrawn(env: &Env, integrator: Address, to: Address, token: Address, amount: i128) {
-    env.events().publish(
-        (symbol_short!("fee"), symbol_short!("int_with")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            integrator,
-            to,
-            token,
-            amount,
-        ),
-    );
-}
-
-// ── Settlement Events ──────────────────────────────────────────────
-
-/// Emits a structured completion event when a settlement is finalized.
-///
-/// This event is emitted exactly once per completed settlement, after all state
-/// transitions are successfully committed. It includes sufficient identifiers to
-/// uniquely reference the finalized settlement.
-///
-/// # Guarantees
-///
-/// - **Exactly-Once Emission**: Event is emitted once and only once per settlement
-/// - **Post-Finalization**: Only emitted after all state changes are committed
-/// - **Unique Identification**: Includes remittance_id for unambiguous reference
-/// - **Deterministic**: Same settlement always produces same event
-/// - **No Re-entry**: Protected against duplicate emission on retries
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `remittance_id` - Unique ID of the finalized settlement
-/// * `sender` - Address of the sender
-/// * `receiver` - Address of the receiver (agent)
-/// * `asset` - Address of the token contract (e.g., USDC)
-/// * `amount` - Settlement amount transferred
-///
-/// # Event Structure
-///
-/// Topic: `("settle", "complete")`
-/// Data: `(schema_version, ledger_sequence, timestamp, remittance_id, sender, receiver, asset, amount)`
-///
-/// # Usage
-///
-/// This function should only be called from `confirm_payout` after:
-/// 1. All validations pass
-/// 2. Token transfer completes
-/// 3. Fee accumulation succeeds
-/// 4. Status updated to Settled
-/// 5. Settlement hash set
-/// 6. Event emission flag checked
-pub fn emit_settlement_completed(
-    env: &Env,
-    remittance_id: u64,
-    sender: Address,
-    receiver: Address,
-    asset: Address,
-    amount: i128,
-) {
-    env.events().publish(
-        (symbol_short!("settle"), symbol_short!("complete")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            remittance_id,
-            sender,
-            receiver,
-            asset,
-            amount,
-        ),
-    );
-}
-// ── Escrow Events ──────────────────────────────────────────────────
-
-/// Emits an event when escrow is created
-pub fn emit_escrow_created(env: &Env, transfer_id: u64, sender: Address, recipient: Address, amount: i128) {
-    env.events().publish(
-        (symbol_short!("escrow"), symbol_short!("created")),
-        (SCHEMA_VERSION, env.ledger().sequence(), env.ledger().timestamp(), transfer_id, sender, recipient, amount),
-    );
-}
-
-/// Emits an event when escrow funds are released
-pub fn emit_escrow_released(env: &Env, transfer_id: u64, recipient: Address, amount: i128) {
-    env.events().publish(
-        (symbol_short!("escrow"), symbol_short!("released")),
-        (SCHEMA_VERSION, env.ledger().sequence(), env.ledger().timestamp(), transfer_id, recipient, amount),
-    );
-}
-
-/// Emits an event when escrow funds are refunded
-pub fn emit_escrow_refunded(env: &Env, transfer_id: u64, sender: Address, amount: i128) {
-    env.events().publish(
-        (symbol_short!("escrow"), symbol_short!("refunded")),
-        (SCHEMA_VERSION, env.ledger().sequence(), env.ledger().timestamp(), transfer_id, sender, amount),
-    );
+pub fn emit_remittance_failed(env: &Env, id: u64, agent: Address) {
+    env.events().publish((Symbol::new(env, "remittance_failed"), id), agent);
 }

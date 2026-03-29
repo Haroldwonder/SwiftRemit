@@ -14,9 +14,11 @@ let logger = createLogger('health-check-demo');
 // Mock contract health check response
 function mockContractHealth() {
   return {
-    operational: true,
-    timestamp: Math.floor(Date.now() / 1000),
-    initialized: true
+    initialized: true,
+    paused: false,
+    admin_count: 1,
+    total_remittances: 0,
+    accumulated_fees: 0,
   };
 }
 
@@ -58,9 +60,11 @@ async function main() {
     logger.info({
       check_num: i,
       status: result.success ? '✅ HEALTHY' : '❌ UNHEALTHY',
-      operational: result.data?.operational,
       initialized: result.data?.initialized,
-      timestamp: result.data?.timestamp,
+      paused: result.data?.paused,
+      admin_count: result.data?.admin_count,
+      total_remittances: result.data?.total_remittances,
+      accumulated_fees: result.data?.accumulated_fees,
       latency_ms: result.latency_ms,
       performance: result.latency_ms < 100 ? '✅ PASS' : '⚠️  SLOW'
     }, 'Health check result');
@@ -72,9 +76,11 @@ async function main() {
     expected_response_structure: {
       success: true,
       data: {
-        operational: true,
-        timestamp: 1708545351,
-        initialized: true
+        initialized: true,
+        paused: false,
+        admin_count: 1,
+        total_remittances: 42,
+        accumulated_fees: 1250000,
       },
       error: null
     }

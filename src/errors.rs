@@ -253,6 +253,15 @@ pub enum ContractError {
     /// Oracle address is invalid or not configured.
     /// Cause: Settlement requires proof but oracle_address is None.
     InvalidOracleAddress = 52,
+
+    /// The dispute window for this failed remittance has expired.
+    DisputeWindowExpired = 53,
+
+    /// This remittance has already been disputed.
+    AlreadyDisputed = 54,
+
+    /// This operation requires the remittance to be in a Disputed state.
+    NotDisputed = 55,
 }
 
 #[cfg(test)]

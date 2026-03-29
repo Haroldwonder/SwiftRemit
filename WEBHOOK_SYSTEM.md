@@ -9,7 +9,7 @@ Secure webhook endpoint for receiving and processing anchor callbacks with signa
 - ✅ **Transaction State Management**: Enforced state transitions with validation
 - ✅ **Suspicious Activity Detection**: Pattern-based anomaly detection
 - ✅ **Comprehensive Logging**: All webhooks logged with verification status
-- ✅ **Multi-Event Support**: Deposit, withdrawal, and KYC updates
+- ✅ **Multi-Event Support**: Deposit, withdrawal, KYC, and remittance created updates
 
 ## Architecture
 
@@ -88,6 +88,21 @@ x-anchor-id: <anchor-identifier>
 }
 ```
 
+**Remittance Created Payload:**
+```json
+{
+  "event_type": "contract_created",
+  "remittance_id": "42",
+  "sender": "GBX...SENDER",
+  "agent": "GBY...AGENT",
+  "amount": "10000000",
+  "fee": "100000",
+  "expiry": "1777777777"
+}
+```
+
+The webhook handler normalizes this contract-created event into outbound `remittance.created` deliveries for all active registered webhook subscribers.
+
 **Response:**
 ```json
 {
@@ -149,6 +164,28 @@ pending_user_transfer_start → pending_anchor → pending_external → complete
 
 Invalid transitions are rejected with error.
 
+### 4. Outbound Subscriber Delivery
+
+When a contract-created remittance event is detected, the service dispatches an outbound `remittance.created` webhook to every active subscriber in `webhook_subscribers`.
+
+`remittance.created` payload fields:
+- `remittance_id`
+- `sender`
+- `agent`
+- `amount`
+- `fee`
+- `expiry`
+
+Delivery attempts are persisted in `webhook_deliveries`.
+
+### 5. Retry Behavior
+
+- Failed subscriber deliveries are retried with incremental backoff.
+- Retry delay matches existing retry pattern: `1000ms * attempt`.
+- Maximum attempts per delivery: `5`.
+- Once max attempts are exhausted, delivery is marked `failed`.
+- Retry worker runs every minute via background scheduler.
+
 ### 4. Suspicious Activity Detection
 
 Automatically flags:
@@ -192,6 +229,31 @@ CREATE TABLE transactions (
   amount_out DECIMAL(20, 7),
   stellar_transaction_id VARCHAR(64),
   external_transaction_id VARCHAR(255)
+);
+
+-- Outbound subscriber registry
+CREATE TABLE webhook_subscribers (
+  id UUID PRIMARY KEY,
+  url TEXT NOT NULL,
+  secret VARCHAR(255),
+  active BOOLEAN
+);
+
+-- Outbound delivery queue / retries
+CREATE TABLE webhook_deliveries (
+  id UUID PRIMARY KEY,
+  event_type VARCHAR(80),
+  event_key VARCHAR(255),
+  subscriber_id UUID,
+  target_url TEXT,
+  payload JSONB,
+  status VARCHAR(20),
+  attempt_count INTEGER,
+  max_attempts INTEGER,
+  next_retry_at TIMESTAMP,
+  last_error TEXT,
+  response_status INTEGER,
+  delivered_at TIMESTAMP
 );
 ```
 
@@ -328,6 +390,63 @@ Set up alerts for:
 4. **Rate Limiting**: Implement per-anchor rate limits
 5. **IP Whitelisting**: Restrict to known anchor IPs
 6. **Audit Trail**: Maintain complete webhook history
+
+## Middleware Enforcement
+
+As of version 2.0, HMAC signature verification is enforced via Express middleware on all `/webhooks/*` routes. This ensures that:
+
+- Every inbound webhook request is verified before processing
+- No handler can accidentally skip verification
+- Invalid/missing signatures return 401 immediately
+
+### Middleware Usage
+
+```typescript
+import { createWebhookVerificationMiddleware } from './webhook-middleware';
+
+// Apply to your Express app
+const verifyWebhook = createWebhookVerificationMiddleware({
+  timestampWindowSeconds: 300,  // 5 minute window
+  requireSignature: true,
+  getAnchorSecret: async (anchorId) => {
+    // Fetch from your database or config
+    return getSecretFromDb(anchorId);
+  },
+});
+
+app.use('/webhooks', verifyWebhook);
+```
+
+### Required Headers
+
+All webhook requests must include:
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| x-anchor-id | Yes | Anchor identifier |
+| x-signature | Yes* | HMAC-SHA256 signature |
+| x-timestamp | No** | ISO-8601 timestamp |
+| x-nonce | No** | Unique request ID |
+
+*Required unless `requireSignature: false` in middleware options
+**Recommended for replay attack prevention
+
+### Testing Verification
+
+Run the unit tests to verify middleware correctly rejects tampered payloads:
+
+```bash
+cd backend
+npm test -- webhook-middleware.test.ts
+```
+
+Test coverage includes:
+- ✅ Valid signatures accepted
+- ✅ Invalid signatures rejected
+- ✅ Tampered payloads rejected
+- ✅ Missing signatures rejected (when required)
+- ✅ Expired timestamps rejected
+- ✅ Duplicate nonces rejected (replay attack)
 
 ## Troubleshooting
 

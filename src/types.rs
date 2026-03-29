@@ -49,6 +49,10 @@ pub enum RemittanceStatus {
     Completed,
     /// Terminal state: cancelled by sender or failed, funds refunded
     Cancelled,
+    /// The agent marked the payout as failed
+    Failed,
+    /// The sender has challenged a failed payout
+    Disputed,
 }
 
 impl RemittanceStatus {
@@ -66,6 +70,9 @@ impl RemittanceStatus {
             // From Processing
             (RemittanceStatus::Processing, RemittanceStatus::Completed) => true,
             (RemittanceStatus::Processing, RemittanceStatus::Cancelled) => true,
+            (RemittanceStatus::Pending, RemittanceStatus::Failed) => true,
+            (RemittanceStatus::Processing, RemittanceStatus::Failed) => true,
+            (RemittanceStatus::Failed, RemittanceStatus::Disputed) => true,
             // Terminal states cannot transition
             (RemittanceStatus::Completed, _) => false,
             (RemittanceStatus::Cancelled, _) => false,
@@ -152,6 +159,22 @@ pub struct Remittance {
     pub expiry: Option<u64>,
     /// Optional settlement configuration for proof validation
     pub settlement_config: Option<SettlementConfig>,
+    /// The specific token address used for this remittance
+    pub token: Address,
+    /// Ledger timestamp when the remittance was created
+    pub created_at: u64,
+    /// Ledger timestamp when the agent marked it as failed, if applicable
+    pub failed_at: Option<u64>,
+    /// Hash of evidence provided by the sender during a dispute
+    pub dispute_evidence: Option<soroban_sdk::BytesN<32>>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentStats {
+    pub total_settlements: u32,
+    pub failed_settlements: u32,
+    pub total_settlement_time: u64,
 }
 
 /// Entry for batch settlement processing.
@@ -161,6 +184,19 @@ pub struct Remittance {
 pub struct BatchSettlementEntry {
     /// The unique ID of the remittance to settle
     pub remittance_id: u64,
+}
+
+/// Entry for batch remittance creation.
+/// Each entry represents a single remittance to be created in a batch.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchCreateEntry {
+    /// Address of the agent who will receive the payout
+    pub agent: Address,
+    /// Amount to send (in USDC)
+    pub amount: i128,
+    /// Optional expiry timestamp (seconds since epoch) for settlement
+    pub expiry: Option<u64>,
 }
 
 /// Result of a batch settlement operation.
@@ -221,4 +257,3 @@ pub struct IdempotencyRecord {
     /// Timestamp when this record expires (ledger timestamp)
     pub expires_at: u64,
 }
-

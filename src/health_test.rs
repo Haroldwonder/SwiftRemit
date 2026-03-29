@@ -1,61 +1,79 @@
 #![cfg(test)]
 
-use soroban_sdk::{Env, contracttype};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HealthStatus {
-    pub operational: bool,
-    pub timestamp: u64,
-    pub initialized: bool,
-}
+use crate::{health::health, SwiftRemitContract};
 
-fn mock_health_check(env: &Env, initialized: bool) -> HealthStatus {
-    HealthStatus {
-        operational: true,
-        timestamp: env.ledger().timestamp(),
-        initialized,
-    }
+fn setup_env() -> (Env, soroban_sdk::Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SwiftRemitContract {});
+    (env, contract_id)
 }
 
 #[test]
-fn test_health_status_structure() {
-    let env = Env::default();
-
-    let health = mock_health_check(&env, false);
-
-    assert!(health.operational);
-    assert_eq!(health.initialized, false);
-    assert!(health.timestamp > 0);
+fn test_health_uninitialized() {
+    let (env, contract_id) = setup_env();
+    env.as_contract(&contract_id, || {
+        let status = health(&env);
+        assert!(!status.initialized);
+        assert!(!status.paused);
+        assert_eq!(status.admin_count, 0);
+        assert_eq!(status.total_remittances, 0);
+        assert_eq!(status.accumulated_fees, 0);
+    });
 }
 
 #[test]
-fn test_health_status_initialized() {
-    let env = Env::default();
+fn test_health_after_initialize() {
+    let (env, contract_id) = setup_env();
+    let admin = Address::generate(&env);
+    let usdc = env.register_contract(None, SwiftRemitContract {});
+    let treasury = Address::generate(&env);
 
-    let health = mock_health_check(&env, true);
+    SwiftRemitContract::initialize(
+        env.clone(),
+        admin.clone(),
+        usdc,
+        250,
+        0,
+        0,
+        treasury,
+    )
+    .unwrap();
 
-    assert!(health.operational);
-    assert_eq!(health.initialized, true);
+    env.as_contract(&contract_id, || {
+        let status = health(&env);
+        assert!(status.initialized);
+        assert!(!status.paused);
+        assert_eq!(status.admin_count, 1);
+        assert_eq!(status.total_remittances, 0);
+        assert_eq!(status.accumulated_fees, 0);
+    });
 }
 
 #[test]
-fn test_health_status_timestamp() {
-    let env = Env::default();
+fn test_health_reflects_paused_state() {
+    let (env, contract_id) = setup_env();
+    let admin = Address::generate(&env);
+    let usdc = env.register_contract(None, SwiftRemitContract {});
+    let treasury = Address::generate(&env);
 
-    let health1 = mock_health_check(&env, true);
-    let health2 = mock_health_check(&env, true);
+    SwiftRemitContract::initialize(
+        env.clone(),
+        admin.clone(),
+        usdc,
+        250,
+        0,
+        0,
+        treasury,
+    )
+    .unwrap();
 
-    // Same ledger, same timestamp
-    assert_eq!(health1.timestamp, health2.timestamp);
-}
+    SwiftRemitContract::pause(env.clone()).unwrap();
 
-#[test]
-fn test_health_status_clone() {
-    let env = Env::default();
-
-    let health1 = mock_health_check(&env, true);
-    let health2 = health1.clone();
-
-    assert_eq!(health1, health2);
+    env.as_contract(&contract_id, || {
+        let status = health(&env);
+        assert!(status.paused);
+    });
 }

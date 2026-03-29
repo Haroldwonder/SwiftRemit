@@ -7,7 +7,7 @@
 
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
-use crate::{ContractError, Remittance, TransferRecord, DailyLimit};
+use crate::{ContractError, Remittance, TransferRecord, DailyLimit, AgentStats};
 
 /// Storage keys for the SwiftRemit contract.
 ///
@@ -174,6 +174,13 @@ enum DataKey {
 
     /// Commitment hash used to validate off-chain payout proofs per remittance.
     PayoutCommitment(u64),
+
+    // === Analytics ===
+    /// Total number of remittances ever created (instance storage).
+    TotalRemittanceCount,
+
+    /// Cumulative volume of completed remittances in USDC stroops (instance storage).
+    TotalCompletedVolume,
 }
 
 /// Checks if the contract has an admin configured.
@@ -410,8 +417,8 @@ pub fn get_accumulated_integrator_fees(env: &Env) -> i128 {
 ///
 /// * `true` - Settlement has been executed
 /// * `false` - Settlement has not been executed
-const SETTLEMENT_EXECUTED_FLAG: u32 = 1;
-const SETTLEMENT_EVENT_EMITTED_FLAG: u32 = 1 << 1;
+
+use crate::config::{SETTLEMENT_EXECUTED_FLAG, SETTLEMENT_EVENT_EMITTED_FLAG};
 
 #[contracttype]
 #[derive(Clone)]
@@ -730,11 +737,11 @@ pub fn set_admin_role(env: &Env, address: &Address, is_admin: bool) {
         .set(&DataKey::AdminRole(address.clone()), &is_admin);
 }
 
-pub fn get_admin_count(env: &Env) -> Result<u32, ContractError> {
+pub fn get_admin_count(env: &Env) -> u32 {
     env.storage()
         .instance()
         .get(&DataKey::AdminCount)
-        .ok_or(ContractError::NotInitialized)
+        .unwrap_or(0)
 }
 
 pub fn set_admin_count(env: &Env, count: u32) {
@@ -1251,4 +1258,42 @@ pub fn get_payout_commitment(env: &Env, remittance_id: u64) -> Option<soroban_sd
     env.storage()
         .persistent()
         .get(&DataKey::PayoutCommitment(remittance_id))
+}
+
+// === Analytics Counters ===
+
+/// Returns the total number of remittances ever created.
+pub fn get_total_remittance_count(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::TotalRemittanceCount)
+        .unwrap_or(0)
+}
+
+/// Increments the total remittance count by 1.
+pub fn increment_remittance_count(env: &Env) -> Result<(), ContractError> {
+    let current = get_total_remittance_count(env);
+    let next = current.checked_add(1).ok_or(ContractError::Overflow)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalRemittanceCount, &next);
+    Ok(())
+}
+
+/// Returns the cumulative volume of completed remittances (original amounts, before fees).
+pub fn get_total_completed_volume(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::TotalCompletedVolume)
+        .unwrap_or(0)
+}
+
+/// Adds `amount` to the cumulative completed volume.
+pub fn add_completed_volume(env: &Env, amount: i128) -> Result<(), ContractError> {
+    let current = get_total_completed_volume(env);
+    let next = current.checked_add(amount).ok_or(ContractError::Overflow)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalCompletedVolume, &next);
+    Ok(())
 }

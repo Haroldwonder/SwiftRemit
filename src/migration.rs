@@ -1,10 +1,6 @@
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec, xdr::ToXdr};
 
-use crate::{ContractError, Remittance, RemittanceStatus};
-
-/// Maximum number of items that can be exported/imported in a single batch
-/// to prevent excessive resource consumption
-pub const MAX_MIGRATION_BATCH_SIZE: u32 = 100;
+use crate::{config::MAX_MIGRATION_BATCH_SIZE, ContractError, Remittance, RemittanceStatus};
 
 /// Migration state snapshot containing all contract data
 /// This structure ensures complete and verifiable state transfer

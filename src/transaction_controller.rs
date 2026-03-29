@@ -213,7 +213,7 @@ impl TransactionController {
         let fee = amount
             .checked_mul(fee_bps as i128)
             .ok_or(ContractError::Overflow)?
-            .checked_div(10000)
+            .checked_div(crate::config::FEE_DIVISOR)
             .ok_or(ContractError::Overflow)?;
 
         // Transfer tokens to contract

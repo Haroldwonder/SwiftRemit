@@ -6,6 +6,7 @@
 use soroban_sdk::{Address, Env};
 
 use crate::{
+    config::MAX_FEE_BPS,
     get_remittance, is_agent_registered, is_paused, is_user_blacklisted, ContractError,
     RemittanceStatus,
 };
@@ -13,15 +14,20 @@ use crate::{
 /// Centralized validation module for all API requests.
 /// Validates required fields before controller logic to prevent invalid data
 /// from reaching business logic.
-// Note: No validate_address function is needed here.
-// In Soroban, the `Address` type is validated by the host runtime before any
-// contract function is invoked — it is impossible to construct an invalid or
-// zero Address value at the Rust level. Any address that reaches contract code
-// is already guaranteed to be a well-formed account or contract address.
+// NOTE: validate_address has been intentionally removed.
+//
+// In Soroban SDK, the `Address` type is constructed and validated by the host
+// environment before it ever reaches contract code. An invalid or zero address
+// cannot be passed in — the host will trap before the contract executes.
+// There is no "zero address" concept in Stellar/Soroban, and no runtime API
+// to distinguish account vs contract addresses in SDK v21.
+//
+// Therefore, any `validate_address` call was a no-op that added noise without
+// providing safety. All former call sites have been removed accordingly.
 
 /// Validates fee basis points are within acceptable range (0-10000 = 0%-100%).
 pub fn validate_fee_bps(fee_bps: u32) -> Result<(), ContractError> {
-    if fee_bps > 10000 {
+    if fee_bps > MAX_FEE_BPS {
         return Err(ContractError::InvalidFeeBps);
     }
     Ok(())
@@ -119,7 +125,7 @@ pub fn validate_initialize_request(
 /// Comprehensive validation for create_remittance request.
 pub fn validate_create_remittance_request(
     env: &Env,
-    sender: &Address,
+    _sender: &Address,
     agent: &Address,
     amount: i128,
 ) -> Result<(), ContractError> {
@@ -171,15 +177,6 @@ pub fn validate_withdraw_fees_request(
     Ok(fees)
 }
 
-pub fn validate_withdraw_integrator_fees_request(
-    env: &Env,
-    _to: &Address,
-) -> Result<i128, ContractError> {
-    let fees = crate::get_accumulated_fees(env)?;
-    validate_fees_available(fees)?;
-    Ok(fees)
-}
-
 /// Comprehensive validation for update_fee request.
 pub fn validate_update_fee_request(fee_bps: u32) -> Result<(), ContractError> {
     validate_fee_bps(fee_bps)
@@ -205,6 +202,8 @@ pub fn normalize_symbol(_env: &Env, symbol: &soroban_sdk::String) -> Result<soro
 mod tests {
     use super::*;
     use soroban_sdk::Env;
+
+    // validate_address was removed — no test needed.
 
     #[test]
     fn test_validate_fee_bps_valid() {

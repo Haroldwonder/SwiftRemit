@@ -23,6 +23,85 @@ SwiftRemit is an escrow-based remittance system that enables secure cross-border
 
 ## Architecture
 
+```mermaid
+graph TB
+    subgraph Users["Users / Clients"]
+        S[Sender]
+        A[Agent]
+        ADM[Admin]
+    end
+
+    subgraph Frontend["Frontend (React/Vite)"]
+        UI[UI Components]
+        VB[VerificationBadge]
+    end
+
+    subgraph API["API Service (TypeScript)"]
+        REST[REST Endpoints]
+        FX[FX Rate / Currency API]
+        CFG[Config Loader]
+    end
+
+    subgraph Backend["Backend Service (TypeScript)"]
+        EVT[Event Listener / Stellar SDK]
+        WH[Webhook Handler]
+        KYC[KYC Service]
+        ANC[Anchor Client]
+        DB[(PostgreSQL)]
+        SCH[Scheduler / Poller]
+    end
+
+    subgraph Contract["Smart Contract (Soroban / Rust)"]
+        LIB[lib.rs — Public API]
+        STOR[storage.rs]
+        TRANS[transitions.rs]
+        FEES[fee_service.rs]
+        HLTH[health.rs]
+        RATE[rate_limit.rs]
+        ABUSE[abuse_protection.rs]
+    end
+
+    subgraph Stellar["Stellar Network"]
+        LEDGER[Ledger]
+        USDC[USDC Token Contract]
+    end
+
+    subgraph AssetVerif["Asset Verification"]
+        AV[asset_verification.rs]
+        EXPERT[Stellar Expert API]
+        TOML[stellar.toml]
+    end
+
+    S -->|create_remittance / cancel| UI
+    A -->|confirm_payout| UI
+    ADM -->|register_agent / withdraw_fees| UI
+    UI --> REST
+    REST --> LIB
+    LIB --> STOR
+    LIB --> TRANS
+    LIB --> FEES
+    LIB --> RATE
+    LIB --> ABUSE
+    LIB --> HLTH
+    LIB --> AV
+    LIB -->|token.transfer| USDC
+    USDC --> LEDGER
+    LEDGER -->|contract events| EVT
+    EVT --> WH
+    WH -->|deliver webhooks| DB
+    WH -->|notify| S
+    EVT --> KYC
+    KYC --> ANC
+    KYC --> DB
+    SCH -->|poll KYC / FX| ANC
+    SCH --> DB
+    AV -->|off-chain checks| EXPERT
+    AV -->|off-chain checks| TOML
+    Backend -->|health check| HLTH
+    Frontend --> FX
+    FX --> CFG
+```
+
 ### Core Components
 
 - **lib.rs**: Main contract implementation with all public functions
@@ -77,6 +156,9 @@ Fees are calculated in basis points (bps):
 - `get_platform_fee_bps()` - Get current fee percentage
 - `get_rate_limit_status(address)` - Read current rate-limit usage for an address
 - `get_daily_limit(currency, country)` - Read configured daily send limit for a corridor
+- `get_remittance_count()` - Total number of remittances ever created
+- `get_total_volume()` - Cumulative volume of all completed remittances (original amounts)
+- `health()` - On-chain health check: initialized, paused, admin_count, total_remittances, accumulated_fees
 
 ## Security Features
 
@@ -382,9 +464,18 @@ For issues and questions:
 
 ## Contributing
 
-Contributions welcome! Please ensure:
+Contributions are welcome! We appreciate your help in making SwiftRemit better.
+
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on:
+- Setting up your development environment
+- Coding standards and best practices
+- Running tests locally
+- Submitting pull requests
+- Creating issues
+
+Quick checklist:
 - All tests pass: `cargo test`
-- Code follows Rust best practices
+- Code follows project style guidelines
 - New features include tests
 - Documentation is updated
 
@@ -421,9 +512,9 @@ import { VerificationBadge } from './components/VerificationBadge';
 ## Roadmap
 
 - [x] Asset verification system
+- [x] Integration with fiat on/off ramps (via SEP-24)
 - [ ] Multi-currency support
 - [ ] Batch remittance processing
 - [ ] Agent reputation system
 - [ ] Dispute resolution mechanism
-- [x] Time-locked escrow options
-- [ ] Integration with fiat on/off ramps
+- [ ] Time-locked escrow options

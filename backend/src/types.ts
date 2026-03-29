@@ -103,3 +103,39 @@ export interface DbUserKycStatus {
   rejection_reason?: string;
   verification_data?: any;
 }
+
+export interface RemittanceCreatedWebhookPayload {
+  remittance_id: string;
+  sender: string;
+  agent: string;
+  amount: string;
+  fee: string;
+  expiry: string;
+}
+
+export interface WebhookSubscriber {
+  id: string;
+  url: string;
+  secret?: string | null;
+  active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type WebhookDeliveryStatus = 'pending' | 'success' | 'failed';
+
+export interface WebhookDelivery {
+  id: string;
+  event_type: string;
+  event_key: string;
+  subscriber_id: string;
+  target_url: string;
+  payload: any;
+  status: WebhookDeliveryStatus;
+  attempt_count: number;
+  max_attempts: number;
+  next_retry_at: Date;
+  last_error?: string | null;
+  response_status?: number | null;
+  delivered_at?: Date | null;
+}

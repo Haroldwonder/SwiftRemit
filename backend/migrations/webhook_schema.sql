@@ -79,3 +79,38 @@ CREATE TABLE IF NOT EXISTS transaction_state_history (
 
 CREATE INDEX idx_state_history_transaction ON transaction_state_history(transaction_id);
 CREATE INDEX idx_state_history_changed ON transaction_state_history(changed_at DESC);
+
+-- Outbound webhook subscribers
+CREATE TABLE IF NOT EXISTS webhook_subscribers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  url TEXT NOT NULL,
+  secret VARCHAR(255),
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_webhook_subscribers_active ON webhook_subscribers(active);
+
+-- Outbound webhook delivery queue and retries
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_type VARCHAR(80) NOT NULL,
+  event_key VARCHAR(255) NOT NULL,
+  subscriber_id UUID NOT NULL REFERENCES webhook_subscribers(id) ON DELETE CASCADE,
+  target_url TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  next_retry_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  last_error TEXT,
+  response_status INTEGER,
+  delivered_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_webhook_delivery_subscriber_event UNIQUE (event_type, event_key, subscriber_id)
+);
+
+CREATE INDEX idx_webhook_deliveries_pending ON webhook_deliveries(status, next_retry_at);
+CREATE INDEX idx_webhook_deliveries_subscriber ON webhook_deliveries(subscriber_id);

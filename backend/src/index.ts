@@ -4,6 +4,7 @@ import { initDatabase, getPool } from './database';
 import { startBackgroundJobs } from './scheduler';
 import { WebhookHandler } from './webhook-handler';
 import { KycService } from './kyc-service';
+import { createWebhookVerificationMiddleware } from './webhook-middleware';
 
 dotenv.config();
 
@@ -22,6 +23,22 @@ async function start() {
 
     // Setup webhook handler
     const pool = getPool();
+    
+    // Apply HMAC verification middleware to all /webhooks routes
+    const webhookVerification = createWebhookVerificationMiddleware({
+      timestampWindowSeconds: 300, // 5 minutes
+      requireSignature: true,
+    });
+    
+    // Use before webhook routes - but skip for health check
+    app.use('/webhooks', (req, res, next) => {
+      if (req.path === '/health') {
+        next();
+      } else {
+        webhookVerification(req, res, next);
+      }
+    });
+    
     const webhookHandler = new WebhookHandler(pool);
     webhookHandler.setupRoutes(app);
     webhookHandler.setupHealthCheck(app);
