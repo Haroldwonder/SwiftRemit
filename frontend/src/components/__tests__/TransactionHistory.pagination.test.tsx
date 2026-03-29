@@ -178,4 +178,218 @@ describe('TransactionHistory Pagination', () => {
 
     expect(screen.getByText(/Showing 11–20 of 25 transactions/)).toBeInTheDocument();
   });
+
+  // New tests for onLoadMore functionality
+  describe('onLoadMore functionality', () => {
+    it('renders load more button in infinite pagination mode', () => {
+      const onLoadMore = vi.fn();
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="infinite"
+          onLoadMore={onLoadMore}
+          hasMore={true}
+        />
+      );
+
+      expect(screen.getByText('Load More')).toBeInTheDocument();
+      expect(screen.getByLabelText('Load more transactions')).toBeInTheDocument();
+    });
+
+    it('calls onLoadMore when load more button is clicked', async () => {
+      const onLoadMore = vi.fn().mockResolvedValue(undefined);
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="infinite"
+          onLoadMore={onLoadMore}
+          hasMore={true}
+        />
+      );
+
+      const loadMoreButton = screen.getByText('Load More');
+      fireEvent.click(loadMoreButton);
+
+      expect(onLoadMore).toHaveBeenCalledWith(2);
+    });
+
+    it('shows loading state when fetching more data', async () => {
+      const onLoadMore = vi.fn().mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="infinite"
+          onLoadMore={onLoadMore}
+          hasMore={true}
+          isLoading={false}
+        />
+      );
+
+      const loadMoreButton = screen.getByText('Load More');
+      fireEvent.click(loadMoreButton);
+
+      // Should show loading state
+      expect(screen.getByText('Loading...')).toBeInTheDocument();
+      expect(screen.getByText('Load More')).toBeDisabled();
+    });
+
+    it('disables load more button when hasMore is false', () => {
+      const onLoadMore = vi.fn();
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="infinite"
+          onLoadMore={onLoadMore}
+          hasMore={false}
+        />
+      );
+
+      const loadMoreButton = screen.getByText('Load More');
+      expect(loadMoreButton).toBeDisabled();
+    });
+
+    it('disables load more button when isLoading is true', () => {
+      const onLoadMore = vi.fn();
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="infinite"
+          onLoadMore={onLoadMore}
+          hasMore={true}
+          isLoading={true}
+        />
+      );
+
+      const loadMoreButton = screen.getByText('Load More');
+      expect(loadMoreButton).toBeDisabled();
+    });
+  });
+
+  // New tests for infinite scroll functionality
+  describe('infinite scroll functionality', () => {
+    it('renders infinite scroll sentinel when enabled', () => {
+      const onLoadMore = vi.fn();
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="infinite"
+          onLoadMore={onLoadMore}
+          hasMore={true}
+          enableInfiniteScroll={true}
+        />
+      );
+
+      const sentinel = document.querySelector('.infinite-scroll-sentinel');
+      expect(sentinel).toBeInTheDocument();
+    });
+
+    it('does not render infinite scroll sentinel when disabled', () => {
+      const onLoadMore = vi.fn();
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="infinite"
+          onLoadMore={onLoadMore}
+          hasMore={true}
+          enableInfiniteScroll={false}
+        />
+      );
+
+      const sentinel = document.querySelector('.infinite-scroll-sentinel');
+      expect(sentinel).not.toBeInTheDocument();
+    });
+
+    it('shows loading spinner in sentinel when fetching', () => {
+      const onLoadMore = vi.fn();
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="infinite"
+          onLoadMore={onLoadMore}
+          hasMore={true}
+          enableInfiniteScroll={true}
+          isLoading={true}
+        />
+      );
+
+      expect(screen.getByText('Loading more transactions...')).toBeInTheDocument();
+    });
+  });
+
+  // New tests for default page size
+  describe('default page size', () => {
+    it('uses default page size of 20 when not specified', () => {
+      render(<TransactionHistory transactions={mockTransactions} />);
+
+      expect(screen.getByText(/Showing 1–20 of 25 transactions/)).toBeInTheDocument();
+      expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument();
+    });
+
+    it('displays correct items with default page size', () => {
+      render(<TransactionHistory transactions={mockTransactions} />);
+
+      expect(screen.getByText('100 USDC')).toBeInTheDocument();
+      expect(screen.getByText('119 USDC')).toBeInTheDocument();
+      expect(screen.queryByText('120 USDC')).not.toBeInTheDocument();
+    });
+
+    it('handles next page with default page size', () => {
+      render(<TransactionHistory transactions={mockTransactions} />);
+
+      const nextButton = screen.getByLabelText('Next page');
+      fireEvent.click(nextButton);
+
+      expect(screen.getByText(/Showing 21–25 of 25 transactions/)).toBeInTheDocument();
+      expect(screen.getByText(/Page 2 of 2/)).toBeInTheDocument();
+      expect(screen.getByText('120 USDC')).toBeInTheDocument();
+    });
+  });
+
+  // New tests for pagination mode switching
+  describe('pagination mode switching', () => {
+    it('shows page controls in page mode', () => {
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="page"
+          pageSize={10}
+        />
+      );
+
+      expect(screen.getByText('Previous')).toBeInTheDocument();
+      expect(screen.getByText('Next')).toBeInTheDocument();
+      expect(screen.getByText(/Page 1 of 3/)).toBeInTheDocument();
+    });
+
+    it('shows load more button in infinite mode', () => {
+      const onLoadMore = vi.fn();
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="infinite"
+          onLoadMore={onLoadMore}
+          hasMore={true}
+        />
+      );
+
+      expect(screen.getByText('Load More')).toBeInTheDocument();
+      expect(screen.queryByText('Previous')).not.toBeInTheDocument();
+      expect(screen.queryByText('Next')).not.toBeInTheDocument();
+    });
+
+    it('hides pagination controls when not in page mode', () => {
+      const onLoadMore = vi.fn();
+      render(
+        <TransactionHistory
+          transactions={mockTransactions}
+          paginationMode="infinite"
+          onLoadMore={onLoadMore}
+          hasMore={true}
+        />
+      );
+
+      const nav = screen.queryByRole('navigation', { name: 'Pagination' });
+      expect(nav).not.toBeInTheDocument();
+    });
+  });
 });
