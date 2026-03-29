@@ -1,20 +1,20 @@
 .send-flow-card {
   width: min(100%, 760px);
-  border: 1px solid #d6dde8;
-  border-radius: 14px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
   padding: 1rem;
-  background: linear-gradient(155deg, #ffffff 0%, #f7f8fd 100%);
+  background: linear-gradient(155deg, var(--bg-primary) 0%, var(--bg-surface) 100%);
 }
 
 .send-flow-header h2 {
   margin: 0;
-  color: #1c2640;
+  color: var(--text-heading);
   font-size: 1.15rem;
 }
 
 .send-flow-header p {
   margin: 0.35rem 0 0;
-  color: #54627a;
+  color: var(--text-muted);
   font-size: 0.9rem;
 }
 
@@ -29,19 +29,19 @@
 
 .send-step-indicator li {
   text-align: center;
-  border: 1px solid #cfdaea;
-  border-radius: 999px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-full);
   padding: 0.35rem 0;
-  background: #f6f9ff;
-  color: #5b6982;
+  background: var(--bg-surface);
+  color: var(--text-muted);
   font-size: 0.82rem;
   font-weight: 600;
 }
 
 .send-step-indicator li.active {
-  border-color: #0f62fe;
-  background: #dce8ff;
-  color: #0f4cca;
+  border-color: var(--border-info);
+  background: var(--bg-info);
+  color: var(--text-primary);
 }
 
 .send-flow-body {
@@ -54,25 +54,25 @@
 }
 
 .flow-field span {
-  color: #34435e;
+  color: var(--text-label);
   font-size: 0.9rem;
   font-weight: 600;
 }
 
 .flow-field input,
 .flow-field select {
-  border: 1px solid #b7c4d8;
-  border-radius: 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
   padding: 0.6rem 0.75rem;
   font-size: 0.95rem;
-  color: #1a2a49;
-  background: #ffffff;
+  color: var(--text-primary);
+  background: var(--bg-input);
 }
 
 .flow-field input:focus,
 .flow-field select:focus {
-  outline: 2px solid #9dc1ff;
-  border-color: #0f62fe;
+  outline: 2px solid var(--border-focus);
+  border-color: var(--border-info);
 }
 
 .flow-review {
@@ -85,21 +85,21 @@
   display: grid;
   grid-template-columns: 120px 1fr;
   gap: 0.65rem;
-  border: 1px solid #d8e2f0;
-  border-radius: 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
   padding: 0.6rem 0.75rem;
-  background: #fbfdff;
+  background: var(--bg-surface);
 }
 
 .flow-review dt {
   margin: 0;
-  color: #62728b;
+  color: var(--text-muted);
   font-size: 0.86rem;
 }
 
 .flow-review dd {
   margin: 0;
-  color: #1f2f50;
+  color: var(--text-body);
   font-weight: 600;
   word-break: break-word;
 }
@@ -113,7 +113,7 @@
 
 .flow-button {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-weight: 700;
   padding: 0.62rem 0.95rem;
   cursor: pointer;
@@ -125,29 +125,29 @@
 }
 
 .flow-button.primary {
-  background: #0f62fe;
-  color: #ffffff;
+  background: var(--bg-info);
+  color: var(--text-primary);
 }
 
 .flow-button.muted {
-  background: #e2e8f4;
-  color: #2a3853;
+  background: var(--bg-surface);
+  color: var(--text-body);
 }
 
 .flow-error {
   margin-top: 0.8rem;
   margin-bottom: 0;
-  color: #ad1f0f;
+  color: var(--text-error);
   font-size: 0.9rem;
 }
 
 .flow-success {
   margin-top: 0.85rem;
   margin-bottom: 0;
-  border: 1px solid #bde6d1;
-  background: #ecfbf2;
-  color: #0b6242;
-  border-radius: 8px;
+  border: 1px solid var(--border-success);
+  background: var(--bg-success);
+  color: var(--text-success);
+  border-radius: var(--radius-md);
   padding: 0.8rem;
   font-weight: 600;
 }

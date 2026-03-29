@@ -8,7 +8,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--bg-gradient-primary);
   min-height: 100vh;
 }
 
@@ -20,7 +20,7 @@ body {
 
 .app-header {
   text-align: center;
-  color: white;
+  color: var(--text-primary);
   margin-bottom: 40px;
 }
 
@@ -35,18 +35,18 @@ body {
 }
 
 .app-main {
-  background: white;
-  border-radius: 20px;
+  background: var(--bg-card);
+  border-radius: var(--radius-xl);
   padding: 40px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-xl);
 }
 
 .wallet-connect,
 .wallet-connected {
   text-align: center;
   padding: 30px;
-  background: #f8f9fa;
-  border-radius: 12px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
   margin-bottom: 30px;
 }
 
@@ -58,30 +58,32 @@ body {
 
 .wallet-connected p {
   font-weight: 600;
-  color: #333;
+  color: var(--text-body);
 }
 
 .contract-config {
   margin-bottom: 30px;
   padding: 20px;
-  background: #f8f9fa;
-  border-radius: 12px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-md);
 }
 
 .contract-config label {
   display: block;
   font-weight: 600;
   margin-bottom: 10px;
-  color: #333;
+  color: var(--text-body);
 }
 
 .contract-config input {
   width: 100%;
   padding: 12px;
-  border: 2px solid #e0e0e0;
-  border-radius: 8px;
+  border: 2px solid var(--border-primary);
+  border-radius: var(--radius-md);
   font-size: 14px;
   font-family: monospace;
+  background: var(--bg-input);
+  color: var(--text-primary);
 }
 
 .panels {
@@ -92,15 +94,15 @@ body {
 }
 
 .panel {
-  background: #f8f9fa;
+  background: var(--bg-surface);
   padding: 25px;
-  border-radius: 12px;
-  border: 2px solid #e0e0e0;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--border-primary);
 }
 
 .panel h2 {
   margin-bottom: 20px;
-  color: #333;
+  color: var(--text-heading);
   font-size: 1.5rem;
 }
 
@@ -112,34 +114,36 @@ body {
   display: block;
   margin-bottom: 8px;
   font-weight: 600;
-  color: #555;
+  color: var(--text-label);
 }
 
 .form-group input {
   width: 100%;
   padding: 12px;
-  border: 2px solid #e0e0e0;
-  border-radius: 8px;
+  border: 2px solid var(--border-primary);
+  border-radius: var(--radius-md);
   font-size: 16px;
-  transition: border-color 0.3s;
+  transition: border-color var(--transition-normal);
+  background: var(--bg-input);
+  color: var(--text-primary);
 }
 
 .form-group input:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: var(--border-focus);
 }
 
 .btn-primary {
   width: 100%;
   padding: 14px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: var(--bg-gradient-primary);
+  color: var(--text-primary);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform var(--transition-normal), box-shadow var(--transition-normal);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -154,46 +158,46 @@ body {
 
 .btn-secondary {
   padding: 10px 20px;
-  background: white;
-  color: #667eea;
-  border: 2px solid #667eea;
-  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-link);
+  border: 2px solid var(--border-info);
+  border-radius: var(--radius-md);
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-normal);
 }
 
 .btn-secondary:hover {
-  background: #667eea;
-  color: white;
+  background: var(--bg-info);
+  color: var(--text-primary);
 }
 
 .success {
   margin-top: 20px;
   padding: 15px;
-  background: #d4edda;
-  border: 1px solid #c3e6cb;
-  border-radius: 8px;
-  color: #155724;
+  background: var(--bg-success);
+  border: 1px solid var(--border-success);
+  border-radius: var(--radius-md);
+  color: var(--text-success);
 }
 
 .error {
   margin-top: 20px;
   padding: 15px;
-  background: #f8d7da;
-  border: 1px solid #f5c6cb;
-  border-radius: 8px;
-  color: #721c24;
+  background: var(--bg-error);
+  border: 1px solid var(--border-error);
+  border-radius: var(--radius-md);
+  color: var(--text-error);
 }
 
 .hint {
   margin-top: 10px;
   font-size: 14px;
-  color: #666;
+  color: var(--text-muted);
 }
 
 .hint a {
-  color: #667eea;
+  color: var(--text-link);
   text-decoration: none;
   font-weight: 600;
 }
@@ -217,35 +221,52 @@ table {
 }
 
 thead {
-  background: #667eea;
-  color: white;
+  background: var(--bg-table-header);
+  color: var(--text-primary);
 }
 
 th, td {
   padding: 15px;
   text-align: left;
+  border-bottom: 1px solid var(--border-primary);
 }
 
 tbody tr {
-  border-bottom: 1px solid #e0e0e0;
+  background: var(--bg-table-row);
 }
 
 tbody tr:hover {
-  background: #f8f9fa;
+  background: var(--bg-table-row-hover);
 }
 
 .status-badge {
   display: inline-block;
   padding: 5px 12px;
   border-radius: 20px;
-  color: white;
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
 }
 
+.status-badge.pending {
+  background: var(--bg-warning);
+}
+
+.status-badge.processing {
+  background: var(--bg-info);
+}
+
+.status-badge.completed {
+  background: var(--bg-success);
+}
+
+.status-badge.failed {
+  background: var(--bg-error);
+}
+
 .app-footer {
   text-align: center;
-  color: white;
+  color: var(--text-primary);
   margin-top: 40px;
   opacity: 0.8;
 }

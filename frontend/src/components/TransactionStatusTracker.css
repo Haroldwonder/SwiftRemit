@@ -1,9 +1,9 @@
 .transaction-tracker {
   width: min(100%, 840px);
-  border: 1px solid #d3dfec;
-  border-radius: 14px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
   padding: 1rem;
-  background: linear-gradient(165deg, #ffffff 0%, #f8fbff 100%);
+  background: linear-gradient(165deg, var(--bg-primary) 0%, var(--bg-surface) 100%);
 }
 
 .transaction-tracker-header {
@@ -15,7 +15,7 @@
 
 .transaction-tracker-header h2 {
   margin: 0;
-  color: #162641;
+  color: var(--text-heading);
   font-size: 1.1rem;
 }
 
@@ -27,15 +27,15 @@
 
 .tracker-refresh-meta {
   font-size: 0.8rem;
-  color: #5b6f8c;
+  color: var(--text-muted);
 }
 
 .tracker-refresh-button {
-  border: 1px solid #b9c8dc;
-  border-radius: 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
   padding: 0.42rem 0.75rem;
-  background: #ffffff;
-  color: #17335a;
+  background: var(--bg-surface);
+  color: var(--text-info);
   font-weight: 600;
   cursor: pointer;
 }
@@ -59,53 +59,53 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  border: 1px solid #d4ddeb;
-  border-radius: 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
   padding: 0.55rem 0.6rem;
-  background: #f5f8fc;
+  background: var(--bg-surface);
 }
 
 .step-marker {
   width: 0.8rem;
   height: 0.8rem;
-  border-radius: 999px;
-  border: 2px solid #95a7c2;
-  background: #ffffff;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--border-tertiary);
+  background: var(--bg-primary);
   flex-shrink: 0;
 }
 
 .step-label {
   font-size: 0.85rem;
   font-weight: 600;
-  color: #495b78;
+  color: var(--text-muted);
 }
 
 .transaction-tracker-step.done {
-  background: #e9f8f0;
-  border-color: #9fd9bb;
+  background: var(--bg-success);
+  border-color: var(--border-success);
 }
 
 .transaction-tracker-step.done .step-marker {
-  border-color: #1f9364;
-  background: #1f9364;
+  border-color: var(--border-success);
+  background: var(--border-success);
 }
 
 .transaction-tracker-step.done .step-label {
-  color: #145f41;
+  color: var(--text-success);
 }
 
 .transaction-tracker-step.active {
-  background: #e8f1ff;
-  border-color: #82acf1;
+  background: var(--bg-info);
+  border-color: var(--border-info);
 }
 
 .transaction-tracker-step.active .step-marker {
-  border-color: #2a6fd1;
-  background: #2a6fd1;
+  border-color: var(--border-info);
+  background: var(--border-info);
 }
 
 .transaction-tracker-step.active .step-label {
-  color: #1d4f96;
+  color: var(--text-info);
 }
 
 .transaction-tracker-step.future {

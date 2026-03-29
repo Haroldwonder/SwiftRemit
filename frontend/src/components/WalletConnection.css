@@ -1,9 +1,9 @@
 .wallet-card {
   width: min(100%, 760px);
-  border: 1px solid #d6dde8;
-  border-radius: 14px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
   padding: 1rem;
-  background: linear-gradient(160deg, #ffffff 0%, #f5f9ff 100%);
+  background: linear-gradient(160deg, var(--bg-primary) 0%, var(--bg-surface) 100%);
 }
 
 .wallet-row {
@@ -16,11 +16,11 @@
 .wallet-title {
   margin: 0;
   font-size: 1.125rem;
-  color: #152238;
+  color: var(--text-heading);
 }
 
 .network-pill {
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -28,35 +28,35 @@
 }
 
 .network-pill.testnet {
-  color: #0c5f40;
-  background: #cbf4e5;
+  color: var(--text-success);
+  background: var(--bg-success);
 }
 
 .network-pill.mainnet {
-  color: #813300;
-  background: #ffe4cc;
+  color: var(--text-warning);
+  background: var(--bg-warning);
 }
 
 .wallet-state {
   margin-top: 1rem;
-  border-radius: 10px;
-  border: 1px dashed #b8c5da;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border-tertiary);
   padding: 0.85rem;
-  background: #f8fbff;
+  background: var(--bg-surface);
 }
 
 .wallet-key {
   margin: 0;
   font-family: 'Courier New', monospace;
   font-weight: 600;
-  color: #0f2342;
+  color: var(--text-code);
   overflow-wrap: anywhere;
 }
 
 .wallet-meta {
   margin: 0.35rem 0 0;
   font-size: 0.825rem;
-  color: #4f5f78;
+  color: var(--text-muted);
 }
 
 .wallet-actions {
@@ -68,7 +68,7 @@
 
 .wallet-button {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 0.62rem 0.9rem;
   font-weight: 600;
   cursor: pointer;
@@ -80,24 +80,24 @@
 }
 
 .wallet-button.primary {
-  background: #0f62fe;
-  color: #ffffff;
+  background: var(--bg-info);
+  color: var(--text-primary);
 }
 
 .wallet-button.secondary {
-  background: #dde7fa;
-  color: #20324f;
+  background: var(--bg-surface);
+  color: var(--text-body);
 }
 
 .wallet-button.danger {
-  background: #ffe2e0;
-  color: #7e2018;
+  background: var(--bg-error);
+  color: var(--text-primary);
 }
 
 .wallet-error {
   margin-top: 0.75rem;
   margin-bottom: 0;
-  color: #a61e12;
+  color: var(--text-error);
   font-size: 0.9rem;
 }
 

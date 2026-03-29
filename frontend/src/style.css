@@ -5,21 +5,106 @@
 
   color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  background-color: var(--bg-primary);
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Color Variables */
+  --bg-primary: #242424;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #111111;
+  --bg-quaternary: #0d0d0d;
+  --bg-surface: #1f1f1f;
+  --bg-surface-hover: #2a2a2a;
+  --bg-surface-active: #333333;
+  --bg-card: #2d2d2d;
+  --bg-card-hover: #383838;
+  --bg-modal: #1a1a1a;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+  --bg-badge: #374151;
+  --bg-badge-hover: #4b5563;
+  --bg-input: #111111;
+  --bg-input-focus: #1f2937;
+  --bg-table-header: #1f2937;
+  --bg-table-row: #0d0d0d;
+  --bg-table-row-hover: #151515;
+  --bg-table-alternate: #111111;
+  --bg-success: #064e3b;
+  --bg-success-light: #0f766e;
+  --bg-error: #7f1d1d;
+  --bg-error-light: #dc2626;
+  --bg-warning: #78350f;
+  --bg-warning-light: #f59e0b;
+  --bg-info: #1e3a8a;
+  --bg-info-light: #3b82f6;
+  --bg-loading: #374151;
+  --bg-loading-light: #4b5563;
+  --bg-border: #374151;
+  --bg-border-hover: #4b5563;
+  --bg-border-focus: #60a5fa;
+  --bg-border-strong: #94a3b8;
+  --bg-divider: #334155;
+  --bg-shadow: rgba(0, 0, 0, 0.3);
+  --bg-gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --bg-gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  --bg-gradient-tertiary: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  
+  --text-primary: #f8fafc;
+  --text-secondary: #e2e8f0;
+  --text-tertiary: #cbd5e1;
+  --text-quaternary: #94a3b8;
+  --text-muted: #64748b;
+  --text-disabled: #475569;
+  --text-heading: #f1f5f9;
+  --text-body: #e2e8f0;
+  --text-label: #94a3b8;
+  --text-placeholder: #64748b;
+  --text-link: #93c5fd;
+  --text-link-hover: #bfdbfe;
+  --text-code: #f1f5f9;
+  --text-error: #fecaca;
+  --text-warning: #fde68a;
+  --text-success: #bbf7d0;
+  --text-info: #bfdbfe;
+  
+  --border-primary: #334155;
+  --border-secondary: #475569;
+  --border-tertiary: #64748b;
+  --border-focus: #60a5fa;
+  --border-error: #dc2626;
+  --border-warning: #f59e0b;
+  --border-success: #10b981;
+  --border-info: #3b82f6;
+  
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.3);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.3);
+  --shadow-2xl: 0 25px 50px rgba(0, 0, 0, 0.3);
+  --shadow-inner: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+  
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+  
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.3s ease;
 }
 
 a {
   font-weight: 500;
-  color: #646cff;
+  color: var(--text-link);
   text-decoration: inherit;
 }
 a:hover {
-  color: #535bf2;
+  color: var(--text-link-hover);
 }
 
 body {
@@ -60,7 +145,7 @@ h1 {
 }
 
 .read-the-docs {
-  color: #888;
+  color: var(--text-muted);
 }
 
 button {
@@ -70,12 +155,12 @@ button {
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
+  background-color: var(--bg-surface);
   cursor: pointer;
   transition: border-color 0.25s;
 }
 button:hover {
-  border-color: #646cff;
+  border-color: var(--border-focus);
 }
 button:focus,
 button:focus-visible {
@@ -84,13 +169,87 @@ button:focus-visible {
 
 @media (prefers-color-scheme: light) {
   :root {
-    color: #213547;
-    background-color: #ffffff;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+    
+    /* Light Mode Overrides */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8fafc;
+    --bg-tertiary: #f1f5f9;
+    --bg-quaternary: #e2e8f0;
+    --bg-surface: #ffffff;
+    --bg-surface-hover: #f1f5f9;
+    --bg-surface-active: #e2e8f0;
+    --bg-card: #ffffff;
+    --bg-card-hover: #f8fafc;
+    --bg-modal: #ffffff;
+    --bg-overlay: rgba(0, 0, 0, 0.5);
+    --bg-badge: #e2e8f0;
+    --bg-badge-hover: #cbd5e1;
+    --bg-input: #ffffff;
+    --bg-input-focus: #f1f5f9;
+    --bg-table-header: #f8fafc;
+    --bg-table-row: #ffffff;
+    --bg-table-row-hover: #f8fafc;
+    --bg-table-alternate: #f1f5f9;
+    --bg-success: #dcfce7;
+    --bg-success-light: #bbf7d0;
+    --bg-error: #fee2e2;
+    --bg-error-light: #fecaca;
+    --bg-warning: #fffbeb;
+    --bg-warning-light: #fef3c7;
+    --bg-info: #dbeafe;
+    --bg-info-light: #bfdbfe;
+    --bg-loading: #e5e7eb;
+    --bg-loading-light: #d1d5db;
+    --bg-border: #e5e7eb;
+    --bg-border-hover: #d1d5db;
+    --bg-border-focus: #93c5fd;
+    --bg-border-strong: #9ca3af;
+    --bg-divider: #e5e7eb;
+    --bg-shadow: rgba(0, 0, 0, 0.1);
+    --bg-gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --bg-gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    --bg-gradient-tertiary: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    
+    --text-primary: #0f172a;
+    --text-secondary: #1e293b;
+    --text-tertiary: #334155;
+    --text-quaternary: #475569;
+    --text-muted: #64748b;
+    --text-disabled: #94a3b8;
+    --text-heading: #0f172a;
+    --text-body: #1e293b;
+    --text-label: #64748b;
+    --text-placeholder: #94a3b8;
+    --text-link: #2563eb;
+    --text-link-hover: #1d4ed8;
+    --text-code: #0f172a;
+    --text-error: #7f1d1d;
+    --text-warning: #92400e;
+    --text-success: #166534;
+    --text-info: #1d4ed8;
+    
+    --border-primary: #e5e7eb;
+    --border-secondary: #d1d5db;
+    --border-tertiary: #9ca3af;
+    --border-focus: #93c5fd;
+    --border-error: #ef4444;
+    --border-warning: #f59e0b;
+    --border-success: #22c55e;
+    --border-info: #3b82f6;
+    
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+    --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.1);
+    --shadow-2xl: 0 25px 50px rgba(0, 0, 0, 0.1);
+    --shadow-inner: inset 0 2px 4px rgba(0, 0, 0, 0.05);
   }
   a:hover {
-    color: #747bff;
+    color: var(--text-link-hover);
   }
   button {
-    background-color: #f9f9f9;
+    background-color: var(--bg-surface);
   }
 }
