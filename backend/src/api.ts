@@ -22,9 +22,11 @@ import { KycUpsertService } from './kyc-upsert-service';
 import { createTransferGuard, AuthenticatedRequest } from './transfer-guard';
 import { correlationIdMiddleware } from './correlation-middleware';
 import { getCorrelationId } from './correlation-id';
+import { MetricsService } from './metrics';
 
 const app = express();
 const verifier = new AssetVerifier();
+const metricsService = new MetricsService(getPool());
 
 // Security middleware
 app.use(helmet());
@@ -43,6 +45,7 @@ const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
   message: 'Too many requests from this IP, please try again later.',
+  skip: (req) => req.path === '/metrics', // Exclude metrics endpoint from rate limiting
 });
 
 app.use('/api/', limiter);
@@ -87,6 +90,21 @@ app.get('/health', (req: Request, res: Response) => {
   const correlationId = getCorrelationId();
   console.log('Health check requested', { correlationId });
   res.json({ status: 'ok', timestamp: new Date().toISOString(), correlationId });
+});
+
+// Prometheus metrics endpoint
+app.get('/metrics', async (req: Request, res: Response) => {
+  const correlationId = getCorrelationId();
+  console.log('Metrics endpoint requested', { correlationId });
+  
+  try {
+    const metrics = await metricsService.getMetrics();
+    res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    res.send(metrics);
+  } catch (error) {
+    console.error('Error generating metrics:', error, { correlationId });
+    res.status(500).json({ error: 'Failed to generate metrics' });
+  }
 });
 
 // Get asset verification status

@@ -5,6 +5,7 @@ import { WebhookLogger } from './webhook-logger';
 import { TransactionStateManager, TransactionUpdate, KYCUpdate } from './transaction-state';
 import { KycUpsertService } from './kyc-upsert-service';
 import { getCorrelationId } from './correlation-id';
+import { MetricsService } from './metrics';
 
 interface WebhookRequest extends Request {
   rawBody?: string;
@@ -15,12 +16,14 @@ export class WebhookHandler {
   private logger: WebhookLogger;
   private stateManager: TransactionStateManager;
   private kycUpsertService: KycUpsertService;
+  private metricsService: MetricsService;
 
   constructor(private pool: Pool) {
     this.verifier = new WebhookVerifier(300); // 5 minute replay window
     this.logger = new WebhookLogger(pool);
     this.stateManager = new TransactionStateManager(pool);
     this.kycUpsertService = new KycUpsertService(pool);
+    this.metricsService = new MetricsService(pool);
   }
 
   /**
@@ -113,6 +116,7 @@ export class WebhookHandler {
       if (!signatureValid) {
         console.log('Invalid signature', { anchorId, ...logContext });
         await this.logSuspicious(anchorId, 'Invalid signature', req.body);
+        this.metricsService.incrementWebhookDeliveries('failed', req.body.event_type || 'unknown', anchorId);
         res.status(401).json({ error: 'Invalid signature' });
         return;
       }
@@ -175,6 +179,9 @@ export class WebhookHandler {
         transaction_id,
         ...logContext 
       });
+      
+      // Track successful webhook delivery
+      this.metricsService.incrementWebhookDeliveries('success', event_type, anchorId);
       
       res.status(200).json({ 
         success: true, 

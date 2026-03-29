@@ -1,0 +1,106 @@
+# Prometheus configuration for SwiftRemit backend service
+# Copy this file to your Prometheus configuration directory and adjust as needed
+
+global:
+  scrape_interval: 15s # Default scrape interval
+  evaluation_interval: 15s # Default evaluation interval
+  scrape_timeout: 10s # Default scrape timeout
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           # - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'
+# rule_files:
+#   - "first_rules.yml"
+#   - "second_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Scrape Prometheus itself
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Scrape SwiftRemit backend service
+  - job_name: "swiftremit-backend"
+    # metrics_path defaults to '/metrics'
+    # scheme defaults to 'http'.
+    static_configs:
+      - targets: ["localhost:3000"] # Adjust to your backend service host:port
+        labels:
+          service: "swiftremit-backend"
+          environment: "production" # Adjust as needed
+
+
+    # Optional: Add relabeling or metric relabeling
+    # metric_relabel_configs:
+    #   - source_labels: [__name__]
+    #     regex: 'swiftremit_.*'
+    #     action: keep
+
+  # Example: Scrape multiple instances
+  # - job_name: 'swiftremit-backend-instances'
+  #   static_configs:
+  #     - targets:
+  #         - 'backend-1:3000'
+  #         - 'backend-2:3000'
+  #         - 'backend-3:3000'
+  #       labels:
+  #         service: 'swiftremit-backend'
+
+  # Example: Scrape with basic auth
+  # - job_name: 'swiftremit-backend-auth'
+  #   basic_auth:
+  #     username: 'admin'
+  #     password: 'secret'
+  #   static_configs:
+  #     - targets: ['localhost:3000']
+
+  # Example: Scrape with TLS
+  # - job_name: 'swiftremit-backend-tls'
+  #   scheme: https
+  #   tls_config:
+  #     ca_file: /path/to/ca.crt
+  #     cert_file: /path/to/client.crt
+  #     key_file: /path/to/client.key
+  #   static_configs:
+  #     - targets: ['localhost:3000']
+
+# Example alerting rules (optional)
+# rule_files:
+#   - "swiftremit_alerts.yml"
+
+# Example alert rules for SwiftRemit
+# groups:
+#   - name: swiftremit_alerts
+#     rules:
+#       - alert: HighWebhookFailureRate
+#         expr: rate(swiftremit_webhook_deliveries_total{result="failed"}[5m]) > 0.1
+#         for: 5m
+#         labels:
+#           severity: warning
+#         annotations:
+#           summary: "High webhook failure rate detected"
+#           description: "Webhook failure rate is {{ $value }} per second"
+#
+#       - alert: HighActiveRemittances
+#         expr: swiftremit_active_remittances > 1000
+#         for: 5m
+#         labels:
+#           severity: warning
+#         annotations:
+#           summary: "High number of active remittances"
+#           description: "There are {{ $value }} active remittances"
+#
+#       - alert: LowSettlementRate
+#         expr: rate(swiftremit_settlements_total{status="completed"}[1h]) < 0.01
+#         for: 10m
+#         labels:
+#           severity: warning
+#         annotations:
+#           summary: "Low settlement completion rate"
+#           description: "Settlement completion rate is {{ $value }} per second"
