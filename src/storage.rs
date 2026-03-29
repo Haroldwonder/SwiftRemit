@@ -414,8 +414,8 @@ pub fn get_accumulated_integrator_fees(env: &Env) -> i128 {
 ///
 /// * `true` - Settlement has been executed
 /// * `false` - Settlement has not been executed
-const SETTLEMENT_EXECUTED_FLAG: u32 = 1;
-const SETTLEMENT_EVENT_EMITTED_FLAG: u32 = 1 << 1;
+
+use crate::config::{SETTLEMENT_EXECUTED_FLAG, SETTLEMENT_EVENT_EMITTED_FLAG};
 
 #[contracttype]
 #[derive(Clone)]

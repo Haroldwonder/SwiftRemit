@@ -11,10 +11,7 @@
 
 use soroban_sdk::{ contracttype, Env, String };
 
-use crate::{ ContractError, FeeStrategy, get_fee_strategy, get_protocol_fee_bps, storage };
-
-/// Fee divisor for basis points calculations (10000 = 100%)
-const FEE_DIVISOR: i128 = 10000;
+use crate::{ config::FEE_DIVISOR, ContractError, FeeStrategy, get_fee_strategy, get_protocol_fee_bps, storage };
 
 /// Complete breakdown of all fees applied to a transaction
 #[contracttype]

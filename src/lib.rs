@@ -6,6 +6,7 @@
 #![no_std]
 mod abuse_protection;
 mod asset_verification;
+mod config;
 mod debug;
 mod error_handler;
 mod errors;
@@ -61,6 +62,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Vec};
 
 pub use abuse_protection::*;
 pub use asset_verification::*;
+pub use config::*;
 pub use debug::*;
 pub use error_handler::*;
 pub use errors::ContractError;
@@ -77,13 +79,6 @@ pub use transitions::*;
 pub use types::*;
 pub use verification::*;
 pub use validation::*;
-
-/// Maximum number of remittances that can be settled in a single batch
-const MAX_BATCH_SIZE: u32 = 100;
-const MAX_EXPIRED_BATCH_SIZE: u32 = 50;
-const DAILY_LIMIT_WINDOW_SECONDS: u64 = 24 * 60 * 60;
-const DEFAULT_DAILY_LIMIT_CURRENCY: &str = "USDC";
-const DEFAULT_DAILY_LIMIT_COUNTRY: &str = "GLOBAL";
 
 fn enforce_daily_send_limit(
     env: &Env,

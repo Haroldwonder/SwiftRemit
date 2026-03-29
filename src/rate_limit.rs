@@ -2,7 +2,7 @@ use core::convert::TryInto;
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
 
-use crate::ContractError;
+use crate::{config::{DEFAULT_RATE_LIMIT_MAX_REQUESTS, DEFAULT_RATE_LIMIT_WINDOW_SECONDS}, ContractError};
 
 /// Rate limit configuration stored in instance storage
 #[contracttype]
@@ -62,8 +62,8 @@ enum RateLimitKey {
 /// Initialize rate limiting with default configuration
 pub fn init_rate_limit(env: &Env) {
     let config = RateLimitConfig {
-        max_requests: 100,
-        window_seconds: 60,
+        max_requests: DEFAULT_RATE_LIMIT_MAX_REQUESTS,
+        window_seconds: DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
         enabled: true,
     };
     env.storage()

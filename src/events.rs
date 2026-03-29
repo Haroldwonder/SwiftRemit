@@ -20,7 +20,7 @@ use soroban_sdk::{symbol_short, Address, Env, String};
 //   and perform migrations when the event format evolves
 // ============================================================================
 
-const SCHEMA_VERSION: u32 = 1;
+use crate::config::SCHEMA_VERSION;
 
 // ── Admin Events ───────────────────────────────────────────────────
 

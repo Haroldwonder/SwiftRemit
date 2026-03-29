@@ -6,6 +6,7 @@
 use soroban_sdk::{Address, Env};
 
 use crate::{
+    config::MAX_FEE_BPS,
     get_remittance, is_agent_registered, is_paused, is_user_blacklisted, ContractError,
     RemittanceStatus,
 };
@@ -26,7 +27,7 @@ use crate::{
 
 /// Validates fee basis points are within acceptable range (0-10000 = 0%-100%).
 pub fn validate_fee_bps(fee_bps: u32) -> Result<(), ContractError> {
-    if fee_bps > 10000 {
+    if fee_bps > MAX_FEE_BPS {
         return Err(ContractError::InvalidFeeBps);
     }
     Ok(())
