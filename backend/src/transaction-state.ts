@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { getCorrelationId } from './correlation-id';
+import { MetricsService } from './metrics';
 
 export type TransactionStatus = 
   | 'pending_user_transfer_start'
@@ -36,7 +37,11 @@ export interface KYCUpdate {
 }
 
 export class TransactionStateManager {
-  constructor(private pool: Pool) {}
+  private metricsService: MetricsService;
+
+  constructor(private pool: Pool) {
+    this.metricsService = new MetricsService(pool);
+  }
 
   /**
    * Get correlation ID for logging
@@ -109,6 +114,9 @@ export class TransactionStateManager {
         kind,
         ...logContext 
       });
+
+      // Track settlement metrics
+      this.metricsService.incrementSettlements(update.status, kind);
 
       await client.query('COMMIT');
     } catch (error) {
