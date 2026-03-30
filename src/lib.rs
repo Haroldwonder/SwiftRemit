@@ -1835,6 +1835,7 @@ impl SwiftRemitContract {
     pub fn update_protocol_fee(env: Env, caller: Address, fee_bps: u32) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
         set_protocol_fee_bps(&env, fee_bps)?;
+        emit_protocol_fee_updated(&env, caller, fee_bps);
         Ok(())
     }
 

@@ -391,6 +391,26 @@ pub fn emit_fees_withdrawn(env: &Env, caller: Address, to: Address, token: Addre
     );
 }
 
+/// Emits an event when the protocol fee is updated.
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `caller` - Address of the admin who updated the protocol fee
+/// * `fee_bps` - New protocol fee rate in basis points
+pub fn emit_protocol_fee_updated(env: &Env, caller: Address, fee_bps: u32) {
+    env.events().publish(
+        (symbol_short!("fee"), symbol_short!("proto_upd")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            caller,
+            fee_bps,
+        ),
+    );
+}
+
 pub fn emit_dispute_resolved(env: &Env, id: u64, in_favour_of_sender: bool) {
     env.events().publish((Symbol::new(env, "dispute_resolved"), id), in_favour_of_sender);
 }

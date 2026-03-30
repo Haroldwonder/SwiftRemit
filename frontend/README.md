@@ -8,9 +8,14 @@ See also: [Root README](../README.md) | [Deployment Guide](../DEPLOYMENT.md)
 
 ## Prerequisites
 
-- Node.js >= 18
-- [Freighter wallet extension](https://www.freighter.app/) installed in your browser
-- A deployed SwiftRemit contract on Stellar testnet (see [DEPLOYMENT.md](../DEPLOYMENT.md))
+Before running the frontend, ensure you have:
+
+- **Node.js >= 18** (check with `node --version`)
+- **npm** or **yarn** package manager
+- **[Freighter wallet extension](https://www.freighter.app/)** installed in your browser (Chrome, Firefox, or Brave)
+- A **deployed SwiftRemit contract** on Stellar testnet (see [DEPLOYMENT.md](../DEPLOYMENT.md))
+- **Testnet XLM** for transaction fees (get from [Stellar Friendbot](https://friendbot.stellar.org))
+- **Testnet USDC** for testing remittances (available via testnet faucets)
 
 ---
 
@@ -37,9 +42,22 @@ VITE_CONTRACT_ID=
 VITE_USDC_TOKEN_ID=
 ```
 
-`VITE_CONTRACT_ID` is the Soroban contract address you get after deploying the smart contract. `VITE_USDC_TOKEN_ID` is the testnet USDC token contract — the Circle testnet USDC address on Stellar is `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`.
+### Environment Variables Explained
 
-All `VITE_` prefixed variables are bundled into the client at build time by Vite.
+| Variable | Description | Example |
+| -------- | ----------- | ------- |
+| `VITE_NETWORK` | Stellar network to connect to | `testnet` or `mainnet` |
+| `VITE_HORIZON_URL` | Horizon API endpoint for Stellar operations | `https://horizon-testnet.stellar.org` |
+| `VITE_SOROBAN_RPC_URL` | Soroban RPC endpoint for smart contract calls | `https://soroban-testnet.stellar.org` |
+| `VITE_CONTRACT_ID` | Your deployed SwiftRemit contract address (starts with `C`) | `CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` |
+| `VITE_USDC_TOKEN_ID` | Testnet USDC token contract address | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
+
+**Important Notes:**
+
+- All `VITE_` prefixed variables are bundled into the client at **build time** by Vite
+- Changes to `.env` require restarting the dev server to take effect
+- Never commit `.env` to version control (it's in `.gitignore`)
+- For mainnet deployment, update all URLs and addresses accordingly
 
 ---
 
