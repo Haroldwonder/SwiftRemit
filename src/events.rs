@@ -358,7 +358,7 @@ pub fn emit_token_removed_from_whitelist(env: &Env, token: Address, caller: Addr
 /// * `fee_bps` - New platform fee in basis points
 pub fn emit_token_fee_updated(env: &Env, caller: Address, token: Address, fee_bps: u32) {
     env.events().publish(
-        (symbol_short!("token"), symbol_short!("fee_updated")),
+        (symbol_short!("token"), symbol_short!("fee_upd")),
         (
             SCHEMA_VERSION,
             env.ledger().sequence(),
@@ -460,5 +460,145 @@ pub fn emit_agent_cap_set(env: &Env, agent: Address, cap: i128, caller: Address)
     env.events().publish(
         (Symbol::new(env, "agent_cap_set"),),
         (agent, cap, caller),
+    );
+}
+
+// ── Recipient Address Verification Events ─────────────────────────
+
+/// Emits an event when a recipient hash is registered for a remittance.
+///
+/// Emitted before returning (emit-before-return convention).
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `remittance_id` - ID of the remittance
+/// * `recipient_hash` - The 32-byte hash that was registered
+/// * `hash_schema_version` - The schema version used to produce the hash
+pub fn emit_recipient_hash_registered(
+    env: &Env,
+    remittance_id: u64,
+    recipient_hash: soroban_sdk::BytesN<32>,
+    hash_schema_version: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "rcpt_hash_reg"), remittance_id),
+        (recipient_hash, hash_schema_version),
+    );
+}
+
+/// Emits an event when a recipient hash verification succeeds at payout time.
+///
+/// Emitted before returning (emit-before-return convention).
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `remittance_id` - ID of the remittance
+/// * `agent` - Address of the agent who confirmed the payout
+pub fn emit_recipient_verified(env: &Env, remittance_id: u64, agent: Address) {
+    env.events().publish(
+        (Symbol::new(env, "rcpt_verified"), remittance_id),
+        agent,
+    );
+}
+
+/// Emits an event when a recipient hash verification fails at payout time.
+///
+/// Emitted before returning (emit-before-return convention).
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `remittance_id` - ID of the remittance
+/// * `agent` - Address of the agent who attempted the payout
+pub fn emit_recipient_verification_failed(env: &Env, remittance_id: u64, agent: Address) {
+    env.events().publish(
+        (Symbol::new(env, "rcpt_vfy_fail"), remittance_id),
+        agent,
+    );
+}
+
+// ── Settlement / Escrow / Treasury Events (stubs for backward compatibility) ──
+
+/// Emits an event when a settlement is completed (alias for emit_remittance_completed with extra fields).
+pub fn emit_settlement_completed(
+    env: &Env,
+    remittance_id: u64,
+    sender: Address,
+    agent: Address,
+    token: Address,
+    payout_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "settlement_done"), remittance_id),
+        (sender, agent, token, payout_amount),
+    );
+}
+
+/// Emits an event when integrator fees are withdrawn.
+pub fn emit_integrator_fees_withdrawn(
+    env: &Env,
+    integrator: Address,
+    to: Address,
+    token: Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "intg_fee_wdrw"),),
+        (integrator, to, token, amount),
+    );
+}
+
+/// Emits an event when an escrow transfer is created.
+pub fn emit_escrow_created(
+    env: &Env,
+    transfer_id: u64,
+    sender: Address,
+    recipient: Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_created"), transfer_id),
+        (sender, recipient, amount),
+    );
+}
+
+/// Emits an event when an escrow transfer is released to the recipient.
+pub fn emit_escrow_released(
+    env: &Env,
+    transfer_id: u64,
+    recipient: Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_released"), transfer_id),
+        (recipient, amount),
+    );
+}
+
+/// Emits an event when an escrow transfer is refunded to the sender.
+pub fn emit_escrow_refunded(
+    env: &Env,
+    transfer_id: u64,
+    sender: Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_refunded"), transfer_id),
+        (sender, amount),
+    );
+}
+
+/// Emits an event when the treasury address is updated.
+pub fn emit_treasury_updated(
+    env: &Env,
+    caller: Address,
+    old_treasury: Option<Address>,
+    new_treasury: Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "treasury_upd"),),
+        (caller, old_treasury, new_treasury),
     );
 }

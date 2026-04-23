@@ -63,6 +63,9 @@ mod transitions;
 mod types;
 mod validation;
 mod verification;
+mod recipient_verification;
+#[cfg(test)]
+mod test_recipient_verification;
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, String, Vec};
 
@@ -82,6 +85,10 @@ pub use rate_limit::*;
 pub use storage::*;
 pub use transaction_controller::*;
 pub use transitions::*;
+pub use recipient_verification::{
+    RecipientDetails, WalletRecipient, BankRecipient, RecipientHashRecord, VerificationOutcome,
+    RECIPIENT_HASH_SCHEMA_VERSION, compute_recipient_hash,
+};
 pub use types::*;
 pub use validation::*;
 pub use verification::*;
@@ -396,6 +403,7 @@ impl SwiftRemitContract {
         token: Option<Address>,
         idempotency_key: Option<String>,
         settlement_config: Option<SettlementConfig>,
+        recipient_hash: Option<BytesN<32>>,
     ) -> Result<u64, ContractError> {
         if crate::storage::is_migration_in_progress(&env) {
             return Err(ContractError::MigrationInProgress);
@@ -451,11 +459,11 @@ impl SwiftRemitContract {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
-            settlement_config: settlement_config.clone(),
+            settlement_config: settlement_config.clone().into(),
             token: token_address.clone(),
             created_at: env.ledger().timestamp(),
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         };
 
         let payout_commitment = compute_payout_commitment(&env, &remittance);
@@ -464,11 +472,16 @@ impl SwiftRemitContract {
         set_payout_commitment(&env, remittance_id, &payout_commitment);
         set_remittance_counter(&env, remittance_id);
 
+        // Store recipient hash if provided (Task 7.1)
+        if let Some(ref hash) = recipient_hash {
+            recipient_verification::store_recipient_hash(&env, remittance_id, hash)?;
+        }
+
         // Increment analytics counter
         storage::increment_remittance_count(&env)?;
 
         // Index this remittance under the sender for paginated queries
-        append_sender_remittance(&env, &sender, remittance_id);
+        storage::append_sender_remittance(&env, &sender, remittance_id);
         // Set initial transfer state
         set_transfer_state(&env, remittance_id, RemittanceStatus::Pending)?;
 
@@ -545,7 +558,11 @@ impl SwiftRemitContract {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
-            settlement_config: None,
+            settlement_config: MaybeSettlementConfig::None,
+            token: usdc_token.clone(),
+            created_at: env.ledger().timestamp(),
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
         };
 
         let payout_commitment = compute_payout_commitment(&env, &remittance);
@@ -553,7 +570,7 @@ impl SwiftRemitContract {
         set_remittance(&env, remittance_id, &remittance);
         set_payout_commitment(&env, remittance_id, &payout_commitment);
         set_remittance_counter(&env, remittance_id);
-        set_transfer_state(&env, remittance_id, TransferState::Initiated)?;
+        set_transfer_state(&env, remittance_id, RemittanceStatus::Pending)?;
 
         Ok(remittance_id)
     }
@@ -652,7 +669,11 @@ impl SwiftRemitContract {
                 fee,
                 status: RemittanceStatus::Pending,
                 expiry: entry.expiry,
-                settlement_config: None,
+                settlement_config: MaybeSettlementConfig::None,
+                token: usdc_token.clone(),
+                created_at: env.ledger().timestamp(),
+                failed_at: None,
+                dispute_evidence: MaybeBytes32::None,
             };
 
             let payout_commitment = compute_payout_commitment(&env, &remittance);
@@ -662,7 +683,7 @@ impl SwiftRemitContract {
             set_transfer_state(&env, remittance_id, RemittanceStatus::Pending)?;
 
             // Index this remittance under the sender for paginated queries
-            append_sender_remittance(&env, &sender, remittance_id);
+            storage::append_sender_remittance(&env, &sender, remittance_id);
 
             remittance_ids.push_back(remittance_id);
         }
@@ -702,6 +723,7 @@ impl SwiftRemitContract {
         env: Env,
         remittance_id: u64,
         proof: Option<soroban_sdk::BytesN<32>>,
+        recipient_details_hash: Option<BytesN<32>>,
     ) -> Result<(), ContractError> {
         if crate::storage::is_migration_in_progress(&env) {
             return Err(ContractError::MigrationInProgress);
@@ -714,7 +736,7 @@ impl SwiftRemitContract {
         // Require Settler role
         require_role_settler(&env, &remittance.agent)?;
 
-        if let Some(config) = remittance.settlement_config.clone() {
+        if let MaybeSettlementConfig::Some(config) = remittance.settlement_config.clone() {
             if config.require_proof {
                 let submitted_proof = proof.ok_or(ContractError::MissingProof)?;
                 let expected = get_payout_commitment(&env, remittance_id)
@@ -727,6 +749,14 @@ impl SwiftRemitContract {
 
         // Transition to Processing state
         crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Processing)?;
+
+        // Verify recipient hash before any token transfer (Task 7.2)
+        recipient_verification::verify_recipient_hash(
+            &env,
+            remittance_id,
+            &remittance.agent,
+            recipient_details_hash,
+        )?;
 
         // Update Agent Stats
         let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
@@ -748,6 +778,7 @@ impl SwiftRemitContract {
             &env,
             remittance.amount,
             None, // No corridor specified
+            None, // No corridor config
         )?;
 
         // Verify stored fee matches calculated platform fee
@@ -867,7 +898,7 @@ impl SwiftRemitContract {
         }
 
         remittance.status = RemittanceStatus::Disputed;
-        remittance.dispute_evidence = Some(evidence_hash.clone());
+        remittance.dispute_evidence = MaybeBytes32::Some(evidence_hash.clone());
         set_remittance(&env, remittance_id, &remittance);
 
         let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
@@ -963,7 +994,7 @@ impl SwiftRemitContract {
         // Enforce per-agent daily cap
         storage::check_and_record_agent_withdrawal(&env, &remittance.agent, amount)?;
 
-        let fee_breakdown = fee_service::calculate_fees_with_breakdown(&env, remittance.amount, None)?;
+        let fee_breakdown = fee_service::calculate_fees_with_breakdown(&env, remittance.amount, None, None)?;
         let net_payout = fee_breakdown.net_amount;
 
         let already_disbursed = storage::get_disbursed_amount(&env, remittance_id);
@@ -1259,7 +1290,10 @@ impl SwiftRemitContract {
         integrator: Address,
         to: Address,
     ) -> Result<(), ContractError> {
-        let fees = validate_withdraw_integrator_fees_request(&env, &to)?;
+        let fees = storage::get_accumulated_integrator_fees(&env);
+        if fees <= 0 {
+            return Err(ContractError::NoFeesToWithdraw);
+        }
 
         integrator.require_auth();
 
@@ -1310,7 +1344,7 @@ impl SwiftRemitContract {
         const MAX_PAGE_SIZE: u64 = 100;
         let limit = limit.min(MAX_PAGE_SIZE);
 
-        let all_ids = get_sender_remittances(&env, &sender);
+        let all_ids = storage::get_sender_remittances(&env, &sender);
         let total = all_ids.len() as u64;
 
         if offset >= total || limit == 0 {
@@ -1334,7 +1368,7 @@ impl SwiftRemitContract {
     }
 
     /// Returns the number of registered admins.
-    pub fn get_admin_count(env: Env) -> Result<u32, ContractError> {
+    pub fn get_admin_count(env: Env) -> u32 {
         storage::get_admin_count(&env)
     }
 
@@ -1364,7 +1398,7 @@ impl SwiftRemitContract {
         crate::storage::set_admin_role(&env, &new_admin, true);
         assign_role(&env, &new_admin, &Role::Admin);
 
-        let count = storage::get_admin_count(&env)?;
+        let count = storage::get_admin_count(&env);
         let next = count.checked_add(1).ok_or(ContractError::Overflow)?;
         storage::set_admin_count(&env, next);
 
@@ -1386,7 +1420,7 @@ impl SwiftRemitContract {
             return Err(ContractError::AdminNotFound);
         }
 
-        let count = storage::get_admin_count(&env)?;
+        let count = storage::get_admin_count(&env);
         if count <= 1 {
             return Err(ContractError::CannotRemoveLastAdmin);
         }
@@ -2677,42 +2711,30 @@ impl SwiftRemitContract {
         Ok(())
     }
 
-    /// Migrates persistent storage keys after an in-place WASM upgrade.
+    // ── Recipient Address Verification View Functions ──────────────────────
+
+    /// Returns the stored recipient hash record for a remittance, or `None` if
+    /// the remittance is verification-exempt (no hash was registered).
     ///
-    /// Must be called immediately after `env.deployer().update_current_contract_wasm()`
-    /// completes.  Safe to call multiple times — subsequent calls are no-ops once the
-    /// schema version is current.
-    ///
-    /// # What is migrated
-    ///
-    /// - `AgentRegistered(Address)` — re-written under current XDR encoding
-    /// - `AgentKycHash(Address)` — re-written under current XDR encoding
-    /// - `AgentList` — rebuilt from the agent snapshot (was missing in schema v1)
-    ///
-    /// # Rollback
-    ///
-    /// If this function returns `MigrationValidationFailed`, call
-    /// `rollback_migration()` to restore the pre-migration agent state.
-    ///
-    /// # Authorization
-    /// Admin only.
-    pub fn migrate(env: Env, caller: Address) -> Result<(), ContractError> {
-        get_admin(&env)?;
-        require_admin(&env, &caller)?;
-        caller.require_auth();
-        migration::migrate(&env)
+    /// Returns `ContractError::RemittanceNotFound` if the remittance_id does not exist.
+    /// No authorization required — the hash itself does not reveal recipient details.
+    pub fn get_recipient_hash(
+        env: Env,
+        remittance_id: u64,
+    ) -> Result<Option<RecipientHashRecord>, ContractError> {
+        recipient_verification::get_recipient_hash(&env, remittance_id)
     }
 
-    /// Restores agent registration state from the pre-migration rollback snapshot.
+    /// Computes the canonical SHA-256 hash of `RecipientDetails`.
     ///
-    /// Only valid after a failed `migrate()` call.  Clears the snapshot on success.
-    ///
-    /// # Authorization
-    /// Admin only.
-    pub fn rollback_migration(env: Env, caller: Address) -> Result<(), ContractError> {
-        get_admin(&env)?;
-        require_admin(&env, &caller)?;
-        caller.require_auth();
-        migration::rollback_migration(&env)
+    /// This view function enables off-chain systems to verify their hash computation
+    /// without submitting a transaction.
+    pub fn compute_recipient_hash(env: Env, details: RecipientDetails) -> BytesN<32> {
+        recipient_verification::compute_recipient_hash(&env, details)
+    }
+
+    /// Returns the current `RECIPIENT_HASH_SCHEMA_VERSION`.
+    pub fn rcpt_hash_schema_version() -> u32 {
+        recipient_verification::get_recipient_hash_schema_version()
     }
 }
