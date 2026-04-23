@@ -6,7 +6,7 @@
 
 use soroban_sdk::contracterror;
 
-#[contracterror]
+#[contracterror(export = false)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum ContractError {
@@ -262,10 +262,32 @@ pub enum ContractError {
 
     /// This operation requires the remittance to be in a Disputed state.
     NotDisputed = 55,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Recipient Address Verification Errors (56-59)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Supplied recipient hash is not exactly 32 bytes.
+    /// Cause: Passing a hash of incorrect length to create_remittance.
+    InvalidRecipientHash = 56,
+
+    /// Hash-protected remittance called without supplying a recipient hash.
+    /// Cause: confirm_payout called on a remittance that has a stored hash, but no hash was supplied.
+    MissingRecipientHash = 57,
+
+    /// Supplied recipient hash does not match the stored hash.
+    /// Cause: The agent-supplied hash differs from the hash registered at creation time.
+    RecipientHashMismatch = 58,
+
+    /// Stored hash schema version differs from the current contract schema version.
+    /// Cause: The remittance was created with a different serialization schema.
+    RecipientHashSchemaMismatch = 59,
 }
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use std::vec::Vec;
     use super::*;
 
     /// Test 1 (Unit): Every ContractError variant must map to a unique u32 value.
