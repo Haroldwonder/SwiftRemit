@@ -462,3 +462,50 @@ pub fn emit_agent_cap_set(env: &Env, agent: Address, cap: i128, caller: Address)
         (agent, cap, caller),
     );
 }
+
+// ── Circuit Breaker Events ─────────────────────────────────────────
+
+/// Emits an event when the contract is emergency-paused.
+///
+/// # Arguments
+///
+/// * `env`       - The contract execution environment
+/// * `caller`    - Address that triggered the pause
+/// * `timestamp` - Ledger timestamp of the pause
+/// * `reason`    - Structured [`crate::PauseReason`] for the pause
+pub fn emit_circuit_breaker_paused(
+    env: &Env,
+    caller: Address,
+    timestamp: u64,
+    reason: crate::PauseReason,
+) {
+    env.events().publish(
+        (symbol_short!("cb"), symbol_short!("paused")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            timestamp,
+            caller,
+            reason,
+        ),
+    );
+}
+
+/// Emits an event when the contract is emergency-unpaused.
+///
+/// # Arguments
+///
+/// * `env`       - The contract execution environment
+/// * `caller`    - Address that triggered the unpause
+/// * `timestamp` - Ledger timestamp of the unpause
+pub fn emit_circuit_breaker_unpaused(env: &Env, caller: Address, timestamp: u64) {
+    env.events().publish(
+        (symbol_short!("cb"), symbol_short!("unpaused")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            timestamp,
+            caller,
+        ),
+    );
+}

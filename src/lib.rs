@@ -22,6 +22,8 @@ mod migration;
 mod netting;
 mod rate_limit;
 mod storage;
+pub mod circuit_breaker;
+pub mod circuit_breaker_storage;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test;
 #[cfg(test)]
@@ -1613,18 +1615,92 @@ impl SwiftRemitContract {
         let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
 
-        set_paused(&env, true);
-        emit_paused(&env, caller);
-        Ok(())
+        // Delegate to circuit breaker with bypass_checks = true (legacy wrapper)
+        circuit_breaker::do_emergency_pause(&env, &caller, PauseReason::MaintenanceWindow, true)
     }
 
     pub fn unpause(env: Env) -> Result<(), ContractError> {
         let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
 
-        set_paused(&env, false);
-        emit_unpaused(&env, caller);
+        // Delegate to circuit breaker with bypass_timelock_quorum = true (legacy wrapper)
+        circuit_breaker::do_emergency_unpause(&env, &caller, true)
+    }
+
+    // ── Circuit Breaker Entry Points ───────────────────────────────────────────
+
+    /// Pauses the contract with a structured reason. Requires Admin role.
+    pub fn emergency_pause(
+        env: Env,
+        caller: Address,
+        reason: PauseReason,
+    ) -> Result<(), ContractError> {
+        circuit_breaker::do_emergency_pause(&env, &caller, reason, false)
+    }
+
+    /// Unpauses the contract, enforcing timelock and quorum. Requires Admin role.
+    pub fn emergency_unpause(env: Env, caller: Address) -> Result<(), ContractError> {
+        circuit_breaker::do_emergency_unpause(&env, &caller, false)
+    }
+
+    /// Casts an admin vote to unpause; auto-unpauses when quorum is reached.
+    pub fn vote_unpause(env: Env, caller: Address) -> Result<(), ContractError> {
+        circuit_breaker::do_vote_unpause(&env, &caller)
+    }
+
+    /// Sets the timelock duration (0..=604800 seconds). Requires Admin role.
+    pub fn set_pause_timelock(
+        env: Env,
+        caller: Address,
+        seconds: u64,
+    ) -> Result<(), ContractError> {
+        if seconds > 604800 {
+            return Err(ContractError::InvalidTimelockDuration);
+        }
+        caller.require_auth();
+        require_role_admin(&env, &caller)?;
+        circuit_breaker_storage::set_timelock_seconds(&env, seconds);
         Ok(())
+    }
+
+    /// Sets the unpause quorum (1..=admin_count). Requires Admin role.
+    pub fn set_unpause_quorum(
+        env: Env,
+        caller: Address,
+        quorum: u32,
+    ) -> Result<(), ContractError> {
+        let admin_count = storage::get_admin_count(&env);
+        if quorum < 1 || quorum > admin_count {
+            return Err(ContractError::InvalidQuorum);
+        }
+        caller.require_auth();
+        require_role_admin(&env, &caller)?;
+        circuit_breaker_storage::set_unpause_quorum(&env, quorum);
+        Ok(())
+    }
+
+    // ── Circuit Breaker View Entry Points ──────────────────────────────────────
+
+    /// Returns a snapshot of the full circuit-breaker state. No auth required.
+    pub fn get_circuit_breaker_status(env: Env) -> CircuitBreakerStatus {
+        circuit_breaker::build_status(&env)
+    }
+
+    /// Returns the pause record for the given sequence number.
+    pub fn get_pause_record(env: Env, seq: u64) -> Result<PauseRecord, ContractError> {
+        circuit_breaker_storage::get_pause_record_by_seq(&env, seq)
+            .ok_or(ContractError::PauseRecordNotFound)
+    }
+
+    /// Returns the active pause record, or None when not paused.
+    pub fn get_current_pause_record(env: Env) -> Option<PauseRecord> {
+        let seq = circuit_breaker_storage::get_active_pause_seq(&env)?;
+        circuit_breaker_storage::get_pause_record_by_seq(&env, seq)
+    }
+
+    /// Returns the total number of pause events ever recorded.
+    pub fn get_pause_history_count(env: Env) -> u64 {
+        circuit_breaker_storage::get_pause_sequence(&env)
     }
 
     // ── Escrow Functions ───────────────────────────────────────────

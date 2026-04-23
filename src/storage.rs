@@ -201,6 +201,42 @@ enum DataKey {
 
     /// Rolling withdrawal records for an agent (persistent storage).
     AgentWithdrawals(Address),
+
+    // === Per-Token Fee Override ===
+    /// Per-token platform fee override in basis points (persistent storage).
+    TokenFeeBps(Address),
+
+    // === Agent Statistics ===
+    /// Aggregated settlement statistics for an agent (persistent storage).
+    AgentStats(Address),
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Circuit Breaker Keys
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Monotonically increasing counter for pause events (instance storage).
+    PauseSequence,
+
+    /// Sequence number of the currently active pause, when paused (instance storage).
+    ActivePauseSeq,
+
+    /// PauseRecord keyed by sequence number (persistent storage).
+    PauseRecord(u64),
+
+    /// UnpauseRecord keyed by the pause sequence number it resolved (persistent storage).
+    UnpauseRecord(u64),
+
+    /// Vote flag: (pause_seq, voter_address) → bool (persistent storage).
+    UnpauseVote(u64, Address),
+
+    /// Vote count for the current pause instance (instance storage).
+    UnpauseVoteCount,
+
+    /// Timelock duration in seconds before unpause is permitted (instance storage, default 0).
+    PauseTimelockSeconds,
+
+    /// Minimum number of admin votes required to unpause (instance storage, default 1).
+    UnpauseQuorum,
 }
 
 /// Checks if the contract has an admin configured.
