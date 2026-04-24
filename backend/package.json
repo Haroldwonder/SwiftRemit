@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "test": "vitest",
     "test:webhook": "vitest webhook",
+    "test:webhook:manual": "tsx scripts/test-webhook.ts",
     "lint": "eslint src --ext .ts",
     "webhook:example": "tsx examples/send-webhook.ts",
     "validate:openapi": "swagger-cli validate openapi.yaml"
