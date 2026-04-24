@@ -264,6 +264,36 @@ pub enum ContractError {
     NotDisputed = 55,
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // Circuit Breaker Errors (56-62)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Contract is already paused; cannot pause again.
+    /// Cause: `emergency_pause` called while the contract is already in a paused state.
+    AlreadyPaused = 56,
+
+    /// Contract is not paused; cannot unpause or vote to unpause.
+    /// Cause: `emergency_unpause` or `vote_unpause` called while the contract is not paused.
+    NotPaused = 57,
+
+    /// Timelock has not yet elapsed; unpause is not permitted yet.
+    /// Cause: `emergency_unpause` called before the configured timelock duration has passed.
+    TimelockActive = 58,
+
+    /// Admin has already cast a vote for the current pause instance.
+    /// Cause: `vote_unpause` called by an admin who already voted.
+    AlreadyVoted = 59,
+
+    /// Timelock duration exceeds the maximum allowed value (604800 seconds / 7 days).
+    /// Cause: `set_pause_timelock` called with a value greater than 604800.
+    InvalidTimelockDuration = 60,
+
+    /// Quorum value is invalid (0 or greater than the current admin count).
+    /// Cause: `set_unpause_quorum` called with 0 or a value exceeding the admin count.
+    InvalidQuorum = 61,
+
+    /// Pause record not found for the given sequence number.
+    /// Cause: `get_pause_record` called with a sequence number that does not exist.
+    PauseRecordNotFound = 62,
     // Recipient Address Verification Errors (56-59)
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -346,6 +376,16 @@ mod tests {
             (ContractError::InvalidProof,                50),
             (ContractError::MissingProof,                51),
             (ContractError::InvalidOracleAddress,        52),
+            (ContractError::DisputeWindowExpired,        53),
+            (ContractError::AlreadyDisputed,             54),
+            (ContractError::NotDisputed,                 55),
+            (ContractError::AlreadyPaused,               56),
+            (ContractError::NotPaused,                   57),
+            (ContractError::TimelockActive,              58),
+            (ContractError::AlreadyVoted,                59),
+            (ContractError::InvalidTimelockDuration,     60),
+            (ContractError::InvalidQuorum,               61),
+            (ContractError::PauseRecordNotFound,         62),
         ];
 
         // Assert each variant maps to its expected discriminant.

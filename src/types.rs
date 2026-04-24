@@ -244,6 +244,64 @@ pub struct TransferRecord {
     pub country: String,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Circuit Breaker Types
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Structured reason for an emergency pause.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PauseReason {
+    SecurityIncident,
+    SuspiciousActivity,
+    MaintenanceWindow,
+    ExternalThreat,
+}
+
+/// Persistent record of a pause event.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PauseRecord {
+    /// Monotonically increasing sequence number for this pause event.
+    pub seq: u64,
+    /// Address that triggered the pause.
+    pub caller: Address,
+    /// Ledger timestamp when the pause was initiated.
+    pub timestamp: u64,
+    /// Structured reason for the pause.
+    pub reason: PauseReason,
+}
+
+/// Persistent record of an unpause event.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnpauseRecord {
+    /// Address that triggered the unpause.
+    pub caller: Address,
+    /// Ledger timestamp when the unpause occurred.
+    pub timestamp: u64,
+    /// Sequence number of the pause event this unpause corresponds to.
+    pub pause_seq: u64,
+}
+
+/// Snapshot of the full circuit-breaker state returned by `get_circuit_breaker_status`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CircuitBreakerStatus {
+    /// Whether the contract is currently paused.
+    pub is_paused: bool,
+    /// Active pause reason, or `None` when not paused.
+    pub pause_reason: Option<PauseReason>,
+    /// Ledger timestamp of the active pause, or `None` when not paused.
+    pub pause_timestamp: Option<u64>,
+    /// Configured timelock duration in seconds (0 = no timelock).
+    pub timelock_seconds: u64,
+    /// Minimum number of admin votes required to unpause.
+    pub unpause_quorum: u32,
+    /// Number of votes cast for the current pause instance.
+    pub current_vote_count: u32,
+}
+
 /// Idempotency record for duplicate remittance prevention.
 ///
 /// Stores the result of a remittance creation request to enable safe retries.
