@@ -12,7 +12,12 @@
 use soroban_sdk::{contracttype, Address, Env, String};
 
 use crate::{
-    config::{FEE_DIVISOR, MIN_FEE},
+    config::{
+        FEE_DIVISOR,
+        MIN_FEE,
+        SENDER_VOLUME_TIER_FEE_BPS_10K,
+        SENDER_VOLUME_TIER_THRESHOLD_10K,
+    },
     get_fee_strategy, get_platform_fee_bps, get_protocol_fee_bps, storage, ContractError,
     FeeStrategy,
 };
@@ -104,6 +109,42 @@ pub fn calculate_platform_fee(
     calculate_fee_by_strategy(amount, &strategy)
 }
 
+/// Calculates the platform fee for a specific sender using rolling volume discounts.
+pub fn calculate_platform_fee_for_sender(
+    env: &Env,
+    sender: &Address,
+    amount: i128,
+    token: Option<&Address>,
+) -> Result<i128, ContractError> {
+    if amount <= 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    let strategy = get_effective_fee_strategy(env, token)?;
+    let prior_volume = storage::get_sender_rolling_volume(env, sender, env.ledger().timestamp());
+    let total_volume = prior_volume
+        .checked_add(amount)
+        .ok_or(ContractError::Overflow)?;
+    let discounted_strategy = apply_volume_discount(total_volume, strategy)?;
+    calculate_fee_by_strategy(amount, &discounted_strategy)
+}
+
+/// Calculates the platform fee for a sender given a pre-computed rolling volume.
+pub fn calculate_platform_fee_for_volume(
+    env: &Env,
+    amount: i128,
+    token: Option<&Address>,
+    total_volume: i128,
+) -> Result<i128, ContractError> {
+    if amount <= 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    let strategy = get_effective_fee_strategy(env, token)?;
+    let discounted_strategy = apply_volume_discount(total_volume, strategy)?;
+    calculate_fee_by_strategy(amount, &discounted_strategy)
+}
+
 /// Calculates complete fee breakdown including platform and protocol fees.
 ///
 /// This is the primary entry point for detailed fee calculations during payout confirmation.
@@ -165,6 +206,85 @@ pub fn calculate_fees_with_breakdown(
     breakdown.validate()?;
 
     Ok(breakdown)
+}
+
+/// Calculates complete fee breakdown for a sender using rolling volume discounts.
+pub fn calculate_fees_with_breakdown_for_sender(
+    env: &Env,
+    sender: &Address,
+    amount: i128,
+    token: Option<&Address>,
+    corridor: Option<&FeeCorridor>,
+) -> Result<FeeBreakdown, ContractError> {
+    if amount <= 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    // Determine which strategy and protocol fee to use
+    let (strategy, protocol_fee_bps, corridor_id) = if let Some(c) = corridor {
+        let protocol_bps = c
+            .protocol_fee_bps
+            .unwrap_or_else(|| get_protocol_fee_bps(env));
+        let id = format_corridor_id(env, &c.from_country, &c.to_country);
+        (c.strategy.clone(), protocol_bps, Some(id))
+    } else {
+        (get_fee_strategy(env), get_protocol_fee_bps(env), None)
+    };
+
+    let effective_strategy = get_effective_fee_strategy_for_strategy(env, &strategy, token)?;
+    let prior_volume = storage::get_sender_rolling_volume(env, sender, env.ledger().timestamp());
+    let total_volume = prior_volume
+        .checked_add(amount)
+        .ok_or(ContractError::Overflow)?;
+    let discounted_strategy = apply_volume_discount(total_volume, effective_strategy)?;
+
+    // Calculate platform fee
+    let platform_fee = calculate_fee_by_strategy(amount, &discounted_strategy)?;
+
+    // Calculate protocol fee
+    let protocol_fee = calculate_protocol_fee(amount, protocol_fee_bps)?;
+
+    // Calculate net amount
+    let net_amount = amount
+        .checked_sub(platform_fee)
+        .and_then(|v| v.checked_sub(protocol_fee))
+        .ok_or(ContractError::Overflow)?;
+
+    let breakdown = FeeBreakdown {
+        amount,
+        platform_fee,
+        protocol_fee,
+        net_amount,
+        corridor: corridor_id,
+    };
+
+    breakdown.validate()?;
+    Ok(breakdown)
+}
+
+fn apply_volume_discount(total_volume: i128, strategy: FeeStrategy) -> Result<FeeStrategy, ContractError> {
+    match strategy {
+        FeeStrategy::Percentage(base_fee_bps) => {
+            let discounted_bps = get_discounted_fee_bps(total_volume, base_fee_bps);
+            Ok(FeeStrategy::Percentage(discounted_bps))
+        }
+        other => Ok(other),
+    }
+}
+
+fn get_discounted_fee_bps(total_volume: i128, base_fee_bps: u32) -> u32 {
+    let tiers: &[(i128, u32)] = &[
+        (SENDER_VOLUME_TIER_THRESHOLD_10K, SENDER_VOLUME_TIER_FEE_BPS_10K),
+    ];
+
+    let mut fee_bps = base_fee_bps;
+    for (threshold, tier_bps) in tiers.iter().rev() {
+        if total_volume >= *threshold {
+            fee_bps = fee_bps.min(*tier_bps);
+            break;
+        }
+    }
+    fee_bps
 }
 
 fn get_effective_fee_strategy(

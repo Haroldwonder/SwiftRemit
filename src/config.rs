@@ -93,6 +93,28 @@ pub const DEFAULT_DAILY_LIMIT_CURRENCY: &str = "USDC";
 /// - Value: "GLOBAL" (applies to all countries)
 pub const DEFAULT_DAILY_LIMIT_COUNTRY: &str = "GLOBAL";
 
+/// Rolling sender volume window for discount tiers.
+///
+/// Used to calculate high-volume sender fee discounts in a 30-day window.
+pub const SENDER_VOLUME_DISCOUNT_WINDOW_SECONDS: u64 = 30 * 24 * 60 * 60;
+
+/// Bucket duration for sender volume aggregation.
+///
+/// Aggregates transaction volume into daily buckets to keep storage efficient
+/// while providing a rolling 30-day view.
+pub const SENDER_VOLUME_DISCOUNT_BUCKET_SECONDS: u64 = 24 * 60 * 60;
+
+/// High-volume sender threshold for discounted fees.
+///
+/// Senders whose 30-day volume meets or exceeds this threshold pay the
+/// discounted fee tier instead of the default platform fee.
+pub const SENDER_VOLUME_TIER_THRESHOLD_10K: i128 = 10_000;
+
+/// Discounted fee basis points for senders above the high-volume threshold.
+///
+/// This is the fee applied when the sender reaches the 30-day volume threshold.
+pub const SENDER_VOLUME_TIER_FEE_BPS_10K: u32 = 150;
+
 // ============================================================================
 // Storage and Event Schema
 // ============================================================================

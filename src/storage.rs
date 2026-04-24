@@ -123,6 +123,9 @@ enum DataKey {
     /// User transfer records indexed by user address (persistent storage)
     UserTransfers(Address),
 
+    /// Sender volume history used for rolling 30-day fee discounts.
+    SenderVolumeHistory(Address),
+
     // === Token Whitelist ===
     // Keys for managing whitelisted tokens
     /// Token whitelist status indexed by token address (persistent storage)
@@ -248,6 +251,15 @@ enum DataKey {
     // === Recipient Address Verification ===
     /// Stored recipient hash record indexed by remittance_id (persistent storage).
     RecipientHash(u64),
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct SenderVolumeEntry {
+    /// Start of the daily bucket for this volume record.
+    pub bucket_start: u64,
+    /// Total amount transacted in this bucket.
+    pub amount: i128,
 }
 
 /// Checks if the contract has an admin configured.
@@ -825,6 +837,87 @@ pub fn set_user_transfers(env: &Env, user: &Address, transfers: &Vec<TransferRec
     env.storage()
         .persistent()
         .set(&DataKey::UserTransfers(user.clone()), transfers);
+}
+
+pub fn get_sender_volume_history(env: &Env, sender: &Address) -> Vec<SenderVolumeEntry> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::SenderVolumeHistory(sender.clone()))
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn set_sender_volume_history(env: &Env, sender: &Address, history: &Vec<SenderVolumeEntry>) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::SenderVolumeHistory(sender.clone()), history);
+}
+
+pub fn get_sender_rolling_volume(env: &Env, sender: &Address, current_time: u64) -> i128 {
+    let window_start = current_time.saturating_sub(crate::config::SENDER_VOLUME_DISCOUNT_WINDOW_SECONDS);
+    let history = get_sender_volume_history(env, sender);
+    let mut total: i128 = 0;
+
+    for i in 0..history.len() {
+        let entry = history.get_unchecked(i);
+        if entry.bucket_start >= window_start {
+            total = total.saturating_add(entry.amount);
+        }
+    }
+
+    total
+}
+
+pub fn record_sender_volume(
+    env: &Env,
+    sender: &Address,
+    amount: i128,
+    current_time: u64,
+) -> Result<(), ContractError> {
+    if amount <= 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    let mut history = get_sender_volume_history(env, sender);
+    let window_start = current_time.saturating_sub(crate::config::SENDER_VOLUME_DISCOUNT_WINDOW_SECONDS);
+    let bucket_start = current_time
+        .checked_div(crate::config::SENDER_VOLUME_DISCOUNT_BUCKET_SECONDS)
+        .ok_or(ContractError::Overflow)?
+        .checked_mul(crate::config::SENDER_VOLUME_DISCOUNT_BUCKET_SECONDS)
+        .ok_or(ContractError::Overflow)?;
+
+    let mut pruned = Vec::new(env);
+    for i in 0..history.len() {
+        let entry = history.get_unchecked(i);
+        if entry.bucket_start >= window_start {
+            pruned.push_back(entry.clone());
+        }
+    }
+
+    if pruned.len() > 0 {
+        let last_index = pruned.len() - 1;
+        let mut last_entry = pruned.get_unchecked(last_index).clone();
+        if last_entry.bucket_start == bucket_start {
+            last_entry.amount = last_entry
+                .amount
+                .checked_add(amount)
+                .ok_or(ContractError::Overflow)?;
+            pruned.pop_back();
+            pruned.push_back(last_entry);
+        } else {
+            pruned.push_back(SenderVolumeEntry {
+                bucket_start,
+                amount,
+            });
+        }
+    } else {
+        pruned.push_back(SenderVolumeEntry {
+            bucket_start,
+            amount,
+        });
+    }
+
+    set_sender_volume_history(env, sender, &pruned);
+    Ok(())
 }
 
 pub fn is_migration_in_progress(env: &Env) -> bool {

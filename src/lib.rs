@@ -448,8 +448,13 @@ impl SwiftRemitContract {
             }
         }
 
-        // Use centralized fee service for calculation with optional token-specific override
-        let fee = fee_service::calculate_platform_fee(&env, amount, Some(&token_address))?;
+        // Use centralized fee service with sender-specific rolling volume discounts.
+        let fee = fee_service::calculate_platform_fee_for_sender(
+            &env,
+            &sender,
+            amount,
+            Some(&token_address),
+        )?;
 
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&sender, &env.current_contract_address(), &amount);
@@ -477,6 +482,7 @@ impl SwiftRemitContract {
         set_remittance(&env, remittance_id, &remittance);
         set_payout_commitment(&env, remittance_id, &payout_commitment);
         set_remittance_counter(&env, remittance_id);
+        storage::record_sender_volume(&env, &sender, amount, env.ledger().timestamp())?;
 
         // Store recipient hash if provided (Task 7.1)
         if let Some(ref hash) = recipient_hash {
@@ -541,8 +547,9 @@ impl SwiftRemitContract {
             (Some(from), Some(to)) => storage::get_fee_corridor(&env, from, to),
             _ => None,
         };
-        let fee = fee_service::calculate_fees_with_breakdown(
+        let fee = fee_service::calculate_fees_with_breakdown_for_sender(
             &env,
+            &sender,
             amount,
             Some(&get_usdc_token(&env)?),
             corridor.as_ref(),
@@ -577,6 +584,7 @@ impl SwiftRemitContract {
         set_payout_commitment(&env, remittance_id, &payout_commitment);
         set_remittance_counter(&env, remittance_id);
         set_transfer_state(&env, remittance_id, RemittanceStatus::Pending)?;
+        storage::record_sender_volume(&env, &sender, amount, env.ledger().timestamp())?;
 
         Ok(remittance_id)
     }
@@ -658,14 +666,25 @@ impl SwiftRemitContract {
         // Create all remittances
         let mut remittance_ids = Vec::new(&env);
         let mut counter = get_remittance_counter(&env)?;
+        let prior_volume = storage::get_sender_rolling_volume(&env, &sender, env.ledger().timestamp());
+        let mut cumulative_volume = prior_volume;
 
         for i in 0..batch_size {
             let entry = entries.get_unchecked(i);
             counter = counter.checked_add(1).ok_or(ContractError::Overflow)?;
             let remittance_id = counter;
 
-            // Calculate fee for this entry
-            let fee = fee_service::calculate_platform_fee(&env, entry.amount, None)?;
+            // Calculate fee for this entry using the sender's rolling volume and batch cumulative amount.
+            let total_volume = cumulative_volume
+                .checked_add(entry.amount)
+                .ok_or(ContractError::Overflow)?;
+            let fee = fee_service::calculate_platform_fee_for_volume(
+                &env,
+                entry.amount,
+                Some(&usdc_token),
+                total_volume,
+            )?;
+            cumulative_volume = total_volume;
 
             let remittance = Remittance {
                 id: remittance_id,
@@ -687,6 +706,9 @@ impl SwiftRemitContract {
             set_remittance(&env, remittance_id, &remittance);
             set_payout_commitment(&env, remittance_id, &payout_commitment);
             set_transfer_state(&env, remittance_id, RemittanceStatus::Pending)?;
+
+            // Persist the sender's volume history for future discount calculations.
+            storage::record_sender_volume(&env, &sender, entry.amount, env.ledger().timestamp())?;
 
             // Index this remittance under the sender for paginated queries
             storage::append_sender_remittance(&env, &sender, remittance_id);

@@ -2,7 +2,7 @@
 
 use crate::{SwiftRemitContract, SwiftRemitContractClient, FeeStrategy};
 use soroban_sdk::{
-    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, LedgerInfo},
     token, Address, Env, IntoVal, Symbol,
 };
 
@@ -42,6 +42,108 @@ fn test_percentage_strategy() {
 
     // Fee should be 5% of 10000 = 500
     assert_eq!(remittance.fee, 500);
+}
+
+#[test]
+fn test_sender_volume_discount_applies_after_threshold() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (token, token_admin) = create_token_contract(&env, &admin);
+    token_admin.mint(&sender, &100_000);
+
+    let contract_id = env.register_contract(None, SwiftRemitContract);
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &token.address, &500, &0, &0, &treasury);
+    client.register_agent(&agent);
+
+    // First remittance stays below the rolling threshold and pays the base fee.
+    let id1 = client.create_remittance(&sender, &agent, &9_000, &None, &None, &None);
+    assert_eq!(client.get_remittance(&id1).fee, 450);
+
+    // Second remittance pushes rolling volume over 10k; fee should drop to 1.5% (150 bps).
+    let id2 = client.create_remittance(&sender, &agent, &2_000, &None, &None, &None);
+    assert_eq!(client.get_remittance(&id2).fee, 30);
+}
+
+#[test]
+fn test_sender_volume_discount_rolls_off_after_30_days() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (token, token_admin) = create_token_contract(&env, &admin);
+    token_admin.mint(&sender, &100_000);
+
+    let contract_id = env.register_contract(None, SwiftRemitContract);
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &token.address, &500, &0, &0, &treasury);
+    client.register_agent(&agent);
+
+    let id1 = client.create_remittance(&sender, &agent, &9_000, &None, &None, &None);
+    assert_eq!(client.get_remittance(&id1).fee, 450);
+
+    // Advance ledger 31 days so the first volume falls out of the rolling window.
+    env.ledger().set(LedgerInfo {
+        timestamp: env.ledger().timestamp() + 31 * 24 * 60 * 60,
+        ..env.ledger().get()
+    });
+
+    let id2 = client.create_remittance(&sender, &agent, &9_000, &None, &None, &None);
+    assert_eq!(client.get_remittance(&id2).fee, 450);
+}
+
+#[test]
+fn test_batch_remittances_apply_cumulative_sender_volume_discount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (token, token_admin) = create_token_contract(&env, &admin);
+    token_admin.mint(&sender, &100_000);
+
+    let contract_id = env.register_contract(None, SwiftRemitContract);
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &token.address, &500, &0, &0, &treasury);
+    client.register_agent(&agent);
+
+    let entries = vec![
+        crate::BatchCreateEntry {
+            agent: agent.clone(),
+            amount: 7_000,
+            expiry: None,
+        },
+        crate::BatchCreateEntry {
+            agent: agent.clone(),
+            amount: 7_000,
+            expiry: None,
+        },
+    ];
+
+    let remittance_ids = client.batch_create_remittances(&sender, &entries);
+    assert_eq!(remittance_ids.len(), 2);
+
+    let fee1 = client.get_remittance(&remittance_ids.get_unchecked(0)).fee;
+    let fee2 = client.get_remittance(&remittance_ids.get_unchecked(1)).fee;
+
+    assert_eq!(fee1, 175); // 7k * 2.5% = 175
+    assert_eq!(fee2, 105); // discounted 7k * 1.5% = 105
 }
 
 #[test]
