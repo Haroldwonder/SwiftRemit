@@ -315,6 +315,70 @@ SwiftRemit uses environment variables for configuration. This allows you to easi
 - **[MIGRATION.md](MIGRATION.md)**: Migration guide for existing developers
 - **[PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md)**: Current production readiness status — what's complete, what's pending, and known risks before mainnet
 
+## Remittance Lifecycle — Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    actor Sender
+    actor Agent
+    participant Contract as SwiftRemit Contract
+    participant USDC as USDC Token
+    actor Admin
+
+    rect rgb(235, 245, 255)
+        Note over Sender,Contract: Happy path — creation → settlement
+        Sender->>USDC: approve(contract, amount)
+        Sender->>Contract: create_remittance(agent, amount)
+        Contract->>USDC: transfer(sender → escrow, amount)
+        Contract-->>Sender: remittance_id (status: Pending)
+
+        Agent->>Contract: confirm_payout(remittance_id)
+        Note over Contract: Pending → Processing → Completed
+        Contract->>USDC: transfer(escrow → agent, amount − fee)
+        Contract-->>Agent: ok (status: Completed)
+        Note over Contract: fee added to accumulated_fees
+    end
+
+    rect rgb(255, 245, 235)
+        Note over Sender,Contract: Cancellation path
+        Sender->>Contract: cancel_remittance(remittance_id)
+        Note over Contract: Pending → Cancelled
+        Contract->>USDC: transfer(escrow → sender, amount)
+        Contract-->>Sender: ok (full refund)
+    end
+
+    rect rgb(240, 255, 240)
+        Note over Sender,Contract: Expiry path (permissionless)
+        Sender->>Contract: process_expired_remittances([id, ...])
+        Note over Contract: Pending + expired → Cancelled
+        Contract->>USDC: transfer(escrow → sender, amount)
+        Contract-->>Sender: [processed_ids]
+    end
+
+    rect rgb(255, 235, 235)
+        Note over Agent,Contract: Failed / dispute path
+        Agent->>Contract: mark_failed(remittance_id)
+        Note over Contract: Pending/Processing → Failed
+        Sender->>Contract: raise_dispute(remittance_id, evidence_hash)
+        Note over Contract: Failed → Disputed
+        Admin->>Contract: resolve_dispute(remittance_id, in_favour_of_sender)
+        alt in favour of sender
+            Contract->>USDC: transfer(escrow → sender, amount)
+            Note over Contract: Disputed → Cancelled
+        else in favour of agent
+            Contract->>USDC: transfer(escrow → agent, amount − fee)
+            Note over Contract: Disputed → Completed
+        end
+    end
+
+    rect rgb(245, 235, 255)
+        Note over Admin,Contract: Fee management
+        Admin->>Contract: withdraw_fees(to)
+        Contract->>USDC: transfer(escrow → to, accumulated_fees)
+        Contract-->>Admin: ok
+    end
+```
+
 ## State Machine
 
 All remittance lifecycle state is tracked by a single canonical `RemittanceStatus` enum:
