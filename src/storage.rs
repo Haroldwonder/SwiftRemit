@@ -488,19 +488,23 @@ pub fn set_accumulated_fees(env: &Env, fees: i128) {
 
 /// Retrieves the accumulated platform fees.
 ///
+/// Returns `Ok(0)` if the counter has never been set (e.g. before the first
+/// `confirm_payout`) so that callers never see a spurious `NotInitialized`
+/// error after a `withdraw_fees` call resets the key to zero.
+///
 /// # Arguments
 ///
 /// * `env` - The contract execution environment
 ///
 /// # Returns
 ///
-/// * `Ok(i128)` - Total accumulated fees
-/// * `Err(ContractError::NotInitialized)` - Contract not initialized
+/// * `Ok(i128)` - Total accumulated fees (0 if not yet initialised)
 pub fn get_accumulated_fees(env: &Env) -> Result<i128, ContractError> {
-    env.storage()
+    Ok(env
+        .storage()
         .instance()
         .get(&DataKey::AccumulatedFees)
-        .ok_or(ContractError::NotInitialized)
+        .unwrap_or(0))
 }
 
 pub fn set_accumulated_integrator_fees(env: &Env, fees: i128) {

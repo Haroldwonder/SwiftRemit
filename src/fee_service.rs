@@ -12,8 +12,9 @@
 use soroban_sdk::{contracttype, Address, Env, String};
 
 use crate::{
-    config::FEE_DIVISOR, get_fee_strategy, get_platform_fee_bps, get_protocol_fee_bps, storage,
-    ContractError, FeeStrategy,
+    config::{FEE_DIVISOR, MIN_FEE},
+    get_fee_strategy, get_platform_fee_bps, get_protocol_fee_bps, storage, ContractError,
+    FeeStrategy,
 };
 
 /// Complete breakdown of all fees applied to a transaction
@@ -207,12 +208,12 @@ fn get_effective_fee_strategy_for_strategy(
 fn calculate_fee_by_strategy(amount: i128, strategy: &FeeStrategy) -> Result<i128, ContractError> {
     match strategy {
         FeeStrategy::Percentage(fee_bps) => {
-            // Fee = amount * fee_bps / 10000
+            // Fee = amount * fee_bps / 10000, with a minimum of MIN_FEE stroop
             let fee = amount
                 .checked_mul(*fee_bps as i128)
                 .and_then(|v| v.checked_div(FEE_DIVISOR))
                 .ok_or(ContractError::Overflow)?;
-            Ok(fee)
+            Ok(fee.max(MIN_FEE))
         }
         FeeStrategy::Flat(fee_amount) => {
             // Fixed fee regardless of amount
@@ -238,7 +239,7 @@ fn calculate_fee_by_strategy(amount: i128, strategy: &FeeStrategy) -> Result<i12
                 .checked_mul(effective_bps as i128)
                 .and_then(|v| v.checked_div(FEE_DIVISOR))
                 .ok_or(ContractError::Overflow)?;
-            Ok(fee)
+            Ok(fee.max(MIN_FEE))
         }
     }
 }
@@ -302,6 +303,21 @@ mod tests {
 
         let fee = calculate_fee_by_strategy(amount, &strategy).unwrap();
         assert_eq!(fee, 250); // 10000 * 250 / 10000 = 250
+    }
+
+    #[test]
+    fn test_calculate_fee_percentage_small_amount_floor() {
+        // 300 stroops * 250 bps / 10000 = 7.5 → truncates to 7, but floor is 1
+        // For amount < 400 stroops at 250 bps the raw result is 0 → floor kicks in
+        let strategy = FeeStrategy::Percentage(250); // 2.5%
+        let amount = 300i128; // 300 * 250 / 10000 = 7 (still > 0 here)
+
+        let fee = calculate_fee_by_strategy(amount, &strategy).unwrap();
+        assert!(fee >= 1, "fee must be at least MIN_FEE");
+
+        // Truly truncating case: 1 stroop * 250 bps / 10000 = 0 → floor to 1
+        let tiny_fee = calculate_fee_by_strategy(1, &strategy).unwrap();
+        assert_eq!(tiny_fee, 1);
     }
 
     #[test]

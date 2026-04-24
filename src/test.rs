@@ -647,6 +647,41 @@ contract.register_agent(&agent);
     assert_eq!(get_token_balance(&token, &contract.address), 0);
 }
 
+// Regression test for #380: accumulated fees counter must be zero after withdrawal
+// so that the next confirm_payout doesn't double-count previously withdrawn fees.
+#[test]
+fn test_accumulated_fees_reset_after_withdrawal_regression() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let fee_recipient = Address::generate(&env);
+
+    token.mint(&sender, &20000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
+    contract.register_agent(&agent);
+
+    // First remittance: accumulate 25 stroops in fees
+    let id1 = contract.create_remittance(&sender, &agent, &1000, &None);
+    contract.confirm_payout(&id1);
+    assert_eq!(contract.get_accumulated_fees(), 25);
+
+    // Withdraw: counter must be zeroed
+    contract.withdraw_fees(&fee_recipient);
+    assert_eq!(contract.get_accumulated_fees(), 0);
+
+    // Second remittance: counter must start from 0, not carry over the old 25
+    let id2 = contract.create_remittance(&sender, &agent, &1000, &None);
+    contract.confirm_payout(&id2);
+    assert_eq!(contract.get_accumulated_fees(), 25); // only the new fee, not 50
+}
+
 #[test]
 #[should_panic(expected = "Error(Contract, #9)")]
 fn test_withdraw_fees_no_fees() {

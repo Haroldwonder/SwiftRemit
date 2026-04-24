@@ -40,6 +40,12 @@ pub const MAX_MIGRATION_BATCH_SIZE: u32 = 100;
 /// - 10000 bps = 100%
 pub const MAX_FEE_BPS: u32 = 10000;
 
+/// Minimum fee charged per transaction, in stroops.
+///
+/// Prevents integer-division truncation from producing a zero fee for very
+/// small amounts (e.g. amount < 400 stroops at 250 bps).
+pub const MIN_FEE: i128 = 1;
+
 /// Divisor for converting basis points to actual fee amounts.
 ///
 /// Formula: fee_amount = amount * fee_bps / FEE_DIVISOR
