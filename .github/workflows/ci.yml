@@ -139,6 +139,36 @@ jobs:
       - run: npm test
         working-directory: api
 
+
+  # -- Frontend coverage --
+  frontend-coverage:
+    name: Frontend coverage (vitest >= 95%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - name: Run vitest coverage (enforce 95% gate)
+        run: npm run test:coverage
+        working-directory: frontend
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: frontend/coverage/lcov.info
+          flags: frontend
+          fail_ci_if_error: false
+      - name: Upload coverage HTML artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-report
+          path: frontend/coverage/
+          retention-days: 14
   # ── Summary gate ───────────────────────────────────────────────────────────
   ci:
     name: CI
@@ -151,6 +181,7 @@ jobs:
       - backend-test
       - api-lint
       - api-test
+      - frontend-coverage
     if: always()
     steps:
       - name: Check all jobs

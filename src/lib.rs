@@ -30,6 +30,8 @@ mod test;
 #[cfg(test)]
 mod test_batch_create;
 #[cfg(test)]
+mod test_coverage_gaps;
+#[cfg(test)]
 mod test_blacklist;
 #[cfg(test)]
 mod test_escrow;
