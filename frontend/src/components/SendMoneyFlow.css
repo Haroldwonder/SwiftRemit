@@ -170,3 +170,30 @@
     width: 100%;
   }
 }
+
+.flow-fx-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #f0f7ff;
+  border-left: 3px solid #3b82f6;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.flow-fx-loading {
+  color: #6b7280;
+  font-style: italic;
+}
+
+.flow-fx-rate {
+  font-weight: 500;
+  color: #1e40af;
+}
+
+.flow-fx-timestamp {
+  color: #6b7280;
+  font-size: 0.85em;
+}
