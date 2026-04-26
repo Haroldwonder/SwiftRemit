@@ -170,3 +170,35 @@
     width: 100%;
   }
 }
+
+@media (max-width: 480px) {
+  .send-flow-card {
+    padding: 0.75rem;
+    width: 100%;
+  }
+
+  .send-step-indicator {
+    grid-template-columns: repeat(5, minmax(28px, 1fr));
+    gap: 0.3rem;
+  }
+
+  .send-step-indicator li {
+    padding: 0.25rem 0;
+    font-size: 0.75rem;
+  }
+
+  .flow-field input,
+  .flow-field select {
+    padding: 1rem 0.85rem;
+    font-size: 1rem;
+  }
+
+  .flow-button {
+    padding: 1rem 1rem;
+    font-size: 1rem;
+  }
+
+  .flow-review div {
+    padding: 0.75rem 0.85rem;
+  }
+}

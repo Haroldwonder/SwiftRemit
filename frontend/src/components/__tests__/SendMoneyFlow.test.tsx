@@ -63,6 +63,12 @@ describe('SendMoneyFlow', () => {
       render(<SendMoneyFlow />);
       expect(screen.getByRole('button', { name: /back/i })).toBeDisabled();
     });
+
+    it('renders step indicator with 5 steps', () => {
+      render(<SendMoneyFlow />);
+      const stepIndicators = screen.getAllByRole('listitem');
+      expect(stepIndicators).toHaveLength(5);
+    });
   });
 
   // -------------------------------------------------------------------------

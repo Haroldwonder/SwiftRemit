@@ -46,6 +46,8 @@ export const TransactionStatusTracker: React.FC<TransactionStatusTrackerProps> =
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const [localStatus, setLocalStatus] = useState<TransactionProgressStatus>(currentStatus);
+  const [statusAnnouncement, setStatusAnnouncement] = useState<string>('');
+  const [previousStatus, setPreviousStatus] = useState<TransactionProgressStatus | null>(null);
   const pollingTimerRef = useRef<number | null>(null);
 
   const activeIndex = useMemo(() => {
@@ -116,6 +118,17 @@ export const TransactionStatusTracker: React.FC<TransactionStatusTrackerProps> =
     setLocalStatus(currentStatus);
   }, [currentStatus]);
 
+  // Announce status changes to screen readers
+  useEffect(() => {
+    if (previousStatus && previousStatus !== localStatus) {
+      const step = TRACKER_STEPS.find(s => s.key === localStatus);
+      if (step) {
+        setStatusAnnouncement(`Transaction status changed to ${step.label}`);
+      }
+    }
+    setPreviousStatus(localStatus);
+  }, [localStatus, previousStatus]);
+
   // Start/stop polling based on status and configuration
   useEffect(() => {
     if (enablePolling && !isTerminalState(localStatus)) {
@@ -140,6 +153,11 @@ export const TransactionStatusTracker: React.FC<TransactionStatusTrackerProps> =
 
   return (
     <section className="transaction-tracker" aria-label="Transaction status tracker">
+      {/* Screen reader announcements */}
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {statusAnnouncement}
+      </div>
+
       <header className="transaction-tracker-header">
         <h2>{title}</h2>
         <div className="transaction-tracker-refresh">
@@ -181,7 +199,7 @@ export const TransactionStatusTracker: React.FC<TransactionStatusTrackerProps> =
           else if (isFuture) stepClass = 'future';
 
           return (
-            <li className={`transaction-tracker-step ${stepClass}`} key={step.key}>
+            <li className={`transaction-tracker-step ${stepClass}`} key={step.key} role={isActive ? "status" : undefined}>
               <span className="step-marker" aria-hidden="true" />
               <span className="step-label">{step.label}</span>
             </li>

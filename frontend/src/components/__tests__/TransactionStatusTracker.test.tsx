@@ -51,6 +51,13 @@ describe('TransactionStatusTracker', () => {
       render(<TransactionStatusTracker currentStatus="processing" enablePolling={false} />);
       expect(screen.queryByText('Cancelled')).not.toBeInTheDocument();
     });
+
+    it('includes aria-live region for status announcements', () => {
+      render(<TransactionStatusTracker currentStatus="initiated" enablePolling={false} />);
+      const liveRegion = document.querySelector('[aria-live="polite"]');
+      expect(liveRegion).toBeInTheDocument();
+      expect(liveRegion).toHaveAttribute('aria-atomic', 'true');
+    });
   });
 
   describe('Status Display', () => {
@@ -88,7 +95,40 @@ describe('TransactionStatusTracker', () => {
       expect(failedStep).not.toBeNull();
       expect(failedStep?.textContent).toBe('Failed');
     });
+
+    it('adds role="status" to the active step', () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="processing" enablePolling={false} />
+      );
+      const activeStep = container.querySelector('.transaction-tracker-step.active');
+      expect(activeStep).toHaveAttribute('role', 'status');
+    });
+
+    it('does not add role="status" to non-active steps', () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="processing" enablePolling={false} />
+      );
+      const doneSteps = container.querySelectorAll('.transaction-tracker-step.done');
+      doneSteps.forEach(step => {
+        expect(step).not.toHaveAttribute('role', 'status');
+      });
+    });
   });
+
+  describe('Accessibility', () => {
+    it('announces status changes to screen readers', () => {
+      const { rerender } = render(
+        <TransactionStatusTracker currentStatus="initiated" enablePolling={false} />
+      );
+      const liveRegion = document.querySelector('[aria-live="polite"]');
+      // Initially empty since no change has occurred
+      expect(liveRegion?.textContent).toBe('');
+
+      rerender(
+        <TransactionStatusTracker currentStatus="processing" enablePolling={false} />
+      );
+      expect(liveRegion?.textContent).toBe('Transaction status changed to Processing');
+    });
 
   describe('Manual Refresh', () => {
     it('calls onRefresh when refresh button is clicked', async () => {

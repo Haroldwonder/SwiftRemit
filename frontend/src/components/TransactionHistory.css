@@ -231,6 +231,72 @@
   }
 }
 
+.skeleton {
+  background: linear-gradient(90deg, var(--color-bg-secondary) 25%, var(--color-bg-primary) 50%, var(--color-bg-secondary) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+.skeleton-text {
+  height: 1rem;
+  width: 100%;
+  max-width: 120px;
+}
+
+.skeleton-status {
+  height: 1.5rem;
+  width: 80px;
+  border-radius: 999px;
+}
+
+.skeleton-button {
+  height: 2rem;
+  width: 60px;
+  border-radius: 8px;
+}
+
+.skeleton-label {
+  height: 0.8rem;
+  width: 40px;
+  margin-bottom: 0.2rem;
+}
+
+.skeleton-card {
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: var(--color-bg-primary);
+}
+
+.skeleton-card .history-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.skeleton-card .history-card-grid {
+  display: grid;
+  gap: 0.55rem;
+  margin-bottom: 0.75rem;
+}
+
+.skeleton-card .history-card-grid > div {
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
 .history-pagination-info {
   margin: 0.75rem 0 0;
   font-size: 0.9rem;

@@ -36,6 +36,41 @@ function formatTimestamp(value: string): string {
   return parsed.toLocaleString();
 }
 
+const SkeletonRow: React.FC = () => (
+  <tr>
+    <td><div className="skeleton skeleton-text" /></td>
+    <td><div className="skeleton skeleton-text" /></td>
+    <td><div className="skeleton skeleton-text" /></td>
+    <td><div className="skeleton skeleton-status" /></td>
+    <td><div className="skeleton skeleton-text" /></td>
+    <td><div className="skeleton skeleton-button" /></td>
+  </tr>
+);
+
+const SkeletonCard: React.FC = () => (
+  <article className="history-card skeleton-card">
+    <div className="history-card-top">
+      <div className="skeleton skeleton-text" />
+      <div className="skeleton skeleton-status" />
+    </div>
+    <div className="history-card-grid">
+      <div>
+        <div className="skeleton skeleton-label" />
+        <div className="skeleton skeleton-text" />
+      </div>
+      <div>
+        <div className="skeleton skeleton-label" />
+        <div className="skeleton skeleton-text" />
+      </div>
+      <div>
+        <div className="skeleton skeleton-label" />
+        <div className="skeleton skeleton-text" />
+      </div>
+    </div>
+    <div className="skeleton skeleton-button" />
+  </article>
+);
+
 export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   transactions,
   defaultView = 'table',
@@ -130,14 +165,47 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
         </div>
       </header>
 
-      {isLoading && (
+      {isLoading && hasTransactions && (
         <div className="history-loading" aria-live="polite">
           <div className="history-loading-spinner" />
           <span>Loading more transactions...</span>
         </div>
       )}
 
-      {!hasTransactions && <p className="history-empty">No transactions yet.</p>}
+      {!hasTransactions && !isLoading && <p className="history-empty">No transactions yet.</p>}
+
+      {(!hasTransactions && isLoading) && (
+        <div className="history-skeletons" aria-busy="true" aria-live="polite">
+          {view === 'table' && (
+            <div className="history-table-wrap">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Amount</th>
+                    <th>Asset</th>
+                    <th>Recipient</th>
+                    <th>Status</th>
+                    <th>Timestamp</th>
+                    <th aria-label="Expand details column" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: 5 }, (_, i) => (
+                    <SkeletonRow key={`skeleton-${i}`} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {view === 'card' && (
+            <div className="history-cards">
+              {Array.from({ length: 4 }, (_, i) => (
+                <SkeletonCard key={`skeleton-${i}`} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {hasTransactions && (
         <>

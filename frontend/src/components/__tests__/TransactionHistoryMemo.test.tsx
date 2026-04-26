@@ -60,3 +60,33 @@ describe('TransactionHistory – memo display', () => {
     expect(screen.queryByText('Memo')).not.toBeInTheDocument();
   });
 });
+
+describe('TransactionHistory – loading state', () => {
+  it('shows skeleton rows in table view when loading and no transactions', () => {
+    render(<TransactionHistory transactions={[]} defaultView="table" isLoading={true} />);
+
+    expect(document.querySelector('[aria-busy="true"]')).toBeInTheDocument();
+    expect(screen.getAllByRole('row')).toHaveLength(6); // 1 header + 5 skeleton rows
+  });
+
+  it('shows skeleton cards in card view when loading and no transactions', () => {
+    render(<TransactionHistory transactions={[]} defaultView="card" isLoading={true} />);
+
+    expect(document.querySelector('[aria-busy="true"]')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(4); // 4 skeleton cards
+  });
+
+  it('does not show skeletons when not loading', () => {
+    render(<TransactionHistory transactions={[]} defaultView="table" isLoading={false} />);
+
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(screen.getByText('No transactions yet.')).toBeInTheDocument();
+  });
+
+  it('shows loading spinner when loading and has transactions', () => {
+    render(<TransactionHistory transactions={[BASE_TX]} defaultView="table" isLoading={true} />);
+
+    expect(screen.getByText('Loading more transactions...')).toBeInTheDocument();
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+});

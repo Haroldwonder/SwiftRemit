@@ -4,6 +4,7 @@ import WalletConnect from './components/WalletConnect'
 import CreateRemittance from './components/CreateRemittance'
 import RemittanceList from './components/RemittanceList'
 import AgentPanel from './components/AgentPanel'
+import ErrorBoundary from './components/ErrorBoundary'
 
 function App() {
   const [walletAddress, setWalletAddress] = useState(null)
@@ -16,6 +17,7 @@ function App() {
         <p>Secure Cross-Border USDC Remittances</p>
       </header>
 
+      <ErrorBoundary>
       <main className="app-main">
         <WalletConnect 
           walletAddress={walletAddress} 
@@ -37,24 +39,31 @@ function App() {
             </div>
 
             <div className="panels">
+              <ErrorBoundary>
               <CreateRemittance 
                 walletAddress={walletAddress}
                 contractId={contractId}
               />
+              </ErrorBoundary>
               
+              <ErrorBoundary>
               <AgentPanel 
                 walletAddress={walletAddress}
                 contractId={contractId}
               />
+              </ErrorBoundary>
             </div>
 
+            <ErrorBoundary>
             <RemittanceList 
               walletAddress={walletAddress}
               contractId={contractId}
             />
+            </ErrorBoundary>
           </>
         )}
       </main>
+      </ErrorBoundary>
 
       <footer className="app-footer">
         <p>Built on Stellar Soroban • Testnet</p>
