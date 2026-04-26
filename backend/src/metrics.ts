@@ -12,6 +12,7 @@ export class MetricsService {
     swiftremit_active_remittances: 0,
     swiftremit_accumulated_fees: 0,
     swiftremit_webhook_dead_letter_count: 0,
+    db_pool_available_connections: 0,
   };
 
   constructor(pool: Pool) {
@@ -120,6 +121,9 @@ export class MetricsService {
    * Update all metrics
    */
   async updateAllMetrics(): Promise<void> {
+    // Pool available connections (totalCount - idleCount gives busy; idleCount = available)
+    this.metrics.db_pool_available_connections = (this.pool as any).idleCount ?? 0;
+
     await Promise.all([
       this.updateSettlementMetrics(),
       this.updateWebhookDeliveryMetrics(),
@@ -162,6 +166,11 @@ export class MetricsService {
     lines.push('# HELP swiftremit_webhook_dead_letter_count Total webhook deliveries moved to dead-letter queue');
     lines.push('# TYPE swiftremit_webhook_dead_letter_count counter');
     lines.push(`swiftremit_webhook_dead_letter_count ${this.metrics.swiftremit_webhook_dead_letter_count}`);
+
+    // DB pool available connections gauge
+    lines.push('# HELP db_pool_available_connections Number of idle (available) connections in the PostgreSQL pool');
+    lines.push('# TYPE db_pool_available_connections gauge');
+    lines.push(`db_pool_available_connections ${this.metrics.db_pool_available_connections}`);
 
     return lines.join('\n') + '\n';
   }
