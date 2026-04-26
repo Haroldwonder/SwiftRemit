@@ -25,7 +25,8 @@ export class WebhookDispatcher {
   constructor(
     private store: IWebhookStore,
     private logger?: Console | any,
-    private options: WebhookDeliveryOptions = {}
+    private options: WebhookDeliveryOptions = {},
+    private onDeadLetter?: () => void
   ) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
     this.logger = logger || console;
@@ -88,16 +89,20 @@ export class WebhookDispatcher {
 
       for (const subscriber of subscribers) {
         try {
-          const deliveryId = await this.store.recordDelivery({
+          const deliveryRecord: Partial<WebhookDeliveryRecord> = {
             webhookId: subscriber.id,
             eventType: event,
             payload,
+            maxRetries: this.options.maxRetries!,
+          };
+
+          const deliveryId = await this.store.recordDelivery({
+            ...deliveryRecord,
             status: 'pending',
             attempt: 0,
-            maxRetries: this.options.maxRetries!,
-          });
+          } as WebhookDeliveryRecord);
 
-          const success = await this.attemptDelivery(deliveryId, subscriber.url, subscriber.secret, payload);
+          const success = await this.attemptDelivery(deliveryId, subscriber.url, subscriber.secret, payload, 1, deliveryRecord);
 
           if (success) {
             successCount++;
@@ -126,7 +131,8 @@ export class WebhookDispatcher {
     url: string,
     secret: string,
     payload: WebhookPayload,
-    attempt: number = 1
+    attempt: number = 1,
+    deliveryRecord?: Partial<WebhookDeliveryRecord>
   ): Promise<boolean> {
     try {
       const payloadJson = JSON.stringify(payload);
@@ -161,10 +167,24 @@ export class WebhookDispatcher {
         await this.store.updateDeliveryStatus(deliveryId, 'pending', attempt, errorMessage);
         await new Promise(resolve => setTimeout(resolve, delay));
 
-        return this.attemptDelivery(deliveryId, url, secret, payload, attempt + 1);
+        return this.attemptDelivery(deliveryId, url, secret, payload, attempt + 1, deliveryRecord);
       } else {
         await this.store.updateDeliveryStatus(deliveryId, 'failed', attempt, errorMessage);
         this.logger.error(`Delivery ${deliveryId} failed after ${attempt} attempts: ${errorMessage}`);
+
+        // Send to dead-letter queue
+        if (deliveryRecord) {
+          await this.store.sendToDeadLetter({
+            ...deliveryRecord,
+            id: deliveryId,
+            status: 'failed',
+            attempt,
+            error: errorMessage,
+          } as WebhookDeliveryRecord);
+          this.onDeadLetter?.();
+          this.logger.warn(`Delivery ${deliveryId} moved to dead-letter queue`);
+        }
+
         return false;
       }
     }
@@ -198,7 +218,8 @@ export class WebhookDispatcher {
           subscriber.url,
           subscriber.secret,
           delivery.payload,
-          delivery.attempt + 1
+          delivery.attempt + 1,
+          delivery
         );
       }
     } catch (error) {

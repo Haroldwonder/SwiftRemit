@@ -72,3 +72,15 @@ export interface WebhookSignatureHeaders {
   'x-webhook-timestamp': string;
   'x-webhook-id': string;
 }
+
+export interface DeadLetterRecord {
+  id: string;
+  deliveryId: string;
+  webhookId: string;
+  eventType: EventType;
+  payload: any;
+  lastError?: string;
+  attempts: number;
+  createdAt: Date;
+  replayedAt?: Date;
+}

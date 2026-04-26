@@ -11,6 +11,7 @@ export class MetricsService {
     swiftremit_webhook_deliveries_total: {} as Record<string, number>,
     swiftremit_active_remittances: 0,
     swiftremit_accumulated_fees: 0,
+    swiftremit_webhook_dead_letter_count: 0,
   };
 
   constructor(pool: Pool) {
@@ -109,6 +110,13 @@ export class MetricsService {
   }
 
   /**
+   * Increment dead-letter counter (called by dispatcher on each DLQ insertion)
+   */
+  incrementDeadLetterCount(): void {
+    this.metrics.swiftremit_webhook_dead_letter_count++;
+  }
+
+  /**
    * Update all metrics
    */
   async updateAllMetrics(): Promise<void> {
@@ -149,6 +157,11 @@ export class MetricsService {
     lines.push('# HELP swiftremit_accumulated_fees Total accumulated fees from completed transactions');
     lines.push('# TYPE swiftremit_accumulated_fees gauge');
     lines.push(`swiftremit_accumulated_fees ${this.metrics.swiftremit_accumulated_fees}`);
+
+    // Dead-letter counter
+    lines.push('# HELP swiftremit_webhook_dead_letter_count Total webhook deliveries moved to dead-letter queue');
+    lines.push('# TYPE swiftremit_webhook_dead_letter_count counter');
+    lines.push(`swiftremit_webhook_dead_letter_count ${this.metrics.swiftremit_webhook_dead_letter_count}`);
 
     return lines.join('\n') + '\n';
   }

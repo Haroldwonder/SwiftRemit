@@ -685,4 +685,49 @@ app.post('/api/simulate-settlement', async (req: Request, res: Response) => {
   }
 });
 
+// Admin: list dead-letter queue entries
+app.get('/api/webhooks/dead-letters', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { createWebhookStore } = await import('./webhooks/store');
+    const store = createWebhookStore(pool);
+    const limit = Math.min(parseInt((req.query.limit as string) || '50', 10), 200);
+    const offset = parseInt((req.query.offset as string) || '0', 10);
+    const entries = await store.listDeadLetters(limit, offset);
+    res.json({ entries, limit, offset });
+  } catch (error) {
+    logger.error('Error listing dead letters', error);
+    res.status(500).json({ error: 'Failed to list dead-letter queue' });
+  }
+});
+
+// Admin: replay a dead-letter entry
+app.post('/api/webhooks/dead-letters/:id/replay', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!id || typeof id !== 'string') {
+      return res.status(400).json({ error: 'Invalid dead-letter id' });
+    }
+
+    const { createWebhookStore } = await import('./webhooks/store');
+    const { WebhookDispatcher } = await import('./webhooks/dispatcher');
+    const store = createWebhookStore(pool);
+    const entries = await store.listDeadLetters(200, 0);
+    const entry = entries.find(e => e.id === id);
+
+    if (!entry) {
+      return res.status(404).json({ error: 'Dead-letter entry not found' });
+    }
+
+    const metrics = getMetricsService(pool);
+    const dispatcher = new WebhookDispatcher(store, logger, {}, () => metrics.incrementDeadLetterCount());
+    await dispatcher.dispatch(entry.eventType, entry.payload);
+    await store.markDeadLetterReplayed(id);
+
+    res.json({ success: true, id });
+  } catch (error) {
+    logger.error('Error replaying dead letter', error);
+    res.status(500).json({ error: 'Failed to replay dead-letter entry' });
+  }
+});
+
 export default app;

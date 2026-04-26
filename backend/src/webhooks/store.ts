@@ -9,7 +9,7 @@
  */
 
 import { Pool, QueryResult } from 'pg';
-import { EventType, WebhookSubscriber, WebhookDeliveryRecord } from './types';
+import { EventType, WebhookSubscriber, WebhookDeliveryRecord, DeadLetterRecord } from './types';
 
 export interface IWebhookStore {
   // Webhook Registration
@@ -25,6 +25,11 @@ export interface IWebhookStore {
   recordDelivery(delivery: WebhookDeliveryRecord): Promise<string>;
   updateDeliveryStatus(deliveryId: string, status: 'pending' | 'success' | 'failed', attempt: number, error?: string): Promise<void>;
   getPendingDeliveries(limit?: number): Promise<WebhookDeliveryRecord[]>;
+
+  // Dead-Letter Queue
+  sendToDeadLetter(delivery: WebhookDeliveryRecord): Promise<void>;
+  listDeadLetters(limit?: number, offset?: number): Promise<DeadLetterRecord[]>;
+  markDeadLetterReplayed(id: string): Promise<void>;
 }
 
 /**
@@ -35,6 +40,7 @@ export interface IWebhookStore {
 export class InMemoryWebhookStore implements IWebhookStore {
   private webhooks: Map<string, WebhookSubscriber> = new Map();
   private deliveries: Map<string, WebhookDeliveryRecord> = new Map();
+  private deadLetters: Map<string, DeadLetterRecord> = new Map();
 
   async registerWebhook(url: string, events: EventType[], secret?: string): Promise<WebhookSubscriber> {
     // Validate URL
@@ -113,6 +119,31 @@ export class InMemoryWebhookStore implements IWebhookStore {
       .filter(d => d.status === 'pending' || (d.status === 'failed' && d.attempt < d.maxRetries))
       .sort((a, b) => (a.createdAt?.getTime() || 0) - (b.createdAt?.getTime() || 0))
       .slice(0, limit);
+  }
+
+  async sendToDeadLetter(delivery: WebhookDeliveryRecord): Promise<void> {
+    const id = `dl_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    this.deadLetters.set(id, {
+      id,
+      deliveryId: delivery.id!,
+      webhookId: delivery.webhookId,
+      eventType: delivery.eventType,
+      payload: delivery.payload,
+      lastError: delivery.error,
+      attempts: delivery.attempt,
+      createdAt: new Date(),
+    });
+  }
+
+  async listDeadLetters(limit: number = 50, offset: number = 0): Promise<DeadLetterRecord[]> {
+    return Array.from(this.deadLetters.values())
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(offset, offset + limit);
+  }
+
+  async markDeadLetterReplayed(id: string): Promise<void> {
+    const record = this.deadLetters.get(id);
+    if (record) record.replayedAt = new Date();
   }
 }
 
@@ -282,6 +313,42 @@ export class PostgresWebhookStore implements IWebhookStore {
       updatedAt: row.updated_at,
       error: row.error,
     }));
+  }
+
+  async sendToDeadLetter(delivery: WebhookDeliveryRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO webhook_dead_letters (delivery_id, webhook_id, event_type, payload, last_error, attempts)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [delivery.id, delivery.webhookId, delivery.eventType, JSON.stringify(delivery.payload), delivery.error || null, delivery.attempt]
+    );
+  }
+
+  async listDeadLetters(limit: number = 50, offset: number = 0): Promise<DeadLetterRecord[]> {
+    const result = await this.pool.query(
+      `SELECT id, delivery_id, webhook_id, event_type, payload, last_error, attempts, created_at, replayed_at
+       FROM webhook_dead_letters
+       ORDER BY created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    return result.rows.map(row => ({
+      id: row.id,
+      deliveryId: row.delivery_id,
+      webhookId: row.webhook_id,
+      eventType: row.event_type,
+      payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload,
+      lastError: row.last_error,
+      attempts: row.attempts,
+      createdAt: row.created_at,
+      replayedAt: row.replayed_at,
+    }));
+  }
+
+  async markDeadLetterReplayed(id: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE webhook_dead_letters SET replayed_at = NOW() WHERE id = $1`,
+      [id]
+    );
   }
 }
 
