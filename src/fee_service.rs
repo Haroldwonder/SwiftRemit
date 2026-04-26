@@ -310,6 +310,18 @@ fn get_effective_fee_strategy_for_strategy(
                 Ok(strategy.clone())
             }
         }
+        // Corridor variant: resolve to the platform percentage fee.
+        // Actual corridor dispatch happens in calculate_fees_with_breakdown
+        // when a FeeCorridor is supplied by the caller.
+        FeeStrategy::Corridor => {
+            let default_fee_bps = get_platform_fee_bps(env)?;
+            let fee_bps = if let Some(token) = token {
+                storage::get_token_fee_bps(env, token).unwrap_or(default_fee_bps)
+            } else {
+                default_fee_bps
+            };
+            Ok(FeeStrategy::Percentage(fee_bps))
+        }
         _ => Ok(strategy.clone()),
     }
 }
@@ -361,6 +373,9 @@ fn calculate_fee_by_strategy(amount: i128, strategy: &FeeStrategy) -> Result<i12
                 .ok_or(ContractError::Overflow)?;
             Ok(fee.max(MIN_FEE))
         }
+        // Corridor is resolved to Percentage before reaching this function.
+        // If it somehow arrives here, treat as zero fee (safe fallback).
+        FeeStrategy::Corridor => Ok(MIN_FEE),
     }
 }
 

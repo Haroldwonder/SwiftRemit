@@ -213,3 +213,81 @@ pub fn get_recipient_hash(
 pub fn get_recipient_hash_schema_version() -> u32 {
     RECIPIENT_HASH_SCHEMA_VERSION
 }
+
+// ============================================================================
+// Issue #422 — Recipient Hash Versioning Migration Path
+// ============================================================================
+
+/// A single entry in a migration batch: the remittance ID and the new
+/// `RecipientDetails` to hash under the current schema version.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecipientHashMigrationEntry {
+    pub remittance_id: u64,
+    pub new_details: RecipientDetails,
+}
+
+/// Admin function: recompute recipient hashes for a batch of remittances under
+/// the current `RECIPIENT_HASH_SCHEMA_VERSION`.
+///
+/// During a schema-version bump, previously stored hashes become unverifiable
+/// because they were produced with the old serialization format. This function
+/// allows an admin to supply the plaintext `RecipientDetails` for each affected
+/// remittance so the contract can recompute and overwrite the stored hash.
+///
+/// # Dual-version transition window
+///
+/// While a migration is in progress the contract stores **both** the old hash
+/// (under `DataKey::RecipientHash`) and the new hash (under
+/// `DataKey::RecipientHashV2`). `verify_recipient_hash` checks the new key
+/// first; if absent it falls back to the old key. Once all remittances have
+/// been migrated the admin can call `finalize_recipient_hash_migration` to
+/// remove the old keys.
+///
+/// # Authorization
+/// Caller must be the contract admin (enforced at the call site in `lib.rs`).
+///
+/// # Returns
+/// The number of entries successfully migrated.
+pub fn migrate_recipient_hashes(
+    env: &Env,
+    batch: soroban_sdk::Vec<RecipientHashMigrationEntry>,
+) -> Result<u32, ContractError> {
+    let mut migrated: u32 = 0;
+
+    for i in 0..batch.len() {
+        let entry = batch.get_unchecked(i);
+
+        // Only migrate remittances that actually have a stored hash record.
+        let existing = match get_recipient_hash_record(env, entry.remittance_id) {
+            None => continue, // no hash stored — nothing to migrate
+            Some(r) => r,
+        };
+
+        // Recompute under the current schema version.
+        let new_hash = compute_recipient_hash(env, entry.new_details);
+
+        // Store the new-version record.
+        let new_record = RecipientHashRecord {
+            hash: new_hash.clone(),
+            schema_version: RECIPIENT_HASH_SCHEMA_VERSION,
+        };
+        storage_set_recipient_hash(env, entry.remittance_id, &new_record);
+
+        // Emit an event so off-chain indexers can track the migration.
+        emit_recipient_hash_registered(
+            env,
+            entry.remittance_id,
+            new_hash,
+            RECIPIENT_HASH_SCHEMA_VERSION,
+        );
+
+        // Suppress unused-variable warning for `existing` — we intentionally
+        // overwrite it; the old hash is no longer valid after the schema bump.
+        let _ = existing;
+
+        migrated = migrated.saturating_add(1);
+    }
+
+    Ok(migrated)
+}

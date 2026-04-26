@@ -101,7 +101,8 @@ pub use storage::*;
 pub use transaction_controller::*;
 pub use transitions::*;
 pub use recipient_verification::{
-    RecipientDetails, WalletRecipient, BankRecipient, RecipientHashRecord, VerificationOutcome,
+    RecipientDetails, WalletRecipient, BankRecipient, RecipientHashRecord,
+    RecipientHashMigrationEntry, VerificationOutcome,
     RECIPIENT_HASH_SCHEMA_VERSION, compute_recipient_hash,
 };
 pub use types::*;
@@ -2849,6 +2850,23 @@ impl SwiftRemitContract {
     /// Returns the current `RECIPIENT_HASH_SCHEMA_VERSION`.
     pub fn rcpt_hash_schema_version() -> u32 {
         recipient_verification::get_recipient_hash_schema_version()
+    }
+
+    /// Admin function: recompute recipient hashes for a batch of remittances
+    /// under the current schema version (Issue #422).
+    ///
+    /// Use this after bumping `RECIPIENT_HASH_SCHEMA_VERSION` to restore
+    /// verifiability for remittances created under the previous schema.
+    ///
+    /// # Authorization
+    /// Requires admin authentication.
+    pub fn migrate_recipient_hashes(
+        env: Env,
+        caller: Address,
+        batch: Vec<recipient_verification::RecipientHashMigrationEntry>,
+    ) -> Result<u32, ContractError> {
+        require_admin(&env, &caller)?;
+        recipient_verification::migrate_recipient_hashes(&env, batch)
     }
 
     // ── Governance Entry Points ────────────────────────────────────────────
