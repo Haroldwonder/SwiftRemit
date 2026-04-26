@@ -1,9 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import './WalletConnection.css';
 import { FreighterService } from '../utils/freighter';
 import type { NetworkType } from '../utils/freighter';
 
 export type { NetworkType };
+
+const STORAGE_KEY = 'swiftremit_wallet_address';
 
 interface WalletConnectionResult {
   publicKey: string;
@@ -57,6 +59,35 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
 
   const publicKeyText = useMemo(() => truncatePublicKey(publicKey), [publicKey]);
 
+  // Restore session from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return;
+
+    // Verify the stored address is still authorized in Freighter
+    FreighterService.connect()
+      .then((result) => {
+        if (result.publicKey === stored) {
+          setPublicKey(result.publicKey);
+          setNetwork(result.network ?? defaultNetwork);
+          setConnected(true);
+          if (FreighterService.isNetworkMismatch(result.network ?? defaultNetwork, defaultNetwork)) {
+            setNetworkWarning(
+              `Warning: Wallet is connected to ${result.network ?? defaultNetwork}, but ${defaultNetwork} is expected.`
+            );
+          }
+        } else {
+          // Stored address no longer matches — clear stale entry
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      })
+      .catch(() => {
+        // Freighter not available or not connected — clear stale entry
+        localStorage.removeItem(STORAGE_KEY);
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleConnect = async () => {
     setError(null);
     setNetworkWarning(null);
@@ -71,6 +102,9 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
       const connectedNetwork = result.network ?? defaultNetwork;
       setNetwork(connectedNetwork);
       setConnected(true);
+
+      // Persist to localStorage
+      localStorage.setItem(STORAGE_KEY, result.publicKey);
 
       // Check for network mismatch
       if (FreighterService.isNetworkMismatch(connectedNetwork, defaultNetwork)) {
@@ -104,6 +138,9 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
       if (onDisconnect) {
         await onDisconnect();
       }
+
+      // Clear persisted session
+      localStorage.removeItem(STORAGE_KEY);
 
       setConnected(false);
       setPublicKey('');
