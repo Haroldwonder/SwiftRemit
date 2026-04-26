@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import './SendMoneyFlow.css';
 import { signTransaction } from '@stellar/freighter-api';
 import * as StellarSdk from '@stellar/stellar-sdk';
@@ -19,13 +20,6 @@ interface SendMoneyFlowProps {
   network?: 'TESTNET' | 'PUBLIC';
 }
 
-const STEPS: Record<FlowStep, string> = {
-  1: 'Enter amount',
-  2: 'Select asset',
-  3: 'Enter recipient',
-  4: 'Review summary',
-  5: 'Confirm transaction',
-};
 const STEP_SEQUENCE: FlowStep[] = [1, 2, 3, 4, 5];
 
 const DEFAULT_ASSETS = ['XLM', 'USDC', 'EURC'];
@@ -62,8 +56,6 @@ async function buildAndSubmitTransaction(
   if (payload.asset === 'XLM') {
     asset = StellarSdk.Asset.native();
   } else {
-    // For non-native assets, use a well-known issuer placeholder;
-    // in production this would come from the asset registry.
     asset = new StellarSdk.Asset(payload.asset, senderPublicKey);
   }
 
@@ -104,6 +96,7 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   senderPublicKey = '',
   network = 'TESTNET',
 }) => {
+  const { t } = useTranslation();
   const [step, setStep] = useState<FlowStep>(1);
   const [amount, setAmount] = useState('');
   const [asset, setAsset] = useState('');
@@ -116,20 +109,28 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
 
   const parsedAmount = useMemo(() => Number(amount), [amount]);
 
+  const STEPS: Record<FlowStep, string> = {
+    1: t('sendMoney.steps.1'),
+    2: t('sendMoney.steps.2'),
+    3: t('sendMoney.steps.3'),
+    4: t('sendMoney.steps.4'),
+    5: t('sendMoney.steps.5'),
+  };
+
   const validateCurrentStep = (): string | null => {
     if (step === 1) {
-      if (!amount) return 'Amount is required.';
+      if (!amount) return t('sendMoney.errors.amountRequired');
       if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-        return 'Amount must be greater than zero.';
+        return t('sendMoney.errors.amountInvalid');
       }
     }
 
     if (step === 2 && !asset) {
-      return 'Please select an asset.';
+      return t('sendMoney.errors.assetRequired');
     }
 
     if (step === 3 && !isValidRecipient(recipient)) {
-      return 'Recipient must be a valid Stellar public key.';
+      return t('sendMoney.errors.recipientInvalid');
     }
 
     return null;
@@ -153,7 +154,7 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
 
   const confirmTransfer = async () => {
     if (!amount || !asset || !recipient) {
-      setError('Transaction details are incomplete.');
+      setError(t('sendMoney.errors.incomplete'));
       return;
     }
 
@@ -172,7 +173,6 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
         await onConfirm(payload);
         setIsComplete(true);
       } else if (senderPublicKey) {
-        // Freighter signing flow
         const hash = await buildAndSubmitTransaction(payload, senderPublicKey, network);
         setTxHash(hash);
         setIsComplete(true);
@@ -187,11 +187,11 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
         msg.toLowerCase().includes('denied') ||
         msg.toLowerCase().includes('user rejected')
       ) {
-        setError('Transaction was rejected by the wallet.');
+        setError(t('sendMoney.errors.rejected'));
       } else if (msg.toLowerCase().includes('not installed')) {
-        setError('Freighter wallet is not installed. Please install it to continue.');
+        setError(t('sendMoney.errors.freighterNotInstalled'));
       } else {
-        setError('Transaction failed. Please try again.');
+        setError(t('sendMoney.errors.failed'));
       }
       console.error(confirmError);
     } finally {
@@ -203,7 +203,7 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
     if (step === 1) {
       return (
         <label className="flow-field" htmlFor="amount">
-          <span>Amount</span>
+          <span>{t('sendMoney.amount')}</span>
           <input
             id="amount"
             type="number"
@@ -220,13 +220,13 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
     if (step === 2) {
       return (
         <label className="flow-field" htmlFor="asset">
-          <span>Asset</span>
+          <span>{t('sendMoney.asset')}</span>
           <select
             id="asset"
             value={asset}
             onChange={(event) => setAsset(event.target.value)}
           >
-            <option value="">Choose an asset</option>
+            <option value="">{t('sendMoney.chooseAsset')}</option>
             {assets.map((assetCode) => (
               <option key={assetCode} value={assetCode}>
                 {assetCode}
@@ -241,7 +241,7 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
       return (
         <>
           <label className="flow-field" htmlFor="recipient">
-            <span>Recipient</span>
+            <span>{t('sendMoney.recipient')}</span>
             <input
               id="recipient"
               type="text"
@@ -251,13 +251,16 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
             />
           </label>
           <label className="flow-field" htmlFor="memo">
-            <span>Memo <span className="flow-field-optional">(optional)</span></span>
+            <span>
+              {t('sendMoney.memo')}{' '}
+              <span className="flow-field-optional">{t('sendMoney.memoOptional')}</span>
+            </span>
             <input
               id="memo"
               type="text"
               value={memo}
               onChange={(event) => setMemo(event.target.value.slice(0, 100))}
-              placeholder="e.g. Invoice #1234"
+              placeholder={t('sendMoney.memoPlaceholder')}
               maxLength={100}
               aria-describedby="memo-count"
             />
@@ -273,20 +276,20 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
       return (
         <dl className="flow-review">
           <div>
-            <dt>Amount</dt>
+            <dt>{t('sendMoney.review.amount')}</dt>
             <dd>{amount || '-'}</dd>
           </div>
           <div>
-            <dt>Asset</dt>
+            <dt>{t('sendMoney.review.asset')}</dt>
             <dd>{asset || '-'}</dd>
           </div>
           <div>
-            <dt>Recipient</dt>
+            <dt>{t('sendMoney.review.recipient')}</dt>
             <dd>{recipient || '-'}</dd>
           </div>
           {memo.trim() && (
             <div>
-              <dt>Memo</dt>
+              <dt>{t('sendMoney.review.memo')}</dt>
               <dd>{memo.trim()}</dd>
             </div>
           )}
@@ -302,10 +305,10 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
     : null;
 
   return (
-    <section className="send-flow-card" aria-label="Send money flow">
+    <section className="send-flow-card" aria-label={t('sendMoney.title')}>
       <div className="send-flow-header">
-        <h2>Send Money</h2>
-        <p>Step {step} of 5: {STEPS[step]}</p>
+        <h2>{t('sendMoney.title')}</h2>
+        <p>{t('sendMoney.stepLabel', { step, name: STEPS[step] })}</p>
       </div>
 
       <ol className="send-step-indicator" aria-label="Progress">
@@ -318,11 +321,11 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
 
       {isComplete ? (
         <div className="flow-success" role="status">
-          <p>Transaction confirmed successfully.</p>
+          <p>{t('sendMoney.success')}</p>
           {txHash && (
             <>
               <p className="flow-tx-hash">
-                Transaction hash: <code>{txHash}</code>
+                {t('sendMoney.txHash')} <code>{txHash}</code>
               </p>
               {stellarExpertUrl && (
                 <a
@@ -331,7 +334,7 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
                   rel="noopener noreferrer"
                   className="flow-expert-link"
                 >
-                  View on Stellar Expert ↗
+                  {t('sendMoney.viewOnExpert')}
                 </a>
               )}
             </>
@@ -350,7 +353,7 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
               onClick={previousStep}
               disabled={step === 1 || isSubmitting}
             >
-              Back
+              {t('sendMoney.back')}
             </button>
 
             {step < 5 ? (
@@ -360,7 +363,7 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
                 onClick={nextStep}
                 disabled={isSubmitting}
               >
-                Continue
+                {t('sendMoney.continue')}
               </button>
             ) : (
               <button
@@ -369,7 +372,7 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
                 onClick={confirmTransfer}
                 disabled={isSubmitting}
               >
-                {isSubmitting ? 'Confirming...' : 'Confirm transaction'}
+                {isSubmitting ? t('sendMoney.confirming') : t('sendMoney.confirm')}
               </button>
             )}
           </div>

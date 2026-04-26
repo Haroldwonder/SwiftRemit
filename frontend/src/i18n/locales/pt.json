@@ -1,0 +1,87 @@
+{
+  "app": {
+    "title": "SwiftRemit",
+    "subtitle": "Remessas USDC Seguras entre Fronteiras",
+    "footer": "Construído em Stellar Soroban • Testnet"
+  },
+  "wallet": {
+    "title": "Carteira",
+    "notConnected": "Não conectado",
+    "connectPrompt": "Conecte uma carteira para continuar",
+    "connectedKey": "Chave pública conectada",
+    "connect": "Conectar",
+    "connecting": "Conectando...",
+    "disconnect": "Desconectar",
+    "disconnecting": "Desconectando...",
+    "signMessage": "Assinar mensagem",
+    "signing": "Aguardando assinatura...",
+    "installLink": "Instalar Freighter Wallet",
+    "errors": {
+      "notInstalled": "Freighter Wallet não está instalado.",
+      "notConnected": "Por favor desbloqueie sua Freighter Wallet e tente novamente.",
+      "connectFailed": "Falha ao conectar a carteira. Por favor tente novamente.",
+      "disconnectFailed": "Falha ao desconectar a carteira.",
+      "signatureRejected": "A solicitação de assinatura foi rejeitada.",
+      "signatureFailed": "Não foi possível concluir a solicitação de assinatura."
+    },
+    "warnings": {
+      "networkMismatch": "Aviso: A carteira está conectada a {{walletNetwork}}, mas {{expectedNetwork}} é esperado."
+    }
+  },
+  "sendMoney": {
+    "title": "Enviar Dinheiro",
+    "stepLabel": "Passo {{step}} de 5: {{name}}",
+    "steps": {
+      "1": "Inserir valor",
+      "2": "Selecionar ativo",
+      "3": "Inserir destinatário",
+      "4": "Revisar resumo",
+      "5": "Confirmar transação"
+    },
+    "amount": "Valor",
+    "asset": "Ativo",
+    "chooseAsset": "Escolha um ativo",
+    "recipient": "Destinatário",
+    "memo": "Memo",
+    "memoOptional": "(opcional)",
+    "memoPlaceholder": "ex. Fatura #1234",
+    "back": "Voltar",
+    "continue": "Continuar",
+    "confirm": "Confirmar transação",
+    "confirming": "Confirmando...",
+    "success": "Transação confirmada com sucesso.",
+    "txHash": "Hash da transação:",
+    "viewOnExpert": "Ver no Stellar Expert ↗",
+    "review": {
+      "amount": "Valor",
+      "asset": "Ativo",
+      "recipient": "Destinatário",
+      "memo": "Memo"
+    },
+    "errors": {
+      "amountRequired": "O valor é obrigatório.",
+      "amountInvalid": "O valor deve ser maior que zero.",
+      "assetRequired": "Por favor selecione um ativo.",
+      "recipientInvalid": "O destinatário deve ser uma chave pública Stellar válida.",
+      "incomplete": "Os detalhes da transação estão incompletos.",
+      "failed": "A transação falhou. Por favor tente novamente.",
+      "rejected": "A transação foi rejeitada pela carteira.",
+      "freighterNotInstalled": "Freighter Wallet não está instalado. Por favor instale-o para continuar."
+    },
+    "limits": {
+      "min": "Mín: {{value}} {{asset}}",
+      "max": "Máx: {{value}} {{asset}}",
+      "dailyRemaining": "Limite diário: {{value}} {{asset}} restante",
+      "approachingLimit": "Aviso: Você está se aproximando do seu limite diário.",
+      "loading": "Carregando limites...",
+      "error": "Não foi possível carregar os limites."
+    }
+  },
+  "language": {
+    "selector": "Idioma",
+    "en": "English",
+    "es": "Español",
+    "fr": "Français",
+    "pt": "Português"
+  }
+}

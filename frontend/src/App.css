@@ -271,3 +271,10 @@ tbody tr:hover {
     padding: 10px;
   }
 }
+
+.app-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
