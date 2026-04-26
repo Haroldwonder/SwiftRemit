@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 import currenciesRouter from './routes/currencies';
 import { createAnchorsRouter } from './routes/anchors';
 import docsRouter from './routes/docs';
+import settlementsRouter from './routes/settlements';
 import { ErrorResponse } from './types';
 import { AnchorStore } from './db/anchorStore';
 
@@ -57,7 +58,10 @@ export function createApp(options: AppOptions = {}): Application {
       adminApiKey: options.anchorAdminApiKey,
     }),
   );
-  
+
+  // Settlement simulation — read-only, no state changes (Issue #420)
+  app.use('/api/settlements', settlementsRouter);
+
   // API documentation
   app.use('/api/docs', docsRouter);
 

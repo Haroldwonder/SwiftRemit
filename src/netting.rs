@@ -99,15 +99,10 @@ pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Vec<
 
     for i in 0..keys.len() {
         let key = keys.get_unchecked(i);
+        let (net_amount, total_fees) = net_map.get(key.clone()).unwrap_or((0, 0));
 
-        // Map.get() returns Option, but we know key exists since we just got it from keys()
-        // This is safe because keys() returns only existing keys
-        let (_net_amount, _total_fees) = net_map.get(key.clone()).unwrap_or((0, 0));
-
-        let (net_amount, total_fees) = net_map.get(key.clone()).unwrap();
-
-
-        // Only include non-zero net transfers
+        // Skip zero-value net positions — attempting a zero-value token transfer
+        // would fail or produce unexpected behaviour (Issue #421).
         if net_amount != 0 {
             result.push_back(NetTransfer {
                 party_a: key.0.clone(),

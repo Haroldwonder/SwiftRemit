@@ -293,3 +293,62 @@ fn test_get_agent_reputation_calculates_score() {
     let reputation = contract.get_agent_reputation(&agent);
     assert_eq!(reputation, 79);
 }
+
+// ── Issue #421: zero-value net positions must not produce a transfer ──────────
+
+#[test]
+fn test_zero_net_position_produces_no_transfer() {
+    // When two remittances between the same agent pair cancel each other out,
+    // compute_net_settlements must return an empty vector — no zero-value
+    // token transfer should be attempted.
+    use crate::netting::{compute_net_settlements, NetTransfer};
+    use crate::{Remittance, RemittanceStatus};
+    use soroban_sdk::{testutils::Address as _, Env, Vec};
+
+    let env = Env::default();
+    let addr_a = Address::generate(&env);
+    let addr_b = Address::generate(&env);
+
+    let mut remittances: Vec<Remittance> = Vec::new(&env);
+
+    // A -> B: 100
+    remittances.push_back(Remittance {
+        id: 1,
+        sender: addr_a.clone(),
+        agent: addr_b.clone(),
+        amount: 100,
+        fee: 2,
+        status: RemittanceStatus::Pending,
+        expiry: None,
+        settlement_config: None,
+        token: addr_a.clone(), // placeholder
+        created_at: 0,
+        failed_at: None,
+        dispute_evidence: None,
+    });
+
+    // B -> A: 100 (exact mirror — net is zero)
+    remittances.push_back(Remittance {
+        id: 2,
+        sender: addr_b.clone(),
+        agent: addr_a.clone(),
+        amount: 100,
+        fee: 2,
+        status: RemittanceStatus::Pending,
+        expiry: None,
+        settlement_config: None,
+        token: addr_a.clone(), // placeholder
+        created_at: 0,
+        failed_at: None,
+        dispute_evidence: None,
+    });
+
+    let net_transfers: Vec<NetTransfer> = compute_net_settlements(&env, &remittances);
+
+    // Zero net position must be skipped — no transfer entry produced
+    assert_eq!(
+        net_transfers.len(),
+        0,
+        "zero-value net position must not produce a NetTransfer"
+    );
+}

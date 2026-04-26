@@ -393,3 +393,34 @@ mod property_tests {
         }
     }
 }
+
+#[test]
+fn test_corridor_strategy_hot_swap() {
+    // Issue #423: FeeStrategy::Corridor can be set without a contract upgrade.
+    // When no corridor config exists for the pair, it falls back to the platform fee bps.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (token, token_admin) = create_token_contract(&env, &admin);
+    token_admin.mint(&sender, &100_000);
+
+    let contract_id = env.register_contract(None, SwiftRemitContract);
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+
+    // Initialize with 2.5% fee
+    client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
+    client.register_agent(&agent);
+
+    // Hot-swap to Corridor strategy — no WASM upgrade needed
+    client.update_fee_strategy(&admin, &FeeStrategy::Corridor);
+    assert_eq!(client.get_fee_strategy(), FeeStrategy::Corridor);
+
+    // Without a corridor config, falls back to platform fee bps (250 = 2.5%)
+    let id = client.create_remittance(&sender, &agent, &10000, &None, &None, &None);
+    assert_eq!(client.get_remittance(&id).fee, 250);
+}
