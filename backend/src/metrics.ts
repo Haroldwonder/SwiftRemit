@@ -1,9 +1,11 @@
 import { Pool } from 'pg';
 import { createLogger } from './correlation-id';
+import { FxRateCache } from './fx-rate-cache';
 
 export class MetricsService {
   private pool: Pool;
   private logger = createLogger('MetricsService');
+  private fxRateCache?: FxRateCache;
 
   // Metrics storage
   private metrics = {
@@ -13,8 +15,37 @@ export class MetricsService {
     swiftremit_accumulated_fees: 0,
   };
 
-  constructor(pool: Pool) {
+  // FX rate staleness metrics
+  private fxRateAgeSeconds: Map<string, number> = new Map();
+  private fxCacheHitsTotal = 0;
+  private fxCacheMissesTotal = 0;
+
+  constructor(pool: Pool, fxRateCache?: FxRateCache) {
     this.pool = pool;
+    this.fxRateCache = fxRateCache;
+  }
+
+  /** Record a cache hit for a currency pair. */
+  recordFxCacheHit(from: string, to: string): void {
+    this.fxCacheHitsTotal++;
+    // Age is 0 when served from live cache (fresh)
+    const key = `${from.toUpperCase()}_${to.toUpperCase()}`;
+    this.fxRateAgeSeconds.set(key, 0);
+  }
+
+  /** Record a cache miss and the age of the rate that was fetched. */
+  recordFxCacheMiss(from: string, to: string, rateTimestamp: Date): void {
+    this.fxCacheMissesTotal++;
+    const ageSeconds = (Date.now() - rateTimestamp.getTime()) / 1000;
+    const key = `${from.toUpperCase()}_${to.toUpperCase()}`;
+    this.fxRateAgeSeconds.set(key, ageSeconds);
+  }
+
+  /** Update the recorded age for a currency pair (call after each successful fetch). */
+  updateFxRateAge(from: string, to: string, rateTimestamp: Date): void {
+    const ageSeconds = (Date.now() - rateTimestamp.getTime()) / 1000;
+    const key = `${from.toUpperCase()}_${to.toUpperCase()}`;
+    this.fxRateAgeSeconds.set(key, ageSeconds);
   }
 
   /**
@@ -150,6 +181,24 @@ export class MetricsService {
     lines.push('# TYPE swiftremit_accumulated_fees gauge');
     lines.push(`swiftremit_accumulated_fees ${this.metrics.swiftremit_accumulated_fees}`);
 
+    // FX rate age gauge (per currency pair)
+    lines.push('# HELP fx_rate_age_seconds Age of the cached FX rate in seconds');
+    lines.push('# TYPE fx_rate_age_seconds gauge');
+    this.fxRateAgeSeconds.forEach((ageSeconds, key) => {
+      const [from, to] = key.split('_');
+      lines.push(`fx_rate_age_seconds{from="${from}",to="${to}"} ${ageSeconds.toFixed(3)}`);
+    });
+
+    // FX cache hit counter
+    lines.push('# HELP fx_rate_cache_hits_total Total number of FX rate cache hits');
+    lines.push('# TYPE fx_rate_cache_hits_total counter');
+    lines.push(`fx_rate_cache_hits_total ${this.fxCacheHitsTotal}`);
+
+    // FX cache miss counter
+    lines.push('# HELP fx_rate_cache_misses_total Total number of FX rate cache misses');
+    lines.push('# TYPE fx_rate_cache_misses_total counter');
+    lines.push(`fx_rate_cache_misses_total ${this.fxCacheMissesTotal}`);
+
     return lines.join('\n') + '\n';
   }
 
@@ -165,9 +214,9 @@ export class MetricsService {
 // Singleton instance
 let metricsServiceInstance: MetricsService | null = null;
 
-export function getMetricsService(pool: Pool): MetricsService {
+export function getMetricsService(pool: Pool, fxRateCache?: FxRateCache): MetricsService {
   if (!metricsServiceInstance) {
-    metricsServiceInstance = new MetricsService(pool);
+    metricsServiceInstance = new MetricsService(pool, fxRateCache);
   }
   return metricsServiceInstance;
 }
