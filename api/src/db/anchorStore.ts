@@ -28,6 +28,7 @@ type AnchorRow = {
 export type AnchorFilters = {
   status?: string;
   currency?: string;
+  currencies?: string[];
 };
 
 export type AnchorUpdateInput = Partial<AnchorProvider>;
@@ -162,9 +163,20 @@ export class PostgresAnchorStore implements AnchorStore {
       clauses.push(`status = $${params.length}`);
     }
 
-    if (filters.currency) {
-      params.push(filters.currency.toUpperCase());
+    // currencies[] takes precedence; fall back to single currency
+    const currencyList = filters.currencies?.length
+      ? filters.currencies
+      : filters.currency
+        ? [filters.currency]
+        : [];
+
+    if (currencyList.length === 1) {
+      params.push(currencyList[0].toUpperCase());
       clauses.push(`$${params.length} = ANY(supported_currencies)`);
+    } else if (currencyList.length > 1) {
+      params.push(currencyList.map(c => c.toUpperCase()));
+      // Anchor must support ALL requested currencies
+      clauses.push(`$${params.length}::text[] <@ supported_currencies`);
     }
 
     const result = await this.db.query(

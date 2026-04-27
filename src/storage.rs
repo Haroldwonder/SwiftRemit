@@ -275,6 +275,9 @@ enum DataKey {
 
     /// Ordered list of current admin addresses for iteration (instance storage).
     AdminList,
+
+    /// Runtime-adjustable maximum batch size for process_expired_remittances (instance storage).
+    MaxExpiredBatchSize,
 }
 
 #[contracttype]
@@ -1524,6 +1527,21 @@ pub fn remove_idempotency_record(env: &Env, key: &String) {
     env.storage()
         .persistent()
         .remove(&DataKey::IdempotencyRecord(key.clone()));
+}
+
+/// Gets the runtime max expired batch size (falls back to compile-time constant).
+pub fn get_max_expired_batch_size(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MaxExpiredBatchSize)
+        .unwrap_or(crate::config::MAX_EXPIRED_BATCH_SIZE)
+}
+
+/// Sets the runtime max expired batch size.
+pub fn set_max_expired_batch_size(env: &Env, size: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MaxExpiredBatchSize, &size);
 }
 
 /// Stores the reverse mapping: remittance_id -> idempotency key

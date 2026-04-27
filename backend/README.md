@@ -330,3 +330,47 @@ See `.env.example` for all configuration options.
 ## License
 
 MIT
+
+## Distributed Tracing (OpenTelemetry)
+
+The backend emits OTLP traces for all major operations: HTTP requests, database queries, FX rate fetches, and webhook deliveries. Trace context is propagated to outbound anchor API calls via W3C `traceparent` headers.
+
+### Local Jaeger setup
+
+Run a Jaeger all-in-one container that accepts OTLP over HTTP:
+
+```bash
+docker run -d --name jaeger \
+  -p 4318:4318 \   # OTLP HTTP receiver
+  -p 16686:16686 \ # Jaeger UI
+  jaegertracing/all-in-one:latest
+```
+
+Then start the backend with tracing enabled (the default):
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 npm run dev
+```
+
+Open the Jaeger UI at **http://localhost:16686** and select the `swiftremit-backend` service.
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `OTEL_ENABLED` | `true` | Set to `false` to disable tracing (e.g. in CI) |
+| `OTEL_SERVICE_NAME` | `swiftremit-backend` | Service name shown in traces |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP HTTP collector endpoint |
+
+### Manual spans
+
+Use the `withSpan` helper for custom instrumentation:
+
+```typescript
+import { withSpan } from './tracing';
+
+const result = await withSpan('fx-rate.fetch', async (span) => {
+  span.setAttribute('currency.pair', `${from}/${to}`);
+  return fetchRate(from, to);
+});
+```

@@ -27,6 +27,7 @@ import { getMetricsService } from './metrics';
 import { sanitizeInput } from './sanitizer';
 import docsRouter from './routes/docs';
 import { Sep24Service, Sep24InitiateRequest, Sep24ConfigError, Sep24AnchorError } from './sep24-service';
+import { AdminAuditLogService } from './admin-audit-log';
 
 const app = express();
 const fxRateCache = getFxRateCache();
@@ -56,14 +57,35 @@ async function getSep24ServiceInstance(): Promise<Sep24Service> {
   return sep24Service;
 }
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
-  message: 'Too many requests from this IP, please try again later.',
-});
+// Per-group rate limiters
+function makeRateLimiter(max: number, windowMs = 60_000) {
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req: Request, res: Response) => {
+      const retryAfter = Math.ceil(windowMs / 1000);
+      res.set('Retry-After', String(retryAfter));
+      metricsService.incrementRateLimitExceeded(req.path);
+      res.status(429).json({
+        error: 'Too many requests',
+        retryAfter,
+      });
+    },
+  });
+}
 
-app.use('/api/', limiter);
+// Public endpoints: 100 req/min
+const publicLimiter = makeRateLimiter(100);
+// Webhook endpoints: 1000 req/min (higher for anchor callbacks)
+const webhookLimiter = makeRateLimiter(1000);
+// Admin endpoints: 20 req/min
+const adminLimiter = makeRateLimiter(20);
+
+app.use('/api/webhook', webhookLimiter);
+app.use('/api/kyc/config', adminLimiter);
+app.use('/api/', publicLimiter);
 
 // Metrics endpoint (excluded from rate limiting)
 app.get('/metrics', async (req: Request, res: Response) => {
@@ -682,6 +704,28 @@ app.post('/api/simulate-settlement', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error simulating settlement:', error);
     res.status(500).json({ error: 'Failed to simulate settlement' });
+  }
+});
+
+// Admin audit log
+app.get('/api/admin/audit-log', async (req: Request, res: Response) => {
+  try {
+    const auditService = new AdminAuditLogService(pool);
+    const limit  = Math.min(parseInt(req.query.limit  as string) || 50, 200);
+    const offset = parseInt(req.query.offset as string) || 0;
+    const filter = {
+      admin_address: req.query.admin_address as string | undefined,
+      action:        req.query.action        as string | undefined,
+      from:  req.query.from  ? new Date(req.query.from  as string) : undefined,
+      to:    req.query.to    ? new Date(req.query.to    as string) : undefined,
+      limit,
+      offset,
+    };
+    const { entries, total } = await auditService.query(filter);
+    res.json({ total, limit, offset, entries });
+  } catch (error) {
+    logger.error('Error fetching audit log', error);
+    res.status(500).json({ error: 'Failed to fetch audit log' });
   }
 });
 

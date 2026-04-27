@@ -111,9 +111,18 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const { status, currency } = req.query;
 
+    // Accept currencies[] (multi) or currency (single, backward-compat)
+    const rawCurrencies = req.query['currencies[]'];
+    const currencies: string[] | undefined = rawCurrencies
+      ? (Array.isArray(rawCurrencies) ? rawCurrencies : [rawCurrencies]).filter(
+          (c): c is string => typeof c === 'string',
+        )
+      : undefined;
+
     const filteredAnchors = await getStore().list({
       status: typeof status === 'string' ? status : undefined,
       currency: typeof currency === 'string' ? currency : undefined,
+      currencies,
     });
 
     const response: AnchorListResponse = {

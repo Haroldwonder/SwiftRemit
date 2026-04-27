@@ -306,6 +306,41 @@ mod tests {
     }
 
     #[test]
+    fn test_cooldown_expires_at_ledger_boundary() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
+        let address = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            // Record action at t=0 (default ledger timestamp)
+            record_action(&env, &address, ActionType::Transfer);
+
+            // One second before cooldown expires: still blocked
+            env.ledger().with_mut(|l| l.timestamp = TRANSFER_COOLDOWN - 1);
+            assert_eq!(
+                check_cooldown(&env, &address, ActionType::Transfer).unwrap_err(),
+                ContractError::CooldownActive,
+                "cooldown should still be active one second before expiry"
+            );
+
+            // Exactly at cooldown boundary: still blocked (time_since_last == cooldown_period - 1 < cooldown_period)
+            env.ledger().with_mut(|l| l.timestamp = TRANSFER_COOLDOWN);
+            // time_since_last = TRANSFER_COOLDOWN - 0 = TRANSFER_COOLDOWN, which is NOT < cooldown_period
+            // so this should be allowed
+            assert!(
+                check_cooldown(&env, &address, ActionType::Transfer).is_ok(),
+                "cooldown should be expired exactly at the boundary"
+            );
+
+            // After cooldown: allowed
+            env.ledger().with_mut(|l| l.timestamp = TRANSFER_COOLDOWN + 1);
+            assert!(
+                check_cooldown(&env, &address, ActionType::Transfer).is_ok(),
+                "cooldown should be expired after the boundary"
+            );
+        });
+    }
+
+    #[test]
     fn test_admin_actions_no_rate_limit() {
         let env = Env::default();
         let contract_id = env.register_contract(None, SwiftRemitContract {});
