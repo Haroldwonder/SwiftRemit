@@ -36,7 +36,8 @@ enum CbKey {
     PauseRecord(u64),
     UnpauseRecord(u64),
     UnpauseVote(u64, Address),
-    UnpauseVoteCountForSeq(u64),
+    /// Vote count scoped to a specific pause sequence.
+    UnpauseVoteCount(u64),
     PauseTimelockSeconds,
     UnpauseQuorum,
 }
@@ -148,20 +149,20 @@ pub fn set_unpause_quorum(env: &Env, quorum: u32) {
 
 // ─── Per-Sequence Vote Count ──────────────────────────────────────────────────
 
-/// Returns the number of votes cast for the pause identified by `seq`.
+/// Returns the number of votes cast for the pause instance identified by `seq`.
 /// Defaults to 0 if never set.
-pub fn get_vote_count_for_seq(env: &Env, seq: u64) -> u32 {
+pub fn get_vote_count(env: &Env, seq: u64) -> u32 {
     env.storage()
-        .persistent()
-        .get(&CbKey::UnpauseVoteCountForSeq(seq))
+        .instance()
+        .get(&CbKey::UnpauseVoteCount(seq))
         .unwrap_or(0)
 }
 
-/// Persists the vote count for the pause identified by `seq`.
-pub fn set_vote_count_for_seq(env: &Env, seq: u64, count: u32) {
+/// Persists the vote count for the pause instance identified by `seq`.
+pub fn set_vote_count(env: &Env, seq: u64, count: u32) {
     env.storage()
-        .persistent()
-        .set(&CbKey::UnpauseVoteCountForSeq(seq), &count);
+        .instance()
+        .set(&CbKey::UnpauseVoteCount(seq), &count);
 }
 
 // ─── Per-Voter Flags ──────────────────────────────────────────────────────────
