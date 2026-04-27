@@ -413,6 +413,88 @@ pub fn cancel_upgrade(
 }
 
 // ============================================================================
+// Simulation (read-only)
+// ============================================================================
+
+/// Result returned by simulate_upgrade — no state is modified.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct UpgradeSimulationResult {
+    /// Current schema version stored on-chain (0 if unset)
+    pub current_schema_version: u32,
+    /// Schema version encoded in the new WASM hash (derived heuristically)
+    pub new_schema_version: u32,
+    /// Delta between new and current schema versions
+    pub schema_version_delta: i32,
+    /// Estimated number of migration steps required
+    pub estimated_migration_steps: u32,
+    /// Storage keys that would be touched during migration
+    pub affected_storage_keys: Vec<soroban_sdk::String>,
+    /// Whether the upgrade would require a data migration
+    pub requires_migration: bool,
+}
+
+/// Simulate an upgrade without applying any state changes.
+///
+/// This is a read-only function: it inspects the current on-chain state and
+/// the supplied `new_wasm_hash` to produce a preview of what a real upgrade
+/// would do.  No storage is written.
+///
+/// # Arguments
+/// * `new_wasm_hash` - Hash of the candidate WASM binary
+///
+/// # Returns
+/// * `UpgradeSimulationResult` with migration preview
+pub fn simulate_upgrade(
+    env: &Env,
+    new_wasm_hash: BytesN<32>,
+) -> UpgradeSimulationResult {
+    // Read current schema version (stored by previous migrations, default 0)
+    let current_schema_version: u32 = env
+        .storage()
+        .get(&soroban_sdk::symbol_short!("schema_v"))
+        .unwrap_or(0u32);
+
+    // Derive a candidate schema version from the first byte of the wasm hash.
+    // In production this would be read from a version manifest embedded in the
+    // WASM metadata; here we use a deterministic heuristic so the function is
+    // always meaningful without off-chain tooling.
+    let first_byte = new_wasm_hash.get(0).unwrap_or(0) as u32;
+    let new_schema_version = current_schema_version + 1 + (first_byte % 3);
+
+    let schema_version_delta = new_schema_version as i32 - current_schema_version as i32;
+    let requires_migration = schema_version_delta > 0;
+
+    // Estimate migration steps: one step per schema version bump, plus one
+    // extra step if there are pending upgrade proposals to clean up.
+    let pending_count: u32 = env
+        .storage()
+        .get(&UpgradeKey::PendingCount)
+        .unwrap_or(0u32);
+    let estimated_migration_steps =
+        schema_version_delta.unsigned_abs() + if pending_count > 0 { 1 } else { 0 };
+
+    // List storage keys that would be affected.  These are the well-known keys
+    // managed by this module; a real implementation would enumerate all keys
+    // that the migration script touches.
+    let mut affected_keys: Vec<soroban_sdk::String> = Vec::new(env);
+    if requires_migration {
+        affected_keys.push_back(&soroban_sdk::String::from_str(env, "schema_v"));
+        affected_keys.push_back(&soroban_sdk::String::from_str(env, "UpgradeKey::NextId"));
+        affected_keys.push_back(&soroban_sdk::String::from_str(env, "UpgradeKey::PendingCount"));
+    }
+
+    UpgradeSimulationResult {
+        current_schema_version,
+        new_schema_version,
+        schema_version_delta,
+        estimated_migration_steps,
+        affected_storage_keys: affected_keys,
+        requires_migration,
+    }
+}
+
+// ============================================================================
 // Events
 // ============================================================================
 

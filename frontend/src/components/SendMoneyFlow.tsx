@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './SendMoneyFlow.css';
 
 type FlowStep = 1 | 2 | 3 | 4 | 5;
@@ -10,9 +10,16 @@ interface ConfirmPayload {
   memo?: string;
 }
 
+interface FxRate {
+  rate: number;
+  localCurrency: string;
+  fetchedAt: number; // epoch ms
+}
+
 interface SendMoneyFlowProps {
   assets?: string[];
   onConfirm?: (payload: ConfirmPayload) => Promise<void>;
+  apiUrl?: string;
 }
 
 const STEPS: Record<FlowStep, string> = {
@@ -25,6 +32,7 @@ const STEPS: Record<FlowStep, string> = {
 const STEP_SEQUENCE: FlowStep[] = [1, 2, 3, 4, 5];
 
 const DEFAULT_ASSETS = ['XLM', 'USDC', 'EURC'];
+const FX_TTL_MS = 30_000;
 
 function isValidRecipient(input: string): boolean {
   return /^G[A-Z2-7]{55}$/.test(input.trim());
@@ -33,6 +41,7 @@ function isValidRecipient(input: string): boolean {
 export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   assets = DEFAULT_ASSETS,
   onConfirm,
+  apiUrl = 'http://localhost:3000',
 }) => {
   const [step, setStep] = useState<FlowStep>(1);
   const [amount, setAmount] = useState('');
@@ -43,7 +52,47 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
 
+  const [fxRate, setFxRate] = useState<FxRate | null>(null);
+  const [fxLoading, setFxLoading] = useState(false);
+  const [fxCountdown, setFxCountdown] = useState(0);
+  const fxTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const parsedAmount = useMemo(() => Number(amount), [amount]);
+
+  const fetchFxRate = async () => {
+    if (!asset) return;
+    setFxLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/fx-rates?from=${asset}&to=USD`);
+      const data = await res.json();
+      const rate: number = data?.rate ?? data?.data?.rate ?? 1;
+      const localCurrency: string = data?.to ?? data?.data?.to ?? 'USD';
+      setFxRate({ rate, localCurrency, fetchedAt: Date.now() });
+      setFxCountdown(Math.floor(FX_TTL_MS / 1000));
+    } catch {
+      // silently ignore FX errors — non-blocking
+    } finally {
+      setFxLoading(false);
+    }
+  };
+
+  // Fetch FX rate when entering step 4; auto-refresh every TTL
+  useEffect(() => {
+    if (step !== 4) {
+      if (fxTimerRef.current) clearInterval(fxTimerRef.current);
+      return;
+    }
+    fetchFxRate();
+    fxTimerRef.current = setInterval(fetchFxRate, FX_TTL_MS);
+    return () => { if (fxTimerRef.current) clearInterval(fxTimerRef.current); };
+  }, [step, asset]);
+
+  // Countdown ticker
+  useEffect(() => {
+    if (step !== 4 || fxCountdown <= 0) return;
+    const tick = setInterval(() => setFxCountdown((c) => Math.max(0, c - 1)), 1000);
+    return () => clearInterval(tick);
+  }, [step, fxCountdown]);
 
   const validateCurrentStep = (): string | null => {
     if (step === 1) {
@@ -184,26 +233,43 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
 
     if (step === 4 || step === 5) {
       return (
-        <dl className="flow-review">
-          <div>
-            <dt>Amount</dt>
-            <dd>{amount || '-'}</dd>
-          </div>
-          <div>
-            <dt>Asset</dt>
-            <dd>{asset || '-'}</dd>
-          </div>
-          <div>
-            <dt>Recipient</dt>
-            <dd>{recipient || '-'}</dd>
-          </div>
-          {memo.trim() && (
+        <>
+          <dl className="flow-review">
             <div>
-              <dt>Memo</dt>
-              <dd>{memo.trim()}</dd>
+              <dt>Amount</dt>
+              <dd>{amount || '-'}</dd>
+            </div>
+            <div>
+              <dt>Asset</dt>
+              <dd>{asset || '-'}</dd>
+            </div>
+            <div>
+              <dt>Recipient</dt>
+              <dd>{recipient || '-'}</dd>
+            </div>
+            {memo.trim() && (
+              <div>
+                <dt>Memo</dt>
+                <dd>{memo.trim()}</dd>
+              </div>
+            )}
+          </dl>
+          {step === 4 && (
+            <div className="flow-fx-preview" aria-live="polite">
+              {fxLoading && <span className="flow-fx-loading">Fetching rate...</span>}
+              {!fxLoading && fxRate && (
+                <>
+                  <span className="flow-fx-rate">
+                    Recipient receives ~{(parsedAmount * fxRate.rate).toLocaleString(undefined, { maximumFractionDigits: 2 })} {fxRate.localCurrency} at rate {fxRate.rate}
+                  </span>
+                  <span className="flow-fx-timestamp">
+                    Rate as of {new Date(fxRate.fetchedAt).toLocaleTimeString()} · valid for {fxCountdown}s
+                  </span>
+                </>
+              )}
             </div>
           )}
-        </dl>
+        </>
       );
     }
 

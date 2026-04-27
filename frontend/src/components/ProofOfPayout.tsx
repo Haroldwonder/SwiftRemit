@@ -1,10 +1,32 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import './ProofOfPayout.css';
-import { horizonService, SettlementCompletedEvent } from '../services/horizonService';
+import { horizonService, type SettlementCompletedEvent } from '../services/horizonService';
 
 interface ProofOfPayoutProps {
   remittanceId: number;
   onRelease?: (remittanceId: number, proofImage: string) => Promise<void>;
+}
+
+type ProofValidationStatus = 'pending' | 'valid' | 'invalid';
+
+/** Convert an arbitrary string to a hex representation of its UTF-8 bytes */
+function toHex(value: string): string {
+  return Array.from(new TextEncoder().encode(value))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/** Derive a deterministic "proof hash" from the on-chain event fields */
+function deriveProofHash(event: SettlementCompletedEvent): string {
+  const raw = [
+    event.remittanceId,
+    event.sender,
+    event.agent,
+    event.amount,
+    event.fee,
+    event.transactionHash,
+  ].join(':');
+  return toHex(raw);
 }
 
 export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRelease }) => {
@@ -16,22 +38,30 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
   const [eventData, setEventData] = useState<SettlementCompletedEvent | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [validationStatus, setValidationStatus] = useState<ProofValidationStatus>('pending');
 
   useEffect(() => {
     const fetchEventData = async () => {
       setIsLoading(true);
       setError(null);
-      
+      setValidationStatus('pending');
+
       try {
         const data = await horizonService.fetchCompletedEvent(remittanceId);
-        
+
         if (data) {
           setEventData(data);
+          // Validate: transaction hash must be non-empty and 64 hex chars
+          const isValid = /^[0-9a-fA-F]{64}$/.test(data.transactionHash);
+          setValidationStatus(isValid ? 'valid' : 'invalid');
         } else {
           setError('No completed event found for this remittance ID');
+          setValidationStatus('invalid');
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch event data');
+        setValidationStatus('invalid');
       } finally {
         setIsLoading(false);
       }
@@ -44,18 +74,17 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
     const startCamera = async () => {
       try {
         const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' }, // Use back camera if available
+          video: { facingMode: 'environment' },
         });
         setStream(mediaStream);
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
         }
-      } catch (error) {
-        console.error('Error accessing camera:', error);
+      } catch (err) {
+        console.error('Error accessing camera:', err);
       }
     };
 
-    // Only start camera if onRelease callback is provided (camera mode)
     if (onRelease) {
       startCamera();
     }
@@ -67,6 +96,26 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
     };
   }, [onRelease]);
 
+  const copyToClipboard = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for environments without clipboard API
+      const el = document.createElement('textarea');
+      el.value = text;
+      el.style.position = 'fixed';
+      el.style.opacity = '0';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, []);
+
   const captureImage = () => {
     if (videoRef.current && canvasRef.current) {
       const canvas = canvasRef.current;
@@ -76,8 +125,7 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(video, 0, 0);
-        const imageDataUrl = canvas.toDataURL('image/png');
-        setCapturedImage(imageDataUrl);
+        setCapturedImage(canvas.toDataURL('image/png'));
       }
     }
   };
@@ -87,9 +135,8 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
       setIsReleasing(true);
       try {
         await onRelease(remittanceId, capturedImage);
-        // Handle success, maybe show confirmation
-      } catch (error) {
-        console.error('Error releasing funds:', error);
+      } catch (err) {
+        console.error('Error releasing funds:', err);
       } finally {
         setIsReleasing(false);
       }
@@ -99,26 +146,25 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
   const formatAmount = (amount: string): string => {
     const num = parseFloat(amount);
     if (isNaN(num)) return amount;
-    return (num / 10000000).toFixed(7); // Convert from stroops to XLM/USDC
+    return (num / 10000000).toFixed(7);
   };
 
-  const formatTimestamp = (timestamp: string): string => {
-    return new Date(timestamp).toLocaleString();
-  };
+  const formatTimestamp = (timestamp: string): string =>
+    new Date(timestamp).toLocaleString();
 
-  const truncateAddress = (address: string): string => {
-    if (address.length <= 12) return address;
-    return `${address.slice(0, 6)}...${address.slice(-6)}`;
-  };
+  const truncateAddress = (address: string): string =>
+    address.length <= 12 ? address : `${address.slice(0, 6)}...${address.slice(-6)}`;
 
-  const retake = () => {
-    setCapturedImage(null);
+  const validationLabel: Record<ProofValidationStatus, string> = {
+    pending: '⏳ Validating proof…',
+    valid: '✅ Proof valid',
+    invalid: '❌ Proof invalid',
   };
 
   return (
     <div className="proof-of-payout">
       <h2>Proof of Payout</h2>
-      
+
       {isLoading && (
         <div className="loading-state">
           <p>Loading payout details...</p>
@@ -133,6 +179,15 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
 
       {!isLoading && !error && eventData && (
         <div className="payout-details">
+          {/* Validation status banner */}
+          <div
+            className={`proof-validation-status proof-validation-${validationStatus}`}
+            role="status"
+            aria-live="polite"
+          >
+            {validationLabel[validationStatus]}
+          </div>
+
           <div className="detail-section">
             <h3>Transaction Details</h3>
             <div className="detail-row">
@@ -163,10 +218,50 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
               <span className="detail-label">Timestamp:</span>
               <span className="detail-value">{formatTimestamp(eventData.timestamp)}</span>
             </div>
-            <div className="detail-row">
+
+            {/* Proof hash — hex display with copy button */}
+            <div className="detail-row proof-hash-row">
+              <span className="detail-label">
+                Proof Hash
+                <span
+                  className="proof-hash-tooltip"
+                  title="A hex-encoded commitment derived from the on-chain settlement event fields. Use it to independently verify this payout on Stellar Expert."
+                  aria-label="What is the proof hash?"
+                >
+                  {' '}ℹ️
+                </span>
+                :
+              </span>
+              <span className="detail-value proof-hash-value">
+                <code className="proof-hash-hex" aria-label="Proof hash hex string">
+                  {deriveProofHash(eventData)}
+                </code>
+                <button
+                  type="button"
+                  className="copy-button"
+                  onClick={() => copyToClipboard(deriveProofHash(eventData))}
+                  aria-label="Copy proof hash to clipboard"
+                >
+                  {copied ? '✓ Copied' : 'Copy'}
+                </button>
+              </span>
+            </div>
+
+            {/* Transaction hash with copy */}
+            <div className="detail-row proof-hash-row">
               <span className="detail-label">Transaction Hash:</span>
-              <span className="detail-value" title={eventData.transactionHash}>
-                {truncateAddress(eventData.transactionHash)}
+              <span className="detail-value proof-hash-value">
+                <code className="proof-hash-hex" title={eventData.transactionHash}>
+                  {truncateAddress(eventData.transactionHash)}
+                </code>
+                <button
+                  type="button"
+                  className="copy-button"
+                  onClick={() => copyToClipboard(eventData.transactionHash)}
+                  aria-label="Copy transaction hash to clipboard"
+                >
+                  Copy
+                </button>
               </span>
             </div>
           </div>
@@ -178,7 +273,7 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
               rel="noopener noreferrer"
               className="stellar-expert-link"
             >
-              View on Stellar Expert →
+              Verify on Stellar Expert →
             </a>
           </div>
         </div>
@@ -200,7 +295,7 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
             <div className="preview-container">
               <img src={capturedImage} alt="Captured proof" className="captured-image" />
               <div className="preview-actions">
-                <button onClick={retake} className="retake-button">Retake</button>
+                <button onClick={() => setCapturedImage(null)} className="retake-button">Retake</button>
                 <button onClick={handleRelease} disabled={isReleasing} className="release-button">
                   {isReleasing ? 'Releasing...' : 'Release Funds'}
                 </button>

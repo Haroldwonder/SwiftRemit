@@ -46,6 +46,7 @@ console.log("Remittance created:", result.hash);
 - ✅ Automatic XDR conversion
 - ✅ Transaction simulation & assembly
 - ✅ Helper utilities (`toStroops`, `fromStroops`)
+- ✅ Real-time event subscription via Horizon SSE (`subscribeToRemittanceEvents`)
 
 ## API Reference
 
@@ -134,6 +135,64 @@ import type {
   SettlementConfig,
 } from "@swiftremit/sdk";
 ```
+
+## Real-Time Event Subscription
+
+Subscribe to contract events without polling `getRemittance` repeatedly:
+
+```typescript
+import { SwiftRemitClient, Networks, RpcUrls } from "@swiftremit/sdk";
+
+const client = new SwiftRemitClient({
+  contractId: "CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  networkPassphrase: Networks.TESTNET,
+  rpcUrl: RpcUrls.TESTNET,
+});
+
+// Subscribe to all events for a specific remittance
+const unsubscribe = client.subscribeToRemittanceEvents(
+  (event) => {
+    console.log(`[${event.type}] remittance #${event.remittanceId} at ledger ${event.ledger}`);
+    if (event.type === "completed") {
+      console.log("Payout confirmed!");
+      unsubscribe(); // stop listening once done
+    }
+  },
+  { remittanceId: 42n } // optional filter
+);
+
+// Subscribe to all events (no filter)
+const unsubAll = client.subscribeToRemittanceEvents((event) => {
+  console.log(event);
+});
+
+// Stop the subscription
+unsubAll();
+```
+
+### Event types
+
+| `event.type` | Trigger |
+|---|---|
+| `created` | New remittance created |
+| `completed` | Payout confirmed and settled |
+| `cancelled` | Remittance cancelled by sender |
+| `failed` | Payout marked as failed |
+| `disputed` | Dispute raised on a failed remittance |
+
+### Filtering
+
+Pass a `SubscribeOptions` object as the second argument:
+
+```typescript
+// Filter by remittance ID
+client.subscribeToRemittanceEvents(cb, { remittanceId: 42n });
+
+// Resume from a saved cursor (paging token)
+client.subscribeToRemittanceEvents(cb, { cursor: "1234567890-0" });
+```
+
+The subscription reconnects automatically with exponential back-off (1 s → 30 s) on stream disconnect.
 
 ## Example: Full Remittance Flow
 

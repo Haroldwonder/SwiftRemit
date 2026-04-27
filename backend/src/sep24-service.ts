@@ -163,10 +163,17 @@ export class Sep24Service {
 
   constructor(pool: Pool) {
     this.pool = pool;
+    this.anchorTimeoutHours = parseFloat(process.env.ANCHOR_TIMEOUT_HOURS ?? '24');
+    this.timeoutWebhookUrl = process.env.ANCHOR_TIMEOUT_WEBHOOK_URL;
     this.httpClient = axios.create({
       timeout: 30000, // 30 second timeout for SEP-24 requests
     });
     this.dispatcher = new WebhookDispatcher();
+  }
+
+  /** Return the current stalled_transactions_total counter value (for Prometheus scraping). */
+  getStalledTransactionsTotal(): number {
+    return this.stalledTransactionsTotal;
   }
 
   /**
@@ -338,7 +345,7 @@ export class Sep24Service {
 
     for (const transaction of pendingTransactions) {
       try {
-        // Check for timeout
+        // Check for anchor timeout on pending_anchor status
         const createdAt = transaction.created_at || new Date();
         const timeSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60);
         

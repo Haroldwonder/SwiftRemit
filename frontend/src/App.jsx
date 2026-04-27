@@ -4,6 +4,7 @@ import WalletConnect from './components/WalletConnect'
 import CreateRemittance from './components/CreateRemittance'
 import RemittanceList from './components/RemittanceList'
 import AgentPanel from './components/AgentPanel'
+import ContractHealth from './components/ContractHealth'
 
 function App() {
   const [walletAddress, setWalletAddress] = useState(null)
@@ -49,6 +50,11 @@ function App() {
             </div>
 
             <RemittanceList 
+              walletAddress={walletAddress}
+              contractId={contractId}
+            />
+
+            <ContractHealth
               walletAddress={walletAddress}
               contractId={contractId}
             />

@@ -196,7 +196,7 @@ export class PostgresWebhookStore implements IWebhookStore {
       `UPDATE webhooks SET active = FALSE WHERE id = $1`,
       [id]
     );
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   async getWebhook(id: string): Promise<WebhookSubscriber | null> {

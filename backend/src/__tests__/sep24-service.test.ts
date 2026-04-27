@@ -18,7 +18,11 @@ vi.mock('../database', async (importOriginal) => {
       { anchor_id: 'anchor_test', kyc_server_url: 'http://localhost:0/sep24' },
     ]),
     saveSep24Transaction: vi.fn(async (record) => {
-      sep24Rows.set(record.transaction_id, { ...sep24Rows.get(record.transaction_id), ...record });
+      sep24Rows.set(record.transaction_id, {
+        created_at: new Date(),
+        ...sep24Rows.get(record.transaction_id),
+        ...record,
+      });
     }),
     getSep24Transaction: vi.fn(async (transactionId: string) => sep24Rows.get(transactionId) ?? null),
     getSep24TransactionById: vi.fn(async (transactionId: string) => sep24Rows.get(transactionId) ?? null),
@@ -259,6 +263,39 @@ describe('Sep24Service', () => {
       
       // Poll - should not throw
       await service.pollAllTransactions();
+    });
+  });
+
+  describe('anchor timeout (pending_anchor)', () => {
+    it('transitions pending_anchor transaction to error after timeout and increments counter', async () => {
+      // Set a very short timeout (0 hours) so any transaction is immediately stale
+      process.env.ANCHOR_TIMEOUT_HOURS = '0';
+      const timeoutService = new Sep24Service(pool);
+      await timeoutService.initialize();
+
+      const request: Sep24InitiateRequest = {
+        user_id: 'timeout-user',
+        anchor_id: 'anchor_test',
+        direction: 'deposit',
+        asset_code: 'USDC',
+        amount: '50.00',
+      };
+
+      const result = await timeoutService.initiateFlow(request);
+
+      // Confirm it starts as pending_anchor
+      const before = await timeoutService.getTransactionStatus(result.transaction_id);
+      expect(before?.status).toBe('pending_anchor');
+
+      // Poll — should detect timeout and mark as error
+      await timeoutService.pollAllTransactions();
+
+      const after = await timeoutService.getTransactionStatus(result.transaction_id);
+      expect(after?.status).toBe('error');
+      expect(timeoutService.getStalledTransactionsTotal()).toBe(1);
+
+      // Restore default
+      process.env.ANCHOR_TIMEOUT_HOURS = '24';
     });
   });
 

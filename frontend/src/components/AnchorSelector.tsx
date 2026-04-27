@@ -39,7 +39,9 @@ export interface AnchorProvider {
 interface AnchorSelectorProps {
   onSelect: (anchor: AnchorProvider) => void;
   selectedAnchorId?: string;
+  /** @deprecated Use currencies instead */
   currency?: string;
+  currencies?: string[];
   apiUrl?: string;
 }
 
@@ -47,8 +49,11 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
   onSelect,
   selectedAnchorId,
   currency,
+  currencies,
   apiUrl = 'http://localhost:3000',
 }) => {
+  // Normalise to array; single `currency` prop is backward-compatible
+  const activeCurrencies = currencies ?? (currency ? [currency] : []);
   const [anchors, setAnchors] = useState<AnchorProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +68,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
 
   useEffect(() => {
     fetchAnchors();
-  }, [currency]);
+  }, [activeCurrencies.join(',')]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (selectedAnchorId && anchors.length > 0) {
@@ -77,7 +82,13 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
       setLoading(true);
       setError(null);
       const params = new URLSearchParams();
-      if (currency) params.append('currency', currency);
+      // Send each currency as a separate `currencies[]` param; fall back to
+      // legacy `currency` for servers that haven't been updated yet.
+      if (activeCurrencies.length === 1) {
+        params.append('currency', activeCurrencies[0]);
+      } else if (activeCurrencies.length > 1) {
+        activeCurrencies.forEach(c => params.append('currencies[]', c));
+      }
       params.append('status', 'active');
       const response = await fetch(`${apiUrl}/api/anchors?${params}`);
       const data = await response.json();
@@ -179,9 +190,9 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
     }
   }, [focusedIndex, isOpen]);
 
-  // Close dropdown when clicking outside
+  // Close dropdown when clicking/tapping outside (pointerdown covers mouse + touch)
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleOutsidePointer = (event: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node) &&
           triggerRef.current && !triggerRef.current.contains(event.target as Node)) {
         setIsOpen(false);
@@ -190,8 +201,8 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
     };
 
     if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+      document.addEventListener('pointerdown', handleOutsidePointer);
+      return () => document.removeEventListener('pointerdown', handleOutsidePointer);
     }
   }, [isOpen]);
 
@@ -305,6 +316,29 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
                   {selectedAnchor.fees.min_fee && <div className="detail-item"><span className="detail-label">Minimum Fee:</span><span className="detail-value">{formatAmount(selectedAnchor.fees.min_fee)}</span></div>}
                   {selectedAnchor.fees.max_fee && <div className="detail-item"><span className="detail-label">Maximum Fee:</span><span className="detail-value">{formatAmount(selectedAnchor.fees.max_fee)}</span></div>}
                 </div>
+                {activeCurrencies.length > 0 && (
+                  <div className="per-currency-fees" aria-label="Per-currency fee breakdown">
+                    <h5>Per-Currency Breakdown</h5>
+                    {activeCurrencies.map(cur => {
+                      const supported = selectedAnchor.supported_currencies.includes(cur.toUpperCase());
+                      return (
+                        <div key={cur} className={`currency-fee-row ${supported ? '' : 'unsupported'}`}>
+                          <span className="currency-code">{cur.toUpperCase()}</span>
+                          {supported ? (
+                            <>
+                              <span className="detail-label">Deposit:</span>
+                              <span className="detail-value">{formatFee(selectedAnchor.fees.deposit_fee_percent, selectedAnchor.fees.deposit_fee_fixed)}</span>
+                              <span className="detail-label">Withdrawal:</span>
+                              <span className="detail-value">{formatFee(selectedAnchor.fees.withdrawal_fee_percent, selectedAnchor.fees.withdrawal_fee_fixed)}</span>
+                            </>
+                          ) : (
+                            <span className="unsupported-label" aria-label={`${cur} not supported`}>⚠️ Not supported</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               <div className="details-section">
                 <h4>Transaction Limits</h4>

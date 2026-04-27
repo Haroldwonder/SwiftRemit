@@ -12,9 +12,19 @@
     "test:webhook:manual": "tsx scripts/test-webhook.ts",
     "lint": "eslint src --ext .ts",
     "webhook:example": "tsx examples/send-webhook.ts",
-    "validate:openapi": "swagger-cli validate openapi.yaml"
+    "validate:openapi": "swagger-cli validate openapi.yaml",
+    "migrate": "tsx src/migrate.ts migrate",
+    "migrate:rollback": "tsx src/migrate.ts rollback"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
+    "@opentelemetry/instrumentation-express": "^0.63.0",
+    "@opentelemetry/instrumentation-http": "^0.215.0",
+    "@opentelemetry/instrumentation-pg": "^0.67.0",
+    "@opentelemetry/resources": "^2.7.0",
+    "@opentelemetry/sdk-node": "^0.215.0",
+    "@opentelemetry/semantic-conventions": "^1.40.0",
     "@stellar/stellar-sdk": "^12.0.0",
     "axios": "^1.8.2",
     "cors": "^2.8.5",
@@ -22,26 +32,27 @@
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
+    "js-yaml": "^4.1.0",
     "node-cache": "^5.1.2",
     "node-cron": "^4.2.1",
     "pg": "^8.11.0",
-    "toml": "^3.0.0",
     "swagger-ui-express": "^5.0.0",
-    "js-yaml": "^4.1.0",
+    "toml": "^3.0.0",
     "uuid": "^14.0.0"
   },
   "overrides": {
     "uuid": "^14.0.0"
   },
   "devDependencies": {
+    "@apidevtools/swagger-cli": "^4.0.4",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.10.0",
     "@types/node-cache": "^4.2.5",
     "@types/pg": "^8.10.9",
     "@types/supertest": "^7.2.0",
     "@types/swagger-ui-express": "^4.1.6",
-    "@types/js-yaml": "^4.0.9",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "eslint": "^8.56.0",
@@ -50,7 +61,6 @@
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
     "vite": "^6.4.2",
-    "vitest": "^3.1.1",
-    "@apidevtools/swagger-cli": "^4.0.4"
+    "vitest": "^3.1.1"
   }
 }

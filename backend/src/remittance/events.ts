@@ -8,6 +8,7 @@
 import { EventEmitter } from 'events';
 import { RemittanceData } from '../webhooks/types';
 import { WebhookService } from '../webhooks/service';
+import { AdminAuditLogService } from '../admin-audit-log';
 
 export interface RemittanceStatusChangeEvent {
   remittanceId: string;
@@ -22,6 +23,15 @@ export interface RemittanceStatusChangeEvent {
   timestamp: Date;
 }
 
+/** Admin actions that should be written to the audit log. */
+export interface AdminActionEvent {
+  adminAddress: string;
+  action: string;
+  target?: string;
+  params?: Record<string, unknown>;
+  txHash?: string;
+}
+
 /**
  * Remittance Event Emitter
  * 
@@ -29,12 +39,32 @@ export interface RemittanceStatusChangeEvent {
  */
 export class RemittanceEventEmitter extends EventEmitter {
   private webhookService?: WebhookService;
+  private auditLogService?: AdminAuditLogService;
 
-  /**
-   * Set webhook service for event notification
-   */
   setWebhookService(webhookService: WebhookService): void {
     this.webhookService = webhookService;
+  }
+
+  setAuditLogService(auditLogService: AdminAuditLogService): void {
+    this.auditLogService = auditLogService;
+  }
+
+  /** Emit an admin action and persist it to the audit log. */
+  async emitAdminAction(event: AdminActionEvent): Promise<void> {
+    this.emit('admin-action', event);
+    if (this.auditLogService) {
+      try {
+        await this.auditLogService.log({
+          admin_address: event.adminAddress,
+          action: event.action,
+          target: event.target ?? null,
+          params_json: event.params ?? null,
+          tx_hash: event.txHash ?? null,
+        });
+      } catch (err) {
+        console.error('Failed to write admin audit log entry:', err);
+      }
+    }
   }
 
   /**
@@ -59,6 +89,7 @@ export class RemittanceEventEmitter extends EventEmitter {
             reason: event.reason,
             metadata: event.metadata,
             createdAt: event.timestamp.toISOString(),
+            updatedAt: event.timestamp.toISOString(),
           }
         );
 

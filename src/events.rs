@@ -372,6 +372,39 @@ pub fn emit_token_fee_updated(env: &Env, caller: Address, token: Address, fee_bp
 
 // ── Fee Events ─────────────────────────────────────────────────────
 
+/// Emits an event when a daily send limit is updated by an admin.
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `currency` - Currency code (e.g. "USDC")
+/// * `country` - Country code (e.g. "NG")
+/// * `old_limit` - Previous limit value, or None if not previously set
+/// * `new_limit` - New limit value
+/// * `admin` - Address of the admin who made the change
+pub fn emit_daily_limit_updated(
+    env: &Env,
+    currency: String,
+    country: String,
+    old_limit: Option<i128>,
+    new_limit: i128,
+    admin: Address,
+) {
+    env.events().publish(
+        (symbol_short!("limit"), symbol_short!("updated")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            currency,
+            country,
+            old_limit,
+            new_limit,
+            admin,
+        ),
+    );
+}
+
 /// Emits an event when the platform fee is updated.
 ///
 /// # Arguments

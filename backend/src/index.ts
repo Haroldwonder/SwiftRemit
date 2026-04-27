@@ -1,10 +1,15 @@
+// MUST be imported first so OTel patches are applied before other modules load
+import './tracing';
 import dotenv from 'dotenv';
 import app from './api';
 import { initDatabase, getPool } from './database';
+import { migrate } from './migrate';
 import { startBackgroundJobs } from './scheduler';
 import { WebhookHandler } from './webhook-handler';
 import { KycService } from './kyc-service';
 import { createWebhookVerificationMiddleware } from './webhook-middleware';
+import { AdminAuditLogService } from './admin-audit-log';
+import { remittanceEventEmitter } from './remittance/events';
 
 dotenv.config();
 
@@ -16,13 +21,18 @@ async function start() {
     await initDatabase();
     console.log('Database initialized');
 
+    // Run pending migrations automatically on startup
+    const pool = getPool();
+    await migrate(pool);
+    console.log('Migrations applied');
+
     // Initialize KYC service
     const kycService = new KycService();
     await kycService.initialize();
     console.log('KYC service initialized');
 
     // Setup webhook handler
-    const pool = getPool();
+    // (pool already declared above)
     
     // Apply HMAC verification middleware to all /webhooks routes
     const webhookVerification = createWebhookVerificationMiddleware({

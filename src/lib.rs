@@ -1187,7 +1187,7 @@ impl SwiftRemitContract {
         env: Env,
         remittance_ids: Vec<u64>,
     ) -> Result<Vec<u64>, ContractError> {
-        if remittance_ids.len() > MAX_EXPIRED_BATCH_SIZE {
+        if remittance_ids.len() > get_max_expired_batch_size(&env) {
             return Err(ContractError::InvalidBatchSize);
         }
 
@@ -1891,7 +1891,7 @@ impl SwiftRemitContract {
         env: Env,
         transfer_ids: Vec<u64>,
     ) -> Result<Vec<u64>, ContractError> {
-        if transfer_ids.len() > MAX_EXPIRED_BATCH_SIZE {
+        if transfer_ids.len() > get_max_expired_batch_size(&env) {
             return Err(ContractError::InvalidBatchSize);
         }
 
@@ -1970,7 +1970,33 @@ impl SwiftRemitContract {
 
         let admin = get_admin(&env)?;
         admin.require_auth();
+
+        let old_limit = crate::storage::get_daily_limit(&env, &currency, &country)
+            .map(|cfg| cfg.limit);
         crate::storage::set_daily_limit(&env, &currency, &country, limit);
+        crate::events::emit_daily_limit_updated(&env, currency, country, old_limit, limit, admin);
+        Ok(())
+    }
+
+    /// Set the maximum batch size for process_expired_remittances (admin only).
+    ///
+    /// # Arguments
+    /// * `size` - New batch size limit. Must be between 1 and 200.
+    ///
+    /// # Tradeoffs
+    /// Larger batches process more remittances per call but consume more ledger
+    /// resources (CPU instructions and memory). Keep below 200 to avoid hitting
+    /// Soroban resource limits. The default (50) is a safe starting point.
+    pub fn set_max_expired_batch_size(
+        env: Env,
+        size: u32,
+    ) -> Result<(), ContractError> {
+        if size < 1 || size > 200 {
+            return Err(ContractError::InvalidBatchSize);
+        }
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+        crate::storage::set_max_expired_batch_size(&env, size);
         Ok(())
     }
 
