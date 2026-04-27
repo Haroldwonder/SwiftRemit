@@ -36,26 +36,56 @@ import {
   stringToScVal,
 } from "./convert.js";
 
-/** Known contract event topic names. */
-const EVENT_TYPES: RemittanceEventType[] = [
-  "created",
-  "completed",
-  "cancelled",
-  "failed",
-  "disputed",
-];
+/** Errors that should NOT be retried (auth failures, validation errors, etc.) */
+function isTransientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  // Retry on network errors, 429 Too Many Requests, and 503 Service Unavailable
+  return (
+    msg.includes("429") ||
+    msg.includes("503") ||
+    msg.includes("ECONNRESET") ||
+    msg.includes("ECONNREFUSED") ||
+    msg.includes("ETIMEDOUT") ||
+    msg.includes("network") ||
+    msg.includes("timeout")
+  );
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries: number,
+  delayMs: number,
+  backoffFactor: number
+): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= retries || !isTransientError(err)) throw err;
+      await new Promise((r) => setTimeout(r, delayMs * Math.pow(backoffFactor, attempt)));
+      attempt++;
+    }
+  }
+}
 
 export class SwiftRemitClient {
   private readonly contract: Contract;
   private readonly server: SorobanRpc.Server;
   private readonly networkPassphrase: string;
   private readonly fee: string;
+  private readonly retries: number;
+  private readonly retryDelayMs: number;
+  private readonly retryBackoffFactor: number;
 
   constructor(options: SwiftRemitClientOptions) {
     this.contract = new Contract(options.contractId);
     this.server = new SorobanRpc.Server(options.rpcUrl, { allowHttp: true });
     this.networkPassphrase = options.networkPassphrase;
     this.fee = options.fee ?? BASE_FEE;
+    this.retries = options.retries ?? 3;
+    this.retryDelayMs = options.retryDelayMs ?? 1000;
+    this.retryBackoffFactor = options.retryBackoffFactor ?? 2;
   }
 
   // ─── Transaction helpers ────────────────────────────────────────────────────
@@ -91,7 +121,12 @@ export class SwiftRemitClient {
     keypair: Keypair
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     tx.sign(keypair);
-    const sendResult = await this.server.sendTransaction(tx);
+    const sendResult = await withRetry(
+      () => this.server.sendTransaction(tx),
+      this.retries,
+      this.retryDelayMs,
+      this.retryBackoffFactor
+    );
     if (sendResult.status === "ERROR") {
       throw new Error(`Submit failed: ${JSON.stringify(sendResult.errorResult)}`);
     }
@@ -124,7 +159,12 @@ export class SwiftRemitClient {
       .setTimeout(30)
       .build();
 
-    const sim = await this.server.simulateTransaction(tx);
+    const sim = await withRetry(
+      () => this.server.simulateTransaction(tx),
+      this.retries,
+      this.retryDelayMs,
+      this.retryBackoffFactor
+    );
     if (SorobanRpc.Api.isSimulationError(sim)) {
       throw new Error(`Simulation failed: ${sim.error}`);
     }

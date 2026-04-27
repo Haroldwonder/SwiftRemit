@@ -136,6 +136,12 @@ export interface SwiftRemitClientOptions {
   rpcUrl: string;
   /** Base fee for transactions in stroops (default: 100) */
   fee?: string;
+  /** Number of retry attempts on transient RPC errors (default: 3) */
+  retries?: number;
+  /** Initial delay in ms before first retry (default: 1000) */
+  retryDelayMs?: number;
+  /** Multiplier applied to delay after each retry (default: 2) */
+  retryBackoffFactor?: number;
 }
 
 export interface GovernanceConfig {
