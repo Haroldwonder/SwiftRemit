@@ -1939,3 +1939,46 @@ pub fn set_governance_initialized(env: &Env) {
         .instance()
         .set(&DataKey::GovernanceInitialized, &true);
 }
+
+// === TTL Management ===
+
+/// Extend TTLs for critical instance and persistent storage keys.
+///
+/// Called by the `extend_storage_ttl` admin function (and the backend scheduler)
+/// to prevent data loss from TTL expiry.
+///
+/// Storage key TTL strategy:
+/// - **Instance storage** (Admin, UsdcToken, PlatformFeeBps, counters, fees):
+///   Extended via `env.storage().instance().extend_ttl()`.
+/// - **Persistent storage** (Remittances, AgentRegistered, DailyLimit, UserTransfers):
+///   Each key must be extended individually; this function bumps the remittance
+///   counter range and agent-related keys that are known at call time.
+///
+/// # Arguments
+/// * `env` - Contract environment
+/// * `extend_by_ledgers` - Number of ledgers to extend TTL by (capped at 3_110_400)
+pub fn extend_critical_ttls(env: &Env, extend_by_ledgers: u32) {
+    // Cap at ~1 year of ledgers (5-second ledger time)
+    let ledgers = extend_by_ledgers.min(3_110_400);
+
+    // Bump instance storage (covers all instance-stored keys as a group)
+    env.storage()
+        .instance()
+        .extend_ttl(ledgers, ledgers);
+
+    // Bump persistent remittance records up to the current counter
+    let counter = env
+        .storage()
+        .instance()
+        .get::<DataKey, u64>(&DataKey::RemittanceCounter)
+        .unwrap_or(0);
+
+    for id in 0..counter {
+        let key = DataKey::Remittance(id);
+        if env.storage().persistent().has(&key) {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, ledgers, ledgers);
+        }
+    }
+}

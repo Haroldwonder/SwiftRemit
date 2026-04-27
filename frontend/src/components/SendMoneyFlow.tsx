@@ -1,8 +1,6 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
+import React, { useEffect, useMemo, useState } from 'react';
 import './SendMoneyFlow.css';
-import { signTransaction } from '@stellar/freighter-api';
-import * as StellarSdk from '@stellar/stellar-sdk';
+import type { DailyLimitStatus } from '../../../sdk/src/types.js';
 
 type FlowStep = 1 | 2 | 3 | 4 | 5;
 
@@ -23,12 +21,12 @@ interface CorridorLimits {
 interface SendMoneyFlowProps {
   assets?: string[];
   onConfirm?: (payload: ConfirmPayload) => Promise<void>;
-  senderPublicKey?: string;
-  network?: 'TESTNET' | 'PUBLIC';
-  /** ISO 3166-1 alpha-2 country code for the recipient corridor */
-  recipientCountry?: string;
-  /** Base URL for the API (defaults to /api) */
-  apiBaseUrl?: string;
+  /** Optional: fetch daily limit status for the sender/currency/country corridor */
+  getDailyLimitStatus?: (currency: string, country: string) => Promise<DailyLimitStatus>;
+  /** Sender address used for limit queries */
+  senderAddress?: string;
+  /** ISO 3166-1 alpha-2 destination country (e.g. "NG") */
+  destinationCountry?: string;
 }
 
 const STEP_SEQUENCE: FlowStep[] = [1, 2, 3, 4, 5];
@@ -108,10 +106,9 @@ async function buildAndSubmitTransaction(
 export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   assets = DEFAULT_ASSETS,
   onConfirm,
-  senderPublicKey = '',
-  network = 'TESTNET',
-  recipientCountry = '',
-  apiBaseUrl = '/api',
+  getDailyLimitStatus,
+  senderAddress,
+  destinationCountry = 'NG',
 }) => {
   const { t } = useTranslation();
   const [step, setStep] = useState<FlowStep>(1);
@@ -122,56 +119,19 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
-  const [txHash, setTxHash] = useState<string | null>(null);
-
-  // Corridor limits state
-  const [limits, setLimits] = useState<CorridorLimits | null>(null);
-  const [limitsLoading, setLimitsLoading] = useState(false);
-  const [limitsError, setLimitsError] = useState(false);
-
-  const [fxRate, setFxRate] = useState<FxRate | null>(null);
-  const [fxLoading, setFxLoading] = useState(false);
-  const [fxCountdown, setFxCountdown] = useState(0);
-  const fxTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [limitStatus, setLimitStatus] = useState<DailyLimitStatus | null>(null);
 
   const parsedAmount = useMemo(() => Number(amount), [amount]);
 
-  const STEPS: Record<FlowStep, string> = {
-    1: t('sendMoney.steps.1'),
-    2: t('sendMoney.steps.2'),
-    3: t('sendMoney.steps.3'),
-    4: t('sendMoney.steps.4'),
-    5: t('sendMoney.steps.5'),
-  };
-
-  // Fetch limits whenever asset or recipientCountry changes
+  // Fetch daily limit status when asset is selected
   useEffect(() => {
-    if (!asset) return;
-
-    setLimitsLoading(true);
-    setLimitsError(false);
-
-    const params = new URLSearchParams({ asset });
-    if (recipientCountry) params.set('country', recipientCountry);
-
-    fetch(`${apiBaseUrl}/limits?${params}`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch limits');
-        return res.json();
-      })
-      .then((data) => {
-        if (data.success && data.data) {
-          setLimits(data.data as CorridorLimits);
-        }
-      })
-      .catch(() => setLimitsError(true))
-      .finally(() => setLimitsLoading(false));
-  }, [asset, recipientCountry, apiBaseUrl]);
-
-  const isApproachingLimit =
-    limits !== null &&
-    parsedAmount > 0 &&
-    parsedAmount >= limits.dailyRemaining * APPROACHING_THRESHOLD;
+    if (!asset || !getDailyLimitStatus || !senderAddress) return;
+    let cancelled = false;
+    getDailyLimitStatus(asset, destinationCountry)
+      .then((status) => { if (!cancelled) setLimitStatus(status); })
+      .catch(() => { /* non-critical — silently ignore */ });
+    return () => { cancelled = true; };
+  }, [asset, destinationCountry, getDailyLimitStatus, senderAddress]);
 
   const validateCurrentStep = (): string | null => {
     if (step === 1) {
@@ -303,21 +263,29 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
 
     if (step === 2) {
       return (
-        <label className="flow-field" htmlFor="asset">
-          <span>{t('sendMoney.asset')}</span>
-          <select
-            id="asset"
-            value={asset}
-            onChange={(event) => setAsset(event.target.value)}
-          >
-            <option value="">{t('sendMoney.chooseAsset')}</option>
-            {assets.map((assetCode) => (
-              <option key={assetCode} value={assetCode}>
-                {assetCode}
-              </option>
-            ))}
-          </select>
-        </label>
+        <>
+          <label className="flow-field" htmlFor="asset">
+            <span>Asset</span>
+            <select
+              id="asset"
+              value={asset}
+              onChange={(event) => setAsset(event.target.value)}
+            >
+              <option value="">Choose an asset</option>
+              {assets.map((assetCode) => (
+                <option key={assetCode} value={assetCode}>
+                  {assetCode}
+                </option>
+              ))}
+            </select>
+          </label>
+          {limitStatus && limitStatus.limit > 0n && (
+            <p className="flow-limit-status" aria-live="polite">
+              Daily limit: {(Number(limitStatus.remaining) / 1e7).toFixed(2)} {asset} remaining
+              {' '}(resets {limitStatus.resetsAt.toLocaleTimeString()})
+            </p>
+          )}
+        </>
       );
     }
 

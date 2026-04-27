@@ -18,7 +18,7 @@ import type {
   CreateRemittanceParams,
   BatchCreateEntry,
   GovernanceConfig,
-  Proposal,
+  DailyLimitStatus,
 } from "./types.js";
 import {
   parseRemittance,
@@ -34,38 +34,8 @@ import {
   parseProposal,
 } from "./convert.js";
 
-/** Errors that should NOT be retried (auth failures, validation errors, etc.) */
-function isTransientError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  // Retry on network errors, 429 Too Many Requests, and 503 Service Unavailable
-  return (
-    msg.includes("429") ||
-    msg.includes("503") ||
-    msg.includes("ECONNRESET") ||
-    msg.includes("ECONNREFUSED") ||
-    msg.includes("ETIMEDOUT") ||
-    msg.includes("network") ||
-    msg.includes("timeout")
-  );
-}
-
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  retries: number,
-  delayMs: number,
-  backoffFactor: number
-): Promise<T> {
-  let attempt = 0;
-  while (true) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (attempt >= retries || !isTransientError(err)) throw err;
-      await new Promise((r) => setTimeout(r, delayMs * Math.pow(backoffFactor, attempt)));
-      attempt++;
-    }
-  }
-}
+/** Maximum number of entries allowed in a single batch remittance call. */
+export const MAX_BATCH_SIZE = 50;
 
 export class SwiftRemitClient {
   private readonly contract: Contract;
@@ -347,6 +317,42 @@ export class SwiftRemitClient {
     return BigInt(scValToNative(val) as number);
   }
 
+  /**
+   * Get a sender's daily limit status for a currency/country corridor.
+   *
+   * Returns the configured limit, amount already used in the rolling 24-hour
+   * window, remaining sendable amount, and when the window resets.
+   *
+   * @param sourceAddress - Address used for simulation (can be any funded account)
+   * @param sender - Sender address to query
+   * @param currency - ISO 4217 currency code (e.g. "USDC")
+   * @param country - ISO 3166-1 alpha-2 country code (e.g. "NG")
+   */
+  async getDailyLimitStatus(
+    sourceAddress: string,
+    sender: string,
+    currency: string,
+    country: string
+  ): Promise<DailyLimitStatus> {
+    const val = await this.simulateCall(
+      sourceAddress,
+      "get_daily_limit_status",
+      [
+        addressToScVal(sender),
+        stringToScVal(currency),
+        stringToScVal(country),
+      ]
+    );
+    const native = scValToNative(val) as [bigint | number, bigint | number, bigint | number, bigint | number];
+    const [limit, used, remaining, resetsAtSecs] = native.map(BigInt) as [bigint, bigint, bigint, bigint];
+    return {
+      limit,
+      used,
+      remaining,
+      resetsAt: new Date(Number(resetsAtSecs) * 1000),
+    };
+  }
+
   // ─── Write functions (return prepared tx) ────────────────────────────────────
 
   /**
@@ -425,6 +431,12 @@ export class SwiftRemitClient {
     sender: string,
     entries: BatchCreateEntry[]
   ): Promise<Transaction> {
+    if (entries.length === 0) {
+      throw new Error("Batch must contain at least one entry");
+    }
+    if (entries.length > MAX_BATCH_SIZE) {
+      throw new Error(`Batch size ${entries.length} exceeds MAX_BATCH_SIZE (${MAX_BATCH_SIZE})`);
+    }
     const entriesScVal = xdr.ScVal.scvVec(
       entries.map((e) =>
         xdr.ScVal.scvMap([
@@ -559,6 +571,22 @@ export class SwiftRemitClient {
     return this.prepareTransaction(admin, "set_agent_daily_cap", [
       addressToScVal(agent),
       i128ToScVal(cap),
+    ]);
+  }
+
+  /**
+   * Extend TTLs for critical contract storage keys (admin only).
+   *
+   * Call this periodically (e.g. daily) to prevent instance and persistent
+   * storage entries from expiring. The backend scheduler calls this automatically.
+   *
+   * @param admin - Admin address
+   * @param extendByLedgers - Number of ledgers to extend TTL by (max 3_110_400 ≈ 1 year)
+   */
+  async extendStorageTtl(admin: string, extendByLedgers: number): Promise<Transaction> {
+    return this.prepareTransaction(admin, "extend_storage_ttl", [
+      addressToScVal(admin),
+      xdr.ScVal.scvU32(extendByLedgers),
     ]);
   }
 

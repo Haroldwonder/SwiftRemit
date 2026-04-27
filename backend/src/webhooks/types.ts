@@ -17,6 +17,8 @@ export interface WebhookSubscriber {
   events: EventType[];
   secret: string;
   active: boolean;
+  /** Content-Type to use when delivering payloads. Defaults to 'application/json'. */
+  content_type?: 'application/json' | 'application/x-www-form-urlencoded';
   createdAt?: Date;
   updatedAt?: Date;
 }

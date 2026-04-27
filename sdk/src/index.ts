@@ -1,4 +1,4 @@
-export { SwiftRemitClient } from "./client.js";
+export { SwiftRemitClient, MAX_BATCH_SIZE } from "./client.js";
 export type {
   SwiftRemitClientOptions,
   Remittance,
@@ -18,9 +18,7 @@ export type {
   EscrowStatus,
   Role,
   GovernanceConfig,
-  Proposal,
-  ProposalState,
-  ProposalAction,
+  DailyLimitStatus,
 } from "./types.js";
 export {
   parseRemittance,

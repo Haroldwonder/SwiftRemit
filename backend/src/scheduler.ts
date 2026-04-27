@@ -4,6 +4,8 @@ import { getStaleAssets, saveAssetVerification, getPool } from './database';
 import { storeVerificationOnChain } from './stellar';
 import { KycService } from './kyc-service';
 import { Sep24Service } from './sep24-service';
+import { SorobanRpc, Keypair } from '@stellar/stellar-sdk';
+import { SwiftRemitClient } from '../../sdk/src/client.js';
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
@@ -33,6 +35,12 @@ export async function startBackgroundJobs() {
   cron.schedule('*/2 * * * *', async () => {
     console.log('Starting SEP-24 transaction polling...');
     await pollSep24Transactions();
+  });
+
+  // Extend contract storage TTLs daily to prevent data loss
+  cron.schedule('0 0 * * *', async () => {
+    console.log('Starting contract storage TTL extension...');
+    await extendContractStorageTtl();
   });
 
   console.log('Background jobs scheduled');
@@ -101,5 +109,48 @@ async function pollSep24Transactions() {
     console.log('SEP-24 polling completed');
   } catch (error) {
     console.error('Error in SEP-24 polling job:', error);
+  }
+}
+
+/**
+ * Extend contract storage TTLs to prevent data loss.
+ *
+ * Calls `extend_storage_ttl` on the SwiftRemit contract using the admin keypair
+ * configured via environment variables. Runs daily so TTLs never expire between
+ * scheduled runs.
+ *
+ * Required env vars:
+ *   CONTRACT_ID, SOROBAN_RPC_URL, NETWORK_PASSPHRASE, ADMIN_SECRET_KEY
+ */
+async function extendContractStorageTtl() {
+  const contractId = process.env.CONTRACT_ID;
+  const rpcUrl = process.env.SOROBAN_RPC_URL;
+  const networkPassphrase = process.env.NETWORK_PASSPHRASE;
+  const adminSecretKey = process.env.ADMIN_SECRET_KEY;
+
+  if (!contractId || !rpcUrl || !networkPassphrase || !adminSecretKey) {
+    console.warn('extend_storage_ttl: missing env vars (CONTRACT_ID, SOROBAN_RPC_URL, NETWORK_PASSPHRASE, ADMIN_SECRET_KEY). Skipping.');
+    return;
+  }
+
+  try {
+    const client = new SwiftRemitClient({ contractId, rpcUrl, networkPassphrase });
+    const keypair = Keypair.fromSecret(adminSecretKey);
+    const adminAddress = keypair.publicKey();
+
+    // Extend by ~30 days worth of ledgers (5-second ledger time)
+    const extendByLedgers = 30 * 24 * 60 * 12; // 518_400 ledgers
+
+    const tx = await (client as any).prepareTransaction(adminAddress, 'extend_storage_ttl', [
+      // caller (Address) and extend_by_ledgers (u32) are encoded by the contract call
+      // We use the raw prepareTransaction helper with pre-encoded args via the SDK
+    ]);
+
+    // Use the SDK's extendStorageTtl method
+    const preparedTx = await (client as any).extendStorageTtl(adminAddress, extendByLedgers);
+    await (client as any).submitTransaction(preparedTx, keypair);
+    console.log(`Contract storage TTLs extended by ${extendByLedgers} ledgers`);
+  } catch (error) {
+    console.error('Failed to extend contract storage TTLs:', error);
   }
 }

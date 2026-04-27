@@ -277,6 +277,44 @@ const remittance = await client.getRemittance(sender.publicKey(), 1n);
 console.log("Status:", remittance.status); // "Completed"
 ```
 
+## Example: Batch Remittance Creation
+
+Use `batchCreateRemittances` to submit up to `MAX_BATCH_SIZE` (50) remittances
+in a single transaction. Each entry can optionally include `currency` and
+`country` metadata for corridor-level daily-limit tracking.
+
+```typescript
+import {
+  SwiftRemitClient,
+  MAX_BATCH_SIZE,
+  Networks,
+  RpcUrls,
+  toStroops,
+} from "@swiftremit/sdk";
+import type { BatchCreateEntry } from "@swiftremit/sdk";
+import { Keypair } from "@stellar/stellar-sdk";
+
+const client = new SwiftRemitClient({
+  contractId: "CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  networkPassphrase: Networks.TESTNET,
+  rpcUrl: RpcUrls.TESTNET,
+});
+
+const sender = Keypair.fromSecret("SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+const agentAddress = "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+
+const entries: BatchCreateEntry[] = [
+  { agent: agentAddress, amount: toStroops(50),  currency: "USDC", country: "NG" },
+  { agent: agentAddress, amount: toStroops(75),  currency: "USDC", country: "GH" },
+  { agent: agentAddress, amount: toStroops(100), currency: "USDC", country: "KE" },
+];
+
+// Client-side validation: throws if entries.length > MAX_BATCH_SIZE (50)
+const batchTx = await client.batchCreateRemittances(sender.publicKey(), entries);
+const result = await client.submitTransaction(batchTx, sender);
+console.log("Batch submitted:", result.hash);
+```
+
 ## License
 
 MIT

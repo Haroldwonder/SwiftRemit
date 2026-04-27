@@ -112,6 +112,10 @@ export interface BatchCreateEntry {
   /** Amount in stroops */
   amount: bigint;
   expiry?: bigint;
+  /** ISO 4217 currency code (e.g. "USDC", "USD") */
+  currency?: string;
+  /** ISO 3166-1 alpha-2 country code (e.g. "NG", "GH") */
+  country?: string;
 }
 
 export interface SettlementConfig {
@@ -177,4 +181,15 @@ export interface GovernanceConfig {
   timelockSeconds: bigint;
   /** Seconds after creation before a proposal expires */
   proposalTtlSeconds: bigint;
+}
+
+export interface DailyLimitStatus {
+  /** Configured corridor limit in stroops (0 = no limit set) */
+  limit: bigint;
+  /** Amount already sent in the current 24-hour window (stroops) */
+  used: bigint;
+  /** Remaining sendable amount in the current window (stroops) */
+  remaining: bigint;
+  /** Timestamp when the current 24-hour window resets */
+  resetsAt: Date;
 }
