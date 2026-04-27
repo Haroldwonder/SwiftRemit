@@ -129,8 +129,20 @@ function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunc
 }
 
 // Health check
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async (req: Request, res: Response) => {
+  let dbStatus: 'healthy' | 'unhealthy' = 'unhealthy';
+  try {
+    await Promise.race([
+      pool.query('SELECT 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+    ]);
+    dbStatus = 'healthy';
+  } catch {
+    // db unreachable or timed out
+  }
+
+  const status = dbStatus === 'healthy' ? 200 : 503;
+  res.status(status).json({ status: dbStatus === 'healthy' ? 'ok' : 'degraded', db: dbStatus, timestamp: new Date().toISOString() });
 });
 
 // Get asset verification status

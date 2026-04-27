@@ -13,7 +13,8 @@ export class MetricsService {
     swiftremit_webhook_deliveries_total: {} as Record<string, number>,
     swiftremit_active_remittances: 0,
     swiftremit_accumulated_fees: 0,
-    swiftremit_rate_limit_exceeded_total: {} as Record<string, number>,
+    swiftremit_webhook_dead_letter_count: 0,
+    db_pool_available_connections: 0,
   };
 
   // FX rate staleness metrics
@@ -151,6 +152,9 @@ export class MetricsService {
    * Update all metrics
    */
   async updateAllMetrics(): Promise<void> {
+    // Pool available connections (totalCount - idleCount gives busy; idleCount = available)
+    this.metrics.db_pool_available_connections = (this.pool as any).idleCount ?? 0;
+
     await Promise.all([
       this.updateSettlementMetrics(),
       this.updateWebhookDeliveryMetrics(),
@@ -206,6 +210,11 @@ export class MetricsService {
     lines.push('# HELP fx_rate_cache_misses_total Total number of FX rate cache misses');
     lines.push('# TYPE fx_rate_cache_misses_total counter');
     lines.push(`fx_rate_cache_misses_total ${this.fxCacheMissesTotal}`);
+
+    // DB pool available connections gauge
+    lines.push('# HELP db_pool_available_connections Number of idle (available) connections in the PostgreSQL pool');
+    lines.push('# TYPE db_pool_available_connections gauge');
+    lines.push(`db_pool_available_connections ${this.metrics.db_pool_available_connections}`);
 
     return lines.join('\n') + '\n';
   }
