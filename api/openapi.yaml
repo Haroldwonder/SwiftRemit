@@ -19,6 +19,10 @@ tags:
     description: Currency configuration endpoints
   - name: Anchors
     description: Anchor provider management endpoints
+  - name: Remittances
+    description: Remittance query endpoints
+  - name: Admin
+    description: Admin utility endpoints
 
 paths:
   /health:
@@ -203,6 +207,86 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/remittances:
+    get:
+      tags:
+        - Remittances
+      summary: Query remittances by agent address
+      description: >
+        Returns a paginated list of remittances assigned to the given agent,
+        with optional status filtering. Resolves issue #472.
+      operationId: getRemittancesByAgent
+      parameters:
+        - name: agent
+          in: query
+          required: true
+          description: Stellar address of the agent
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          description: Filter by remittance status
+          schema:
+            type: string
+            enum: [Pending, Processing, Completed, Cancelled, Failed, Disputed]
+        - name: page
+          in: query
+          required: false
+          description: 1-based page number
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          description: Items per page (max 100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of remittances
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemittanceListResponse'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/admin/fees:
+    get:
+      tags:
+        - Admin
+      summary: Get accumulated fee breakdown
+      description: >
+        Returns total accumulated platform fees, per-integrator breakdown,
+        daily/weekly/monthly time-series, and pending withdrawal amount.
+        Requires admin authentication. Resolves issue #473.
+      operationId: getAdminFees
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Fee breakdown data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeeBreakdownResponse'
+        '401':
+          description: Unauthorized — admin API key required
           content:
             application/json:
               schema:
@@ -461,6 +545,147 @@ components:
           example: true
         data:
           $ref: '#/components/schemas/AnchorProvider'
+        timestamp:
+          type: string
+          format: date-time
+
+    Remittance:
+      type: object
+      required:
+        - id
+        - sender
+        - agent
+        - amount
+        - fee
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          example: 1
+        sender:
+          type: string
+          description: Stellar address of the sender
+        agent:
+          type: string
+          description: Stellar address of the agent
+        amount:
+          type: integer
+          description: Amount in stroops
+        fee:
+          type: integer
+          description: Platform fee in stroops
+        status:
+          type: string
+          enum: [Pending, Processing, Completed, Cancelled, Failed, Disputed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Pagination:
+      type: object
+      required:
+        - page
+        - limit
+        - total
+        - total_pages
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+
+    RemittanceListResponse:
+      type: object
+      required:
+        - success
+        - data
+        - pagination
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Remittance'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        timestamp:
+          type: string
+          format: date-time
+
+    IntegratorFeeEntry:
+      type: object
+      required:
+        - integrator
+        - accumulated_fees
+      properties:
+        integrator:
+          type: string
+          description: Stellar address of the integrator
+        accumulated_fees:
+          type: integer
+          description: Accumulated fees in stroops
+
+    FeeTimeSeries:
+      type: object
+      required:
+        - period
+        - label
+        - amount
+      properties:
+        period:
+          type: string
+          enum: [daily, weekly, monthly]
+        label:
+          type: string
+          description: Human-readable period label (e.g. "2026-04-27")
+        amount:
+          type: integer
+          description: Fees collected in this period (stroops)
+
+    FeeBreakdownResponse:
+      type: object
+      required:
+        - success
+        - data
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - total_accumulated_fees
+            - pending_withdrawal
+            - integrator_breakdown
+            - time_series
+          properties:
+            total_accumulated_fees:
+              type: integer
+              description: Total platform fees accumulated (stroops)
+            pending_withdrawal:
+              type: integer
+              description: Fees not yet withdrawn (stroops)
+            integrator_breakdown:
+              type: array
+              items:
+                $ref: '#/components/schemas/IntegratorFeeEntry'
+            time_series:
+              type: array
+              items:
+                $ref: '#/components/schemas/FeeTimeSeries'
         timestamp:
           type: string
           format: date-time

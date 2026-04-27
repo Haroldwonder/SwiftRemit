@@ -73,9 +73,6 @@ pub fn do_emergency_pause(
     // Set the shared paused flag (read by validate_not_paused in validation.rs).
     set_paused(env, true);
 
-    // Reset vote count for the new pause instance.
-    cb_storage::set_vote_count(env, 0);
-
     // Emit the circuit-breaker paused event.
     emit_circuit_breaker_paused(env, caller.clone(), timestamp, reason);
 
@@ -128,7 +125,8 @@ pub fn do_emergency_unpause(
 
         // Enforce quorum: enough admin votes must have been cast.
         let quorum = cb_storage::get_unpause_quorum(env);
-        let votes = cb_storage::get_vote_count(env);
+        let pause_seq_for_quorum = cb_storage::get_active_pause_seq(env).unwrap_or(0);
+        let votes = cb_storage::get_vote_count_for_seq(env, pause_seq_for_quorum);
         if votes < quorum {
             return Err(ContractError::Unauthorized);
         }
@@ -185,10 +183,10 @@ pub fn do_vote_unpause(env: &Env, caller: &Address) -> Result<(), ContractError>
 
     // Record the vote and increment the count.
     cb_storage::record_vote(env, pause_seq, caller);
-    let new_count = cb_storage::get_vote_count(env)
+    let new_count = cb_storage::get_vote_count_for_seq(env, pause_seq)
         .checked_add(1)
         .ok_or(ContractError::Overflow)?;
-    cb_storage::set_vote_count(env, new_count);
+    cb_storage::set_vote_count_for_seq(env, pause_seq, new_count);
 
     // Auto-unpause when quorum is reached (timelock still applies).
     let quorum = cb_storage::get_unpause_quorum(env);
@@ -228,6 +226,88 @@ pub fn build_status(env: &Env) -> CircuitBreakerStatus {
         pause_timestamp,
         timelock_seconds: cb_storage::get_timelock_seconds(env),
         unpause_quorum: cb_storage::get_unpause_quorum(env),
-        current_vote_count: cb_storage::get_vote_count(env),
+        current_vote_count: {
+            let active_seq = cb_storage::get_active_pause_seq(env).unwrap_or(0);
+            cb_storage::get_vote_count_for_seq(env, active_seq)
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        circuit_breaker_storage as cb_storage,
+        storage::{assign_role, set_paused},
+        types::PauseReason,
+        Role, SwiftRemitContract,
+    };
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    fn setup() -> (Env, soroban_sdk::Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
+        let admin = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            assign_role(&env, &admin, &Role::Admin);
+            cb_storage::set_unpause_quorum(&env, 1);
+        });
+        (env, contract_id, admin)
+    }
+
+    /// Votes from cycle 1 must not be counted in cycle 2.
+    #[test]
+    fn test_vote_count_isolated_across_pause_cycles() {
+        let (env, contract_id, admin) = setup();
+
+        env.as_contract(&contract_id, || {
+            // ── Cycle 1 ──────────────────────────────────────────────────────
+            do_emergency_pause(&env, &admin, PauseReason::MaintenanceWindow, true).unwrap();
+            let seq1 = cb_storage::get_active_pause_seq(&env).unwrap();
+
+            // Cast 1 vote in cycle 1.
+            do_vote_unpause(&env, &admin).unwrap();
+            // Quorum=1 so the contract auto-unpaused; verify vote count for seq1 = 1.
+            assert_eq!(cb_storage::get_vote_count_for_seq(&env, seq1), 1);
+
+            // ── Cycle 2 ──────────────────────────────────────────────────────
+            // Pause again (contract was auto-unpaused by quorum).
+            do_emergency_pause(&env, &admin, PauseReason::SecurityIncident, true).unwrap();
+            let seq2 = cb_storage::get_active_pause_seq(&env).unwrap();
+            assert!(seq2 > seq1, "sequence must increment");
+
+            // Cycle 2 vote count must start at 0 — not inherit cycle 1's count.
+            assert_eq!(
+                cb_storage::get_vote_count_for_seq(&env, seq2),
+                0,
+                "vote count for new pause cycle must be 0"
+            );
+
+            // build_status must also report 0 for the new cycle.
+            let status = build_status(&env);
+            assert_eq!(status.current_vote_count, 0);
+        });
+    }
+
+    /// A voter who voted in cycle 1 can vote again in cycle 2 (different seq key).
+    #[test]
+    fn test_voter_can_vote_in_new_cycle() {
+        let (env, contract_id, admin) = setup();
+        // Use quorum=2 so the first vote doesn't auto-unpause.
+        env.as_contract(&contract_id, || {
+            cb_storage::set_unpause_quorum(&env, 2);
+
+            // Cycle 1: vote once, then force-unpause.
+            do_emergency_pause(&env, &admin, PauseReason::MaintenanceWindow, true).unwrap();
+            do_vote_unpause(&env, &admin).unwrap();
+            // Force-unpause (bypass quorum).
+            do_emergency_unpause(&env, &admin, true).unwrap();
+
+            // Cycle 2: same admin must be able to vote again.
+            do_emergency_pause(&env, &admin, PauseReason::SecurityIncident, true).unwrap();
+            let result = do_vote_unpause(&env, &admin);
+            assert!(result.is_ok(), "admin should be able to vote in a new pause cycle");
+        });
     }
 }

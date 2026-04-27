@@ -1,6 +1,8 @@
+import { createServer } from 'http';
 import dotenv from 'dotenv';
 import { createApp } from './app';
 import { initializeCurrencyConfig } from './config';
+import { initWebSocket } from './websocket';
 
 // Load environment variables
 dotenv.config();
@@ -13,14 +15,30 @@ async function start() {
     console.log('Initializing currency configuration...');
     initializeCurrencyConfig();
 
-    // Create and start Express app
-    const app = createApp();
+    // Create a bare HTTP server first so Socket.IO can attach to it.
+    // We pass a temporary no-op handler; the real Express app is set below.
+    const httpServer = createServer();
 
-    app.listen(PORT, () => {
+    // Attach WebSocket server before the Express app is wired up.
+    // Socket.IO only needs the raw http.Server — it intercepts the upgrade
+    // event, not the request event.
+    const io = initWebSocket(httpServer);
+
+    // Build the Express app with the io instance so /ws/health is mounted.
+    const app = createApp({ io });
+
+    // Wire the Express app as the HTTP request handler.
+    httpServer.on('request', app);
+
+    httpServer.listen(PORT, () => {
       console.log(`✓ SwiftRemit API server running on port ${PORT}`);
       console.log(`✓ Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`✓ Health check: http://localhost:${PORT}/health`);
       console.log(`✓ Currencies API: http://localhost:${PORT}/api/currencies`);
+      console.log(`✓ WebSocket: ws://localhost:${PORT}`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`✓ WS health: http://localhost:${PORT}/ws/health`);
+      }
     });
   } catch (error) {
     console.error('✗ Failed to start server:', error);

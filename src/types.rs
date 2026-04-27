@@ -179,6 +179,10 @@ pub struct AgentStats {
     pub failed_settlements: u32,
     pub total_settlement_time: u64,
     pub dispute_count: u32,
+    /// Successful payouts / total * 10000 (basis points). Updated on each payout.
+    pub success_rate_bps: u32,
+    /// Ledger timestamp of the most recent confirm_payout or mark_failed call.
+    pub last_active_timestamp: u64,
 }
 
 /// Entry for batch settlement processing.

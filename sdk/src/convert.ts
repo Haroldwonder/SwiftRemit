@@ -12,6 +12,9 @@ import type {
   PauseReason,
   HealthStatus,
   FeeBreakdown,
+  Proposal,
+  ProposalState,
+  ProposalAction,
 } from "./types.js";
 
 // ─── ScVal → Native ──────────────────────────────────────────────────────────
@@ -45,6 +48,8 @@ export function parseAgentStats(val: xdr.ScVal): AgentStats {
     failedSettlements: Number(map["failed_settlements"]),
     totalSettlementTime: BigInt(map["total_settlement_time"] as number),
     disputeCount: Number(map["dispute_count"]),
+    successRateBps: Number(map["success_rate_bps"]),
+    lastActiveTimestamp: BigInt(map["last_active_timestamp"] as number),
   };
 }
 
@@ -85,6 +90,39 @@ export function parseFeeBreakdown(val: xdr.ScVal): FeeBreakdown {
     platformFee: BigInt(map["platform_fee"] as number),
     protocolFee: BigInt(map["protocol_fee"] as number),
     netAmount: BigInt(map["net_amount"] as number),
+  };
+}
+
+export function parseProposal(val: xdr.ScVal): Proposal {
+  const map = scValToNative(val) as Record<string, unknown>;
+  const stateRaw = map["state"] as Record<string, unknown>;
+  const actionRaw = map["action"] as Record<string, unknown>;
+  const actionKey = Object.keys(actionRaw)[0];
+  const actionVal = actionRaw[actionKey];
+
+  let action: ProposalAction;
+  if (actionKey === "UpdateFee") {
+    action = { UpdateFee: Number(actionVal) };
+  } else if (actionKey === "UpdateQuorum") {
+    action = { UpdateQuorum: Number(actionVal) };
+  } else if (actionKey === "UpdateTimelock") {
+    action = { UpdateTimelock: BigInt(actionVal as number) };
+  } else {
+    action = { [actionKey]: String(actionVal) } as ProposalAction;
+  }
+
+  return {
+    id: BigInt(map["id"] as number),
+    proposer: String(map["proposer"]),
+    action,
+    state: Object.keys(stateRaw)[0] as ProposalState,
+    createdAt: BigInt(map["created_at"] as number),
+    expiry: BigInt(map["expiry"] as number),
+    approvalCount: Number(map["approval_count"]),
+    approvalTimestamp:
+      map["approval_timestamp"] != null
+        ? BigInt(map["approval_timestamp"] as number)
+        : null,
   };
 }
 

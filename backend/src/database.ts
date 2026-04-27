@@ -166,6 +166,24 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_sep24_user_id ON sep24_transactions(user_id);
       CREATE INDEX IF NOT EXISTS idx_sep24_status ON sep24_transactions(status);
       CREATE INDEX IF NOT EXISTS idx_sep24_last_polled ON sep24_transactions(last_polled);
+
+      CREATE TABLE IF NOT EXISTS contract_events (
+        id              SERIAL PRIMARY KEY,
+        event_type      VARCHAR(50)  NOT NULL,
+        remittance_id   BIGINT,
+        actor           VARCHAR(56),
+        amount          NUMERIC(30, 7),
+        fee             NUMERIC(30, 7),
+        tx_hash         VARCHAR(64),
+        ledger_sequence BIGINT,
+        timestamp       TIMESTAMP    NOT NULL DEFAULT NOW(),
+        raw_data        JSONB
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ce_event_type    ON contract_events(event_type);
+      CREATE INDEX IF NOT EXISTS idx_ce_actor         ON contract_events(actor);
+      CREATE INDEX IF NOT EXISTS idx_ce_remittance_id ON contract_events(remittance_id);
+      CREATE INDEX IF NOT EXISTS idx_ce_timestamp     ON contract_events(timestamp);
     `);
     console.log('Database initialized successfully');
   } finally {
@@ -768,4 +786,95 @@ export { pool };
 
 export function getPool(): Pool {
   return pool;
+}
+
+// ── Contract Events ──────────────────────────────────────────────────────────
+
+export interface ContractEvent {
+  id?: number;
+  event_type: string;
+  remittance_id?: number | null;
+  actor?: string | null;
+  amount?: string | null;
+  fee?: string | null;
+  tx_hash?: string | null;
+  ledger_sequence?: number | null;
+  timestamp: Date;
+  raw_data?: Record<string, unknown> | null;
+}
+
+export interface ContractEventFilter {
+  event_type?: string;
+  actor?: string;
+  remittance_id?: number;
+  from?: Date;
+  to?: Date;
+  limit?: number;
+  offset?: number;
+}
+
+export async function saveContractEvent(event: ContractEvent): Promise<void> {
+  await pool.query(
+    `INSERT INTO contract_events
+       (event_type, remittance_id, actor, amount, fee, tx_hash, ledger_sequence, timestamp, raw_data)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT DO NOTHING`,
+    [
+      event.event_type,
+      event.remittance_id ?? null,
+      event.actor ?? null,
+      event.amount ?? null,
+      event.fee ?? null,
+      event.tx_hash ?? null,
+      event.ledger_sequence ?? null,
+      event.timestamp,
+      event.raw_data ? JSON.stringify(event.raw_data) : null,
+    ]
+  );
+}
+
+export async function queryContractEvents(
+  filter: ContractEventFilter
+): Promise<{ events: ContractEvent[]; total: number }> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  if (filter.event_type) {
+    conditions.push(`event_type = $${idx++}`);
+    params.push(filter.event_type);
+  }
+  if (filter.actor) {
+    conditions.push(`actor = $${idx++}`);
+    params.push(filter.actor);
+  }
+  if (filter.remittance_id !== undefined) {
+    conditions.push(`remittance_id = $${idx++}`);
+    params.push(filter.remittance_id);
+  }
+  if (filter.from) {
+    conditions.push(`timestamp >= $${idx++}`);
+    params.push(filter.from);
+  }
+  if (filter.to) {
+    conditions.push(`timestamp <= $${idx++}`);
+    params.push(filter.to);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = Math.min(filter.limit ?? 50, 200);
+  const offset = filter.offset ?? 0;
+
+  const [dataResult, countResult] = await Promise.all([
+    pool.query(
+      `SELECT * FROM contract_events ${where} ORDER BY timestamp DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...params, limit, offset]
+    ),
+    pool.query(`SELECT COUNT(*) FROM contract_events ${where}`, params),
+  ]);
+
+  return {
+    events: dataResult.rows,
+    total: parseInt(countResult.rows[0].count, 10),
+  };
 }

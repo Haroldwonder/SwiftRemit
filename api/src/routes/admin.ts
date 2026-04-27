@@ -15,6 +15,46 @@ function isValidWasmHash(value: unknown): value is string {
 }
 
 /**
+ * Validate admin API key from the x-api-key header.
+ * Returns true if the key matches the configured admin key.
+ */
+function isAdminAuthorized(req: Request): boolean {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (!adminKey) return false;
+  return req.headers['x-api-key'] === adminKey;
+}
+
+export interface IntegratorFeeEntry {
+  integrator: string;
+  accumulated_fees: number;
+}
+
+export interface FeeTimeSeries {
+  period: 'daily' | 'weekly' | 'monthly';
+  label: string;
+  amount: number;
+}
+
+export interface FeeBreakdownData {
+  total_accumulated_fees: number;
+  pending_withdrawal: number;
+  integrator_breakdown: IntegratorFeeEntry[];
+  time_series: FeeTimeSeries[];
+}
+
+/**
+ * Stub: in production this queries the contract via RPC and/or the event DB.
+ */
+function fetchFeeBreakdown(): FeeBreakdownData {
+  return {
+    total_accumulated_fees: 0,
+    pending_withdrawal: 0,
+    integrator_breakdown: [],
+    time_series: [],
+  };
+}
+
+/**
  * Simulate what a contract upgrade would do without applying any state changes.
  *
  * This mirrors the on-chain `simulate_upgrade` read-only function in
@@ -54,6 +94,39 @@ function simulateUpgrade(wasmHashHex: string): {
 
 export function createAdminRouter(): Router {
   const router = Router();
+
+  /**
+   * @openapi
+   * /api/admin/fees:
+   *   get:
+   *     summary: Get accumulated fee breakdown (admin only)
+   *     description: >
+   *       Returns total accumulated platform fees, per-integrator breakdown,
+   *       daily/weekly/monthly time-series, and pending withdrawal amount.
+   *       Requires admin authentication via x-api-key header.
+   *     tags:
+   *       - Admin
+   *     security:
+   *       - ApiKeyAuth: []
+   *     responses:
+   *       200:
+   *         description: Fee breakdown data
+   *       401:
+   *         description: Unauthorized
+   */
+  router.get('/fees', (req: Request, res: Response) => {
+    if (!isAdminAuthorized(req)) {
+      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
+    }
+
+    const data = fetchFeeBreakdown();
+
+    return res.json({
+      success: true,
+      data,
+      timestamp: timestamp(),
+    });
+  });
 
   /**
    * @openapi

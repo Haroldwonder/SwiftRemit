@@ -170,3 +170,63 @@
     width: 100%;
   }
 }
+
+.flow-tx-hash {
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+  word-break: break-all;
+}
+
+.flow-tx-hash code {
+  font-family: monospace;
+  background: rgba(0,0,0,0.06);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+}
+
+.flow-expert-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  color: var(--color-secondary, #0070f3);
+  font-size: 0.88rem;
+  text-decoration: underline;
+}
+
+.flow-field-optional {
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+.flow-char-count {
+  font-size: 0.78rem;
+  color: var(--color-text-tertiary);
+}
+
+.flow-limits {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+}
+
+.flow-limits-range {
+  color: var(--color-text-tertiary, #888);
+}
+
+.flow-limits-daily {
+  color: var(--color-text-secondary, #555);
+  font-weight: 500;
+}
+
+.flow-limits-warning {
+  color: var(--color-warning, #b45309);
+  font-weight: 600;
+}
+
+.flow-limits-loading,
+.flow-limits-error {
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--color-text-tertiary, #888);
+}

@@ -70,6 +70,23 @@ pub const DEFAULT_RATE_LIMIT_MAX_REQUESTS: u32 = 100;
 /// - Value: 60 seconds (1 minute)
 pub const DEFAULT_RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
 
+// ── Abuse-protection sliding-window constants ────────────────────────────────
+
+/// Sliding-window duration used by abuse_protection rate limiting (seconds).
+pub const RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
+
+/// Maximum number of transfer actions allowed per sliding window.
+pub const MAX_TRANSFERS_PER_WINDOW: u32 = 10;
+
+/// Maximum number of cancellation actions allowed per sliding window.
+pub const MAX_CANCELLATIONS_PER_WINDOW: u32 = 5;
+
+/// Maximum number of query actions allowed per sliding window.
+pub const MAX_QUERIES_PER_WINDOW: u32 = 100;
+
+/// Minimum seconds that must elapse between consecutive transfer/settlement actions.
+pub const TRANSFER_COOLDOWN_SECONDS: u64 = 5;
+
 // ============================================================================
 // Daily Send Limits
 // ============================================================================

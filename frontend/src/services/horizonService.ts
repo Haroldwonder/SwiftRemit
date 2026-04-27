@@ -164,5 +164,7 @@ export class HorizonService {
   }
 }
 
-// Export singleton instance
-export const horizonService = new HorizonService();
+// Export singleton instance — reads VITE_HORIZON_URL from env, falls back to testnet
+export const horizonService = new HorizonService(
+  import.meta.env.VITE_HORIZON_URL || 'https://horizon-testnet.stellar.org'
+);

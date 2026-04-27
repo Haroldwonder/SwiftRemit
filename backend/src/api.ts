@@ -28,6 +28,8 @@ import { sanitizeInput } from './sanitizer';
 import docsRouter from './routes/docs';
 import { Sep24Service, Sep24InitiateRequest, Sep24ConfigError, Sep24AnchorError } from './sep24-service';
 import { AdminAuditLogService } from './admin-audit-log';
+import { saveContractEvent, queryContractEvents } from './database';
+import { remittanceEventEmitter } from './remittance/events';
 
 const app = express();
 const fxRateCache = getFxRateCache();
@@ -129,8 +131,20 @@ function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunc
 }
 
 // Health check
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async (req: Request, res: Response) => {
+  let dbStatus: 'healthy' | 'unhealthy' = 'unhealthy';
+  try {
+    await Promise.race([
+      pool.query('SELECT 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+    ]);
+    dbStatus = 'healthy';
+  } catch {
+    // db unreachable or timed out
+  }
+
+  const status = dbStatus === 'healthy' ? 200 : 503;
+  res.status(status).json({ status: dbStatus === 'healthy' ? 'ok' : 'degraded', db: dbStatus, timestamp: new Date().toISOString() });
 });
 
 // Get asset verification status
@@ -726,6 +740,51 @@ app.get('/api/admin/audit-log', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error fetching audit log', error);
     res.status(500).json({ error: 'Failed to fetch audit log' });
+  }
+});
+
+// ── Contract Events ──────────────────────────────────────────────────────────
+
+// Persist contract events emitted by the remittance event emitter
+remittanceEventEmitter.onStatusChange(async (event) => {
+  try {
+    await saveContractEvent({
+      event_type: event.status,
+      remittance_id: event.remittanceId ? parseInt(event.remittanceId, 10) : null,
+      actor: event.recipientId || null,
+      amount: event.amount?.toString() ?? null,
+      fee: null,
+      tx_hash: (event.metadata?.txHash as string) ?? null,
+      ledger_sequence: (event.metadata?.ledgerSequence as number) ?? null,
+      timestamp: event.timestamp,
+      raw_data: event.metadata ?? null,
+    });
+  } catch (err) {
+    logger.error('Failed to persist contract event', err);
+  }
+});
+
+// GET /api/events — query indexed contract events with filters and pagination
+app.get('/api/events', async (req: Request, res: Response) => {
+  try {
+    const limit  = Math.min(parseInt(req.query.limit  as string) || 50, 200);
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const filter = {
+      event_type:    req.query.event_type    as string | undefined,
+      actor:         req.query.actor         as string | undefined,
+      remittance_id: req.query.remittance_id ? parseInt(req.query.remittance_id as string, 10) : undefined,
+      from:          req.query.from          ? new Date(req.query.from as string) : undefined,
+      to:            req.query.to            ? new Date(req.query.to   as string) : undefined,
+      limit,
+      offset,
+    };
+
+    const { events, total } = await queryContractEvents(filter);
+    res.json({ total, limit, offset, events });
+  } catch (error) {
+    logger.error('Error fetching contract events', error);
+    res.status(500).json({ error: 'Failed to fetch contract events' });
   }
 });
 

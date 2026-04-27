@@ -190,9 +190,9 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
     }
   }, [focusedIndex, isOpen]);
 
-  // Close dropdown when clicking outside
+  // Close dropdown when clicking/tapping outside (pointerdown covers mouse + touch)
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleOutsidePointer = (event: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node) &&
           triggerRef.current && !triggerRef.current.contains(event.target as Node)) {
         setIsOpen(false);
@@ -201,8 +201,8 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
     };
 
     if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+      document.addEventListener('pointerdown', handleOutsidePointer);
+      return () => document.removeEventListener('pointerdown', handleOutsidePointer);
     }
   }, [isOpen]);
 

@@ -1243,6 +1243,8 @@ pub fn get_agent_stats(env: &Env, agent: &Address) -> AgentStats {
             failed_settlements: 0,
             total_settlement_time: 0,
             dispute_count: 0,
+            success_rate_bps: 10000,
+            last_active_timestamp: 0,
         })
 }
 
