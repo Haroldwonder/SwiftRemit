@@ -159,6 +159,57 @@ export async function simulateSettlement(
   }
 }
 
+/**
+ * Call cancel_remittance on the Soroban contract to release escrowed funds.
+ * Uses the admin keypair as the authorized caller.
+ */
+export async function cancelRemittanceOnChain(remittanceId: number): Promise<void> {
+  const contractId = process.env.CONTRACT_ID;
+  if (!contractId) throw new Error('CONTRACT_ID not configured');
+
+  const adminSecret = process.env.ADMIN_SECRET_KEY;
+  if (!adminSecret) throw new Error('ADMIN_SECRET_KEY not configured');
+
+  const adminKeypair = Keypair.fromSecret(adminSecret);
+  const contract = new Contract(contractId);
+  const account = await server.getAccount(adminKeypair.publicKey());
+
+  const tx = new TransactionBuilder(account, {
+    fee: '1000',
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      contract.call(
+        'cancel_remittance',
+        nativeToScVal(remittanceId, { type: 'u64' })
+      )
+    )
+    .setTimeout(30)
+    .build();
+
+  const simulated = await server.simulateTransaction(tx);
+  if (SorobanRpc.Api.isSimulationError(simulated)) {
+    throw new Error(`Simulation failed: ${simulated.error}`);
+  }
+
+  const prepared = SorobanRpc.assembleTransaction(tx, simulated).build();
+  prepared.sign(adminKeypair);
+
+  const result = await server.sendTransaction(prepared);
+
+  let status = await server.getTransaction(result.hash);
+  while (status.status === 'NOT_FOUND') {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    status = await server.getTransaction(result.hash);
+  }
+
+  if (status.status === 'FAILED') {
+    throw new Error(`cancel_remittance failed: ${status.resultXdr}`);
+  }
+
+  console.log(`cancel_remittance called on-chain for remittance ${remittanceId}`);
+}
+
 export async function updateKycStatusOnChain(
   userId: string,
   approved: boolean

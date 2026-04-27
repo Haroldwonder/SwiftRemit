@@ -18,6 +18,7 @@ import type {
   CreateRemittanceParams,
   BatchCreateEntry,
   GovernanceConfig,
+  Proposal,
 } from "./types.js";
 import {
   parseRemittance,
@@ -30,19 +31,59 @@ import {
   optionToScVal,
   bytesNToScVal,
   stringToScVal,
+  parseProposal,
 } from "./convert.js";
+
+/** Errors that should NOT be retried (auth failures, validation errors, etc.) */
+function isTransientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  // Retry on network errors, 429 Too Many Requests, and 503 Service Unavailable
+  return (
+    msg.includes("429") ||
+    msg.includes("503") ||
+    msg.includes("ECONNRESET") ||
+    msg.includes("ECONNREFUSED") ||
+    msg.includes("ETIMEDOUT") ||
+    msg.includes("network") ||
+    msg.includes("timeout")
+  );
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries: number,
+  delayMs: number,
+  backoffFactor: number
+): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= retries || !isTransientError(err)) throw err;
+      await new Promise((r) => setTimeout(r, delayMs * Math.pow(backoffFactor, attempt)));
+      attempt++;
+    }
+  }
+}
 
 export class SwiftRemitClient {
   private readonly contract: Contract;
   private readonly server: SorobanRpc.Server;
   private readonly networkPassphrase: string;
   private readonly fee: string;
+  private readonly retries: number;
+  private readonly retryDelayMs: number;
+  private readonly retryBackoffFactor: number;
 
   constructor(options: SwiftRemitClientOptions) {
     this.contract = new Contract(options.contractId);
     this.server = new SorobanRpc.Server(options.rpcUrl, { allowHttp: true });
     this.networkPassphrase = options.networkPassphrase;
     this.fee = options.fee ?? BASE_FEE;
+    this.retries = options.retries ?? 3;
+    this.retryDelayMs = options.retryDelayMs ?? 1000;
+    this.retryBackoffFactor = options.retryBackoffFactor ?? 2;
   }
 
   // ─── Transaction helpers ────────────────────────────────────────────────────
@@ -78,7 +119,12 @@ export class SwiftRemitClient {
     keypair: Keypair
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     tx.sign(keypair);
-    const sendResult = await this.server.sendTransaction(tx);
+    const sendResult = await withRetry(
+      () => this.server.sendTransaction(tx),
+      this.retries,
+      this.retryDelayMs,
+      this.retryBackoffFactor
+    );
     if (sendResult.status === "ERROR") {
       throw new Error(`Submit failed: ${JSON.stringify(sendResult.errorResult)}`);
     }
@@ -111,7 +157,12 @@ export class SwiftRemitClient {
       .setTimeout(30)
       .build();
 
-    const sim = await this.server.simulateTransaction(tx);
+    const sim = await withRetry(
+      () => this.server.simulateTransaction(tx),
+      this.retries,
+      this.retryDelayMs,
+      this.retryBackoffFactor
+    );
     if (SorobanRpc.Api.isSimulationError(sim)) {
       throw new Error(`Simulation failed: ${sim.error}`);
     }
@@ -550,5 +601,61 @@ export class SwiftRemitClient {
       timelockSeconds: BigInt(native.timelock_seconds),
       proposalTtlSeconds: BigInt(native.proposal_ttl_seconds),
     };
+  }
+
+  // ─── Governance ──────────────────────────────────────────────────────────────
+
+  /** Fetch a single proposal by ID. */
+  async getProposal(sourceAddress: string, proposalId: bigint): Promise<Proposal> {
+    const val = await this.simulateCall(sourceAddress, "get_proposal", [
+      u64ToScVal(proposalId),
+    ]);
+    return parseProposal(val);
+  }
+
+  /**
+   * Fetch all proposals with state Pending or Approved.
+   * Iterates proposal IDs starting from 0 until the contract returns NotFound.
+   */
+  async getActiveProposals(sourceAddress: string): Promise<Proposal[]> {
+    const proposals: Proposal[] = [];
+    let id = 0n;
+    while (true) {
+      try {
+        const val = await this.simulateCall(sourceAddress, "get_proposal", [
+          u64ToScVal(id),
+        ]);
+        const p = parseProposal(val);
+        if (p.state === "Pending" || p.state === "Approved") {
+          proposals.push(p);
+        }
+        id++;
+      } catch {
+        break; // ProposalNotFound — no more proposals
+      }
+    }
+    return proposals;
+  }
+
+  /** Cast an approval vote on a pending proposal (admin only). */
+  async voteOnProposal(
+    sourceAddress: string,
+    proposalId: bigint
+  ): Promise<Transaction> {
+    return this.prepareTransaction(sourceAddress, "vote", [
+      addressToScVal(sourceAddress),
+      u64ToScVal(proposalId),
+    ]);
+  }
+
+  /** Execute an approved proposal after the timelock has elapsed (admin only). */
+  async executeProposal(
+    sourceAddress: string,
+    proposalId: bigint
+  ): Promise<Transaction> {
+    return this.prepareTransaction(sourceAddress, "execute", [
+      addressToScVal(sourceAddress),
+      u64ToScVal(proposalId),
+    ]);
   }
 }

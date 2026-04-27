@@ -114,6 +114,15 @@ export interface RemittanceCreatedWebhookPayload {
   memo?: string;
 }
 
+export interface Sep24ExpiredRefundWebhookPayload {
+  transaction_id: string;
+  anchor_id: string;
+  user_id: string;
+  asset_code: string;
+  amount?: string;
+  refunded_at: string;
+}
+
 /** Remittance creation request body */
 export interface CreateRemittanceRequest {
   sender: string;

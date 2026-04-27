@@ -9,6 +9,8 @@ import {
   getSep24TransactionById,
 } from './database';
 import { AnchorKycConfig } from './types';
+import { cancelRemittanceOnChain } from './stellar';
+import { WebhookDispatcher } from './webhook-dispatcher';
 
 /**
  * SEP-24 transaction types
@@ -157,12 +159,21 @@ export class Sep24Service {
   private pool: Pool;
   private anchorConfigs: Map<string, AnchorSep24Config> = new Map();
   private httpClient: AxiosInstance;
+  private dispatcher: WebhookDispatcher;
 
   constructor(pool: Pool) {
     this.pool = pool;
+    this.anchorTimeoutHours = parseFloat(process.env.ANCHOR_TIMEOUT_HOURS ?? '24');
+    this.timeoutWebhookUrl = process.env.ANCHOR_TIMEOUT_WEBHOOK_URL;
     this.httpClient = axios.create({
       timeout: 30000, // 30 second timeout for SEP-24 requests
     });
+    this.dispatcher = new WebhookDispatcher();
+  }
+
+  /** Return the current stalled_transactions_total counter value (for Prometheus scraping). */
+  getStalledTransactionsTotal(): number {
+    return this.stalledTransactionsTotal;
   }
 
   /**
@@ -334,14 +345,13 @@ export class Sep24Service {
 
     for (const transaction of pendingTransactions) {
       try {
-        // Check for timeout
+        // Check for anchor timeout on pending_anchor status
         const createdAt = transaction.created_at || new Date();
         const timeSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60);
         
         if (timeSinceCreation > config.timeout_minutes) {
-          // Mark as expired
-          await updateSep24TransactionStatus(transaction.transaction_id, 'expired');
-          console.log(`Transaction ${transaction.transaction_id} marked as expired`);
+          // Trigger refund flow (idempotent)
+          await this.processExpiredRefund(transaction);
           continue;
         }
 
@@ -379,6 +389,62 @@ export class Sep24Service {
       } catch (error) {
         console.error(`Failed to poll transaction ${transaction.transaction_id}:`, error);
       }
+    }
+  }
+
+  /**
+   * Process an expired SEP-24 transaction:
+   * 1. Idempotency check — skip if already refunded.
+   * 2. Call cancel_remittance on the Soroban contract.
+   * 3. Mark the transaction as 'refunded' in the DB.
+   * 4. Emit a sep24.expired_refund webhook event.
+   */
+  private async processExpiredRefund(transaction: any): Promise<void> {
+    const { transaction_id, status } = transaction;
+
+    // Idempotency: skip if already refunded or expired-and-processed
+    if (status === 'refunded') {
+      console.log(`Transaction ${transaction_id} already refunded, skipping`);
+      return;
+    }
+
+    // Derive the on-chain remittance ID from external_transaction_id (set at creation time)
+    const remittanceId = transaction.external_transaction_id
+      ? parseInt(transaction.external_transaction_id, 10)
+      : null;
+
+    if (remittanceId !== null && !isNaN(remittanceId)) {
+      try {
+        await cancelRemittanceOnChain(remittanceId);
+      } catch (err) {
+        console.error(
+          `cancel_remittance failed for transaction ${transaction_id} (remittance ${remittanceId}):`,
+          err
+        );
+        // Still mark expired so we don't retry indefinitely; operator can investigate
+      }
+    } else {
+      console.warn(
+        `Transaction ${transaction_id} has no valid external_transaction_id; skipping on-chain cancel`
+      );
+    }
+
+    // Mark as refunded (idempotent status update)
+    await updateSep24TransactionStatus(transaction_id, 'refunded');
+    console.log(`Transaction ${transaction_id} marked as refunded`);
+
+    // Emit webhook event
+    try {
+      await this.dispatcher.dispatchSep24ExpiredRefund({
+        transaction_id,
+        anchor_id: transaction.anchor_id,
+        user_id: transaction.user_id,
+        asset_code: transaction.asset_code,
+        amount: transaction.amount ?? transaction.amount_in,
+        refunded_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(`Failed to dispatch sep24.expired_refund webhook for ${transaction_id}:`, err);
     }
   }
 

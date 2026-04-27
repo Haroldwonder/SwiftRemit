@@ -296,3 +296,24 @@
     min-width: auto;
   }
 }
+
+.receipt-buttons {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.receipt-btn {
+  padding: 2px 8px;
+  font-size: 0.75em;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  background: transparent;
+  color: #3b82f6;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.receipt-btn:hover {
+  background: #3b82f6;
+  color: #fff;
+}

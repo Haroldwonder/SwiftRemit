@@ -287,6 +287,8 @@ fn test_get_agent_reputation_calculates_score() {
         failed_settlements: 2,
         total_settlement_time: 7200 * 10,
         dispute_count: 1,
+        success_rate_bps: 8000,
+        last_active_timestamp: 0,
     };
     crate::storage::set_agent_stats(&env, &agent, &stats);
 

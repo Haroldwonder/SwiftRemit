@@ -5,7 +5,7 @@ import {
   markWebhookDeliveryFailure,
   markWebhookDeliverySuccess,
 } from './database';
-import { RemittanceCreatedWebhookPayload, WebhookDelivery } from './types';
+import { RemittanceCreatedWebhookPayload, Sep24ExpiredRefundWebhookPayload, WebhookDelivery } from './types';
 
 const MAX_RETRIES = 5;
 
@@ -17,6 +17,19 @@ export class WebhookDispatcher {
     const deliveries = await Promise.all(
       subscribers.map((subscriber) =>
         enqueueWebhookDelivery('remittance.created', payload.remittance_id, subscriber, payload, MAX_RETRIES)
+      )
+    );
+
+    for (const delivery of deliveries) {
+      await this.attemptDelivery(delivery);
+    }
+  }
+
+  async dispatchSep24ExpiredRefund(payload: Sep24ExpiredRefundWebhookPayload): Promise<void> {
+    const subscribers = await getActiveWebhookSubscribers();
+    const deliveries = await Promise.all(
+      subscribers.map((subscriber) =>
+        enqueueWebhookDelivery('sep24.expired_refund', payload.transaction_id, subscriber, payload, MAX_RETRIES)
       )
     );
 

@@ -3,6 +3,10 @@ export type {
   SwiftRemitClientOptions,
   Remittance,
   RemittanceStatus,
+  RemittanceEvent,
+  RemittanceEventType,
+  SubscribeOptions,
+  Unsubscribe,
   AgentStats,
   CircuitBreakerStatus,
   PauseReason,
@@ -14,6 +18,9 @@ export type {
   EscrowStatus,
   Role,
   GovernanceConfig,
+  Proposal,
+  ProposalState,
+  ProposalAction,
 } from "./types.js";
 export {
   parseRemittance,
@@ -21,6 +28,7 @@ export {
   parseCircuitBreakerStatus,
   parseHealthStatus,
   parseFeeBreakdown,
+  parseProposal,
   addressToScVal,
   u64ToScVal,
   i128ToScVal,

@@ -46,6 +46,7 @@ console.log("Remittance created:", result.hash);
 - ✅ Automatic XDR conversion
 - ✅ Transaction simulation & assembly
 - ✅ Helper utilities (`toStroops`, `fromStroops`)
+- ✅ Real-time event subscription via Horizon SSE (`subscribeToRemittanceEvents`)
 
 ## API Reference
 
@@ -117,6 +118,55 @@ toStroops(100);      // 100 USDC → 1_000_000_000n stroops
 fromStroops(1_000_000_000n); // → 100 USDC
 ```
 
+## Governance
+
+The SDK exposes four methods for interacting with the on-chain governance module.
+
+### Types
+
+```typescript
+type ProposalState = "Pending" | "Approved" | "Executed" | "Expired";
+
+type ProposalAction =
+  | { UpdateFee: number }
+  | { RegisterAgent: string }
+  | { RemoveAgent: string }
+  | { AddAdmin: string }
+  | { RemoveAdmin: string }
+  | { UpdateQuorum: number }
+  | { UpdateTimelock: bigint };
+
+interface Proposal {
+  id: bigint;
+  proposer: string;
+  action: ProposalAction;
+  state: ProposalState;
+  createdAt: bigint;
+  expiry: bigint;
+  approvalCount: number;
+  approvalTimestamp: bigint | null;
+}
+```
+
+### Methods
+
+```typescript
+// Fetch a single proposal by ID (read-only)
+const proposal = await client.getProposal(sourceAddress, 0n);
+console.log(proposal.state); // "Pending"
+
+// Fetch all Pending and Approved proposals (iterates IDs until NotFound)
+const active = await client.getActiveProposals(sourceAddress);
+
+// Cast an approval vote (admin only) — returns a prepared Transaction
+const voteTx = await client.voteOnProposal(adminAddress, 0n);
+await client.submitTransaction(voteTx, adminKeypair);
+
+// Execute an approved proposal after the timelock (admin only)
+const execTx = await client.executeProposal(adminAddress, 0n);
+await client.submitTransaction(execTx, adminKeypair);
+```
+
 ## Types
 
 All contract types are exported:
@@ -134,6 +184,64 @@ import type {
   SettlementConfig,
 } from "@swiftremit/sdk";
 ```
+
+## Real-Time Event Subscription
+
+Subscribe to contract events without polling `getRemittance` repeatedly:
+
+```typescript
+import { SwiftRemitClient, Networks, RpcUrls } from "@swiftremit/sdk";
+
+const client = new SwiftRemitClient({
+  contractId: "CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  networkPassphrase: Networks.TESTNET,
+  rpcUrl: RpcUrls.TESTNET,
+});
+
+// Subscribe to all events for a specific remittance
+const unsubscribe = client.subscribeToRemittanceEvents(
+  (event) => {
+    console.log(`[${event.type}] remittance #${event.remittanceId} at ledger ${event.ledger}`);
+    if (event.type === "completed") {
+      console.log("Payout confirmed!");
+      unsubscribe(); // stop listening once done
+    }
+  },
+  { remittanceId: 42n } // optional filter
+);
+
+// Subscribe to all events (no filter)
+const unsubAll = client.subscribeToRemittanceEvents((event) => {
+  console.log(event);
+});
+
+// Stop the subscription
+unsubAll();
+```
+
+### Event types
+
+| `event.type` | Trigger |
+|---|---|
+| `created` | New remittance created |
+| `completed` | Payout confirmed and settled |
+| `cancelled` | Remittance cancelled by sender |
+| `failed` | Payout marked as failed |
+| `disputed` | Dispute raised on a failed remittance |
+
+### Filtering
+
+Pass a `SubscribeOptions` object as the second argument:
+
+```typescript
+// Filter by remittance ID
+client.subscribeToRemittanceEvents(cb, { remittanceId: 42n });
+
+// Resume from a saved cursor (paging token)
+client.subscribeToRemittanceEvents(cb, { cursor: "1234567890-0" });
+```
+
+The subscription reconnects automatically with exponential back-off (1 s → 30 s) on stream disconnect.
 
 ## Example: Full Remittance Flow
 

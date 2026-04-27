@@ -60,7 +60,91 @@ function formatTimestamp(value: string): string {
   return parsed.toLocaleString();
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+function downloadJSON(tx: TransactionHistoryItem): void {
+  const receipt = {
+    transactionId: tx.id,
+    amount: tx.amount,
+    asset: tx.asset,
+    recipient: tx.recipient,
+    status: tx.status,
+    timestamp: tx.timestamp,
+    ...(tx.memo ? { memo: tx.memo } : {}),
+    ...(tx.details ? { details: tx.details } : {}),
+    downloadedAt: new Date().toISOString(),
+  };
+  const blob = new Blob([JSON.stringify(receipt, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `receipt-${tx.id}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadPDF(tx: TransactionHistoryItem): void {
+  const rows = [
+    ['Transaction ID', tx.id],
+    ['Amount', formatAmount(tx.amount, tx.asset)],
+    ['Asset', tx.asset],
+    ['Recipient', tx.recipient],
+    ['Status', tx.status],
+    ['Timestamp', formatTimestamp(tx.timestamp)],
+    ...(tx.memo ? [['Memo', tx.memo]] : []),
+    ...Object.entries(tx.details || {}).map(([k, v]) => [k, String(v)]),
+    ['Downloaded At', new Date().toLocaleString()],
+  ];
+
+  const tableRows = rows
+    .map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`)
+    .join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Receipt ${tx.id}</title>
+<style>
+  body { font-family: sans-serif; padding: 32px; color: #111; }
+  h1 { font-size: 1.4em; margin-bottom: 16px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #ddd; }
+  th { width: 40%; color: #555; font-weight: 600; }
+</style>
+</head><body>
+<h1>Transaction Receipt</h1>
+<table>${tableRows}</table>
+</body></html>`;
+
+  const win = window.open('', '_blank');
+  if (!win) return;
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  win.print();
+  win.close();
+}
+
+function ReceiptDownloadButtons({ tx }: { tx: TransactionHistoryItem }) {
+  return (
+    <span className="receipt-buttons">
+      <button
+        type="button"
+        className="receipt-btn"
+        onClick={() => downloadJSON(tx)}
+        aria-label={`Download JSON receipt for transaction ${tx.id}`}
+        title="Download JSON"
+      >
+        JSON
+      </button>
+      <button
+        type="button"
+        className="receipt-btn"
+        onClick={() => downloadPDF(tx)}
+        aria-label={`Download PDF receipt for transaction ${tx.id}`}
+        title="Download PDF"
+      >
+        PDF
+      </button>
+    </span>
+  );
+}
 
 export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   transactions,
@@ -304,6 +388,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                     <th>Status</th>
                     <th>Timestamp</th>
                     <th aria-label="Expand details column" />
+                    <th>Receipt</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -331,10 +416,11 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                               {isExpanded ? 'Hide' : 'Expand'}
                             </button>
                           </td>
+                          <td><ReceiptDownloadButtons tx={transaction} /></td>
                         </tr>
                         {isExpanded && (
                           <tr className="history-details-row">
-                            <td colSpan={6}>
+                            <td colSpan={7}>
                               <dl className="history-details">
                                 <div key={`${transaction.id}-id`}>
                                   <dt>Transaction ID</dt>
@@ -398,6 +484,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                     >
                       {isExpanded ? 'Hide details' : 'Expand details'}
                     </button>
+                    <ReceiptDownloadButtons tx={transaction} />
                     {isExpanded && (
                       <dl className="history-details">
                         <div key={`${transaction.id}-id`}>

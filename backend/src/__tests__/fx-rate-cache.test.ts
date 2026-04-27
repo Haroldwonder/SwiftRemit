@@ -109,6 +109,46 @@ describe('FxRateCache', () => {
       await expect(cache.getCurrentRate('USD', 'EUR')).rejects.toThrow('Failed to fetch FX rate');
     });
 
+    it('returns stale rate with stale:true on 429 when cache entry exists', async () => {
+      const mockResponse = { data: { rates: { EUR: 0.85 } } };
+      const rateLimitError = Object.assign(new Error('Too Many Requests'), {
+        isAxiosError: true,
+        response: { status: 429 },
+      });
+      // Make axios.isAxiosError return true for our error
+      vi.spyOn(axios, 'isAxiosError').mockImplementation((e) => (e as any).isAxiosError === true);
+
+      vi.mocked(axios.get)
+        .mockResolvedValueOnce(mockResponse)  // first call succeeds → populates stale cache
+        .mockRejectedValueOnce(rateLimitError); // second call (after invalidate) → 429
+
+      cache = new FxRateCache({ ttlSeconds: 60 });
+
+      // Populate stale cache
+      await cache.getCurrentRate('USD', 'EUR');
+      // Evict live cache so next call hits the API
+      cache.invalidate('USD', 'EUR');
+
+      const result = await cache.getCurrentRate('USD', 'EUR');
+      expect(result.stale).toBe(true);
+      expect(result.cached).toBe(true);
+      expect(result.rate).toBe(0.85);
+    });
+
+    it('throws on 429 when no stale entry exists', async () => {
+      const rateLimitError = Object.assign(new Error('Too Many Requests'), {
+        isAxiosError: true,
+        response: { status: 429 },
+      });
+      vi.spyOn(axios, 'isAxiosError').mockImplementation((e) => (e as any).isAxiosError === true);
+      vi.mocked(axios.get).mockRejectedValueOnce(rateLimitError);
+
+      cache = new FxRateCache({ ttlSeconds: 60 });
+
+      // No stale entry → the original axios error is re-thrown
+      await expect(cache.getCurrentRate('USD', 'EUR')).rejects.toMatchObject({ isAxiosError: true });
+    });
+
     it('includes API key in request headers when provided', async () => {
       const mockResponse = {
         data: {

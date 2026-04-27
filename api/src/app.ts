@@ -3,6 +3,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import currenciesRouter from './routes/currencies';
+import limitsRouter from './routes/limits';
 import { createAnchorsRouter } from './routes/anchors';
 import docsRouter from './routes/docs';
 import settlementsRouter from './routes/settlements';
@@ -10,11 +11,15 @@ import remittancesRouter from './routes/remittances';
 import { createAdminRouter } from './routes/admin';
 import { ErrorResponse } from './types';
 import { AnchorStore } from './db/anchorStore';
+import { Server as SocketIOServer } from 'socket.io';
+import { createWsHealthRouter } from './websocket/health';
 
 type AppOptions = {
   anchorStore?: AnchorStore;
   anchorAdminApiKey?: string;
-};
+  /** Socket.IO instance — when provided, mounts the /ws/health route */
+  io?: SocketIOServer;
+} & RemittancesRouterOptions;
 
 export function createApp(options: AppOptions = {}): Application {
   const app = express();
@@ -53,6 +58,7 @@ export function createApp(options: AppOptions = {}): Application {
 
   // API routes
   app.use('/api/currencies', currenciesRouter);
+  app.use('/api/limits', limitsRouter);
   app.use(
     '/api/anchors',
     createAnchorsRouter({
@@ -72,6 +78,11 @@ export function createApp(options: AppOptions = {}): Application {
 
   // API documentation
   app.use('/api/docs', docsRouter);
+
+  // WebSocket health endpoint (development only — guarded inside the router)
+  if (options.io) {
+    app.use('/ws/health', createWsHealthRouter(options.io));
+  }
 
   // 404 handler
   app.use((req: Request, res: Response) => {

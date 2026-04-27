@@ -1,0 +1,31 @@
+groups:
+  - name: fx_rate_alerts
+    rules:
+      # Alert when any FX rate has not been refreshed for more than 5 minutes
+      - alert: FxRateStale
+        expr: fx_rate_age_seconds > 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FX rate is stale for {{ $labels.from }}/{{ $labels.to }}"
+          description: >
+            The cached FX rate for {{ $labels.from }}/{{ $labels.to }} is
+            {{ $value | humanizeDuration }} old (threshold: 5 minutes).
+            The external FX provider may be down or rate-limiting requests.
+
+      # Alert when the cache miss rate is unusually high (>80% of requests)
+      - alert: FxRateCacheMissRateHigh
+        expr: >
+          rate(fx_rate_cache_misses_total[5m])
+          /
+          (rate(fx_rate_cache_hits_total[5m]) + rate(fx_rate_cache_misses_total[5m]))
+          > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FX rate cache miss rate is high"
+          description: >
+            More than 80% of FX rate requests are cache misses over the last 5 minutes.
+            This may indicate the cache TTL is too short or the cache is being cleared frequently.

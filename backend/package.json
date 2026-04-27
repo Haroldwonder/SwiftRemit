@@ -12,7 +12,9 @@
     "test:webhook:manual": "tsx scripts/test-webhook.ts",
     "lint": "eslint src --ext .ts",
     "webhook:example": "tsx examples/send-webhook.ts",
-    "validate:openapi": "swagger-cli validate openapi.yaml"
+    "validate:openapi": "swagger-cli validate openapi.yaml",
+    "migrate": "tsx src/migrate.ts migrate",
+    "migrate:rollback": "tsx src/migrate.ts rollback"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
