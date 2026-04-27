@@ -18,6 +18,7 @@ import type {
   CreateRemittanceParams,
   BatchCreateEntry,
   GovernanceConfig,
+  DailyLimitStatus,
 } from "./types.js";
 import {
   parseRemittance,
@@ -297,6 +298,42 @@ export class SwiftRemitClient {
       []
     );
     return BigInt(scValToNative(val) as number);
+  }
+
+  /**
+   * Get a sender's daily limit status for a currency/country corridor.
+   *
+   * Returns the configured limit, amount already used in the rolling 24-hour
+   * window, remaining sendable amount, and when the window resets.
+   *
+   * @param sourceAddress - Address used for simulation (can be any funded account)
+   * @param sender - Sender address to query
+   * @param currency - ISO 4217 currency code (e.g. "USDC")
+   * @param country - ISO 3166-1 alpha-2 country code (e.g. "NG")
+   */
+  async getDailyLimitStatus(
+    sourceAddress: string,
+    sender: string,
+    currency: string,
+    country: string
+  ): Promise<DailyLimitStatus> {
+    const val = await this.simulateCall(
+      sourceAddress,
+      "get_daily_limit_status",
+      [
+        addressToScVal(sender),
+        stringToScVal(currency),
+        stringToScVal(country),
+      ]
+    );
+    const native = scValToNative(val) as [bigint | number, bigint | number, bigint | number, bigint | number];
+    const [limit, used, remaining, resetsAtSecs] = native.map(BigInt) as [bigint, bigint, bigint, bigint];
+    return {
+      limit,
+      used,
+      remaining,
+      resetsAt: new Date(Number(resetsAtSecs) * 1000),
+    };
   }
 
   // ─── Write functions (return prepared tx) ────────────────────────────────────

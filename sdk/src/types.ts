@@ -112,3 +112,14 @@ export interface GovernanceConfig {
   /** Seconds after creation before a proposal expires */
   proposalTtlSeconds: bigint;
 }
+
+export interface DailyLimitStatus {
+  /** Configured corridor limit in stroops (0 = no limit set) */
+  limit: bigint;
+  /** Amount already sent in the current 24-hour window (stroops) */
+  used: bigint;
+  /** Remaining sendable amount in the current window (stroops) */
+  remaining: bigint;
+  /** Timestamp when the current 24-hour window resets */
+  resetsAt: Date;
+}

@@ -14,6 +14,7 @@ export type {
   EscrowStatus,
   Role,
   GovernanceConfig,
+  DailyLimitStatus,
 } from "./types.js";
 export {
   parseRemittance,

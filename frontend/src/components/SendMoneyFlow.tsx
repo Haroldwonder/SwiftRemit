@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import './SendMoneyFlow.css';
+import type { DailyLimitStatus } from '../../../sdk/src/types.js';
 
 type FlowStep = 1 | 2 | 3 | 4 | 5;
 
@@ -13,6 +14,12 @@ interface ConfirmPayload {
 interface SendMoneyFlowProps {
   assets?: string[];
   onConfirm?: (payload: ConfirmPayload) => Promise<void>;
+  /** Optional: fetch daily limit status for the sender/currency/country corridor */
+  getDailyLimitStatus?: (currency: string, country: string) => Promise<DailyLimitStatus>;
+  /** Sender address used for limit queries */
+  senderAddress?: string;
+  /** ISO 3166-1 alpha-2 destination country (e.g. "NG") */
+  destinationCountry?: string;
 }
 
 const STEPS: Record<FlowStep, string> = {
@@ -33,6 +40,9 @@ function isValidRecipient(input: string): boolean {
 export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   assets = DEFAULT_ASSETS,
   onConfirm,
+  getDailyLimitStatus,
+  senderAddress,
+  destinationCountry = 'NG',
 }) => {
   const [step, setStep] = useState<FlowStep>(1);
   const [amount, setAmount] = useState('');
@@ -42,8 +52,19 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [limitStatus, setLimitStatus] = useState<DailyLimitStatus | null>(null);
 
   const parsedAmount = useMemo(() => Number(amount), [amount]);
+
+  // Fetch daily limit status when asset is selected
+  useEffect(() => {
+    if (!asset || !getDailyLimitStatus || !senderAddress) return;
+    let cancelled = false;
+    getDailyLimitStatus(asset, destinationCountry)
+      .then((status) => { if (!cancelled) setLimitStatus(status); })
+      .catch(() => { /* non-critical — silently ignore */ });
+    return () => { cancelled = true; };
+  }, [asset, destinationCountry, getDailyLimitStatus, senderAddress]);
 
   const validateCurrentStep = (): string | null => {
     if (step === 1) {
@@ -132,21 +153,29 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
 
     if (step === 2) {
       return (
-        <label className="flow-field" htmlFor="asset">
-          <span>Asset</span>
-          <select
-            id="asset"
-            value={asset}
-            onChange={(event) => setAsset(event.target.value)}
-          >
-            <option value="">Choose an asset</option>
-            {assets.map((assetCode) => (
-              <option key={assetCode} value={assetCode}>
-                {assetCode}
-              </option>
-            ))}
-          </select>
-        </label>
+        <>
+          <label className="flow-field" htmlFor="asset">
+            <span>Asset</span>
+            <select
+              id="asset"
+              value={asset}
+              onChange={(event) => setAsset(event.target.value)}
+            >
+              <option value="">Choose an asset</option>
+              {assets.map((assetCode) => (
+                <option key={assetCode} value={assetCode}>
+                  {assetCode}
+                </option>
+              ))}
+            </select>
+          </label>
+          {limitStatus && limitStatus.limit > 0n && (
+            <p className="flow-limit-status" aria-live="polite">
+              Daily limit: {(Number(limitStatus.remaining) / 1e7).toFixed(2)} {asset} remaining
+              {' '}(resets {limitStatus.resetsAt.toLocaleTimeString()})
+            </p>
+          )}
+        </>
       );
     }
 
