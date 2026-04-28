@@ -21,6 +21,7 @@
 import { Router, Request, Response } from 'express';
 import { ErrorResponse } from '../types';
 import { RemittanceStore } from '../db/remittanceStore';
+import { createRemittanceSchema, validateRequest } from './schemas/requestValidation';
 
 export type RemittanceStatus = 'Pending' | 'Processing' | 'Completed' | 'Cancelled' | 'Failed' | 'Disputed';
 
