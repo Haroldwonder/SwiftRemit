@@ -75,7 +75,7 @@ export class WebhookDispatcher {
   /**
    * Dispatch a webhook event to all subscribers
    */
-  async dispatch(event: EventType, payload: WebhookPayload): Promise<{ success: number; failed: number }> {
+  async dispatch(event: EventType, payload: WebhookPayload, correlationId?: string): Promise<{ success: number; failed: number }> {
     this.inFlight++;
     try {
       const subscribers = await this.store.getSubscribers(event);
@@ -85,7 +85,12 @@ export class WebhookDispatcher {
         return { success: 0, failed: 0 };
       }
 
-      this.logger.info(`Dispatching ${event} to ${subscribers.length} subscriber(s)`);
+      this.logger.info(`Dispatching ${event} to ${subscribers.length} subscriber(s)`, { correlation_id: correlationId });
+
+      // Enrich payload with correlation ID if provided
+      const enrichedPayload = correlationId 
+        ? { ...payload, correlation_id: correlationId }
+        : payload;
 
       let successCount = 0;
       let failedCount = 0;
@@ -95,7 +100,7 @@ export class WebhookDispatcher {
           const deliveryRecord: Partial<WebhookDeliveryRecord> = {
             webhookId: subscriber.id,
             eventType: event,
-            payload,
+            payload: enrichedPayload,
             maxRetries: this.options.maxRetries!,
           };
 
@@ -105,7 +110,7 @@ export class WebhookDispatcher {
             attempt: 0,
           } as WebhookDeliveryRecord);
 
-          const success = await this.attemptDelivery(deliveryId, subscriber.url, subscriber.secret, payload, 1, deliveryRecord, subscriber.content_type);
+          const success = await this.attemptDelivery(deliveryId, subscriber.url, subscriber.secret, enrichedPayload, 1, deliveryRecord, subscriber.content_type);
 
           if (success) {
             successCount++;
