@@ -313,6 +313,7 @@ SwiftRemit uses environment variables for configuration. This allows you to easi
 
 - **[CONFIGURATION.md](CONFIGURATION.md)**: Complete configuration reference with all variables, validation rules, and examples
 - **[MIGRATION.md](MIGRATION.md)**: Migration guide for existing developers
+- **[RUNBOOK.md](RUNBOOK.md)**: Operational runbook — emergency pause/unpause, admin key rotation, stuck migrations, webhook replay, storage TTL extension
 - **[PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md)**: Current production readiness status — what's complete, what's pending, and known risks before mainnet
 
 ## Remittance Lifecycle — Sequence Diagram
@@ -591,7 +592,8 @@ import { VerificationBadge } from './components/VerificationBadge';
 | **2** | NotInitialized | Operations attempted before the contract setup is complete. | The administrator must call the initialize() function with valid parameters. |
 | **3** | InvalidAmount | Providing zero or negative values for remittance. | Ensure the transfer amount is a positive integer greater than 0. |
 | **4** | InvalidFeeBps | Fee percentage is set outside the 0-100% (0-10000 bps) range. | Adjust the basis points to fall within the valid range (e.g., 2.5% = 250 bps). |
-| **5** | AgentNotRegistered | Using an address that hasn't been added to the whitelist. | Register the agent address first using the egister_agent function. |
+| **5** | AgentNotRegistered | Using an address that hasn't been added to the whitelist. | Register the agent address first using the 
+egister_agent function. |
 | **6** | RemittanceNotFound | Querying an ID that does not exist on the ledger. | Verify the Remittance ID from your transaction history or event logs. |
 | **7** | InvalidStatus | Operation not allowed in current state (e.g. canceling a settled payment). | Check the current status of the remittance via get_remittance before retrying. |
 | **11** | SettlementExpired | The time-lock for the remittance has passed. | The sender may need to cancel and recreate the remittance with a new deadline. |

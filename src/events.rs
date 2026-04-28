@@ -226,19 +226,31 @@ pub fn emit_protocol_fee_updated(env: &Env, caller: Address, fee_bps: u32) {
     emit_event!(env, "fee", "proto_upd", caller, fee_bps);
 }
 
-pub fn emit_dispute_resolved(env: &Env, id: u64, in_favour_of_sender: bool) {
-    env.events().publish((Symbol::new(env, "dispute_resolved"), id), in_favour_of_sender);
+/// Emits an event when a sender raises a dispute on a failed remittance.
+///
+/// Topics: `("dispute", "raised")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, remittance_id, sender, evidence_hash)`
+pub fn emit_dispute_raised(env: &Env, remittance_id: u64, sender: Address, evidence_hash: soroban_sdk::BytesN<32>) {
+    emit_event!(env, "dispute", "raised", remittance_id, sender, evidence_hash);
+}
+
+/// Emits an event when an admin resolves a dispute.
+///
+/// Topics: `("dispute", "resolved")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, remittance_id, admin, in_favour_of_sender, resulting_status)`
+///
+/// `resulting_status` is `"Cancelled"` when resolved in favour of sender, `"Completed"` otherwise.
+pub fn emit_dispute_resolved(env: &Env, remittance_id: u64, admin: Address, in_favour_of_sender: bool) {
+    let resulting_status = if in_favour_of_sender {
+        symbol_short!("Cancelled")
+    } else {
+        symbol_short!("Completed")
+    };
+    emit_event!(env, "dispute", "resolved", remittance_id, admin, in_favour_of_sender, resulting_status);
 }
 
 pub fn emit_remittance_failed(env: &Env, id: u64, agent: Address) {
     env.events().publish((Symbol::new(env, "remittance_failed"), id), agent);
-}
-
-pub fn emit_dispute_raised(env: &Env, id: u64, sender: Address, evidence_hash: soroban_sdk::BytesN<32>) {
-    env.events().publish(
-        (Symbol::new(env, "dispute_raised"), id),
-        (sender, evidence_hash),
-    );
 }
 
 pub fn emit_partial_payout(env: &Env, remittance_id: u64, agent: Address, amount: i128, disbursed_total: i128) {
