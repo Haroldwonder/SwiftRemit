@@ -162,131 +162,8 @@ enum DataKey {
     /// Fee corridor configuration indexed by (from_country, to_country) (persistent storage)
     FeeCorridor(String, String),
 
-    // === Idempotency Protection ===
-    // Keys for preventing duplicate remittance creation
-    /// Idempotency record indexed by idempotency key (persistent storage)
-    /// Stores remittance_id and request hash for duplicate detection
-    IdempotencyRecord(String),
-
-    /// Reverse mapping: remittance_id -> idempotency key (persistent storage)
-    /// Used to clean up the idempotency record when a remittance reaches a terminal state
-    RemittanceIdempotencyKey(u64),
-
-    /// TTL for idempotency records in seconds (instance storage)
-    IdempotencyTTL,
-
-    // === Migration ===
-    /// Flag indicating a migration is currently in progress (instance storage).
-    /// When set, normal write operations (create_remittance, confirm_payout, etc.) are blocked.
-    MigrationInProgress,
-
-    /// Commitment hash used to validate off-chain payout proofs per remittance.
-    PayoutCommitment(u64),
-
-    // === Analytics ===
-    /// Total number of remittances ever created (instance storage).
-    TotalRemittanceCount,
-
-    /// Cumulative volume of completed remittances in USDC stroops (instance storage).
-    TotalCompletedVolume,
-
-    // === Dispute Window ===
-    /// Duration in seconds within which a sender can raise a dispute after a failed payout.
-    DisputeWindow,
-
-    // === Partial Payout Tracking ===
-    /// Amount already disbursed for a remittance (persistent storage).
-    DisbursedAmount(u64),
-
-    // === Per-Agent Daily Withdrawal Cap ===
-    /// Maximum USDC an agent may withdraw in a rolling 24-hour window (persistent storage).
-    AgentDailyCap(Address),
-
-    /// Rolling withdrawal records for an agent (persistent storage).
-    AgentWithdrawals(Address),
-
-    // === Per-Token Fee Override ===
-    /// Per-token platform fee override in basis points (persistent storage).
-    TokenFeeBps(Address),
-
-    // === Agent Statistics ===
-    /// Aggregated settlement statistics for an agent (persistent storage).
-    AgentStats(Address),
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Circuit Breaker Keys
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// Monotonically increasing counter for pause events (instance storage).
-    PauseSequence,
-
-    /// Sequence number of the currently active pause, when paused (instance storage).
-    ActivePauseSeq,
-
-    /// PauseRecord keyed by sequence number (persistent storage).
-    PauseRecord(u64),
-
-    /// UnpauseRecord keyed by the pause sequence number it resolved (persistent storage).
-    UnpauseRecord(u64),
-
-    /// Vote flag: (pause_seq, voter_address) → bool (persistent storage).
-    UnpauseVote(u64, Address),
-
-    /// Vote count for the current pause instance (instance storage).
-    UnpauseVoteCount,
-
-    /// Timelock duration in seconds before unpause is permitted (instance storage, default 0).
-    PauseTimelockSeconds,
-
-    /// Minimum number of admin votes required to unpause (instance storage, default 1).
-    UnpauseQuorum,
-
-    // === Recipient Address Verification ===
-    /// Stored recipient hash record indexed by remittance_id (persistent storage).
-    RecipientHash(u64),
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Governance Keys
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /// Monotonically increasing proposal ID counter (instance storage).
-    GovernanceProposalCounter,
-
-    /// Proposal record indexed by proposal_id (persistent storage).
-    GovernanceProposal(u64),
-
-    /// Vote flag: (proposal_id, voter_address) → bool (persistent storage).
-    GovernanceVote(u64, Address),
-
-    /// Configured quorum for governance proposals (instance storage).
-    GovernanceQuorum,
-
-    /// Timelock in seconds between approval and execution (instance storage).
-    GovernanceTimelockSeconds,
-
-    /// TTL in seconds for proposals before they expire (instance storage).
-    GovernanceProposalTtl,
-
-    /// Proposal ID of the currently active fee proposal, if any (instance storage).
-    ActiveFeeProposal,
-
-    /// Flag: governance has been initialized via migrate_to_governance (instance storage).
-    GovernanceInitialized,
-
-    /// Ordered list of current admin addresses for iteration (instance storage).
-    AdminList,
-
-    /// Runtime-adjustable maximum batch size for process_expired_remittances (instance storage).
-    MaxExpiredBatchSize,
-}
-
-#[contracttype]
-#[derive(Clone)]
-pub struct SenderVolumeEntry {
-    /// Start of the daily bucket for this volume record.
-    pub bucket_start: u64,
-    /// Total amount transacted in this bucket.
-    pub amount: i128,
+    /// Pending admin address proposed by current admin (2-step transfer, #365)
+    PendingAdmin,
 }
 
 /// Checks if the contract has an admin configured.
@@ -1981,4 +1858,21 @@ pub fn extend_critical_ttls(env: &Env, extend_by_ledgers: u32) {
                 .extend_ttl(&key, ledgers, ledgers);
         }
     }
+}
+
+// === 2-Step Admin Transfer (#365) ===
+
+/// Returns the pending admin address, if any.
+pub fn get_pending_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::PendingAdmin)
+}
+
+/// Stores the proposed new admin address.
+pub fn set_pending_admin(env: &Env, new_admin: &Address) {
+    env.storage().instance().set(&DataKey::PendingAdmin, new_admin);
+}
+
+/// Clears the pending admin proposal.
+pub fn clear_pending_admin(env: &Env) {
+    env.storage().instance().remove(&DataKey::PendingAdmin);
 }

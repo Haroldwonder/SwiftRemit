@@ -521,3 +521,33 @@ pub fn emit_migration_aborted(env: &Env, caller: Address) {
         (SCHEMA_VERSION, env.ledger().sequence(), caller),
     );
 }
+
+// ── Admin Transfer Events (#365) ───────────────────────────────────
+
+/// Emits an event when an admin proposes a new admin (step 1 of 2-step transfer).
+pub fn emit_admin_transfer_proposed(env: &Env, current_admin: Address, proposed_admin: Address) {
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("proposed")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            current_admin,
+            proposed_admin,
+        ),
+    );
+}
+
+/// Emits an event when the proposed admin accepts and becomes the new admin (step 2).
+pub fn emit_admin_transfer_accepted(env: &Env, old_admin: Address, new_admin: Address) {
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("accepted")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            old_admin,
+            new_admin,
+        ),
+    );
+}
