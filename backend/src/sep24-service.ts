@@ -11,6 +11,7 @@ import {
 import { AnchorKycConfig } from './types';
 import { cancelRemittanceOnChain } from './stellar';
 import { WebhookDispatcher } from './webhook-dispatcher';
+import { validateAnchorToml } from './anchor-toml-validator';
 
 /**
  * SEP-24 transaction types
@@ -89,6 +90,8 @@ export interface AnchorSep24Config {
   webhook_url?: string;
   polling_interval_minutes: number;
   timeout_minutes: number;
+  home_domain?: string;
+  signing_key?: string;
 }
 
 /**
@@ -181,6 +184,12 @@ export class Sep24Service {
    */
   async initialize(): Promise<void> {
     const kycConfigs = await getAnchorKycConfigs();
+
+    // Fetch anchor home_domain and public_key from DB for TOML validation
+    const anchorRows = await this.pool.query<{ id: string; home_domain: string | null; public_key: string | null }>(
+      'SELECT id, home_domain, public_key FROM anchors'
+    );
+    const anchorMeta = new Map(anchorRows.rows.map(r => [r.id, r]));
     
     // Load SEP-24 configurations from environment
     for (const config of kycConfigs) {
@@ -188,6 +197,7 @@ export class Sep24Service {
       const sepServerUrl = process.env[`SEP24_SERVER_${config.anchor_id.toUpperCase()}`] || config.kyc_server_url;
       
       if (sep24Enabled && sepServerUrl) {
+        const meta = anchorMeta.get(config.anchor_id);
         const anchorConfig: AnchorSep24Config = {
           anchor_id: config.anchor_id,
           sep_server_url: sepServerUrl,
@@ -196,6 +206,8 @@ export class Sep24Service {
           webhook_url: process.env[`SEP24_WEBHOOK_${config.anchor_id.toUpperCase()}`],
           polling_interval_minutes: parseInt(process.env[`SEP24_POLL_INTERVAL_${config.anchor_id.toUpperCase()}`] || '5'),
           timeout_minutes: parseInt(process.env[`SEP24_TIMEOUT_${config.anchor_id.toUpperCase()}`] || '30'),
+          home_domain: meta?.home_domain ?? undefined,
+          signing_key: meta?.public_key ?? undefined,
         };
         
         this.anchorConfigs.set(config.anchor_id, anchorConfig);
@@ -219,6 +231,18 @@ export class Sep24Service {
 
     if (!anchorConfig.sep24_enabled) {
       throw new Sep24ConfigError(`SEP-24 is not enabled for anchor ${anchor_id}`);
+    }
+
+    // Validate anchor TOML before initiating any flow (security check)
+    if (anchorConfig.home_domain && anchorConfig.signing_key) {
+      const tomlValid = await validateAnchorToml(anchorConfig.home_domain, anchorConfig.signing_key);
+      if (!tomlValid) {
+        throw new Sep24ConfigError(
+          `Anchor ${anchor_id} failed stellar.toml SIGNING_KEY validation — flow aborted`
+        );
+      }
+    } else {
+      console.warn(`Anchor ${anchor_id} has no home_domain/signing_key; skipping TOML validation`);
     }
 
     // Generate transaction ID

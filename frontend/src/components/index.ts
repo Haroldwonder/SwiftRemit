@@ -8,3 +8,5 @@ export type { TransactionProgressStatus } from './TransactionStatusTracker';
 export { TransactionHistory } from './TransactionHistory';
 export type { TransactionHistoryItem } from './TransactionHistory';
 export { KycStatusBadge } from './KycStatusBadge';
+export { ToastContainer, useToast } from './Toast';
+export type { ToastMessage, ToastType, UseToastReturn } from './Toast';
