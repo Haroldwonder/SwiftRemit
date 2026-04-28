@@ -9,6 +9,8 @@
  *   status {string}  - Filter by status: Pending | Processing | Completed | Cancelled (optional)
  *   page   {number}  - 1-based page number (default: 1)
  *   limit  {number}  - Items per page, max 100 (default: 20)
+ *
+ * The `memo` field is included in each remittance object when present (issue #538).
  */
 
 import { Router, Request, Response } from 'express';
@@ -23,6 +25,7 @@ export interface Remittance {
   amount: number;
   fee: number;
   status: RemittanceStatus;
+  memo?: string;
   created_at: string;
   updated_at: string;
 }

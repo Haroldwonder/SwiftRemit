@@ -632,3 +632,294 @@ fn test_query_governance_config_reflects_updates() {
     let config = client.query_governance_config();
     assert_eq!(config.timelock_seconds, 7200u64);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #540 — Additional governance tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Timelock enforcement ──────────────────────────────────────────────────────
+
+#[test]
+fn test_execute_at_exact_timelock_boundary_succeeds() {
+    let (env, client) = setup_env();
+    let admin = Address::generate(&env);
+    initialize(&env, &client, &admin);
+    client.migrate_to_governance(&admin, &1u32, &3600u64, &604_800u64);
+
+    let pid = client.propose(&admin, &ProposalAction::UpdateFee(100u32));
+    client.vote(&admin, &pid);
+
+    // Advance to exactly the timelock boundary (approved_at + 3600)
+    advance_time(&env, 3600);
+    client.execute(&admin, &pid);
+
+    let proposal = client.get_proposal(&pid);
+    assert_eq!(proposal.state, ProposalState::Executed);
+}
+
+#[test]
+fn test_execute_one_second_before_timelock_rejected() {
+    let (env, client) = setup_env();
+    let admin = Address::generate(&env);
+    initialize(&env, &client, &admin);
+    client.migrate_to_governance(&admin, &1u32, &3600u64, &604_800u64);
+
+    let pid = client.propose(&admin, &ProposalAction::UpdateFee(100u32));
+    client.vote(&admin, &pid);
+
+    // One second short of the timelock
+    advance_time(&env, 3599);
+    let result = client.try_execute(&admin, &pid);
+    assert_eq!(result, Err(Ok(ContractError::TimelockNotElapsed)));
+}
+
+// ── Proposal expiry ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_vote_on_expired_proposal_rejected() {
+    let (env, client) = setup_env();
+    let admin = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    initialize(&env, &client, &admin);
+    // quorum=2 so the proposal stays Pending after one vote
+    client.migrate_to_governance(&admin, &1u32, &0u64, &604_800u64);
+
+    // Add second admin and raise quorum to 2
+    let pid0 = client.propose(&admin, &ProposalAction::AddAdmin(admin2.clone()));
+    client.vote(&admin, &pid0);
+    client.execute(&admin, &pid0);
+
+    let pid1 = client.propose(&admin, &ProposalAction::UpdateQuorum(2u32));
+    client.vote(&admin, &pid1);
+    client.vote(&admin2, &pid1);
+    client.execute(&admin, &pid1);
+
+    // Short TTL
+    let pid2 = client.propose(&admin, &ProposalAction::UpdateFee(100u32));
+    // Expire the proposal by advancing past the TTL
+    advance_time(&env, 604_801);
+    client.expire_proposal(&pid2);
+
+    // Voting on an expired proposal should fail
+    let result = client.try_vote(&admin2, &pid2);
+    assert_eq!(result, Err(Ok(ContractError::InvalidProposalState)));
+}
+
+#[test]
+fn test_execute_expired_proposal_rejected() {
+    let (env, client) = setup_env();
+    let admin = Address::generate(&env);
+    initialize(&env, &client, &admin);
+    client.migrate_to_governance(&admin, &1u32, &0u64, &100u64);
+
+    let pid = client.propose(&admin, &ProposalAction::UpdateFee(100u32));
+    client.vote(&admin, &pid);
+
+    // Advance past TTL and expire
+    advance_time(&env, 101);
+    client.expire_proposal(&pid);
+
+    // Execute on expired proposal should fail
+    let result = client.try_execute(&admin, &pid);
+    assert_eq!(result, Err(Ok(ContractError::InvalidProposalState)));
+}
+
+// ── Quorum edge cases ─────────────────────────────────────────────────────────
+
+#[test]
+fn test_quorum_exactly_at_threshold_executes() {
+    let (env, client) = setup_env();
+    let admin = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    let admin3 = Address::generate(&env);
+    initialize(&env, &client, &admin);
+    client.migrate_to_governance(&admin, &1u32, &0u64, &604_800u64);
+
+    // Add two more admins
+    let pid1 = client.propose(&admin, &ProposalAction::AddAdmin(admin2.clone()));
+    client.vote(&admin, &pid1);
+    client.execute(&admin, &pid1);
+
+    let pid2 = client.propose(&admin, &ProposalAction::AddAdmin(admin3.clone()));
+    client.vote(&admin, &pid2);
+    client.execute(&admin, &pid2);
+
+    // Set quorum to 2 (threshold)
+    let pid3 = client.propose(&admin, &ProposalAction::UpdateQuorum(2u32));
+    client.vote(&admin, &pid3);
+    client.execute(&admin, &pid3);
+
+    // Proposal needs exactly 2 votes
+    let pid4 = client.propose(&admin, &ProposalAction::UpdateFee(300u32));
+    client.vote(&admin, &pid4);
+
+    // After 1 vote, still Pending
+    let p = client.get_proposal(&pid4);
+    assert_eq!(p.state, ProposalState::Pending);
+
+    // Second vote reaches quorum exactly
+    client.vote(&admin2, &pid4);
+    let p2 = client.get_proposal(&pid4);
+    assert_eq!(p2.state, ProposalState::Approved);
+
+    client.execute(&admin, &pid4);
+    let p3 = client.get_proposal(&pid4);
+    assert_eq!(p3.state, ProposalState::Executed);
+}
+
+#[test]
+fn test_quorum_one_below_threshold_does_not_execute() {
+    let (env, client) = setup_env();
+    let admin = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    let admin3 = Address::generate(&env);
+    initialize(&env, &client, &admin);
+    client.migrate_to_governance(&admin, &1u32, &0u64, &604_800u64);
+
+    // Add two more admins
+    let pid1 = client.propose(&admin, &ProposalAction::AddAdmin(admin2.clone()));
+    client.vote(&admin, &pid1);
+    client.execute(&admin, &pid1);
+
+    let pid2 = client.propose(&admin, &ProposalAction::AddAdmin(admin3.clone()));
+    client.vote(&admin, &pid2);
+    client.execute(&admin, &pid2);
+
+    // Set quorum to 3 (all admins must vote)
+    let pid3 = client.propose(&admin, &ProposalAction::UpdateQuorum(3u32));
+    client.vote(&admin, &pid3);
+    client.execute(&admin, &pid3);
+
+    // Proposal with only 2 votes (quorum - 1) stays Pending
+    let pid4 = client.propose(&admin, &ProposalAction::UpdateFee(400u32));
+    client.vote(&admin, &pid4);
+    client.vote(&admin2, &pid4);
+
+    let p = client.get_proposal(&pid4);
+    assert_eq!(p.state, ProposalState::Pending);
+
+    // Execute should fail — not yet Approved
+    let result = client.try_execute(&admin, &pid4);
+    assert_eq!(result, Err(Ok(ContractError::InvalidProposalState)));
+}
+
+// ── Admin removal via governance ──────────────────────────────────────────────
+
+#[test]
+fn test_remove_admin_via_governance_proposal() {
+    let (env, client) = setup_env();
+    let admin = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    initialize(&env, &client, &admin);
+    client.migrate_to_governance(&admin, &1u32, &0u64, &604_800u64);
+
+    // Add admin2 via governance
+    let pid1 = client.propose(&admin, &ProposalAction::AddAdmin(admin2.clone()));
+    client.vote(&admin, &pid1);
+    client.execute(&admin, &pid1);
+    assert!(client.is_admin(&admin2));
+    assert_eq!(client.get_admin_count(), 2u32);
+
+    // Remove admin2 via governance (not direct remove_agent)
+    let pid2 = client.propose(&admin, &ProposalAction::RemoveAdmin(admin2.clone()));
+    client.vote(&admin, &pid2);
+    client.execute(&admin, &pid2);
+
+    assert!(!client.is_admin(&admin2));
+    assert_eq!(client.get_admin_count(), 1u32);
+
+    // admin2 can no longer propose
+    let result = client.try_propose(&admin2, &ProposalAction::UpdateFee(100u32));
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn test_remove_admin_below_quorum_rejected() {
+    let (env, client) = setup_env();
+    let admin = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    initialize(&env, &client, &admin);
+    client.migrate_to_governance(&admin, &1u32, &0u64, &604_800u64);
+
+    // Add admin2
+    let pid1 = client.propose(&admin, &ProposalAction::AddAdmin(admin2.clone()));
+    client.vote(&admin, &pid1);
+    client.execute(&admin, &pid1);
+
+    // Raise quorum to 2 — now removing either admin would drop count below quorum
+    let pid2 = client.propose(&admin, &ProposalAction::UpdateQuorum(2u32));
+    client.vote(&admin, &pid2);
+    client.vote(&admin2, &pid2);
+    client.execute(&admin, &pid2);
+
+    // Attempting to remove admin2 would leave count=1 < quorum=2
+    let result = client.try_propose(&admin, &ProposalAction::RemoveAdmin(admin2.clone()));
+    assert_eq!(result, Err(Ok(ContractError::InsufficientAdmins)));
+}
+
+// ── Re-vote prevention ────────────────────────────────────────────────────────
+
+#[test]
+fn test_same_admin_cannot_vote_twice_on_same_proposal() {
+    let (env, client) = setup_env();
+    let admin = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    initialize(&env, &client, &admin);
+    client.migrate_to_governance(&admin, &1u32, &0u64, &604_800u64);
+
+    // Add admin2 and raise quorum to 2 so proposal stays Pending after first vote
+    let pid0 = client.propose(&admin, &ProposalAction::AddAdmin(admin2.clone()));
+    client.vote(&admin, &pid0);
+    client.execute(&admin, &pid0);
+
+    let pid1 = client.propose(&admin, &ProposalAction::UpdateQuorum(2u32));
+    client.vote(&admin, &pid1);
+    client.vote(&admin2, &pid1);
+    client.execute(&admin, &pid1);
+
+    let pid2 = client.propose(&admin, &ProposalAction::UpdateFee(500u32));
+    client.vote(&admin, &pid2);
+
+    // Same admin votes again — must fail
+    let result = client.try_vote(&admin, &pid2);
+    assert_eq!(result, Err(Ok(ContractError::AlreadyVoted)));
+
+    // Proposal approval_count must still be 1
+    let p = client.get_proposal(&pid2);
+    assert_eq!(p.approval_count, 1u32);
+}
+
+#[test]
+fn test_different_admins_can_each_vote_once() {
+    let (env, client) = setup_env();
+    let admin = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    let admin3 = Address::generate(&env);
+    initialize(&env, &client, &admin);
+    client.migrate_to_governance(&admin, &1u32, &0u64, &604_800u64);
+
+    // Add two more admins
+    let pid1 = client.propose(&admin, &ProposalAction::AddAdmin(admin2.clone()));
+    client.vote(&admin, &pid1);
+    client.execute(&admin, &pid1);
+
+    let pid2 = client.propose(&admin, &ProposalAction::AddAdmin(admin3.clone()));
+    client.vote(&admin, &pid2);
+    client.execute(&admin, &pid2);
+
+    // Set quorum to 3
+    let pid3 = client.propose(&admin, &ProposalAction::UpdateQuorum(3u32));
+    client.vote(&admin, &pid3);
+    client.execute(&admin, &pid3);
+
+    let pid4 = client.propose(&admin, &ProposalAction::UpdateFee(200u32));
+
+    // Each admin votes once — should succeed
+    client.vote(&admin, &pid4);
+    client.vote(&admin2, &pid4);
+    client.vote(&admin3, &pid4);
+
+    let p = client.get_proposal(&pid4);
+    assert_eq!(p.state, ProposalState::Approved);
+    assert_eq!(p.approval_count, 3u32);
+}

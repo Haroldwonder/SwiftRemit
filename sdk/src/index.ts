@@ -1,4 +1,5 @@
 export { SwiftRemitClient, MAX_BATCH_SIZE } from "./client.js";
+export { SwiftRemitError, ErrorCode, parseContractError } from "./errors.js";
 export type {
   SwiftRemitClientOptions,
   Remittance,

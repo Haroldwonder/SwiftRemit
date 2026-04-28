@@ -510,3 +510,155 @@ proptest! {
         prop_assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #540 — Property tests for quorum invariants
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── P19: Exactly Q votes always transitions to Approved, Q-1 never does ──────
+
+proptest! {
+    #[test]
+    fn prop_quorum_boundary_approved_vs_pending(extra_admins in 1usize..=3usize) {
+        // Feature: multi-admin-dao-governance
+        // Property 19: exactly Q votes → Approved; Q-1 votes → Pending
+        let env = make_env();
+        let (client, admin) = make_client(&env);
+
+        let mut all_admins: std::vec::Vec<Address> = std::vec![admin.clone()];
+        for _ in 0..extra_admins {
+            let a = Address::generate(&env);
+            let pid = client.propose(&admin, &ProposalAction::AddAdmin(a.clone()));
+            client.vote(&admin, &pid);
+            client.execute(&admin, &pid);
+            all_admins.push(a);
+        }
+
+        let q = all_admins.len() as u32;
+        // Set quorum to total admin count
+        let pid_q = client.propose(&admin, &ProposalAction::UpdateQuorum(q));
+        for a in &all_admins {
+            client.vote(a, &pid_q);
+        }
+        client.execute(&admin, &pid_q);
+
+        // Create a proposal and cast Q-1 votes — must stay Pending
+        let pid = client.propose(&admin, &ProposalAction::UpdateTimelock(42u64));
+        for a in all_admins.iter().take(all_admins.len() - 1) {
+            client.vote(a, &pid);
+        }
+        let p_before = client.get_proposal(&pid);
+        prop_assert_eq!(p_before.state, ProposalState::Pending);
+
+        // Cast the Q-th vote — must transition to Approved
+        client.vote(all_admins.last().unwrap(), &pid);
+        let p_after = client.get_proposal(&pid);
+        prop_assert_eq!(p_after.state, ProposalState::Approved);
+    }
+}
+
+// ── P20: Admin count never drops below quorum after RemoveAdmin ───────────────
+
+proptest! {
+    #[test]
+    fn prop_admin_count_never_below_quorum(extra_admins in 1usize..=3usize) {
+        // Feature: multi-admin-dao-governance
+        // Property 20: admin_count >= quorum invariant holds after any RemoveAdmin
+        let env = make_env();
+        let (client, admin) = make_client(&env);
+
+        let mut all_admins: std::vec::Vec<Address> = std::vec![admin.clone()];
+        for _ in 0..extra_admins {
+            let a = Address::generate(&env);
+            let pid = client.propose(&admin, &ProposalAction::AddAdmin(a.clone()));
+            client.vote(&admin, &pid);
+            client.execute(&admin, &pid);
+            all_admins.push(a);
+        }
+
+        // Remove admins one by one (keeping quorum=1 so removal is always valid)
+        // We can remove all but the original admin
+        for a in all_admins.iter().skip(1) {
+            let pid = client.propose(&admin, &ProposalAction::RemoveAdmin(a.clone()));
+            client.vote(&admin, &pid);
+            client.execute(&admin, &pid);
+
+            let count = client.get_admin_count();
+            let quorum = client.get_quorum();
+            prop_assert!(count >= quorum, "admin_count {} < quorum {}", count, quorum);
+            prop_assert!(count >= 1);
+        }
+    }
+}
+
+// ── P21: Timelock prevents execution until elapsed ────────────────────────────
+
+proptest! {
+    #[test]
+    fn prop_timelock_blocks_early_execution(timelock in 1u64..=3600u64) {
+        // Feature: multi-admin-dao-governance
+        // Property 21: execute before timelock → TimelockNotElapsed; after → succeeds
+        let env = make_env();
+        let contract_id = env.register_contract(None, SwiftRemitContract);
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let token = Address::generate(&env);
+        client.initialize(&admin, &token, &30u32, &0u32, &admin, &0u32);
+        client.migrate_to_governance(&admin, &1u32, &timelock, &604_800u64);
+
+        let pid = client.propose(&admin, &ProposalAction::UpdateFee(100u32));
+        client.vote(&admin, &pid);
+
+        // One second before timelock — must fail
+        advance(&env, timelock - 1);
+        let r = client.try_execute(&admin, &pid);
+        prop_assert_eq!(r, Err(Ok(ContractError::TimelockNotElapsed)));
+
+        // Advance to exactly the boundary — must succeed
+        advance(&env, 1);
+        client.execute(&admin, &pid);
+        let p = client.get_proposal(&pid);
+        prop_assert_eq!(p.state, ProposalState::Approved); // state is set to Executed after execute
+        // Re-read to confirm Executed
+        let p2 = client.get_proposal(&pid);
+        prop_assert_eq!(p2.state, ProposalState::Executed);
+    }
+}
+
+// ── P22: Double-vote invariant across arbitrary admin counts ──────────────────
+
+proptest! {
+    #[test]
+    fn prop_double_vote_always_rejected_multi_admin(extra in 1usize..=3usize) {
+        // Feature: multi-admin-dao-governance
+        // Property 22: any admin voting twice on the same proposal → AlreadyVoted
+        let env = make_env();
+        let (client, admin) = make_client(&env);
+
+        let mut all_admins: std::vec::Vec<Address> = std::vec![admin.clone()];
+        for _ in 0..extra {
+            let a = Address::generate(&env);
+            let pid = client.propose(&admin, &ProposalAction::AddAdmin(a.clone()));
+            client.vote(&admin, &pid);
+            client.execute(&admin, &pid);
+            all_admins.push(a);
+        }
+
+        // Set quorum to total so proposal stays Pending while we test double-vote
+        let q = all_admins.len() as u32;
+        let pid_q = client.propose(&admin, &ProposalAction::UpdateQuorum(q));
+        for a in &all_admins {
+            client.vote(a, &pid_q);
+        }
+        client.execute(&admin, &pid_q);
+
+        let pid = client.propose(&admin, &ProposalAction::UpdateTimelock(99u64));
+
+        // Each admin votes once, then tries again — second vote must always fail
+        for a in &all_admins {
+            client.vote(a, &pid);
+            let result = client.try_vote(a, &pid);
+            prop_assert_eq!(result, Err(Ok(ContractError::AlreadyVoted)));
+        }
+    }
+}

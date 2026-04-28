@@ -20,6 +20,7 @@ import type {
   GovernanceConfig,
   DailyLimitStatus,
 } from "./types.js";
+import { parseContractError } from "./errors.js";
 import {
   parseRemittance,
   parseAgentStats,
@@ -78,6 +79,8 @@ export class SwiftRemitClient {
 
     const simResult = await this.server.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(simResult)) {
+      const typed = parseContractError(simResult.error);
+      if (typed) throw typed;
       throw new Error(`Simulation failed: ${simResult.error}`);
     }
     return SorobanRpc.assembleTransaction(tx, simResult).build();
@@ -106,7 +109,10 @@ export class SwiftRemitClient {
     }
 
     if (getResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
-      throw new Error(`Transaction failed: ${JSON.stringify(getResult)}`);
+      const raw = JSON.stringify(getResult);
+      const typed = parseContractError(raw);
+      if (typed) throw typed;
+      throw new Error(`Transaction failed: ${raw}`);
     }
     return getResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
   }
@@ -134,6 +140,8 @@ export class SwiftRemitClient {
       this.retryBackoffFactor
     );
     if (SorobanRpc.Api.isSimulationError(sim)) {
+      const typed = parseContractError(sim.error);
+      if (typed) throw typed;
       throw new Error(`Simulation failed: ${sim.error}`);
     }
     const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse)

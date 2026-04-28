@@ -311,13 +311,13 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
               id="memo"
               type="text"
               value={memo}
-              onChange={(event) => setMemo(event.target.value.slice(0, 100))}
+              onChange={(event) => setMemo(event.target.value.slice(0, 28))}
               placeholder={t('sendMoney.memoPlaceholder')}
-              maxLength={100}
+              maxLength={28}
               aria-describedby="memo-count"
             />
             <span id="memo-count" className="flow-char-count" aria-live="polite">
-              {memo.length}/100
+              {memo.length}/28
             </span>
           </label>
         </>
@@ -345,7 +345,7 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
               <dd>{memo.trim()}</dd>
             </div>
           )}
-        </>
+        </dl>
       );
     }
 

@@ -1,0 +1,23 @@
+# Local secrets override — copy and fill in real values.
+# This file is gitignored and takes precedence over docker-compose.yml.
+#
+# Usage:
+#   cp docker-compose.override.yml docker-compose.override.local.yml
+#   # edit docker-compose.override.local.yml with real secrets
+#   docker compose -f docker-compose.yml -f docker-compose.override.local.yml up
+
+version: "3.9"
+
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: change_me_in_local_override
+
+  backend:
+    environment:
+      ADMIN_SECRET: ""
+      AGENT_SECRET: ""
+
+  api:
+    environment:
+      JWT_SECRET: change_me_in_local_override
