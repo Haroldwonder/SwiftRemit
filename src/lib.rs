@@ -1006,7 +1006,7 @@ impl SwiftRemitContract {
         }
 
         set_remittance(&env, remittance_id, &remittance);
-        emit_dispute_resolved(&env, remittance_id, in_favour_of_sender);
+        emit_dispute_resolved(&env, remittance_id, caller, in_favour_of_sender);
         Ok(())
     }
 

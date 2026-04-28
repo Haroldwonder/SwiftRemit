@@ -2,13 +2,6 @@ import { Router, Request, Response } from 'express';
 import { ErrorResponse } from '../types';
 import { Pool } from 'pg';
 import { AdminConfirmationService, HighRiskOperation } from '../../../backend/src/admin-confirmation';
-import {
-  registerAgentSchema,
-  updateFeeSchema,
-  setDailyLimitSchema,
-  withdrawFeesSchema,
-  validateRequest,
-} from './schemas/requestValidation';
 
 function timestamp(): string {
   return new Date().toISOString();
@@ -108,29 +101,6 @@ function getConfirmationService(): AdminConfirmationService | null {
   if (!dbUrl) return null;
   const pool = new Pool({ connectionString: dbUrl });
   return new AdminConfirmationService(pool);
-}
-
-/**
- * Validate operation parameters based on operation type
- */
-function validateOperationParams(
-  operation: HighRiskOperation,
-  params: unknown,
-): { error: string; details: string[] } | null {
-  if (!params || typeof params !== 'object') {
-    return { error: 'params must be an object', details: [] };
-  }
-
-  switch (operation) {
-    case 'withdraw_fees':
-      return validateRequest(params, withdrawFeesSchema);
-    case 'remove_agent':
-      return validateRequest(params, registerAgentSchema);
-    case 'update_fee':
-      return validateRequest(params, updateFeeSchema);
-    default:
-      return null;
-  }
 }
 
 export function createAdminRouter(): Router {
@@ -266,12 +236,6 @@ export function createAdminRouter(): Router {
     }
     if (typeof initiated_by !== 'string' || !initiated_by) {
       return sendError(res, 400, 'initiated_by is required', 'MISSING_FIELD');
-    }
-
-    // Validate params based on operation type
-    const validationError = validateOperationParams(operation as HighRiskOperation, params);
-    if (validationError) {
-      return sendError(res, 400, validationError.error, 'VALIDATION_FAILED');
     }
 
     const svc = getConfirmationService();

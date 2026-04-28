@@ -2,38 +2,52 @@ import { useState, useEffect, useCallback } from 'react'
 
 const AUTO_REFRESH_MS = 60_000
 
+const PAUSE_REASON_LABELS = {
+  SecurityIncident: 'Security Incident',
+  SuspiciousActivity: 'Suspicious Activity',
+  MaintenanceWindow: 'Maintenance Window',
+  ExternalThreat: 'External Threat',
+}
+
 /**
  * ContractHealth widget — polls the contract's health() function and displays
  * initialized status, pause state, admin count, total remittances, and
  * accumulated fees. Includes a withdraw fees button for admins.
+ *
+ * Props:
+ *   walletAddress  — connected wallet address (optional)
+ *   contractId     — deployed contract ID
+ *   onPausedChange — callback(isPaused: boolean) fired whenever pause state changes
  */
-export default function ContractHealth({ walletAddress, contractId }) {
+export default function ContractHealth({ walletAddress, contractId, onPausedChange }) {
   const [health, setHealth] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [lastChecked, setLastChecked] = useState(null)
   const [withdrawing, setWithdrawing] = useState(false)
   const [withdrawResult, setWithdrawResult] = useState(null)
+  const [bannerDismissed, setBannerDismissed] = useState(false)
 
   const fetchHealth = useCallback(async () => {
     if (!contractId) return
     setLoading(true)
     setError(null)
     try {
-      // In a real integration this would call the contract via Soroban RPC.
-      // Here we use the REST API proxy if available, otherwise show a placeholder.
       const apiBase = import.meta.env.VITE_API_URL || ''
       const res = await fetch(`${apiBase}/api/contract/health?contractId=${encodeURIComponent(contractId)}`)
       if (!res.ok) throw new Error(`Health check failed: ${res.status}`)
       const data = await res.json()
       setHealth(data)
       setLastChecked(new Date())
+      // Re-show banner on next poll if still paused
+      if (data.paused) setBannerDismissed(false)
+      onPausedChange?.(data.paused)
     } catch (err) {
       setError(err.message || 'Failed to fetch contract health')
     } finally {
       setLoading(false)
     }
-  }, [contractId])
+  }, [contractId, onPausedChange])
 
   // Initial fetch + auto-refresh every 60 s
   useEffect(() => {
@@ -73,8 +87,56 @@ export default function ContractHealth({ walletAddress, contractId }) {
     )
   }
 
+  const pauseReasonLabel = health?.pause_reason
+    ? (PAUSE_REASON_LABELS[health.pause_reason] ?? health.pause_reason)
+    : null
+
   return (
     <div className="panel">
+      {/* Prominent pause banner — shown outside the panel when paused and not dismissed */}
+      {health?.paused && !bannerDismissed && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            padding: '14px 18px',
+            marginBottom: '16px',
+            borderRadius: '8px',
+            background: '#fef2f2',
+            border: '2px solid #ef4444',
+            color: '#b91c1c',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '1.4rem' }}>🔴</span>
+            <div>
+              <strong>Service temporarily paused{pauseReasonLabel ? `: ${pauseReasonLabel}` : ''}</strong>
+              <p style={{ margin: '2px 0 0', fontSize: '0.85rem' }}>
+                Transaction submission is disabled until the service resumes.
+              </p>
+            </div>
+          </div>
+          <button
+            aria-label="Dismiss pause banner"
+            onClick={() => setBannerDismissed(true)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '1.2rem',
+              color: '#b91c1c',
+              flexShrink: 0,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2>Contract Health</h2>
         <button
@@ -112,7 +174,9 @@ export default function ContractHealth({ walletAddress, contractId }) {
               </strong>
               {health.paused && (
                 <p style={{ margin: 0, fontSize: '0.85rem', color: '#b91c1c' }}>
-                  All operations are temporarily disabled.
+                  {pauseReasonLabel
+                    ? `Reason: ${pauseReasonLabel}. All operations are temporarily disabled.`
+                    : 'All operations are temporarily disabled.'}
                 </p>
               )}
             </div>
@@ -132,7 +196,7 @@ export default function ContractHealth({ walletAddress, contractId }) {
         <div style={{ marginTop: '16px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             onClick={handleWithdrawFees}
-            disabled={withdrawing || !walletAddress || !health.accumulated_fees}
+            disabled={withdrawing || !walletAddress || !health.accumulated_fees || health.paused}
             className="btn-primary"
           >
             {withdrawing ? 'Withdrawing…' : 'Withdraw Fees'}

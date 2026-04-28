@@ -56,6 +56,11 @@ pub enum RemittanceStatus {
 
 impl RemittanceStatus {
     /// Returns `true` if this is a terminal state (no further transitions allowed).
+    ///
+    /// `Failed` and `Disputed` are intentionally excluded — they are transient states
+    /// from which further transitions are permitted (`Failed → Disputed`,
+    /// `Disputed → Completed | Cancelled` via `resolve_dispute`).
+    /// Only `Completed` and `Cancelled` are truly terminal.
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
