@@ -704,9 +704,27 @@ describe('Dispute resolution flow', () => {
   const TX_ID = 'tx-dispute-001';
   const USER_ID = 'user-dispute';
 
+  function seedCreatedWithdrawal() {
+    seedTransaction({
+      transaction_id: TX_ID,
+      kind: 'withdrawal',
+      status: 'pending_anchor',
+      amount_in: '100.00',
+      amount_out: '97.50',
+      amount_fee: '2.50',
+    });
+  }
+
   // Helper: seed a transaction in Failed state (simulates mark_failed having run)
   function seedFailed() {
-    seedTransaction({ transaction_id: TX_ID, kind: 'withdrawal', status: 'failed' });
+    seedTransaction({
+      transaction_id: TX_ID,
+      kind: 'withdrawal',
+      status: 'failed',
+      amount_in: '100.00',
+      amount_out: '97.50',
+      amount_fee: '2.50',
+    });
   }
 
   // ── mark_failed ─────────────────────────────────────────────────────────────
@@ -761,14 +779,23 @@ describe('Dispute resolution flow', () => {
 
   // ── resolve_dispute — sender wins ───────────────────────────────────────────
 
-  it('admin resolves dispute in favour of sender — sender receives full refund', async () => {
-    seedFailed();
-    // Transition to disputed first
+  it('covers the sender refund lifecycle from creation to dispute resolution', async () => {
+    seedCreatedWithdrawal();
+
+    const failRes = await sendWebhook({
+      event_type: 'withdrawal_update',
+      transaction_id: TX_ID,
+      status: 'error',
+      message: 'Payout failed before dispute',
+    });
+
+    expect(failRes.status).toBe(200);
+    expect(db.tx.get(TX_ID)?.status).toBe('error');
+
+    // Simulate the contract-side raise_dispute transition after the failed payout.
     db.tx.set(TX_ID, {
       ...db.tx.get(TX_ID)!,
       status: 'disputed',
-      amount_in: '100.00',
-      amount_fee: '2.50',
     });
 
     const res = await sendWebhook({
@@ -780,21 +807,31 @@ describe('Dispute resolution flow', () => {
     });
 
     expect(res.status).toBe(200);
-    // After sender-wins resolution the remittance is refunded/cancelled
     const tx = db.tx.get(TX_ID);
     expect(['refunded', 'cancelled', 'resolved_sender']).toContain(tx?.status);
+    expect(tx?.amount_in).toBe('100.00');
+    expect(tx?.amount_fee).toBe('2.50');
   });
 
   // ── resolve_dispute — agent wins ────────────────────────────────────────────
 
-  it('admin resolves dispute in favour of agent — agent receives net amount', async () => {
-    seedFailed();
+  it('covers the agent payout lifecycle from creation to dispute resolution', async () => {
+    seedCreatedWithdrawal();
+
+    const failRes = await sendWebhook({
+      event_type: 'withdrawal_update',
+      transaction_id: TX_ID,
+      status: 'error',
+      message: 'Payout failed before dispute',
+    });
+
+    expect(failRes.status).toBe(200);
+    expect(db.tx.get(TX_ID)?.status).toBe('error');
+
+    // Simulate the contract-side raise_dispute transition after the failed payout.
     db.tx.set(TX_ID, {
       ...db.tx.get(TX_ID)!,
       status: 'disputed',
-      amount_in: '100.00',
-      amount_out: '97.50',
-      amount_fee: '2.50',
     });
 
     const res = await sendWebhook({
@@ -808,6 +845,8 @@ describe('Dispute resolution flow', () => {
     expect(res.status).toBe(200);
     const tx = db.tx.get(TX_ID);
     expect(['completed', 'resolved_agent']).toContain(tx?.status);
+    expect(tx?.amount_out).toBe('97.50');
+    expect(tx?.amount_fee).toBe('2.50');
   });
 
   // ── non-admin resolve attempt ────────────────────────────────────────────────

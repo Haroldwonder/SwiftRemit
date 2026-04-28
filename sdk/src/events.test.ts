@@ -4,6 +4,7 @@ import { xdr, scValToNative } from "@stellar/stellar-sdk";
 
 // Minimal mock of SorobanRpc.Server
 const mockGetEvents = vi.fn();
+const mockServerConstructor = vi.fn();
 
 vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@stellar/stellar-sdk")>();
@@ -12,6 +13,9 @@ vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
     SorobanRpc: {
       ...actual.SorobanRpc,
       Server: class {
+        constructor(...args: unknown[]) {
+          mockServerConstructor(...args);
+        }
         getEvents = mockGetEvents;
         getAccount = vi.fn();
         simulateTransaction = vi.fn();
@@ -48,6 +52,32 @@ describe("subscribeToRemittanceEvents", () => {
       networkPassphrase: "Test SDF Network ; September 2015",
       rpcUrl: "https://soroban-testnet.stellar.org",
     });
+  });
+
+  it("disables allowHttp for non-local HTTPS endpoints", () => {
+    expect(mockServerConstructor).toHaveBeenCalledWith(
+      "https://soroban-testnet.stellar.org",
+      { allowHttp: false }
+    );
+  });
+
+  it("allows localhost HTTP endpoints and warns once", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    new SwiftRemitClient({
+      contractId: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      networkPassphrase: "Test SDF Network ; September 2015",
+      rpcUrl: "http://localhost:8000",
+    });
+
+    expect(mockServerConstructor).toHaveBeenLastCalledWith(
+      "http://localhost:8000",
+      { allowHttp: true }
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Using insecure HTTP RPC connection")
+    );
+    warnSpy.mockRestore();
   });
 
   it("returns an unsubscribe function", () => {

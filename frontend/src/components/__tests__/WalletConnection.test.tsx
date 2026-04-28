@@ -11,11 +11,13 @@ vi.mock('@stellar/freighter-api', () => ({
 }));
 
 const MOCK_PUBLIC_KEY = 'GBZXN7PIRZGNMHGAU2LYGAZGQG4RYSQ3TB2T6O3COVGW6OLBDEQ2COFQ';
+const STORAGE_KEY = 'swiftremit_wallet_address';
 
 describe('WalletConnection', () => {
   beforeEach(() => {
     // Reset all mocks before each test
     vi.clearAllMocks();
+    localStorage.clear();
     
     // Default: Freighter is installed
     window.freighter = {
@@ -91,6 +93,10 @@ describe('WalletConnection', () => {
       await waitFor(() => {
         expect(screen.getByText(/GBZXN7...Q2COFQ/)).toBeInTheDocument();
         expect(screen.getByText(/connected public key/i)).toBeInTheDocument();
+      });
+
+      expect(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')).toMatchObject({
+        publicKey: MOCK_PUBLIC_KEY,
       });
     });
 
@@ -308,12 +314,16 @@ describe('WalletConnection', () => {
         expect(screen.getByText(/GBZXN7...Q2COFQ/)).toBeInTheDocument();
       });
 
+      expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
+
       fireEvent.click(screen.getByRole('button', { name: /disconnect/i }));
 
       await waitFor(() => {
         expect(screen.getByText(/not connected/i)).toBeInTheDocument();
         expect(screen.queryByText(/GBZXN7...Q2COFQ/)).not.toBeInTheDocument();
       });
+
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
     });
 
     it('shows disconnecting state', async () => {
@@ -488,6 +498,45 @@ describe('WalletConnection', () => {
       await waitFor(() => {
         expect(screen.getByText('SHORTKEY')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('session persistence', () => {
+    it('restores a fresh stored session', async () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          publicKey: MOCK_PUBLIC_KEY,
+          storedAt: Date.now(),
+        })
+      );
+      vi.mocked(freighterApi.isConnected).mockResolvedValue({ isConnected: true });
+      vi.mocked(freighterApi.getAddress).mockResolvedValue({ address: MOCK_PUBLIC_KEY });
+      vi.mocked(freighterApi.getNetwork).mockResolvedValue({ network: 'TESTNET', networkPassphrase: 'Test SDF Network ; September 2015' });
+
+      render(<WalletConnection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('GBZXN7...Q2COFQ')).toBeInTheDocument();
+      });
+    });
+
+    it('drops expired stored sessions before reconnecting', async () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          publicKey: MOCK_PUBLIC_KEY,
+          storedAt: Date.now() - 10_000,
+        })
+      );
+
+      render(<WalletConnection storageTtlMs={1_000} />);
+
+      await waitFor(() => {
+        expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+      });
+      expect(screen.getByText(/not connected/i)).toBeInTheDocument();
+      expect(freighterApi.isConnected).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,16 +1,82 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
-export default function DisputeResolution() {
-  const [disputes, setDisputes] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [auditLog, setAuditLog] = useState([]);
-  const [resolving, setResolving] = useState(null); // { id, favour }
-  const [confirmOpen, setConfirmOpen] = useState(null); // { id, inFavourOfSender }
+interface DisputeItem {
+  id: string | number;
+  sender: string;
+  agent: string;
+  amount: string | number;
+  created_at?: string | null;
+  evidence_hash?: string | null;
+}
 
-  useEffect(() => { fetchDisputes(); fetchAuditLog(); }, []);
+interface AuditLogItem {
+  remittance_id: string | number;
+  resolved_at?: string | null;
+  in_favour_of_sender: boolean;
+  resolved_by?: string | null;
+}
+
+interface ConfirmState {
+  id: string | number;
+  inFavourOfSender: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isDisputeItem(value: unknown): value is DisputeItem {
+  return (
+    isRecord(value) &&
+    (typeof value.id === 'string' || typeof value.id === 'number') &&
+    typeof value.sender === 'string' &&
+    typeof value.agent === 'string' &&
+    (typeof value.amount === 'string' || typeof value.amount === 'number') &&
+    (value.created_at === undefined || value.created_at === null || typeof value.created_at === 'string') &&
+    (value.evidence_hash === undefined || value.evidence_hash === null || typeof value.evidence_hash === 'string')
+  );
+}
+
+function isAuditLogItem(value: unknown): value is AuditLogItem {
+  return (
+    isRecord(value) &&
+    (typeof value.remittance_id === 'string' || typeof value.remittance_id === 'number') &&
+    typeof value.in_favour_of_sender === 'boolean' &&
+    (value.resolved_at === undefined || value.resolved_at === null || typeof value.resolved_at === 'string') &&
+    (value.resolved_by === undefined || value.resolved_by === null || typeof value.resolved_by === 'string')
+  );
+}
+
+function parseDisputesResponse(value: unknown): DisputeItem[] {
+  if (!Array.isArray(value) || !value.every(isDisputeItem)) {
+    throw new Error('Invalid disputes response');
+  }
+
+  return value;
+}
+
+function parseAuditLogResponse(value: unknown): AuditLogItem[] {
+  if (!Array.isArray(value) || !value.every(isAuditLogItem)) {
+    throw new Error('Invalid dispute audit response');
+  }
+
+  return value;
+}
+
+export default function DisputeResolution() {
+  const [disputes, setDisputes] = useState<DisputeItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [auditLog, setAuditLog] = useState<AuditLogItem[]>([]);
+  const [resolving, setResolving] = useState<string | number | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState<ConfirmState | null>(null);
+
+  useEffect(() => {
+    void fetchDisputes();
+    void fetchAuditLog();
+  }, []);
 
   async function fetchDisputes() {
     setLoading(true);
@@ -18,9 +84,10 @@ export default function DisputeResolution() {
     try {
       const res = await fetch(`${API_URL}/api/remittances?status=Disputed`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setDisputes(await res.json());
-    } catch (e) {
-      setError(e.message);
+      const data: unknown = await res.json();
+      setDisputes(parseDisputesResponse(data));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Unknown error');
       setDisputes([]);
     } finally {
       setLoading(false);
@@ -30,17 +97,27 @@ export default function DisputeResolution() {
   async function fetchAuditLog() {
     try {
       const res = await fetch(`${API_URL}/api/disputes/audit`);
-      if (res.ok) setAuditLog(await res.json());
+      if (!res.ok) {
+        return;
+      }
+
+      const data: unknown = await res.json();
+      setAuditLog(parseAuditLogResponse(data));
     } catch {
+      setAuditLog([]);
       // audit log is non-critical
     }
   }
 
-  function openConfirm(id, inFavourOfSender) {
+  function openConfirm(id: string | number, inFavourOfSender: boolean) {
     setConfirmOpen({ id, inFavourOfSender });
   }
 
   async function confirmResolve() {
+    if (!confirmOpen) {
+      return;
+    }
+
     const { id, inFavourOfSender } = confirmOpen;
     setConfirmOpen(null);
     setResolving(id);
@@ -54,8 +131,8 @@ export default function DisputeResolution() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       await fetchDisputes();
       await fetchAuditLog();
-    } catch (e) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Unknown error');
     } finally {
       setResolving(null);
     }
@@ -67,7 +144,6 @@ export default function DisputeResolution() {
 
       {error && <div className="error" role="alert">{error}</div>}
 
-      {/* Confirmation dialog */}
       {confirmOpen && (
         <div
           role="dialog"
@@ -103,7 +179,7 @@ export default function DisputeResolution() {
           <p>No disputed remittances.</p>
         ) : (
           <ul style={{ listStyle: 'none', padding: 0 }}>
-            {disputes.map(d => (
+            {disputes.map((d) => (
               <li
                 key={d.id}
                 style={{ border: '1px solid #fed7d7', borderRadius: '8px', padding: '16px', marginBottom: '12px', background: '#fff5f5' }}
@@ -167,8 +243,11 @@ export default function DisputeResolution() {
               </tr>
             </thead>
             <tbody>
-              {auditLog.map((entry, i) => (
-                <tr key={i} style={{ borderBottom: '1px solid #e2e8f0' }}>
+              {auditLog.map((entry) => (
+                <tr
+                  key={`${entry.remittance_id}-${entry.resolved_at ?? 'pending'}-${entry.resolved_by ?? 'unknown'}`}
+                  style={{ borderBottom: '1px solid #e2e8f0' }}
+                >
                   <td style={{ padding: '6px' }}>#{entry.remittance_id}</td>
                   <td style={{ padding: '6px' }}>{entry.resolved_at ? new Date(entry.resolved_at).toLocaleString() : '—'}</td>
                   <td style={{ padding: '6px' }}>{entry.in_favour_of_sender ? 'Sender' : 'Agent'}</td>

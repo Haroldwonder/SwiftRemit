@@ -7,6 +7,12 @@ import type { NetworkType } from '../utils/freighter';
 export type { NetworkType };
 
 const STORAGE_KEY = 'swiftremit_wallet_address';
+const DEFAULT_STORAGE_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface StoredWalletSession {
+  publicKey: string;
+  storedAt: number;
+}
 
 interface WalletConnectionResult {
   publicKey: string;
@@ -15,9 +21,34 @@ interface WalletConnectionResult {
 
 interface WalletConnectionProps {
   defaultNetwork?: NetworkType;
+  storageTtlMs?: number;
   onConnect?: () => Promise<WalletConnectionResult>;
   onDisconnect?: () => Promise<void> | void;
   onRequestSignature?: () => Promise<void>;
+}
+
+function parseStoredWalletSession(raw: string | null, storageTtlMs: number): StoredWalletSession | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredWalletSession>;
+    if (typeof parsed.publicKey !== 'string' || typeof parsed.storedAt !== 'number') {
+      return null;
+    }
+
+    if (Date.now() - parsed.storedAt > storageTtlMs) {
+      return null;
+    }
+
+    return {
+      publicKey: parsed.publicKey,
+      storedAt: parsed.storedAt,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function truncatePublicKey(publicKey: string): string {
@@ -43,6 +74,7 @@ function isRejectedSignature(error: unknown): boolean {
 
 export const WalletConnection: React.FC<WalletConnectionProps> = ({
   defaultNetwork = 'Testnet',
+  storageTtlMs = DEFAULT_STORAGE_TTL_MS,
   onConnect,
   onDisconnect,
   onRequestSignature,
@@ -63,12 +95,15 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
 
   // Restore session from localStorage on mount
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return;
+    const stored = parseStoredWalletSession(localStorage.getItem(STORAGE_KEY), storageTtlMs);
+    if (!stored) {
+      localStorage.removeItem(STORAGE_KEY);
+      return;
+    }
 
     FreighterService.connect()
       .then((result) => {
-        if (result.publicKey === stored) {
+        if (result.publicKey === stored.publicKey) {
           setPublicKey(result.publicKey);
           setNetwork(result.network ?? defaultNetwork);
           setConnected(true);
@@ -88,7 +123,7 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
         localStorage.removeItem(STORAGE_KEY);
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [defaultNetwork, storageTtlMs, t]);
 
   const handleConnect = async () => {
     setError(null);
@@ -105,7 +140,13 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
       setNetwork(connectedNetwork);
       setConnected(true);
 
-      localStorage.setItem(STORAGE_KEY, result.publicKey);
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          publicKey: result.publicKey,
+          storedAt: Date.now(),
+        } satisfies StoredWalletSession)
+      );
 
       if (FreighterService.isNetworkMismatch(connectedNetwork, defaultNetwork)) {
         setNetworkWarning(
