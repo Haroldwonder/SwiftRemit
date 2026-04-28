@@ -2201,7 +2201,8 @@ impl SwiftRemitContract {
                 }
             }
 
-            // Addresses are guaranteed valid by the Soroban host runtime.
+            // Address type is guaranteed valid by the Soroban SDK runtime; no further
+            // address validation is required or possible at the contract level.
 
             remittances.push_back(remittance);
         }
