@@ -95,6 +95,7 @@ mod standalone_property_tests {
         amount: i128,
         platform_fee: i128,
         protocol_fee: i128,
+        integrator_fee: i128,
         net_amount: i128,
     }
 
@@ -102,6 +103,7 @@ mod standalone_property_tests {
         fn validate(&self) -> Result<(), &'static str> {
             let total = self.platform_fee
                 .checked_add(self.protocol_fee)
+                .and_then(|sum| sum.checked_add(self.integrator_fee))
                 .and_then(|sum| sum.checked_add(self.net_amount))
                 .ok_or("Overflow in validation")?;
             
@@ -109,7 +111,7 @@ mod standalone_property_tests {
                 return Err("Breakdown inconsistent");
             }
             
-            if self.amount < 0 || self.platform_fee < 0 || self.protocol_fee < 0 || self.net_amount < 0 {
+            if self.amount < 0 || self.platform_fee < 0 || self.protocol_fee < 0 || self.integrator_fee < 0 || self.net_amount < 0 {
                 return Err("Negative values");
             }
             
@@ -138,6 +140,7 @@ mod standalone_property_tests {
             amount,
             platform_fee,
             protocol_fee,
+            integrator_fee: 0,
             net_amount,
         };
         
@@ -475,6 +478,7 @@ mod standalone_property_tests {
             amount: 1000,
             platform_fee: 25,
             protocol_fee: 5,
+            integrator_fee: 0,
             net_amount: 970,
         };
         assert!(breakdown.validate().is_ok());
@@ -483,6 +487,7 @@ mod standalone_property_tests {
             amount: 1000,
             platform_fee: 25,
             protocol_fee: 5,
+            integrator_fee: 0,
             net_amount: 900, // Wrong!
         };
         assert!(invalid_breakdown.validate().is_err());
