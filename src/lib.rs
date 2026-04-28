@@ -365,6 +365,14 @@ impl SwiftRemitContract {
         
         // Require Settler role
         require_role_settler(&env, &remittance.agent)?;
+
+        // Fix #379: Optimistic lock — atomically claim this settlement before any token
+        // transfer. A second concurrent call will find the hash already set and fail with
+        // DuplicateSettlement, preventing double-payout.
+        if has_settlement_hash(&env, remittance_id) {
+            return Err(ContractError::DuplicateSettlement);
+        }
+        set_settlement_hash(&env, remittance_id);
         
         // Transition to Processing state
         set_transfer_state(&env, remittance_id, TransferState::Processing)?;
@@ -424,9 +432,6 @@ impl SwiftRemitContract {
         // Transition to Completed state
         set_transfer_state(&env, remittance_id, TransferState::Completed)?;
 
-        // Mark settlement as executed to prevent duplicates
-        set_settlement_hash(&env, remittance_id);
-        
         // Update last settlement time for rate limiting
         set_last_settlement_time(&env, &remittance.sender, current_time);
 
@@ -490,6 +495,9 @@ impl SwiftRemitContract {
         );
 
         remittance.status = RemittanceStatus::Cancelled;
+        // Fix #378: zero out the amount field so querying the remittance after
+        // cancellation does not return a stale USDC balance.
+        remittance.amount = 0;
         set_remittance(&env, remittance_id, &remittance);
         
         // Transition to Refunded state
@@ -634,6 +642,61 @@ impl SwiftRemitContract {
     pub fn compute_settlement_hash(env: Env, remittance_id: u64) -> Result<soroban_sdk::BytesN<32>, ContractError> {
         let remittance = get_remittance(&env, remittance_id)?;
         Ok(compute_settlement_id_from_remittance(&env, &remittance))
+    }
+
+    /// Step 1 of 2-step admin transfer (#365).
+    ///
+    /// The current admin proposes a new admin address. The proposal is stored on-chain
+    /// and must be accepted by the proposed address via `accept_admin` before the
+    /// transfer takes effect. This prevents accidental or malicious key handover.
+    ///
+    /// # Authorization
+    ///
+    /// Requires authentication from the current admin.
+    pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
+        let caller = get_admin(&env)?;
+        require_admin(&env, &caller)?;
+
+        set_pending_admin(&env, &new_admin);
+        emit_admin_transfer_proposed(&env, caller, new_admin);
+
+        Ok(())
+    }
+
+    /// Step 2 of 2-step admin transfer (#365).
+    ///
+    /// The proposed admin accepts the role. Only callable by the address that was
+    /// previously proposed via `propose_admin`. On success the caller becomes the
+    /// new admin and the pending proposal is cleared.
+    ///
+    /// # Authorization
+    ///
+    /// Requires authentication from the proposed admin address.
+    pub fn accept_admin(env: Env) -> Result<(), ContractError> {
+        let new_admin = get_pending_admin(&env)
+            .ok_or(ContractError::NoPendingAdminTransfer)?;
+
+        new_admin.require_auth();
+
+        let old_admin = get_admin(&env)?;
+
+        // Update legacy admin pointer
+        set_admin(&env, &new_admin);
+
+        // Update role-based admin system
+        set_admin_role(&env, &old_admin, false);
+        set_admin_role(&env, &new_admin, true);
+
+        // Update role assignments
+        remove_role(&env, &old_admin, &Role::Admin);
+        assign_role(&env, &new_admin, &Role::Admin);
+
+        // Clear the pending proposal
+        clear_pending_admin(&env);
+
+        emit_admin_transfer_accepted(&env, old_admin, new_admin);
+
+        Ok(())
     }
 
     pub fn pause(env: Env) -> Result<(), ContractError> {

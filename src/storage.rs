@@ -150,6 +150,9 @@ enum DataKey {
     
     /// Fee corridor configuration indexed by (from_country, to_country)
     FeeCorridor(String, String),
+
+    /// Pending admin address proposed by current admin (2-step transfer, #365)
+    PendingAdmin,
 }
 
 /// Checks if the contract has an admin configured.
@@ -1072,4 +1075,21 @@ pub fn remove_fee_corridor(env: &Env, from_country: &String, to_country: &String
     env.storage()
         .persistent()
         .remove(&key);
+}
+
+// === 2-Step Admin Transfer (#365) ===
+
+/// Returns the pending admin address, if any.
+pub fn get_pending_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::PendingAdmin)
+}
+
+/// Stores the proposed new admin address.
+pub fn set_pending_admin(env: &Env, new_admin: &Address) {
+    env.storage().instance().set(&DataKey::PendingAdmin, new_admin);
+}
+
+/// Clears the pending admin proposal.
+pub fn clear_pending_admin(env: &Env) {
+    env.storage().instance().remove(&DataKey::PendingAdmin);
 }

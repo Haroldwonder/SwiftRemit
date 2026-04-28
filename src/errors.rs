@@ -224,4 +224,8 @@ pub enum ContractError {
     /// Arithmetic underflow occurred.
     /// Cause: Result of arithmetic operation is below minimum.
     Underflow = 48,
+
+    /// No pending admin transfer to accept.
+    /// Cause: accept_admin() called when no propose_admin() has been issued.
+    NoPendingAdminTransfer = 49,
 }
