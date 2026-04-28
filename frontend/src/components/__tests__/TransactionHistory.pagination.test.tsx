@@ -14,6 +14,14 @@ const mockTransactions: TransactionHistoryItem[] = Array.from({ length: 25 }, (_
 }));
 
 describe('TransactionHistory Pagination', () => {
+  it('initializes uncontrolled pagination from the URL', () => {
+    window.history.replaceState(null, '', '/?page=2');
+    render(<TransactionHistory transactions={mockTransactions} pageSize={10} />);
+
+    expect(screen.getByText(/Page 2 of 3/)).toBeInTheDocument();
+    expect(screen.getByText(/Showing 11–20 of 25 transactions/)).toBeInTheDocument();
+  });
+
   it('renders pagination controls with default page size', () => {
     render(<TransactionHistory transactions={mockTransactions} pageSize={10} />);
 
@@ -177,5 +185,19 @@ describe('TransactionHistory Pagination', () => {
     );
 
     expect(screen.getByText(/Showing 11–20 of 25 transactions/)).toBeInTheDocument();
+  });
+
+  it('restores page state from the URL on popstate navigation', () => {
+    window.history.replaceState(null, '', '/?page=1');
+    render(<TransactionHistory transactions={mockTransactions} pageSize={10} />);
+
+    fireEvent.click(screen.getByLabelText('Next page'));
+    expect(screen.getByText(/Page 2 of 3/)).toBeInTheDocument();
+
+    window.history.replaceState(null, '', '/?page=1');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+
+    expect(screen.getByText(/Page 1 of 3/)).toBeInTheDocument();
+    expect(screen.getByText(/Showing 1–10 of 25 transactions/)).toBeInTheDocument();
   });
 });

@@ -44,11 +44,29 @@ const STELLAR_EXPERT_BASE: Record<string, string> = {
   PUBLIC: 'https://stellar.expert/explorer/public/tx',
 };
 
+const ASSET_ISSUERS: Partial<Record<string, string>> = {
+  USDC: import.meta.env.VITE_USDC_ISSUER,
+  EURC: import.meta.env.VITE_EURC_ISSUER,
+};
+
 /** Threshold at which we show the "approaching limit" warning (90%) */
 const APPROACHING_THRESHOLD = 0.9;
 
 function isValidRecipient(input: string): boolean {
   return /^G[A-Z2-7]{55}$/.test(input.trim());
+}
+
+function resolveAsset(assetCode: string): StellarSdk.Asset {
+  if (assetCode === 'XLM') {
+    return StellarSdk.Asset.native();
+  }
+
+  const issuer = ASSET_ISSUERS[assetCode];
+  if (!issuer) {
+    throw new Error(`Issuer not configured for asset ${assetCode}`);
+  }
+
+  return new StellarSdk.Asset(assetCode, issuer);
 }
 
 async function buildAndSubmitTransaction(
@@ -65,12 +83,7 @@ async function buildAndSubmitTransaction(
 
   const account = await server.loadAccount(senderPublicKey);
 
-  let asset: StellarSdk.Asset;
-  if (payload.asset === 'XLM') {
-    asset = StellarSdk.Asset.native();
-  } else {
-    asset = new StellarSdk.Asset(payload.asset, senderPublicKey);
-  }
+  const asset = resolveAsset(payload.asset);
 
   const txBuilder = new StellarSdk.TransactionBuilder(account, {
     fee: StellarSdk.BASE_FEE,

@@ -3,16 +3,15 @@ import {
   Contract,
   SorobanRpc,
   TransactionBuilder,
-  Networks,
   Address,
   nativeToScVal,
   xdr,
 } from '@stellar/stellar-sdk';
 import { AssetVerification, VerificationStatus } from './types';
+import { getStellarRuntimeConfig } from './stellar-network';
 
-const server = new SorobanRpc.Server(
-  process.env.HORIZON_URL || 'https://soroban-testnet.stellar.org'
-);
+const { rpcUrl, networkPassphrase } = getStellarRuntimeConfig();
+const server = new SorobanRpc.Server(rpcUrl);
 
 export async function storeVerificationOnChain(
   verification: AssetVerification
@@ -49,7 +48,7 @@ export async function storeVerificationOnChain(
   // Build transaction
   const tx = new TransactionBuilder(account, {
     fee: '1000',
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase,
   })
     .addOperation(
       contract.call(
@@ -118,7 +117,7 @@ export async function simulateSettlement(
 
   const tx = new TransactionBuilder(sourceAccount, {
     fee: '100',
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase,
   })
     .addOperation(
       contract.call(
@@ -176,7 +175,7 @@ export async function cancelRemittanceOnChain(remittanceId: number): Promise<voi
 
   const tx = new TransactionBuilder(account, {
     fee: '1000',
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase,
   })
     .addOperation(
       contract.call(
@@ -236,7 +235,7 @@ export async function updateKycStatusOnChain(
   // Build transaction
   const tx = new TransactionBuilder(account, {
     fee: '1000',
-    networkPassphrase: Networks.TESTNET,
+    networkPassphrase,
   })
     .addOperation(
       contract.call(
