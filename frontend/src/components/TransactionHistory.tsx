@@ -32,9 +32,24 @@ function getSearchParams(): URLSearchParams {
   return new URLSearchParams(window.location.search);
 }
 
-function pushSearchParams(params: URLSearchParams): void {
+function replaceSearchParams(params: URLSearchParams): void {
   const url = `${window.location.pathname}?${params.toString()}`;
   window.history.replaceState(null, '', url);
+}
+
+function pushSearchParams(params: URLSearchParams): void {
+  const url = `${window.location.pathname}?${params.toString()}`;
+  window.history.pushState(null, '', url);
+}
+
+function getPageFromSearchParams(params: URLSearchParams): number {
+  const rawPage = params.get('page');
+  if (!rawPage) {
+    return 1;
+  }
+
+  const parsedPage = Number.parseInt(rawPage, 10);
+  return Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
 }
 
 // ── Debounce hook ────────────────────────────────────────────────────────────
@@ -107,10 +122,14 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
 }) => {
   // Initialise filter state from URL params
   const initialParams = getSearchParams();
+  const isControlled = controlledPage !== undefined;
+  const syncPageFromHistoryRef = useRef(false);
 
   const [view, setView] = useState<HistoryViewMode>(defaultView);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [uncontrolledPage, setUncontrolledPage] = useState(1);
+  const [uncontrolledPage, setUncontrolledPage] = useState(() =>
+    getPageFromSearchParams(initialParams)
+  );
 
   const [searchText, setSearchText] = useState(initialParams.get('q') ?? '');
   const [filterStatus, setFilterStatus] = useState(initialParams.get('status') ?? '');
@@ -130,11 +149,53 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
     set('asset', filterAsset);
     set('from', filterDateFrom);
     set('to', filterDateTo);
-    pushSearchParams(params);
+    replaceSearchParams(params);
   }, [debouncedSearch, filterStatus, filterAsset, filterDateFrom, filterDateTo]);
 
-  const isControlled = controlledPage !== undefined;
   const currentPage = isControlled ? controlledPage : uncontrolledPage;
+
+  useEffect(() => {
+    const params = getSearchParams();
+    const currentUrlPage = getPageFromSearchParams(params);
+
+    if (currentPage <= 1) {
+      params.delete('page');
+    } else {
+      params.set('page', String(currentPage));
+    }
+
+    if (syncPageFromHistoryRef.current) {
+      syncPageFromHistoryRef.current = false;
+      replaceSearchParams(params);
+      return;
+    }
+
+    if (currentUrlPage !== currentPage) {
+      pushSearchParams(params);
+    }
+  }, [currentPage]);
+
+  useEffect(() => {
+    const syncFromUrl = () => {
+      const params = getSearchParams();
+      syncPageFromHistoryRef.current = true;
+      setSearchText(params.get('q') ?? '');
+      setFilterStatus(params.get('status') ?? '');
+      setFilterAsset(params.get('asset') ?? '');
+      setFilterDateFrom(params.get('from') ?? '');
+      setFilterDateTo(params.get('to') ?? '');
+
+      const page = getPageFromSearchParams(params);
+      if (isControlled) {
+        onPageChange?.(page);
+      } else {
+        setUncontrolledPage(page);
+      }
+    };
+
+    window.addEventListener('popstate', syncFromUrl);
+    return () => window.removeEventListener('popstate', syncFromUrl);
+  }, [isControlled, onPageChange]);
 
   // Derive unique status/asset options from data
   const statusOptions = useMemo(
@@ -210,6 +271,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
 
   const hasActiveFilters =
     searchText || filterStatus || filterAsset || filterDateFrom || filterDateTo;
+  const hasTransactions = transactions.length > 0;
 
   return (
     <section className="transaction-history" aria-label="Transaction history">
@@ -450,4 +512,3 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
     </section>
   );
 };
-
