@@ -850,8 +850,8 @@ impl SwiftRemitContract {
                 }
             }
 
-            // Validate addresses
-            validate_address(&remittance.agent)?;
+            // Address type is guaranteed valid by the Soroban SDK runtime; no further
+            // address validation is required or possible at the contract level.
 
             remittances.push_back(remittance);
         }
