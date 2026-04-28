@@ -112,5 +112,6 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   CONSTRAINT uq_webhook_delivery_subscriber_event UNIQUE (event_type, event_key, subscriber_id)
 );
 
+CREATE INDEX idx_webhook_deliveries_status ON webhook_deliveries(status);
 CREATE INDEX idx_webhook_deliveries_pending ON webhook_deliveries(status, next_retry_at);
 CREATE INDEX idx_webhook_deliveries_subscriber ON webhook_deliveries(subscriber_id);
