@@ -19,6 +19,7 @@ export interface TransactionRecord {
   message?: string;
   memo?: string;
   sender_address?: string;
+  correlation_id?: string;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -65,8 +66,8 @@ export class RemittanceRepository {
          (transaction_id, anchor_id, kind, status, status_eta,
           amount_in, amount_out, amount_fee, asset_code,
           stellar_transaction_id, external_transaction_id,
-          kyc_status, kyc_fields, kyc_rejection_reason, message, memo, sender_address)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+          kyc_status, kyc_fields, kyc_rejection_reason, message, memo, sender_address, correlation_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        ON CONFLICT (transaction_id) DO UPDATE SET
          status                  = EXCLUDED.status,
          amount_in               = COALESCE(EXCLUDED.amount_in, transactions.amount_in),
@@ -76,6 +77,7 @@ export class RemittanceRepository {
          external_transaction_id = COALESCE(EXCLUDED.external_transaction_id, transactions.external_transaction_id),
          kyc_status              = COALESCE(EXCLUDED.kyc_status, transactions.kyc_status),
          message                 = COALESCE(EXCLUDED.message, transactions.message),
+         correlation_id          = COALESCE(EXCLUDED.correlation_id, transactions.correlation_id),
          updated_at              = NOW()`,
       [
         record.transaction_id,
@@ -95,6 +97,7 @@ export class RemittanceRepository {
         record.message ?? null,
         record.memo ?? null,
         record.sender_address ?? null,
+        record.correlation_id ?? null,
       ]
     );
   }

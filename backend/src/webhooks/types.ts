@@ -29,6 +29,7 @@ export interface WebhookPayload<T = any> {
   timestamp: string;
   data: T;
   id?: string; // Unique event ID for idempotency
+  correlation_id?: string; // Correlation ID for end-to-end tracing
 }
 
 export interface RemittanceData {
@@ -42,6 +43,7 @@ export interface RemittanceData {
   metadata?: Record<string, any>;
   createdAt: string;
   updatedAt: string;
+  correlation_id?: string; // Correlation ID for tracing
 }
 
 export interface RemittanceEventPayload extends WebhookPayload {

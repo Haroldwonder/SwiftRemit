@@ -218,6 +218,7 @@ mod property_tests {
                 amount,
                 platform_fee: (amount * platform_fee_bps as i128 / FEE_DIVISOR).max(MIN_FEE),
                 protocol_fee: amount * protocol_fee_bps as i128 / FEE_DIVISOR,
+                integrator_fee: 0,
                 net_amount: 0, // Will be calculated
                 corridor: None,
             };
@@ -312,6 +313,7 @@ mod property_tests {
                 amount,
                 platform_fee,
                 protocol_fee,
+                integrator_fee: 0,
                 net_amount,
                 corridor: None,
             };

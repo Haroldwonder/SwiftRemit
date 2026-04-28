@@ -152,6 +152,9 @@ enum MigrationKey {
     RollbackSnapshot,
     /// Tracks the next expected batch index during a cross-contract import.
     ExpectedNextBatch,
+    /// Tracks whether a cross-contract migration is in progress.
+    /// Blocks normal operations until migration completes successfully.
+    MigrationInProgress,
 }
 
 fn get_schema_version(env: &Env) -> u32 {
@@ -206,6 +209,27 @@ fn clear_expected_next_batch(env: &Env) {
         .remove(&MigrationKey::ExpectedNextBatch);
 }
 
+// ─── Migration state helpers ──────────────────────────────────────────────────
+
+fn is_migration_in_progress(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&MigrationKey::MigrationInProgress)
+        .unwrap_or(false)
+}
+
+fn set_migration_in_progress(env: &Env, in_progress: bool) {
+    if in_progress {
+        env.storage()
+            .instance()
+            .set(&MigrationKey::MigrationInProgress, &true);
+    } else {
+        env.storage()
+            .instance()
+            .remove(&MigrationKey::MigrationInProgress);
+    }
+}
+
 // ─── Helper: status byte ─────────────────────────────────────────────────────
 
 fn status_to_byte(status: &RemittanceStatus) -> u8 {
@@ -217,6 +241,17 @@ fn status_to_byte(status: &RemittanceStatus) -> u8 {
         RemittanceStatus::Failed => 4,
         RemittanceStatus::Disputed => 5,
     }
+}
+
+// ─── Public migration state query ─────────────────────────────────────────────
+
+/// Check if a cross-contract migration is currently in progress.
+///
+/// Returns `true` if `import_batch` has been called for the first batch but
+/// not yet completed for the final batch. During this period, normal contract
+/// operations should be blocked to prevent data inconsistency.
+pub fn is_migration_in_progress_public(env: &Env) -> bool {
+    is_migration_in_progress(env)
 }
 
 // ─── migrate() — in-place WASM upgrade entrypoint ────────────────────────────
@@ -600,7 +635,11 @@ pub fn export_batch(
     })
 }
 
-/// Import a single batch of remittances.
+/// Import a single batch of remittances with checkpoint/resume semantics.
+///
+/// Sets `MigrationInProgress` flag at the start of the first batch and clears it
+/// after the final batch completes successfully. If any batch fails, the flag
+/// remains set, blocking normal operations until the migration is resumed or rolled back.
 pub fn import_batch(env: &Env, batch: MigrationBatch) -> Result<(), ContractError> {
     let computed_hash = compute_batch_hash(env, &batch.remittances, batch.batch_number);
 
@@ -614,6 +653,12 @@ pub fn import_batch(env: &Env, batch: MigrationBatch) -> Result<(), ContractErro
         return Err(ContractError::InvalidMigrationBatch);
     }
 
+    // Set migration flag on first batch
+    if batch.batch_number == 0 {
+        set_migration_in_progress(env, true);
+    }
+
+    // Import remittances for this batch
     for i in 0..batch.remittances.len() {
         let remittance = batch.remittances.get_unchecked(i);
         crate::storage::set_remittance(env, remittance.id, &remittance);
@@ -622,9 +667,10 @@ pub fn import_batch(env: &Env, batch: MigrationBatch) -> Result<(), ContractErro
     // Advance the counter for the next expected batch.
     set_expected_next_batch(env, expected + 1);
 
-    // Clear the counter after the final batch so it doesn't linger.
+    // Clear the flag after the final batch completes successfully
     if batch.batch_number == batch.total_batches.saturating_sub(1) {
         clear_expected_next_batch(env);
+        set_migration_in_progress(env, false);
     }
 
     Ok(())

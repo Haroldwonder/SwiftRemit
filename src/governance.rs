@@ -223,14 +223,15 @@ pub fn do_execute(
     Ok(())
 }
 
-/// Transitions an expired proposal to the Expired state.
+/// Transitions an expired proposal to the Expired state and deletes it from storage.
 ///
 /// Can be called by any address once the proposal TTL has elapsed.
+/// Automatically deletes the proposal to prevent unbounded storage growth.
 pub fn do_expire(
     env: &Env,
     proposal_id: u64,
 ) -> Result<(), ContractError> {
-    let mut proposal = get_proposal(env, proposal_id)?;
+    let proposal = get_proposal(env, proposal_id)?;
 
     if proposal.state != ProposalState::Pending && proposal.state != ProposalState::Approved {
         return Err(ContractError::InvalidProposalState);
@@ -248,9 +249,8 @@ pub fn do_expire(
         }
     }
 
-    proposal.state = ProposalState::Expired;
-    set_proposal(env, &proposal);
-
+    // Auto-delete expired proposal to prevent storage bloat
+    delete_proposal(env, proposal_id);
     emit_proposal_expired(env, proposal_id);
     Ok(())
 }
