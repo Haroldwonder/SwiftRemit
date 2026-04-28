@@ -2,11 +2,28 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import { Pool } from 'pg';
 import currenciesRouter from './routes/currencies';
-import anchorsRouter from './routes/anchors';
+import limitsRouter from './routes/limits';
+import { createAnchorsRouter } from './routes/anchors';
+import docsRouter from './routes/docs';
+import settlementsRouter from './routes/settlements';
+import { createRemittancesRouter, RemittancesRouterOptions } from './routes/remittances';
+import { createAdminRouter } from './routes/admin';
+import { createAnalyticsRouter } from './routes/analytics';
 import { ErrorResponse } from './types';
+import { AnchorStore } from './db/anchorStore';
+import { Server as SocketIOServer } from 'socket.io';
+import { createWsHealthRouter } from './websocket/health';
 
-export function createApp(): Application {
+type AppOptions = {
+  anchorStore?: AnchorStore;
+  anchorAdminApiKey?: string;
+  /** Socket.IO instance — when provided, mounts the /ws/health route */
+  io?: SocketIOServer;
+} & RemittancesRouterOptions;
+
+export function createApp(options: AppOptions = {}): Application {
   const app = express();
 
   // Security middleware
@@ -43,7 +60,41 @@ export function createApp(): Application {
 
   // API routes
   app.use('/api/currencies', currenciesRouter);
-  app.use('/api/anchors', anchorsRouter);
+  app.use('/api/limits', limitsRouter);
+  app.use(
+    '/api/anchors',
+    createAnchorsRouter({
+      store: options.anchorStore,
+      adminApiKey: options.anchorAdminApiKey,
+    }),
+  );
+
+  // Settlement simulation — read-only, no state changes (Issue #420)
+  app.use('/api/settlements', settlementsRouter);
+
+  // Remittances — cursor-based pagination (Issues #472, #531)
+  app.use('/api/remittances', createRemittancesRouter({
+    remittanceStore: options.remittanceStore,
+  }));
+
+  // Admin utilities — read-only operations (simulate-upgrade, etc.)
+  app.use('/api/admin', createAdminRouter());
+
+  // Corridor analytics (Issue #482)
+  const analyticsPool = process.env.DATABASE_URL
+    ? new Pool({ connectionString: process.env.DATABASE_URL, max: 5 })
+    : null;
+  if (analyticsPool) {
+    app.use('/api/analytics', createAnalyticsRouter(analyticsPool));
+  }
+
+  // API documentation
+  app.use('/api/docs', docsRouter);
+
+  // WebSocket health endpoint (development only — guarded inside the router)
+  if (options.io) {
+    app.use('/ws/health', createWsHealthRouter(options.io));
+  }
 
   // 404 handler
   app.use((req: Request, res: Response) => {

@@ -1,0 +1,89 @@
+# SwiftRemit stellar.toml
+# Served at https://<your-domain>/.well-known/stellar.toml
+# Stellar Expert and other tooling discover contract metadata from this file.
+# See: https://developers.stellar.org/docs/issuing-assets/publishing-asset-info
+
+VERSION = "2.0.0"
+
+NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015"
+
+# ─── Documentation ────────────────────────────────────────────────────────────
+# Organization information and contact details
+
+[DOCUMENTATION]
+ORG_NAME = "SwiftRemit"
+ORG_URL = "https://swiftremit.example.com"
+ORG_LOGO = "https://swiftremit.example.com/logo.png"
+ORG_DESCRIPTION = "Production-ready Soroban smart contract for USDC remittance on Stellar with escrow-based agent network and fee management"
+ORG_GITHUB = "https://github.com/Haroldwonder/SwiftRemit"
+ORG_OFFICIAL_EMAIL = "support@swiftremit.example.com"
+ORG_SUPPORT_EMAIL = "support@swiftremit.example.com"
+ORG_TWITTER = "SwiftRemit"
+ORG_KEYBASE = "swiftremit"
+
+# ─── Principals ───────────────────────────────────────────────────────────────
+# Contact information for key personnel
+
+[[PRINCIPALS]]
+name = "Platform Administrator"
+email = "admin@swiftremit.example.com"
+github = "Haroldwonder"
+keybase = "swiftremit_admin"
+
+# ─── Currencies ───────────────────────────────────────────────────────────────
+# Asset definitions for tokens used by the platform
+
+[[CURRENCIES]]
+code = "USDC"
+issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+display_decimals = 7
+name = "USD Coin"
+desc = "USDC stablecoin used for remittances on SwiftRemit platform"
+conditions = "Remittances are processed through the SwiftRemit smart contract with escrow protection"
+image = "https://www.centre.io/images/usdc/usdc-icon-86074d9d49.png"
+is_asset_anchored = true
+anchor_asset_type = "fiat"
+anchor_asset = "USD"
+redemption_instructions = "USDC can be redeemed through Circle or authorized exchanges"
+status = "live"
+
+# ─── Soroban Contracts ────────────────────────────────────────────────────────
+# CONTRACT_ID and WASM_HASH are injected by the publish-abi.sh script after
+# each mainnet deployment. Do not edit these lines manually.
+
+[[CONTRACTS]]
+NAME = "SwiftRemit"
+DESCRIPTION = "Escrow-based USDC remittance contract with agent network and fee management"
+CONTRACT_ID = "${CONTRACT_ID}"
+WASM_HASH = "${WASM_HASH}"
+VERSION = "${CONTRACT_VERSION}"
+SOURCE_REPO = "https://github.com/Haroldwonder/SwiftRemit"
+
+# ─── Validators ───────────────────────────────────────────────────────────────
+# If running validators, list them here. Remove this section if not applicable.
+
+# [[VALIDATORS]]
+# ALIAS = "swiftremit-validator-1"
+# DISPLAY_NAME = "SwiftRemit Validator 1"
+# HOST = "validator1.swiftremit.example.com:11625"
+# PUBLIC_KEY = "VALIDATOR_PUBLIC_KEY_HERE"
+# HISTORY = "https://history.swiftremit.example.com"
+
+# ─── Additional Information ───────────────────────────────────────────────────
+
+# Accounts used by the platform (optional)
+# ACCOUNTS = [
+#   "PLATFORM_ADMIN_PUBLIC_KEY",
+#   "FEE_COLLECTION_PUBLIC_KEY"
+# ]
+
+# API endpoints (optional)
+# WEB_AUTH_ENDPOINT = "https://api.swiftremit.example.com/auth"
+# TRANSFER_SERVER = "https://api.swiftremit.example.com/sep24"
+# TRANSFER_SERVER_SEP0024 = "https://api.swiftremit.example.com/sep24"
+
+# Compliance and regulatory information (optional)
+# ORG_LICENSE_TYPE = "Money Transmitter License"
+# ORG_LICENSE_NUMBER = "LICENSE_NUMBER_HERE"
+# ORG_PHYSICAL_ADDRESS = "123 Main St, City, Country"
+

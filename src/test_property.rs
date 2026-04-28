@@ -53,9 +53,9 @@ fn batch_size_strategy() -> impl Strategy<Value = usize> {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(50))]
-    
+
     /// Property: Total balance in the system must be conserved.
-    /// 
+    ///
     /// For any remittance operation:
     /// - Initial total balance = sender_balance + contract_balance
     /// - After create_remittance: total balance unchanged
@@ -87,7 +87,7 @@ proptest! {
         let token_client = token::Client::new(&env, &token.address);
 
         // Record initial total balance
-        let initial_total = token_client.balance(&sender) 
+        let initial_total = token_client.balance(&sender)
             + token_client.balance(&contract.address)
             + token_client.balance(&agent);
 
@@ -104,7 +104,7 @@ proptest! {
             + token_client.balance(&contract.address)
             + token_client.balance(&agent);
 
-        prop_assert_eq!(initial_total, after_create_total, 
+        prop_assert_eq!(initial_total, after_create_total,
             "Balance created during remittance creation");
     }
 
@@ -148,7 +148,7 @@ proptest! {
             + token_client.balance(&admin); // treasury
 
         // Settle remittance
-        contract.confirm_payout(&remittance_id);
+        contract.confirm_payout(&remittance_id, &None);
 
         // Verify total balance unchanged
         let after_settle_total = token_client.balance(&sender)
@@ -216,7 +216,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(50))]
-    
+
     /// Property: All balances must remain non-negative after any operation.
     #[test]
     fn prop_no_negative_balances(
@@ -251,10 +251,10 @@ proptest! {
             &None
         );
 
-        contract.confirm_payout(&remittance_id);
+        contract.confirm_payout(&remittance_id, &None);
 
         // Verify all balances are non-negative
-        prop_assert!(token_client.balance(&sender) >= 0, 
+        prop_assert!(token_client.balance(&sender) >= 0,
             "Sender balance became negative");
         prop_assert!(token_client.balance(&agent) >= 0,
             "Agent balance became negative");
@@ -291,10 +291,10 @@ proptest! {
         );
 
         let remittance = contract.get_remittance(&remittance_id);
-        
+
         // Calculate expected payout
         let payout = amount - remittance.fee;
-        
+
         prop_assert!(payout >= 0, "Payout amount is negative");
         prop_assert!(remittance.fee >= 0, "Fee is negative");
         prop_assert!(remittance.fee <= amount, "Fee exceeds amount");
@@ -307,7 +307,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(30))]
-    
+
     /// Property: Net settlement results must be independent of input order.
     #[test]
     fn prop_netting_order_independence(
@@ -319,7 +319,7 @@ proptest! {
         let admin = Address::generate(&env);
         let token_admin = Address::generate(&env);
         let token = create_token_contract(&env, &token_admin);
-        
+
         // Create two parties for bidirectional flows
         let party_a = Address::generate(&env);
         let party_b = Address::generate(&env);
@@ -348,7 +348,7 @@ proptest! {
                 &amount,
                 &None
             );
-            
+
             let remittance = contract.get_remittance(&remittance_id);
             remittances_forward.push_back(remittance);
         }
@@ -368,14 +368,14 @@ proptest! {
                 &amount,
                 &None
             );
-            
+
             let remittance = contract.get_remittance(&remittance_id);
             remittances_reverse.push_back(remittance);
         }
 
         // Compute net settlements for both orders
-        let net_forward = crate::netting::compute_net_settlements(&env, &remittances_forward);
-        let net_reverse = crate::netting::compute_net_settlements(&env, &remittances_reverse);
+        let net_forward = crate::netting::compute_net_settlements(&env, &remittances_forward)?;
+        let net_reverse = crate::netting::compute_net_settlements(&env, &remittances_reverse)?;
 
         // Results should be identical
         prop_assert_eq!(net_forward.len(), net_reverse.len(),
@@ -399,7 +399,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
-    
+
     /// Property: Fees must be calculated correctly and consistently.
     #[test]
     fn prop_fee_calculation_accuracy(
@@ -435,11 +435,11 @@ proptest! {
 
         prop_assert_eq!(remittance.fee, expected_fee,
             "Fee calculation incorrect");
-        
+
         // Verify fee is within valid range
         prop_assert!(remittance.fee >= 0, "Fee is negative");
         prop_assert!(remittance.fee <= amount, "Fee exceeds amount");
-        
+
         // Verify payout + fee = amount
         let payout = amount - remittance.fee;
         prop_assert_eq!(payout + remittance.fee, amount,
@@ -482,7 +482,7 @@ proptest! {
             let remittance = contract.get_remittance(&remittance_id);
             expected_total_fees += remittance.fee;
 
-            contract.confirm_payout(&remittance_id);
+            contract.confirm_payout(&remittance_id, &None);
         }
 
         let accumulated_fees = contract.get_accumulated_fees();
@@ -498,7 +498,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(50))]
-    
+
     /// Property: Remittance status transitions must follow valid state machine.
     #[test]
     fn prop_valid_state_transitions(
@@ -534,7 +534,7 @@ proptest! {
             "New remittance not in Pending state");
 
         // Settle remittance - should transition to Settled
-        contract.confirm_payout(&remittance_id);
+        contract.confirm_payout(&remittance_id, &None);
 
         let remittance = contract.get_remittance(&remittance_id);
         prop_assert_eq!(remittance.status, crate::RemittanceStatus::Completed,
@@ -569,12 +569,12 @@ proptest! {
             &None
         );
 
-        // Cancel remittance - should transition to Failed
+        // Cancel remittance - should transition to Cancelled
         contract.cancel_remittance(&remittance_id);
 
         let remittance = contract.get_remittance(&remittance_id);
         prop_assert_eq!(remittance.status, crate::RemittanceStatus::Cancelled,
-            "Cancelled remittance not in Failed state");
+            "Cancelled remittance not in Cancelled state");
     }
 }
 
@@ -584,7 +584,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(30))]
-    
+
     /// Property: Duplicate settlement attempts must be prevented.
     #[test]
     fn prop_no_duplicate_settlement(
@@ -617,13 +617,13 @@ proptest! {
             &None
         );
 
-        contract.confirm_payout(&remittance_id);
+        contract.confirm_payout(&remittance_id, &None);
 
         let agent_balance_after_first = token_client.balance(&agent);
 
         // Attempt duplicate settlement - should fail
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            contract.confirm_payout(&remittance_id);
+            contract.confirm_payout(&remittance_id, &None);
         }));
 
         prop_assert!(result.is_err(), "Duplicate settlement was not prevented");
@@ -641,7 +641,7 @@ proptest! {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(30))]
-    
+
     /// Property: Net settlement must preserve total fees.
     #[test]
     fn prop_netting_preserves_fees(
@@ -653,7 +653,7 @@ proptest! {
         let admin = Address::generate(&env);
         let token_admin = Address::generate(&env);
         let token = create_token_contract(&env, &token_admin);
-        
+
         let party_a = Address::generate(&env);
         let party_b = Address::generate(&env);
 
@@ -683,14 +683,14 @@ proptest! {
                 &amount,
                 &None
             );
-            
+
             let remittance = contract.get_remittance(&remittance_id);
             expected_total_fees += remittance.fee;
             remittances.push_back(remittance);
         }
 
         // Compute net settlements
-        let net_transfers = crate::netting::compute_net_settlements(&env, &remittances);
+        let net_transfers = crate::netting::compute_net_settlements(&env, &remittances)?;
 
         // Sum fees from net transfers
         let mut net_total_fees = 0i128;
@@ -703,5 +703,4 @@ proptest! {
             "Net settlement did not preserve total fees");
     }
 }
-
 

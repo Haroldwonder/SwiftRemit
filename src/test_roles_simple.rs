@@ -7,10 +7,10 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 fn test_role_storage_and_retrieval() {
     let env = Env::default();
     let contract_id = env.register_contract(None, SwiftRemitContract {});
-    
+
     let admin = Address::generate(&env);
     let settler = Address::generate(&env);
-    
+
     env.as_contract(&contract_id, || {
         crate::storage::assign_role(&env, &admin, &Role::Admin);
         assert!(crate::storage::has_role(&env, &admin, &Role::Admin));
@@ -27,10 +27,10 @@ fn test_role_storage_and_retrieval() {
 fn test_role_authorization_checks() {
     let env = Env::default();
     let contract_id = env.register_contract(None, SwiftRemitContract {});
-    
+
     let admin = Address::generate(&env);
     let non_admin = Address::generate(&env);
-    
+
     // Assign Admin role
     env.as_contract(&contract_id, || {
         crate::storage::assign_role(&env, &admin, &Role::Admin);
@@ -44,10 +44,10 @@ fn test_role_authorization_checks() {
 fn test_settler_authorization() {
     let env = Env::default();
     let contract_id = env.register_contract(None, SwiftRemitContract {});
-    
+
     let settler = Address::generate(&env);
     let non_settler = Address::generate(&env);
-    
+
     // Assign Settler role
     env.as_contract(&contract_id, || {
         crate::storage::assign_role(&env, &settler, &Role::Settler);
@@ -61,9 +61,9 @@ fn test_settler_authorization() {
 fn test_role_persistence() {
     let env = Env::default();
     let contract_id = env.register_contract(None, SwiftRemitContract {});
-    
+
     let address = Address::generate(&env);
-    
+
     // Assign role
     env.as_contract(&contract_id, || {
         crate::storage::assign_role(&env, &address, &Role::Admin);

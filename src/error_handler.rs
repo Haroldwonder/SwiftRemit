@@ -4,7 +4,7 @@ use soroban_sdk::{Env, String as SorobanString};
 use crate::ContractError;
 
 /// Centralized error handling module for the SwiftRemit contract.
-/// 
+///
 /// This module provides a single global error handler that:
 /// - Maps contract errors to structured error responses
 /// - Provides consistent error formatting
@@ -55,15 +55,15 @@ pub struct ErrorHandler;
 
 impl ErrorHandler {
     /// Handle a contract error and return structured response
-    /// 
+    ///
     /// This is the single global error handler that all contract functions
     /// should use for consistent error handling.
     pub fn handle_error(env: &Env, error: ContractError) -> ErrorResponse {
         let (code, message, category, severity) = Self::map_error(env, error);
-        
+
         // Log error for debugging (only in debug builds)
         Self::log_error(env, error, severity);
-        
+
         ErrorResponse {
             code,
             message,
@@ -71,9 +71,9 @@ impl ErrorHandler {
             severity,
         }
     }
-    
+
     /// Map ContractError to structured error information
-    /// 
+    ///
     /// This function maps known errors to proper codes and messages,
     /// preventing stack traces and sensitive information from leaking.
     fn map_error(env: &Env, error: ContractError) -> (u32, SorobanString, ErrorCategory, ErrorSeverity) {
@@ -91,7 +91,7 @@ impl ErrorHandler {
                 ErrorCategory::State,
                 ErrorSeverity::Medium,
             ),
-            
+
             // Validation Errors (3-10)
             ContractError::InvalidAmount => (
                 3,
@@ -141,7 +141,7 @@ impl ErrorHandler {
                 ErrorCategory::Validation,
                 ErrorSeverity::Low,
             ),
-            
+
             // Settlement Errors (11-14)
             ContractError::SettlementExpired => (
                 11,
@@ -167,7 +167,7 @@ impl ErrorHandler {
                 ErrorCategory::State,
                 ErrorSeverity::Low,
             ),
-            
+
             // Authorization Errors (15-18)
             ContractError::Unauthorized => (
                 15,
@@ -193,7 +193,7 @@ impl ErrorHandler {
                 ErrorCategory::State,
                 ErrorSeverity::Low,
             ),
-            
+
             // Token Whitelist Errors (19-20)
             ContractError::TokenNotWhitelisted => (
                 19,
@@ -207,7 +207,7 @@ impl ErrorHandler {
                 ErrorCategory::Resource,
                 ErrorSeverity::Low,
             ),
-            
+
             // Migration Errors (21-23)
             ContractError::InvalidMigrationHash => (
                 21,
@@ -227,7 +227,7 @@ impl ErrorHandler {
                 ErrorCategory::Validation,
                 ErrorSeverity::Low,
             ),
-            
+
             // Rate Limiting Errors (24)
             ContractError::DailySendLimitExceeded => (
                 24,
@@ -235,7 +235,7 @@ impl ErrorHandler {
                 ErrorCategory::State,
                 ErrorSeverity::Low,
             ),
-            
+
             // Arithmetic Errors (25-26)
             ContractError::Overflow => (
                 25,
@@ -249,7 +249,7 @@ impl ErrorHandler {
                 ErrorCategory::System,
                 ErrorSeverity::High,
             ),
-            
+
             // Data Integrity Errors (27-30)
             ContractError::NetSettlementValidationFailed => (
                 27,
@@ -275,7 +275,7 @@ impl ErrorHandler {
                 ErrorCategory::System,
                 ErrorSeverity::High,
             ),
-            
+
             // Collection Errors (31-33)
             ContractError::IndexOutOfBounds => (
                 31,
@@ -295,7 +295,7 @@ impl ErrorHandler {
                 ErrorCategory::Resource,
                 ErrorSeverity::Low,
             ),
-            
+
             // String/Symbol Errors (34-35)
             ContractError::StringConversionFailed => (
                 34,
@@ -329,9 +329,9 @@ impl ErrorHandler {
             ),
         }
     }
-    
+
     /// Log error for debugging (internal use only)
-    /// 
+    ///
     /// Logs are only available in debug builds and never exposed to clients.
     /// This prevents stack traces and sensitive information from leaking.
     fn log_error(env: &Env, error: ContractError, severity: ErrorSeverity) {

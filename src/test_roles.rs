@@ -82,10 +82,37 @@ fn test_confirm_payout_requires_settler_role() {
 
     // Create remittance
     usdc_token.mint(&sender, &10000);
-    let remittance_id = client.create_remittance(&sender, &agent, &1000, &None);
+    let remittance_id = client.create_remittance(&sender, &agent, &1000, &None, &None, &None);
 
     // Agent tries to confirm payout without Settler role - should panic
-    client.confirm_payout(&remittance_id);
+    client.confirm_payout(&remittance_id, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_unregistered_agent_cannot_confirm_partial_payout() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, SwiftRemitContract {});
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let usdc_token = create_token_contract(&env, &token_admin);
+
+    client.initialize(&admin, &usdc_token.address, &250, &0, &0, &admin);
+    client.register_agent(&agent);
+
+    usdc_token.mint(&sender, &10000);
+    let remittance_id = client.create_remittance(&sender, &agent, &1000, &None, &None, &None);
+
+    // Remove agent authorization so the agent should no longer be able to confirm a partial payout.
+    client.remove_agent(&agent);
+
+    client.confirm_partial_payout(&remittance_id, &100);
 }
 
 #[test]
@@ -114,10 +141,10 @@ fn test_settler_can_finalize_transfers() {
 
     // Create remittance
     usdc_token.mint(&sender, &10000);
-    let remittance_id = client.create_remittance(&sender, &agent, &1000, &None);
+    let remittance_id = client.create_remittance(&sender, &agent, &1000, &None, &None, &None);
 
     // Agent with Settler role can confirm payout
-    client.confirm_payout(&remittance_id);
+    client.confirm_payout(&remittance_id, &None);
 }
 
 #[test]

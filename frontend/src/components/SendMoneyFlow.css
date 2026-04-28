@@ -1,20 +1,20 @@
 .send-flow-card {
   width: min(100%, 760px);
-  border: 1px solid #d6dde8;
+  border: 1px solid var(--color-border-secondary);
   border-radius: 14px;
   padding: 1rem;
-  background: linear-gradient(155deg, #ffffff 0%, #f7f8fd 100%);
+  background: var(--gradient-secondary);
 }
 
 .send-flow-header h2 {
   margin: 0;
-  color: #1c2640;
+  color: var(--color-text-primary);
   font-size: 1.15rem;
 }
 
 .send-flow-header p {
   margin: 0.35rem 0 0;
-  color: #54627a;
+  color: var(--color-text-secondary);
   font-size: 0.9rem;
 }
 
@@ -29,19 +29,19 @@
 
 .send-step-indicator li {
   text-align: center;
-  border: 1px solid #cfdaea;
+  border: 1px solid var(--color-border-tertiary);
   border-radius: 999px;
   padding: 0.35rem 0;
-  background: #f6f9ff;
-  color: #5b6982;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
   font-size: 0.82rem;
   font-weight: 600;
 }
 
 .send-step-indicator li.active {
-  border-color: #0f62fe;
-  background: #dce8ff;
-  color: #0f4cca;
+  border-color: var(--color-secondary);
+  background: var(--color-secondary-light);
+  color: var(--color-secondary-dark);
 }
 
 .send-flow-body {
@@ -54,25 +54,25 @@
 }
 
 .flow-field span {
-  color: #34435e;
+  color: var(--color-text-secondary);
   font-size: 0.9rem;
   font-weight: 600;
 }
 
 .flow-field input,
 .flow-field select {
-  border: 1px solid #b7c4d8;
+  border: 1px solid var(--color-border-secondary);
   border-radius: 8px;
   padding: 0.6rem 0.75rem;
   font-size: 0.95rem;
-  color: #1a2a49;
-  background: #ffffff;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
 }
 
 .flow-field input:focus,
 .flow-field select:focus {
-  outline: 2px solid #9dc1ff;
-  border-color: #0f62fe;
+  outline: 2px solid var(--color-border-focus);
+  border-color: var(--color-secondary);
 }
 
 .flow-review {
@@ -85,21 +85,21 @@
   display: grid;
   grid-template-columns: 120px 1fr;
   gap: 0.65rem;
-  border: 1px solid #d8e2f0;
+  border: 1px solid var(--color-border-secondary);
   border-radius: 8px;
   padding: 0.6rem 0.75rem;
-  background: #fbfdff;
+  background: var(--color-bg-secondary);
 }
 
 .flow-review dt {
   margin: 0;
-  color: #62728b;
+  color: var(--color-text-tertiary);
   font-size: 0.86rem;
 }
 
 .flow-review dd {
   margin: 0;
-  color: #1f2f50;
+  color: var(--color-text-primary);
   font-weight: 600;
   word-break: break-word;
 }
@@ -125,28 +125,28 @@
 }
 
 .flow-button.primary {
-  background: #0f62fe;
-  color: #ffffff;
+  background: var(--color-secondary);
+  color: var(--color-text-light);
 }
 
 .flow-button.muted {
-  background: #e2e8f4;
-  color: #2a3853;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
 }
 
 .flow-error {
   margin-top: 0.8rem;
   margin-bottom: 0;
-  color: #ad1f0f;
+  color: var(--color-error);
   font-size: 0.9rem;
 }
 
 .flow-success {
   margin-top: 0.85rem;
   margin-bottom: 0;
-  border: 1px solid #bde6d1;
-  background: #ecfbf2;
-  color: #0b6242;
+  border: 1px solid var(--color-success-border);
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
   border-radius: 8px;
   padding: 0.8rem;
   font-weight: 600;
@@ -155,6 +155,14 @@
 @media (max-width: 680px) {
   .send-flow-card {
     padding: 0.9rem;
+  }
+
+  .send-flow-header h2 {
+    font-size: 1rem;
+  }
+
+  .send-flow-header p {
+    font-size: 0.8rem;
   }
 
   .flow-review div {
@@ -168,5 +176,207 @@
 
   .flow-button {
     width: 100%;
+    padding: 0.75rem 1rem;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .flow-field input,
+  .flow-field select {
+    min-height: 44px;
+  }
+}
+
+/* Mobile viewport optimization: 375px+ devices */
+@media (max-width: 480px) {
+  .send-flow-card {
+    padding: 0.75rem;
+    width: 100%;
+    margin: 0;
+  }
+
+  .send-flow-header {
+    margin-bottom: 0.5rem;
+  }
+
+  .send-flow-header h2 {
+    font-size: 1rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .send-flow-header p {
+    font-size: 0.75rem;
+    margin: 0;
+  }
+
+  .send-step-indicator {
+    grid-template-columns: repeat(5, minmax(28px, 1fr));
+    gap: 0.3rem;
+    margin: 0.5rem 0 0;
+  }
+
+  .send-step-indicator li {
+    padding: 0.25rem 0.1rem;
+    font-size: 0.7rem;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+  }
+
+  .send-step-indicator li.active {
+    box-shadow: 0 0 0 2px var(--color-secondary);
+  }
+
+  .send-flow-body {
+    margin-top: 0.75rem;
+  }
+
+  .flow-field {
+    gap: 0.3rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .flow-field span {
+    font-size: 0.8rem;
+  }
+
+  .flow-field input,
+  .flow-field select {
+    padding: 0.75rem;
+    font-size: 1rem;
+    min-height: 44px;
+    border-radius: 6px;
+  }
+
+  .flow-field-optional {
+    font-size: 0.75rem;
+    opacity: 0.8;
+  }
+
+  .flow-char-count {
+    font-size: 0.75rem;
+    opacity: 0.7;
+    margin-top: 0.2rem;
+  }
+
+  .flow-review {
+    gap: 0.5rem;
+  }
+
+  .flow-review div {
+    grid-template-columns: 1fr;
+    gap: 0.3rem;
+    padding: 0.6rem;
+    border-radius: 6px;
+  }
+
+  .flow-review dt {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    opacity: 0.8;
+  }
+
+  .flow-review dd {
+    font-size: 0.9rem;
+  }
+
+  .send-flow-actions {
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+
+  .flow-button {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    min-height: 44px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .flow-button:active {
+    transform: scale(0.98);
+  }
+
+  .flow-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .flow-error {
+    margin-top: 0.6rem;
+    font-size: 0.85rem;
+    padding: 0.5rem;
+    border-radius: 4px;
+    background: rgba(220, 38, 38, 0.1);
+    border-left: 3px solid var(--color-error);
+  }
+
+  .flow-success {
+    margin-top: 0.6rem;
+    font-size: 0.85rem;
+    padding: 0.6rem;
+    border-radius: 6px;
+  }
+}
+
+/* Extra small devices: 320px-374px */
+@media (max-width: 374px) {
+  .send-flow-card {
+    padding: 0.65rem;
+    margin: 0;
+  }
+
+  .send-flow-header h2 {
+    font-size: 0.95rem;
+  }
+
+  .send-flow-header p {
+    font-size: 0.7rem;
+  }
+
+  .send-step-indicator {
+    grid-template-columns: repeat(5, minmax(24px, 1fr));
+    gap: 0.25rem;
+    margin: 0.4rem 0 0;
+  }
+
+  .send-step-indicator li {
+    padding: 0.2rem;
+    font-size: 0.6rem;
+    min-height: 32px;
+    border-radius: 4px;
+  }
+
+  .flow-field input,
+  .flow-field select {
+    padding: 0.65rem;
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  .flow-button {
+    padding: 0.65rem 0.8rem;
+    font-size: 0.95rem;
+    min-height: 44px;
+    border-radius: 4px;
+  }
+
+  .flow-review div {
+    padding: 0.5rem;
+  }
+
+  .send-flow-actions {
+    gap: 0.4rem;
+    margin-top: 0.6rem;
   }
 }

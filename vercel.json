@@ -1,4 +1,5 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
   "name": "swiftremit",
   "builds": [
@@ -19,5 +20,10 @@
   "buildCommand": "cd frontend && npm install --legacy-peer-deps && npm run build",
   "outputDirectory": "frontend/dist",
   "framework": "vite",
-  "installCommand": "cd frontend && npm install --legacy-peer-deps"
+  "installCommand": "cd frontend && npm install --legacy-peer-deps",
+  "git": {
+    "deploymentEnabled": {
+      "feat/*": false
+    }
+  }
 }

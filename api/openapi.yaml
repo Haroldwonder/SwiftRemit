@@ -1,0 +1,695 @@
+openapi: 3.0.0
+info:
+  title: SwiftRemit API Service
+  version: 1.0.0
+  description: API service for SwiftRemit currency configuration and anchor management
+  contact:
+    name: SwiftRemit Team
+
+servers:
+  - url: http://localhost:3000
+    description: Development server
+  - url: https://api.swiftremit.com
+    description: Production server
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Currencies
+    description: Currency configuration endpoints
+  - name: Anchors
+    description: Anchor provider management endpoints
+  - name: Remittances
+    description: Remittance query endpoints
+  - name: Admin
+    description: Admin utility endpoints
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check endpoint
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/currencies:
+    get:
+      tags:
+        - Currencies
+      summary: Get all supported currencies
+      description: Returns all supported currencies with their formatting rules
+      operationId: getCurrencies
+      responses:
+        '200':
+          description: List of currencies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrencyResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/currencies/{code}:
+    get:
+      tags:
+        - Currencies
+      summary: Get currency by code
+      description: Returns a specific currency by its code
+      operationId: getCurrencyByCode
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: Currency code (e.g., USD, EUR)
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 12
+            example: USD
+      responses:
+        '200':
+          description: Currency details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrencyResponse'
+        '400':
+          description: Invalid currency code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Currency not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/anchors:
+    get:
+      tags:
+        - Anchors
+      summary: Get all anchor providers
+      description: Returns all available anchor providers with optional filtering
+      operationId: getAnchors
+      parameters:
+        - name: status
+          in: query
+          description: Filter by anchor status
+          schema:
+            type: string
+            enum: [active, inactive, maintenance]
+        - name: currency
+          in: query
+          description: Filter by supported currency
+          schema:
+            type: string
+            maxLength: 12
+      responses:
+        '200':
+          description: List of anchor providers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnchorListResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/anchors/{id}:
+    get:
+      tags:
+        - Anchors
+      summary: Get anchor by ID
+      description: Returns a specific anchor provider by ID
+      operationId: getAnchorById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Anchor ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Anchor details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnchorDetailResponse'
+        '404':
+          description: Anchor not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/anchors/admin:
+    post:
+      tags:
+        - Anchors
+      summary: Create new anchor (Admin)
+      description: Creates a new anchor provider. Requires admin API key.
+      operationId: createAnchor
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnchorProvider'
+      responses:
+        '201':
+          description: Anchor created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnchorDetailResponse'
+        '400':
+          description: Invalid anchor payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/remittances:
+    get:
+      tags:
+        - Remittances
+      summary: Query remittances by agent address
+      description: >
+        Returns a paginated list of remittances assigned to the given agent,
+        with optional status filtering. Resolves issue #472.
+      operationId: getRemittancesByAgent
+      parameters:
+        - name: agent
+          in: query
+          required: true
+          description: Stellar address of the agent
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          description: Filter by remittance status
+          schema:
+            type: string
+            enum: [Pending, Processing, Completed, Cancelled, Failed, Disputed]
+        - name: page
+          in: query
+          required: false
+          description: 1-based page number
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          description: Items per page (max 100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of remittances
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemittanceListResponse'
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/admin/fees:
+    get:
+      tags:
+        - Admin
+      summary: Get accumulated fee breakdown
+      description: >
+        Returns total accumulated platform fees, per-integrator breakdown,
+        daily/weekly/monthly time-series, and pending withdrawal amount.
+        Requires admin authentication. Resolves issue #473.
+      operationId: getAdminFees
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Fee breakdown data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeeBreakdownResponse'
+        '401':
+          description: Unauthorized — admin API key required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Admin API key for protected endpoints
+
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - uptime
+      properties:
+        status:
+          type: string
+          example: ok
+        timestamp:
+          type: string
+          format: date-time
+        uptime:
+          type: number
+          description: Server uptime in seconds
+
+    Currency:
+      type: object
+      required:
+        - code
+        - symbol
+        - decimal_precision
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 12
+          example: USD
+        symbol:
+          type: string
+          example: $
+        decimal_precision:
+          type: integer
+          minimum: 0
+          maximum: 18
+          example: 2
+        name:
+          type: string
+          example: US Dollar
+
+    CurrencyResponse:
+      type: object
+      required:
+        - success
+        - data
+        - count
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Currency'
+        count:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          required:
+            - message
+          properties:
+            message:
+              type: string
+            code:
+              type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    AnchorFees:
+      type: object
+      required:
+        - deposit_fee_percent
+        - withdrawal_fee_percent
+      properties:
+        deposit_fee_percent:
+          type: number
+          format: float
+        deposit_fee_fixed:
+          type: number
+          format: float
+        withdrawal_fee_percent:
+          type: number
+          format: float
+        withdrawal_fee_fixed:
+          type: number
+          format: float
+        min_fee:
+          type: number
+          format: float
+        max_fee:
+          type: number
+          format: float
+
+    AnchorLimits:
+      type: object
+      required:
+        - min_amount
+        - max_amount
+      properties:
+        min_amount:
+          type: number
+          format: float
+        max_amount:
+          type: number
+          format: float
+        daily_limit:
+          type: number
+          format: float
+        monthly_limit:
+          type: number
+          format: float
+
+    AnchorCompliance:
+      type: object
+      required:
+        - kyc_required
+        - kyc_level
+        - supported_countries
+        - restricted_countries
+        - documents_required
+      properties:
+        kyc_required:
+          type: boolean
+        kyc_level:
+          type: string
+          enum: [basic, intermediate, advanced]
+        supported_countries:
+          type: array
+          items:
+            type: string
+        restricted_countries:
+          type: array
+          items:
+            type: string
+        documents_required:
+          type: array
+          items:
+            type: string
+
+    AnchorProvider:
+      type: object
+      required:
+        - id
+        - name
+        - domain
+        - description
+        - status
+        - fees
+        - limits
+        - compliance
+        - supported_currencies
+        - processing_time
+        - verified
+      properties:
+        id:
+          type: string
+          example: anchor-1
+        name:
+          type: string
+          example: Example Anchor
+        domain:
+          type: string
+          example: anchor.example.com
+        logo_url:
+          type: string
+          format: uri
+        description:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, maintenance]
+        fees:
+          $ref: '#/components/schemas/AnchorFees'
+        limits:
+          $ref: '#/components/schemas/AnchorLimits'
+        compliance:
+          $ref: '#/components/schemas/AnchorCompliance'
+        supported_currencies:
+          type: array
+          items:
+            type: string
+        processing_time:
+          type: string
+          example: 1-2 business days
+        rating:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 5
+        total_transactions:
+          type: integer
+        verified:
+          type: boolean
+
+    AnchorListResponse:
+      type: object
+      required:
+        - success
+        - data
+        - count
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnchorProvider'
+        count:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    AnchorDetailResponse:
+      type: object
+      required:
+        - success
+        - data
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/AnchorProvider'
+        timestamp:
+          type: string
+          format: date-time
+
+    Remittance:
+      type: object
+      required:
+        - id
+        - sender
+        - agent
+        - amount
+        - fee
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          example: 1
+        sender:
+          type: string
+          description: Stellar address of the sender
+        agent:
+          type: string
+          description: Stellar address of the agent
+        amount:
+          type: integer
+          description: Amount in stroops
+        fee:
+          type: integer
+          description: Platform fee in stroops
+        status:
+          type: string
+          enum: [Pending, Processing, Completed, Cancelled, Failed, Disputed]
+        token:
+          type: string
+          description: Stellar token address used for this remittance
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Pagination:
+      type: object
+      required:
+        - page
+        - limit
+        - total
+        - total_pages
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+
+    RemittanceListResponse:
+      type: object
+      required:
+        - success
+        - data
+        - pagination
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Remittance'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        timestamp:
+          type: string
+          format: date-time
+
+    IntegratorFeeEntry:
+      type: object
+      required:
+        - integrator
+        - accumulated_fees
+      properties:
+        integrator:
+          type: string
+          description: Stellar address of the integrator
+        accumulated_fees:
+          type: integer
+          description: Accumulated fees in stroops
+
+    FeeTimeSeries:
+      type: object
+      required:
+        - period
+        - label
+        - amount
+      properties:
+        period:
+          type: string
+          enum: [daily, weekly, monthly]
+        label:
+          type: string
+          description: Human-readable period label (e.g. "2026-04-27")
+        amount:
+          type: integer
+          description: Fees collected in this period (stroops)
+
+    FeeBreakdownResponse:
+      type: object
+      required:
+        - success
+        - data
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - total_accumulated_fees
+            - pending_withdrawal
+            - integrator_breakdown
+            - time_series
+          properties:
+            total_accumulated_fees:
+              type: integer
+              description: Total platform fees accumulated (stroops)
+            pending_withdrawal:
+              type: integer
+              description: Fees not yet withdrawn (stroops)
+            integrator_breakdown:
+              type: array
+              items:
+                $ref: '#/components/schemas/IntegratorFeeEntry'
+            time_series:
+              type: array
+              items:
+                $ref: '#/components/schemas/FeeTimeSeries'
+        timestamp:
+          type: string
+          format: date-time

@@ -1,0 +1,51 @@
+name: Rust Property Tests
+
+on:
+  push:
+    branches: [main, "feat/**", "test/**"]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/property-tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/property-tests.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+  # Reduce proptest cases in CI to keep runs fast while still catching regressions
+  PROPTEST_CASES: 50
+
+jobs:
+  property-tests:
+    name: Property-Based Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run property tests (invariants)
+        run: cargo test test_invariants -- --nocapture
+
+      - name: Run all property tests
+        run: cargo test prop_ -- --nocapture

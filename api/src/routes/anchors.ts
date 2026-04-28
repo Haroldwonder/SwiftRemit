@@ -1,155 +1,258 @@
 import { Router, Request, Response } from 'express';
 import { AnchorProvider, AnchorListResponse, AnchorDetailResponse } from '../types/anchor';
 import { ErrorResponse } from '../types';
+import {
+  AnchorStore,
+  getDefaultAnchorStore,
+  isAnchorStatus,
+} from '../db/anchorStore';
 
-const router = Router();
+type RouterOptions = {
+  store?: AnchorStore;
+  adminApiKey?: string;
+};
 
-// Mock anchor data - in production, this would come from a database
-const mockAnchors: AnchorProvider[] = [
-  {
-    id: 'anchor-1',
-    name: 'MoneyGram Access',
-    domain: 'moneygram.stellar.org',
-    logo_url: 'https://example.com/moneygram-logo.png',
-    description: 'Global money transfer service with extensive agent network',
-    status: 'active',
-    fees: {
-      deposit_fee_percent: 1.5,
-      deposit_fee_fixed: 0,
-      withdrawal_fee_percent: 2.0,
-      withdrawal_fee_fixed: 1.0,
-      min_fee: 1.0,
-      max_fee: 50.0,
-    },
-    limits: {
-      min_amount: 10,
-      max_amount: 10000,
-      daily_limit: 25000,
-      monthly_limit: 100000,
-    },
-    compliance: {
-      kyc_required: true,
-      kyc_level: 'intermediate',
-      supported_countries: ['US', 'CA', 'MX', 'GB', 'PH', 'IN'],
-      restricted_countries: ['KP', 'IR', 'SY'],
-      documents_required: ['government_id', 'proof_of_address'],
-    },
-    supported_currencies: ['USD', 'EUR', 'GBP', 'PHP', 'INR'],
-    processing_time: '1-3 business days',
-    rating: 4.5,
-    total_transactions: 125000,
-    verified: true,
-  },
-  {
-    id: 'anchor-2',
-    name: 'Circle USDC',
-    domain: 'circle.com',
-    logo_url: 'https://example.com/circle-logo.png',
-    description: 'Leading USDC issuer with instant settlement',
-    status: 'active',
-    fees: {
-      deposit_fee_percent: 0.5,
-      deposit_fee_fixed: 0,
-      withdrawal_fee_percent: 0.5,
-      withdrawal_fee_fixed: 0,
-      min_fee: 0,
-      max_fee: 25.0,
-    },
-    limits: {
-      min_amount: 1,
-      max_amount: 50000,
-      daily_limit: 100000,
-      monthly_limit: 500000,
-    },
-    compliance: {
-      kyc_required: true,
-      kyc_level: 'advanced',
-      supported_countries: ['US', 'CA', 'GB', 'EU'],
-      restricted_countries: ['KP', 'IR', 'SY', 'CU'],
-      documents_required: ['government_id', 'proof_of_address', 'ssn_or_tax_id'],
-    },
-    supported_currencies: ['USD', 'EUR'],
-    processing_time: 'Instant',
-    rating: 4.8,
-    total_transactions: 500000,
-    verified: true,
-  },
-  {
-    id: 'anchor-3',
-    name: 'AnchorUSD',
-    domain: 'anchorusd.com',
-    logo_url: 'https://example.com/anchorusd-logo.png',
-    description: 'Fast and reliable USD anchor for Stellar network',
-    status: 'active',
-    fees: {
-      deposit_fee_percent: 1.0,
-      deposit_fee_fixed: 0.5,
-      withdrawal_fee_percent: 1.0,
-      withdrawal_fee_fixed: 0.5,
-      min_fee: 0.5,
-      max_fee: 30.0,
-    },
-    limits: {
-      min_amount: 5,
-      max_amount: 25000,
-      daily_limit: 50000,
-    },
-    compliance: {
-      kyc_required: true,
-      kyc_level: 'basic',
-      supported_countries: ['US', 'CA', 'MX', 'BR', 'AR'],
-      restricted_countries: ['KP', 'IR'],
-      documents_required: ['government_id'],
-    },
-    supported_currencies: ['USD'],
-    processing_time: '2-4 hours',
-    rating: 4.2,
-    total_transactions: 75000,
-    verified: true,
-  },
-];
+function timestamp(): string {
+  return new Date().toISOString();
+}
+
+function sendError(
+  res: Response,
+  status: number,
+  message: string,
+  code: string,
+): Response<ErrorResponse> {
+  return res.status(status).json({
+    success: false,
+    error: { message, code },
+    timestamp: timestamp(),
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function isAnchorProvider(value: unknown): value is AnchorProvider {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.domain === 'string' &&
+    typeof value.description === 'string' &&
+    typeof value.processing_time === 'string' &&
+    typeof value.verified === 'boolean' &&
+    typeof value.status === 'string' &&
+    isAnchorStatus(value.status) &&
+    isRecord(value.fees) &&
+    isRecord(value.limits) &&
+    isRecord(value.compliance) &&
+    isStringArray(value.supported_currencies)
+  );
+}
+
+function isAnchorUpdatePayload(value: unknown): value is Partial<AnchorProvider> {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const status = value.status;
+  if (status !== undefined && (typeof status !== 'string' || !isAnchorStatus(status))) {
+    return false;
+  }
+
+  const supportedCurrencies = value.supported_currencies;
+  if (supportedCurrencies !== undefined && !isStringArray(supportedCurrencies)) {
+    return false;
+  }
+
+  return true;
+}
+
+function requireAdminApiKey(adminApiKey?: string) {
+  return (req: Request, res: Response, next: () => void): void | Response<ErrorResponse> => {
+    if (!adminApiKey) {
+      return sendError(
+        res,
+        500,
+        'Anchor admin API key is not configured',
+        'ANCHOR_ADMIN_NOT_CONFIGURED',
+      );
+    }
+
+    const requestApiKey = req.header('x-api-key');
+    if (!requestApiKey || requestApiKey !== adminApiKey) {
+      return sendError(res, 401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+
+    next();
+  };
+}
+
+export function createAnchorsRouter(options: RouterOptions = {}): Router {
+  const router = Router();
+  const adminAuth = requireAdminApiKey(
+    options.adminApiKey ?? process.env.ANCHORS_ADMIN_API_KEY,
+  );
+  const getStore = (): AnchorStore => options.store ?? getDefaultAnchorStore();
 
 /**
  * GET /api/anchors
  * Returns all available anchor providers
  */
-router.get('/', (req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
     const { status, currency } = req.query;
-    
-    let filteredAnchors = mockAnchors;
-    
-    // Filter by status if provided
-    if (status && typeof status === 'string') {
-      filteredAnchors = filteredAnchors.filter(anchor => anchor.status === status);
-    }
-    
-    // Filter by supported currency if provided
-    if (currency && typeof currency === 'string') {
-      filteredAnchors = filteredAnchors.filter(anchor => 
-        anchor.supported_currencies.includes(currency.toUpperCase())
-      );
-    }
-    
+
+    // Accept currencies[] (multi) or currency (single, backward-compat)
+    const rawCurrencies = req.query['currencies[]'];
+    const currencies: string[] | undefined = rawCurrencies
+      ? (Array.isArray(rawCurrencies) ? rawCurrencies : [rawCurrencies]).filter(
+          (c): c is string => typeof c === 'string',
+        )
+      : undefined;
+
+    const filteredAnchors = await getStore().list({
+      status: typeof status === 'string' ? status : undefined,
+      currency: typeof currency === 'string' ? currency : undefined,
+      currencies,
+    });
+
     const response: AnchorListResponse = {
       success: true,
       data: filteredAnchors,
       count: filteredAnchors.length,
-      timestamp: new Date().toISOString(),
+      timestamp: timestamp(),
     };
-    
+
     res.json(response);
   } catch (error) {
-    const errorResponse: ErrorResponse = {
-      success: false,
-      error: {
-        message: error instanceof Error ? error.message : 'Failed to retrieve anchors',
-        code: 'ANCHOR_RETRIEVAL_ERROR',
-      },
-      timestamp: new Date().toISOString(),
+    return sendError(
+      res,
+      500,
+      error instanceof Error ? error.message : 'Failed to retrieve anchors',
+      'ANCHOR_RETRIEVAL_ERROR',
+    );
+  }
+});
+
+router.post('/admin', adminAuth, async (req: Request, res: Response) => {
+  try {
+    if (!isAnchorProvider(req.body)) {
+      return sendError(res, 400, 'Invalid anchor payload', 'INVALID_ANCHOR_PAYLOAD');
+    }
+
+    const anchor = await getStore().create(req.body);
+    const response: AnchorDetailResponse = {
+      success: true,
+      data: anchor,
+      timestamp: timestamp(),
     };
-    
-    res.status(500).json(errorResponse);
+
+    res.status(201).json(response);
+  } catch (error) {
+    return sendError(
+      res,
+      500,
+      error instanceof Error ? error.message : 'Failed to create anchor',
+      'ANCHOR_CREATE_ERROR',
+    );
+  }
+});
+
+router.put('/admin/:id', adminAuth, async (req: Request, res: Response) => {
+  try {
+    if (!isAnchorUpdatePayload(req.body)) {
+      return sendError(res, 400, 'Invalid anchor update payload', 'INVALID_ANCHOR_PAYLOAD');
+    }
+
+    const anchor = await getStore().update(req.params.id, req.body);
+    if (!anchor) {
+      return sendError(
+        res,
+        404,
+        `Anchor with id '${req.params.id}' not found`,
+        'ANCHOR_NOT_FOUND',
+      );
+    }
+
+    const response: AnchorDetailResponse = {
+      success: true,
+      data: anchor,
+      timestamp: timestamp(),
+    };
+
+    res.json(response);
+  } catch (error) {
+    return sendError(
+      res,
+      500,
+      error instanceof Error ? error.message : 'Failed to update anchor',
+      'ANCHOR_UPDATE_ERROR',
+    );
+  }
+});
+
+router.post('/admin/:id/deactivate', adminAuth, async (req: Request, res: Response) => {
+  try {
+    const anchor = await getStore().deactivate(req.params.id);
+    if (!anchor) {
+      return sendError(
+        res,
+        404,
+        `Anchor with id '${req.params.id}' not found`,
+        'ANCHOR_NOT_FOUND',
+      );
+    }
+
+    const response: AnchorDetailResponse = {
+      success: true,
+      data: anchor,
+      timestamp: timestamp(),
+    };
+
+    res.json(response);
+  } catch (error) {
+    return sendError(
+      res,
+      500,
+      error instanceof Error ? error.message : 'Failed to deactivate anchor',
+      'ANCHOR_DEACTIVATE_ERROR',
+    );
+  }
+});
+
+router.delete('/admin/:id', adminAuth, async (req: Request, res: Response) => {
+  try {
+    const deleted = await getStore().delete(req.params.id);
+    if (!deleted) {
+      return sendError(
+        res,
+        404,
+        `Anchor with id '${req.params.id}' not found`,
+        'ANCHOR_NOT_FOUND',
+      );
+    }
+
+    res.json({
+      success: true,
+      data: { id: req.params.id },
+      timestamp: timestamp(),
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      500,
+      error instanceof Error ? error.message : 'Failed to delete anchor',
+      'ANCHOR_DELETE_ERROR',
+    );
   }
 });
 
@@ -157,43 +260,36 @@ router.get('/', (req: Request, res: Response) => {
  * GET /api/anchors/:id
  * Returns details for a specific anchor provider
  */
-router.get('/:id', (req: Request, res: Response) => {
+router.get('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const anchor = mockAnchors.find(a => a.id === id);
-    
+    const anchor = await getStore().getById(id);
+
     if (!anchor) {
-      const errorResponse: ErrorResponse = {
-        success: false,
-        error: {
-          message: `Anchor with id '${id}' not found`,
-          code: 'ANCHOR_NOT_FOUND',
-        },
-        timestamp: new Date().toISOString(),
-      };
-      
-      return res.status(404).json(errorResponse);
+      return sendError(
+        res,
+        404,
+        `Anchor with id '${id}' not found`,
+        'ANCHOR_NOT_FOUND',
+      );
     }
-    
+
     const response: AnchorDetailResponse = {
       success: true,
       data: anchor,
-      timestamp: new Date().toISOString(),
+      timestamp: timestamp(),
     };
-    
+
     res.json(response);
   } catch (error) {
-    const errorResponse: ErrorResponse = {
-      success: false,
-      error: {
-        message: error instanceof Error ? error.message : 'Failed to retrieve anchor',
-        code: 'ANCHOR_RETRIEVAL_ERROR',
-      },
-      timestamp: new Date().toISOString(),
-    };
-    
-    res.status(500).json(errorResponse);
+    return sendError(
+      res,
+      500,
+      error instanceof Error ? error.message : 'Failed to retrieve anchor',
+      'ANCHOR_RETRIEVAL_ERROR',
+    );
   }
 });
 
-export default router;
+return router;
+}

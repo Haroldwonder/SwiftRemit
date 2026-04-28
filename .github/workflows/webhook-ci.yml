@@ -97,7 +97,7 @@ jobs:
 
       - name: Run security audit
         working-directory: ./backend
-        run: npm audit --audit-level=moderate || true
+        run: npm audit --audit-level=moderate
 
   lint:
     name: Code Quality

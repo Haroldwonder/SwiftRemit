@@ -1,0 +1,29 @@
+name: Validate .env.example Files
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/.env.example'
+      - 'scripts/validate-env-examples.js'
+      - 'backend/src/**'
+      - 'api/src/**'
+      - 'frontend/src/**'
+      - 'examples/**/*.js'
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Check .env.example sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+
+      - name: Run validation
+        run: node scripts/validate-env-examples.js

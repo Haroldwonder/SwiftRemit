@@ -4,24 +4,46 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["debug-log"]
+default = []
 debug-log = []
 benchmarks = []
 legacy-tests = []
+testnet-integration = []
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = "21.7.0"
+soroban-sdk = "25.3.1"
 
 [dev-dependencies]
-soroban-sdk = { version = "21.7.0", features = ["testutils"] }
+soroban-sdk = { version = "25.3.1", features = ["testutils"] }
 proptest = "1.4"
 criterion = "0.5"
+# Used only by the testnet-integration test suite (gated by feature flag).
+reqwest = { version = "0.12.5", features = ["json", "blocking"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+dotenvy = "0.15"
 
 [[bench]]
 name = "settlement_storage"
+harness = false
+required-features = ["benchmarks"]
+
+[[bench]]
+name = "fee_calculation"
+harness = false
+required-features = ["benchmarks"]
+
+[[bench]]
+name = "batch_expiry"
+harness = false
+required-features = ["benchmarks"]
+
+[[bench]]
+name = "abuse_protection"
 harness = false
 required-features = ["benchmarks"]
 

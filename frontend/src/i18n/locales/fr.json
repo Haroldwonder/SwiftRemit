@@ -1,0 +1,87 @@
+{
+  "app": {
+    "title": "SwiftRemit",
+    "subtitle": "Transferts USDC Sécurisés à l'International",
+    "footer": "Construit sur Stellar Soroban • Testnet"
+  },
+  "wallet": {
+    "title": "Portefeuille",
+    "notConnected": "Non connecté",
+    "connectPrompt": "Connectez un portefeuille pour continuer",
+    "connectedKey": "Clé publique connectée",
+    "connect": "Connecter",
+    "connecting": "Connexion...",
+    "disconnect": "Déconnecter",
+    "disconnecting": "Déconnexion...",
+    "signMessage": "Signer le message",
+    "signing": "En attente de signature...",
+    "installLink": "Installer Freighter Wallet",
+    "errors": {
+      "notInstalled": "Freighter Wallet n'est pas installé.",
+      "notConnected": "Veuillez déverrouiller votre Freighter Wallet et réessayer.",
+      "connectFailed": "Échec de la connexion au portefeuille. Veuillez réessayer.",
+      "disconnectFailed": "Échec de la déconnexion du portefeuille.",
+      "signatureRejected": "La demande de signature a été rejetée.",
+      "signatureFailed": "Impossible de compléter la demande de signature."
+    },
+    "warnings": {
+      "networkMismatch": "Avertissement : Le portefeuille est connecté à {{walletNetwork}}, mais {{expectedNetwork}} est attendu."
+    }
+  },
+  "sendMoney": {
+    "title": "Envoyer de l'argent",
+    "stepLabel": "Étape {{step}} sur 5 : {{name}}",
+    "steps": {
+      "1": "Saisir le montant",
+      "2": "Sélectionner l'actif",
+      "3": "Saisir le destinataire",
+      "4": "Vérifier le résumé",
+      "5": "Confirmer la transaction"
+    },
+    "amount": "Montant",
+    "asset": "Actif",
+    "chooseAsset": "Choisir un actif",
+    "recipient": "Destinataire",
+    "memo": "Mémo",
+    "memoOptional": "(facultatif)",
+    "memoPlaceholder": "ex. Facture #1234",
+    "back": "Retour",
+    "continue": "Continuer",
+    "confirm": "Confirmer la transaction",
+    "confirming": "Confirmation...",
+    "success": "Transaction confirmée avec succès.",
+    "txHash": "Hash de transaction :",
+    "viewOnExpert": "Voir sur Stellar Expert ↗",
+    "review": {
+      "amount": "Montant",
+      "asset": "Actif",
+      "recipient": "Destinataire",
+      "memo": "Mémo"
+    },
+    "errors": {
+      "amountRequired": "Le montant est requis.",
+      "amountInvalid": "Le montant doit être supérieur à zéro.",
+      "assetRequired": "Veuillez sélectionner un actif.",
+      "recipientInvalid": "Le destinataire doit être une clé publique Stellar valide.",
+      "incomplete": "Les détails de la transaction sont incomplets.",
+      "failed": "La transaction a échoué. Veuillez réessayer.",
+      "rejected": "La transaction a été rejetée par le portefeuille.",
+      "freighterNotInstalled": "Freighter Wallet n'est pas installé. Veuillez l'installer pour continuer."
+    },
+    "limits": {
+      "min": "Min : {{value}} {{asset}}",
+      "max": "Max : {{value}} {{asset}}",
+      "dailyRemaining": "Limite quotidienne : {{value}} {{asset}} restant",
+      "approachingLimit": "Avertissement : Vous approchez de votre limite quotidienne.",
+      "loading": "Chargement des limites...",
+      "error": "Impossible de charger les limites."
+    }
+  },
+  "language": {
+    "selector": "Langue",
+    "en": "English",
+    "es": "Español",
+    "fr": "Français",
+    "pt": "Português"
+  }
+}

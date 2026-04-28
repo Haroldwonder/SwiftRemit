@@ -43,14 +43,14 @@
 .overlay-frame {
   width: 80%;
   height: 60%;
-  border: 2px solid #fff;
+  border: 2px solid var(--color-text-light);
   border-radius: 8px;
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
 }
 
 .overlay-text {
   margin-top: 10px;
-  color: #fff;
+  color: var(--color-text-light);
   background: rgba(0, 0, 0, 0.7);
   padding: 5px 10px;
   border-radius: 4px;
@@ -63,8 +63,8 @@
   left: 50%;
   transform: translateX(-50%);
   padding: 10px 20px;
-  background: #007bff;
-  color: #fff;
+  background: var(--color-secondary);
+  color: var(--color-text-light);
   border: none;
   border-radius: 50px;
   cursor: pointer;
@@ -72,7 +72,7 @@
 }
 
 .capture-button:hover {
-  background: #0056b3;
+  background: var(--color-secondary-dark);
 }
 
 .preview-container {
@@ -103,24 +103,126 @@
 }
 
 .retake-button {
-  background: #6c757d;
-  color: #fff;
+  background: var(--color-neutral-600);
+  color: var(--color-text-light);
 }
 
 .retake-button:hover {
-  background: #545b62;
+  background: var(--color-neutral-700);
 }
 
 .release-button {
-  background: #28a745;
-  color: #fff;
+  background: var(--color-success);
+  color: var(--color-text-light);
 }
 
 .release-button:hover {
-  background: #218838;
+  background: var(--color-success-dark);
 }
 
 .release-button:disabled {
-  background: #6c757d;
+  background: var(--color-neutral-600);
   cursor: not-allowed;
+}
+
+
+/* Loading and Error States */
+.loading-state,
+.error-state {
+  padding: 20px;
+  text-align: center;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.loading-state {
+  background: var(--color-neutral-200);
+  color: var(--color-text-primary);
+}
+
+.error-state {
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
+}
+
+.error-message {
+  color: var(--color-error-text);
+  margin: 0;
+}
+
+/* Payout Details Section */
+.payout-details {
+  width: 100%;
+  background: var(--color-bg-secondary);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.detail-section {
+  margin-bottom: 20px;
+}
+
+.detail-section h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: var(--color-text-primary);
+  font-size: 18px;
+  border-bottom: 2px solid var(--color-secondary);
+  padding-bottom: 8px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border-primary);
+}
+
+.detail-row:last-child {
+  border-bottom: none;
+}
+
+.detail-label {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.detail-value {
+  color: var(--color-text-primary);
+  font-family: monospace;
+  text-align: right;
+  word-break: break-all;
+}
+
+/* Action Section */
+.action-section {
+  text-align: center;
+}
+
+.stellar-expert-link {
+  display: inline-block;
+  padding: 12px 24px;
+  background: var(--color-secondary);
+  color: var(--color-text-light);
+  text-decoration: none;
+  border-radius: 4px;
+  font-weight: 600;
+  transition: background 0.3s ease;
+}
+
+.stellar-expert-link:hover {
+  background: var(--color-secondary-dark);
+}
+
+/* Responsive Design */
+@media (max-width: 600px) {
+  .detail-row {
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .detail-value {
+    text-align: left;
+  }
 }

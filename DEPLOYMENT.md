@@ -248,6 +248,54 @@ Then redeploy the frontend.
 - **Stellar Expert**: https://stellar.expert/explorer/testnet
 - **Horizon API**: https://horizon-testnet.stellar.org
 
+### Contract Function Examples
+
+#### Get Settlement Hash
+
+Retrieve the stored settlement hash for a settled remittance:
+
+```bash
+# Get settlement hash for a remittance
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --network testnet \
+  -- \
+  get_settlement_hash \
+  --remittance_id 1
+```
+
+This function returns the 32-byte SHA-256 settlement hash that was stored when the remittance was settled. External systems can use this to verify their computed hash matches the on-chain value.
+
+**Example Response:**
+```
+"a1b2c3d4e5f6789012345678901234567890123456789012345678901234abcd"
+```
+
+**Error Cases:**
+- `RemittanceNotFound`: The remittance ID doesn't exist
+- `InvalidStatus`: The remittance hasn't been settled yet
+
+#### Compute Settlement Hash
+
+Compute the deterministic settlement hash for any remittance (settled or not):
+
+```bash
+# Compute settlement hash for a remittance
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --network testnet \
+  -- \
+  compute_settlement_hash \
+  --remittance_id 1
+```
+
+This function computes the hash using the canonical ordering specified in the contract. External systems can use this to pre-compute hashes before settlement or verify their hashing implementation matches the contract's.
+
+**Use Cases:**
+- Pre-compute settlement IDs before submission
+- Verify external system hashing matches contract implementation
+- Enable cross-system reconciliation using deterministic IDs
+
 ### Logs
 - **Frontend**: Check Vercel/Netlify deployment logs
 - **Contract**: Use Stellar CLI to query contract state
@@ -279,6 +327,59 @@ stellar contract build
 - Ensure variables start with `VITE_` prefix
 - Redeploy after changing variables
 - Check browser console for actual values
+
+---
+
+## Storage TTL Management
+
+Soroban contracts use two storage tiers with different TTL behaviours:
+
+| Storage type | Scope | Default TTL | Risk if expired |
+|---|---|---|---|
+| **Instance** | Contract-wide config (admin, fee, counters) | ~1 month | Contract becomes unusable |
+| **Persistent** | Per-entity data (remittances, agents, limits) | ~1 month | Individual records lost |
+| **Temporary** | Rate-limit windows, sliding windows | Short (hours) | Resets automatically — acceptable |
+
+### Key audit
+
+| Key | Storage | TTL strategy |
+|---|---|---|
+| `Admin`, `UsdcToken`, `PlatformFeeBps`, `RemittanceCounter`, `AccumulatedFees` | Instance | Extended by `extend_storage_ttl` |
+| `Remittance(id)` | Persistent | Extended by `extend_storage_ttl` for all IDs up to counter |
+| `AgentRegistered(addr)` | Persistent | Extended by `extend_storage_ttl` |
+| `DailyLimit(currency, country)` | Persistent | Extended by `extend_storage_ttl` |
+| `RateLimitEntry(addr)` | Temporary | Self-managed (TTL = window + 1 h) |
+| `SlidingWindowEntry(addr, tag)` | Temporary | Self-managed (TTL = 2 × window) |
+
+### Extending TTLs manually
+
+```bash
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --source admin \
+  --network testnet \
+  -- \
+  extend_storage_ttl \
+  --caller $ADMIN_ADDRESS \
+  --extend_by_ledgers 518400
+```
+
+`518400` ledgers ≈ 30 days at 5-second ledger time.
+
+### Automated TTL extension (backend scheduler)
+
+The backend scheduler runs `extendContractStorageTtl()` daily at midnight UTC.
+Configure the following environment variables in `backend/.env`:
+
+```env
+CONTRACT_ID=your_contract_id
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+ADMIN_SECRET_KEY=your_admin_secret_key
+```
+
+The job extends TTLs by **518 400 ledgers (~30 days)** each run, providing a
+comfortable buffer before the next scheduled execution.
 
 ---
 

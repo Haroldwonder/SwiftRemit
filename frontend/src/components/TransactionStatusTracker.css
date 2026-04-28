@@ -1,9 +1,21 @@
 .transaction-tracker {
   width: min(100%, 840px);
-  border: 1px solid #d3dfec;
+  border: 1px solid var(--color-border-tertiary);
   border-radius: 14px;
   padding: 1rem;
-  background: linear-gradient(165deg, #ffffff 0%, #f8fbff 100%);
+  background: var(--gradient-card-alt);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .transaction-tracker-header {
@@ -15,7 +27,7 @@
 
 .transaction-tracker-header h2 {
   margin: 0;
-  color: #162641;
+  color: var(--color-text-primary);
   font-size: 1.1rem;
 }
 
@@ -27,15 +39,15 @@
 
 .tracker-refresh-meta {
   font-size: 0.8rem;
-  color: #5b6f8c;
+  color: var(--color-text-tertiary);
 }
 
 .tracker-refresh-button {
-  border: 1px solid #b9c8dc;
+  border: 1px solid var(--color-border-secondary);
   border-radius: 8px;
   padding: 0.42rem 0.75rem;
-  background: #ffffff;
-  color: #17335a;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
   font-weight: 600;
   cursor: pointer;
 }
@@ -59,57 +71,85 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  border: 1px solid #d4ddeb;
+  border: 1px solid var(--color-border-secondary);
   border-radius: 10px;
   padding: 0.55rem 0.6rem;
-  background: #f5f8fc;
+  background: var(--color-bg-tertiary);
 }
 
 .step-marker {
   width: 0.8rem;
   height: 0.8rem;
   border-radius: 999px;
-  border: 2px solid #95a7c2;
-  background: #ffffff;
+  border: 2px solid var(--color-border-secondary);
+  background: var(--color-bg-primary);
   flex-shrink: 0;
 }
 
 .step-label {
   font-size: 0.85rem;
   font-weight: 600;
-  color: #495b78;
+  color: var(--color-text-secondary);
 }
 
 .transaction-tracker-step.done {
-  background: #e9f8f0;
-  border-color: #9fd9bb;
+  background: var(--color-success-bg);
+  border-color: var(--color-success-border);
 }
 
 .transaction-tracker-step.done .step-marker {
-  border-color: #1f9364;
-  background: #1f9364;
+  border-color: var(--color-success);
+  background: var(--color-success);
 }
 
 .transaction-tracker-step.done .step-label {
-  color: #145f41;
+  color: var(--color-success-text);
 }
 
 .transaction-tracker-step.active {
-  background: #e8f1ff;
-  border-color: #82acf1;
+  background: var(--color-info-bg);
+  border-color: var(--color-info-border);
 }
 
 .transaction-tracker-step.active .step-marker {
-  border-color: #2a6fd1;
-  background: #2a6fd1;
+  border-color: var(--color-info);
+  background: var(--color-info);
 }
 
 .transaction-tracker-step.active .step-label {
-  color: #1d4f96;
+  color: var(--color-info-text);
 }
 
 .transaction-tracker-step.future {
   opacity: 0.85;
+}
+
+.transaction-tracker-step.failed {
+  background: var(--color-error-bg);
+  border-color: var(--color-error-border);
+}
+
+.transaction-tracker-step.failed .step-marker {
+  border-color: var(--color-error);
+  background: var(--color-error);
+}
+
+.transaction-tracker-step.failed .step-label {
+  color: var(--color-error-text);
+}
+
+.transaction-tracker-step.cancelled {
+  background: var(--color-neutral-100);
+  border-color: var(--color-neutral-400);
+}
+
+.transaction-tracker-step.cancelled .step-marker {
+  border-color: var(--color-neutral-600);
+  background: var(--color-neutral-600);
+}
+
+.transaction-tracker-step.cancelled .step-label {
+  color: var(--color-neutral-700);
 }
 
 @media (max-width: 860px) {

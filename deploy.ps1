@@ -56,6 +56,7 @@ if ($Network -ne "mainnet") {
 
 # Build and Optimize
 Write-Host "🔨 Building and Optimizing Contract..." -ForegroundColor Yellow
+# Note: To enable debug logging for local testing, add: --features debug-log
 cargo build --target wasm32-unknown-unknown --release
 soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 

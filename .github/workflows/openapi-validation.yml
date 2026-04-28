@@ -1,0 +1,74 @@
+name: OpenAPI Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'api/openapi.yaml'
+      - 'backend/openapi.yaml'
+      - 'api/src/**'
+      - 'backend/src/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'api/openapi.yaml'
+      - 'backend/openapi.yaml'
+      - 'api/src/**'
+      - 'backend/src/**'
+
+jobs:
+  validate-api-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: ./api
+        run: npm ci
+      
+      - name: Validate API OpenAPI spec
+        working-directory: ./api
+        run: npm run validate:openapi
+      
+      - name: Check spec is up to date
+        working-directory: ./api
+        run: |
+          if [ -n "$(git status --porcelain openapi.yaml)" ]; then
+            echo "OpenAPI spec is out of date. Please regenerate it."
+            exit 1
+          fi
+
+  validate-backend-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: ./backend
+        run: npm ci
+      
+      - name: Validate Backend OpenAPI spec
+        working-directory: ./backend
+        run: npm run validate:openapi
+      
+      - name: Check spec is up to date
+        working-directory: ./backend
+        run: |
+          if [ -n "$(git status --porcelain openapi.yaml)" ]; then
+            echo "OpenAPI spec is out of date. Please regenerate it."
+            exit 1
+          fi

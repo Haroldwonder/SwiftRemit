@@ -1,6 +1,8 @@
-use soroban_sdk::{contracttype, Address, Env};
+use core::convert::TryInto;
 
-use crate::ContractError;
+use soroban_sdk::{contracttype, Address, Env, Vec};
+
+use crate::{config::{DEFAULT_RATE_LIMIT_MAX_REQUESTS, DEFAULT_RATE_LIMIT_WINDOW_SECONDS}, ContractError};
 
 /// Rate limit configuration stored in instance storage
 #[contracttype]
@@ -14,7 +16,8 @@ pub struct RateLimitConfig {
     pub enabled: bool,
 }
 
-/// Rate limit tracking per address
+/// Simple counter-based rate limit entry used by the global `check_rate_limit`.
+/// Stored per-address in temporary storage.
 #[contracttype]
 #[derive(Clone, Debug)]
 struct RateLimitEntry {
@@ -24,20 +27,43 @@ struct RateLimitEntry {
     window_start: u64,
 }
 
+/// Sliding-window rate limit entry used by `abuse_protection`.
+/// Tracks individual request timestamps so stale ones can be evicted.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SlidingWindowEntry {
+    /// Address being rate limited
+    pub address: Address,
+    /// Action type tag (opaque u32 so this module stays action-agnostic)
+    pub action_tag: u32,
+    /// Request timestamps within the current window
+    pub timestamps: Vec<u64>,
+    /// Window start time (updated on each check)
+    pub window_start: u64,
+    /// Total requests in current window
+    pub request_count: u32,
+}
+
 #[contracttype]
 #[derive(Clone)]
 enum RateLimitKey {
     /// Global rate limit configuration
     Config,
-    /// Per-address rate limit tracking
+    /// Per-address counter-based tracking
     Entry(Address),
+    /// Per-(address, action_tag) sliding-window tracking
+    Sliding(Address, u32),
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Configuration helpers
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Initialize rate limiting with default configuration
 pub fn init_rate_limit(env: &Env) {
     let config = RateLimitConfig {
-        max_requests: 100,
-        window_seconds: 60,
+        max_requests: DEFAULT_RATE_LIMIT_MAX_REQUESTS,
+        window_seconds: DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
         enabled: true,
     };
     env.storage()
@@ -46,15 +72,11 @@ pub fn init_rate_limit(env: &Env) {
 }
 
 /// Get current rate limit configuration
-pub fn get_rate_limit_config(env: &Env) -> RateLimitConfig {
+pub fn get_rate_limit_config(env: &Env) -> Result<RateLimitConfig, ContractError> {
     env.storage()
         .instance()
         .get(&RateLimitKey::Config)
-        .unwrap_or(RateLimitConfig {
-            max_requests: 100,
-            window_seconds: 60,
-            enabled: true,
-        })
+        .ok_or(ContractError::NotInitialized)
 }
 
 /// Update rate limit configuration (admin only)
@@ -64,12 +86,15 @@ pub fn set_rate_limit_config(env: &Env, config: RateLimitConfig) {
         .set(&RateLimitKey::Config, &config);
 }
 
-/// Check and update rate limit for an address
-/// Returns Ok(()) if within limits, Err(ContractError::RateLimitExceeded) if exceeded
-pub fn check_rate_limit(env: &Env, address: &Address) -> Result<(), ContractError> {
-    let config = get_rate_limit_config(env);
+// ═══════════════════════════════════════════════════════════════════════════
+// Counter-based rate limit (global, used by contract entry-points)
+// ═══════════════════════════════════════════════════════════════════════════
 
-    // If rate limiting is disabled, allow all requests
+/// Check and update rate limit for an address.
+/// Returns `Ok(())` if within limits, `Err(ContractError::RateLimitExceeded)` if exceeded.
+pub fn check_rate_limit(env: &Env, address: &Address) -> Result<(), ContractError> {
+    let config = get_rate_limit_config(env)?;
+
     if !config.enabled {
         return Ok(());
     }
@@ -77,7 +102,6 @@ pub fn check_rate_limit(env: &Env, address: &Address) -> Result<(), ContractErro
     let current_time = env.ledger().timestamp();
     let key = RateLimitKey::Entry(address.clone());
 
-    // Get or create rate limit entry
     let mut entry: RateLimitEntry = env
         .storage()
         .temporary()
@@ -87,35 +111,30 @@ pub fn check_rate_limit(env: &Env, address: &Address) -> Result<(), ContractErro
             window_start: current_time,
         });
 
-    // Check if we're in a new window
     let window_elapsed = current_time.saturating_sub(entry.window_start);
     if window_elapsed >= config.window_seconds {
-        // Reset to new window
         entry.request_count = 1;
         entry.window_start = current_time;
     } else {
-        // Same window - check limit
         if entry.request_count >= config.max_requests {
             return Err(ContractError::RateLimitExceeded);
         }
         entry.request_count = entry.request_count.saturating_add(1);
     }
 
-    // Store updated entry with TTL
     let ttl = config.window_seconds.saturating_add(3600);
+    env.storage().temporary().set(&key, &entry);
     env.storage()
         .temporary()
-        .set(&key, &entry);
-    env.storage()
-        .temporary()
-        .extend_ttl(&key, ttl as u32, ttl as u32);
+        .extend_ttl(&key, ttl.try_into().unwrap_or(u32::MAX), ttl.try_into().unwrap_or(u32::MAX));
 
     Ok(())
 }
 
-/// Get current rate limit status for an address
-pub fn get_rate_limit_status(env: &Env, address: &Address) -> (u32, u32, u64) {
-    let config = get_rate_limit_config(env);
+/// Get current rate limit status for an address.
+/// Returns `(current_requests, max_requests, window_seconds)`.
+pub fn get_rate_limit_status(env: &Env, address: &Address) -> Result<(u32, u32, u64), ContractError> {
+    let config = get_rate_limit_config(env)?;
     let key = RateLimitKey::Entry(address.clone());
 
     let entry: RateLimitEntry = env
@@ -130,10 +149,102 @@ pub fn get_rate_limit_status(env: &Env, address: &Address) -> (u32, u32, u64) {
     let current_time = env.ledger().timestamp();
     let window_elapsed = current_time.saturating_sub(entry.window_start);
 
-    // If window expired, return 0 requests
     if window_elapsed >= config.window_seconds {
-        (0, config.max_requests, config.window_seconds)
+        Ok((0, config.max_requests, config.window_seconds))
     } else {
-        (entry.request_count, config.max_requests, config.window_seconds)
+        Ok((entry.request_count, config.max_requests, config.window_seconds))
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sliding-window primitives (shared with abuse_protection)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Load a `SlidingWindowEntry` for `(address, action_tag)` from temporary storage,
+/// creating a default empty entry if none exists yet.
+pub fn get_sliding_window_entry(
+    env: &Env,
+    address: &Address,
+    action_tag: u32,
+) -> SlidingWindowEntry {
+    let key = RateLimitKey::Sliding(address.clone(), action_tag);
+    env.storage()
+        .temporary()
+        .get(&key)
+        .unwrap_or_else(|| SlidingWindowEntry {
+            address: address.clone(),
+            action_tag,
+            timestamps: Vec::new(env),
+            window_start: env.ledger().timestamp(),
+            request_count: 0,
+        })
+}
+
+/// Persist a `SlidingWindowEntry` with a TTL of `2 × window_seconds`.
+pub fn save_sliding_window_entry(env: &Env, entry: &SlidingWindowEntry, window_seconds: u64) {
+    let key = RateLimitKey::Sliding(entry.address.clone(), entry.action_tag);
+    env.storage().temporary().set(&key, entry);
+    let ttl: u32 = (window_seconds * 2).try_into().unwrap_or(u32::MAX);
+    env.storage().temporary().extend_ttl(&key, ttl, ttl);
+}
+
+/// Clean up stale sliding window entries for an address.
+/// Removes entries where all timestamps are older than the current window.
+pub fn cleanup_stale_entries(env: &Env, address: &Address, window_seconds: u64) {
+    let current_time = env.ledger().timestamp();
+    let window_start = current_time.saturating_sub(window_seconds);
+    
+    // Iterate through known action tags and clean up stale ones
+    // In practice, this would be called periodically by admin or during high-activity periods
+    for action_tag in 0..100u32 {
+        let key = RateLimitKey::Sliding(address.clone(), action_tag);
+        if let Some(entry) = env.storage().temporary().get::<_, SlidingWindowEntry>(&key) {
+            let active_count = count_timestamps_in_window(&entry.timestamps, window_start);
+            if active_count == 0 {
+                env.storage().temporary().remove(&key);
+            }
+        }
+    }
+}
+
+/// Return a new `Vec` containing only timestamps `>= window_start`.
+pub fn filter_timestamps_in_window(env: &Env, timestamps: &Vec<u64>, window_start: u64) -> Vec<u64> {
+    let mut filtered = Vec::new(env);
+    for i in 0..timestamps.len() {
+        let ts = timestamps.get_unchecked(i);
+        if ts >= window_start {
+            filtered.push_back(ts);
+        }
+    }
+    filtered
+}
+
+/// Count timestamps `>= window_start` without allocating.
+pub fn count_timestamps_in_window(timestamps: &Vec<u64>, window_start: u64) -> u32 {
+    let mut count = 0u32;
+    for i in 0..timestamps.len() {
+        if timestamps.get_unchecked(i) >= window_start {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Prune stale timestamps from a sliding window entry.
+/// Returns a new entry with only active timestamps.
+pub fn prune_stale_timestamps(
+    env: &Env,
+    entry: &SlidingWindowEntry,
+    window_start: u64,
+) -> SlidingWindowEntry {
+    let active_timestamps = filter_timestamps_in_window(env, &entry.timestamps, window_start);
+    let active_count = active_timestamps.len() as u32;
+    
+    SlidingWindowEntry {
+        address: entry.address.clone(),
+        action_tag: entry.action_tag,
+        timestamps: active_timestamps,
+        window_start,
+        request_count: active_count,
     }
 }
