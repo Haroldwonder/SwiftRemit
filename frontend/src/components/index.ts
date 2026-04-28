@@ -7,3 +7,4 @@ export { TransactionStatusTracker } from './TransactionStatusTracker';
 export type { TransactionProgressStatus } from './TransactionStatusTracker';
 export { TransactionHistory } from './TransactionHistory';
 export type { TransactionHistoryItem } from './TransactionHistory';
+export { KycStatusBadge } from './KycStatusBadge';

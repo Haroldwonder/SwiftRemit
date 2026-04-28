@@ -6,13 +6,21 @@ import { Currency, CurrencyConfig } from './types';
 // Validation schema for currency objects
 const currencySchema = Joi.object({
   code: Joi.string()
-    .uppercase()
-    .min(3)
-    .max(12)
-    .pattern(/^[A-Z0-9]+$/)
     .required()
+    .custom((value, helpers) => {
+      if (!/^[A-Z][A-Z0-9]*$/.test(value)) {
+        return helpers.error('string.uppercase');
+      }
+      if (value.length < 3) {
+        return helpers.error('string.min', { limit: 3 });
+      }
+      if (value.length > 12) {
+        return helpers.error('string.max', { limit: 12 });
+      }
+      return value;
+    })
     .messages({
-      'string.pattern.base': 'Currency code must contain only uppercase letters and numbers',
+      'string.uppercase': 'Currency code must contain only uppercase letters and numbers',
       'string.min': 'Currency code must be at least 3 characters',
       'string.max': 'Currency code must not exceed 12 characters',
     }),

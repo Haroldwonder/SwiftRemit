@@ -4,6 +4,24 @@ import { CurrencyResponse, ErrorResponse } from '../types';
 
 const router = Router();
 
+// Reject requests where the path is just a trailing slash with no code
+// e.g. GET /api/currencies/ should not match the list route
+router.use((req: Request, res: Response, next: Function) => {
+  // If the original URL ends with /currencies/ (trailing slash), treat as not found
+  if (req.method === 'GET' && req.originalUrl.endsWith('/currencies/')) {
+    const errorResponse: ErrorResponse = {
+      success: false,
+      error: {
+        message: `Route not found: ${req.method} ${req.path}`,
+        code: 'ROUTE_NOT_FOUND',
+      },
+      timestamp: new Date().toISOString(),
+    };
+    return res.status(404).json(errorResponse);
+  }
+  next();
+});
+
 /**
  * GET /api/currencies
  * Returns all supported currencies with their formatting rules
@@ -43,11 +61,24 @@ router.get('/:code', (req: Request, res: Response) => {
   try {
     const { code } = req.params;
 
-    if (!code || typeof code !== 'string') {
+    if (!code || typeof code !== 'string' || code.trim() === '') {
       const errorResponse: ErrorResponse = {
         success: false,
         error: {
           message: 'Currency code is required',
+          code: 'INVALID_CURRENCY_CODE',
+        },
+        timestamp: new Date().toISOString(),
+      };
+      return res.status(400).json(errorResponse);
+    }
+
+    // Validate code format: must be uppercase letters/numbers, 1-12 chars
+    if (!/^[A-Za-z0-9]{1,12}$/.test(code) || code.length > 12) {
+      const errorResponse: ErrorResponse = {
+        success: false,
+        error: {
+          message: `Invalid currency code format: ${code}`,
           code: 'INVALID_CURRENCY_CODE',
         },
         timestamp: new Date().toISOString(),

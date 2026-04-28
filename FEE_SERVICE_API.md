@@ -171,6 +171,135 @@ client.remove_fee_corridor(
 
 ---
 
+### Protocol Fee Management
+
+#### `update_protocol_fee`
+Updates the global protocol fee rate (Admin only).
+
+```rust
+pub fn update_protocol_fee(
+    env: Env,
+    caller: Address,
+    fee_bps: u32,
+) -> Result<(), ContractError>
+```
+
+**Parameters:**
+- `env` - Contract environment
+- `caller` - Admin address (requires authentication)
+- `fee_bps` - New protocol fee in basis points (0-200, max 2%)
+
+**Authorization:** Admin only
+
+**Validation:**
+- `fee_bps` must be ≤ 200 (MAX_PROTOCOL_FEE_BPS)
+- Returns `ContractError::InvalidFeeBps` if out of range
+- Returns `ContractError::Unauthorized` if caller is not admin
+
+**Events:**
+- Emits `fee::proto_upd` event with caller and new fee_bps
+
+**Example:**
+```rust
+// Set protocol fee to 1% (100 basis points)
+client.update_protocol_fee(&admin, &100)?;
+
+// Set protocol fee to 0.5% (50 basis points)
+client.update_protocol_fee(&admin, &50)?;
+
+// Invalid: exceeds maximum (will fail)
+let result = client.update_protocol_fee(&admin, &300);
+assert_eq!(result, Err(ContractError::InvalidFeeBps));
+```
+
+---
+
+#### `get_protocol_fee_bps`
+Retrieves the current global protocol fee rate (Public view).
+
+```rust
+pub fn get_protocol_fee_bps(env: Env) -> u32
+```
+
+**Parameters:**
+- `env` - Contract environment
+
+**Returns:**
+- `u32` - Protocol fee in basis points (0-200)
+
+**Authorization:** None (public read-only)
+
+**Example:**
+```rust
+let protocol_fee = client.get_protocol_fee_bps();
+println!("Current protocol fee: {}bps ({}%)", protocol_fee, protocol_fee as f64 / 100.0);
+
+// Use in fee calculation
+let amount = 10000;
+let protocol_fee_amount = amount * (protocol_fee as i128) / 10000;
+```
+
+**Notes:**
+- Default value is 0 if not set during initialization
+- Protocol fee is sent to treasury address during payout
+- Maximum allowed value is 200 bps (2%)
+- Can be overridden per-corridor using `FeeCorridor.protocol_fee_bps`
+
+---
+
+#### `update_treasury`
+Updates the treasury address that receives protocol fees (Admin only).
+
+```rust
+pub fn update_treasury(
+    env: Env,
+    caller: Address,
+    treasury: Address,
+) -> Result<(), ContractError>
+```
+
+**Parameters:**
+- `env` - Contract environment
+- `caller` - Admin address (requires authentication)
+- `treasury` - New treasury address
+
+**Authorization:** Admin only
+
+**Events:**
+- Emits `admin::treasury` event with caller, old treasury, and new treasury
+
+**Example:**
+```rust
+let new_treasury = Address::generate(&env);
+client.update_treasury(&admin, &new_treasury)?;
+```
+
+---
+
+#### `get_treasury`
+Retrieves the current treasury address (Public view).
+
+```rust
+pub fn get_treasury(env: Env) -> Result<Address, ContractError>
+```
+
+**Parameters:**
+- `env` - Contract environment
+
+**Returns:**
+- `Address` - Treasury address that receives protocol fees
+- `ContractError::NotInitialized` - If contract not initialized
+
+**Authorization:** None (public read-only)
+
+**Example:**
+```rust
+let treasury = client.get_treasury()?;
+println!("Protocol fees are sent to: {}", treasury);
+```
+
+---
+
 ## Data Structures
 
 ### `FeeBreakdown`

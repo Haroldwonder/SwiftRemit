@@ -44,7 +44,7 @@ pub struct TransactionController;
 impl TransactionController {
     /// Maximum retry attempts for transient failures
     const MAX_RETRIES: u32 = 3;
-    
+
     /// Retry delay in seconds
     const RETRY_DELAY_SECS: u64 = 5;
 
@@ -105,7 +105,7 @@ impl TransactionController {
                 Ok(_) => return Ok(()),
                 Err(e) => {
                     last_error = e;
-                    
+
                     // Don't retry on non-transient errors
                     if !Self::is_retryable_error(&e) {
                         return Err(e);
@@ -213,7 +213,7 @@ impl TransactionController {
         let fee = amount
             .checked_mul(fee_bps as i128)
             .ok_or(ContractError::Overflow)?
-            .checked_div(10000)
+            .checked_div(crate::config::FEE_DIVISOR)
             .ok_or(ContractError::Overflow)?;
 
         // Transfer tokens to contract

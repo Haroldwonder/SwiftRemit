@@ -1,0 +1,160 @@
+name: Rust Smart Contract CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/contract-ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/contract-ci.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run tests
+        run: cargo test --verbose
+
+  coverage:
+    name: Coverage (tarpaulin ≥ 95%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-tarpaulin-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-tarpaulin-
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --version "0.31.2" --locked
+
+      - name: Run tarpaulin (enforce 95% gate)
+        run: |
+          cargo tarpaulin \
+            --verbose \
+            --all-features \
+            --workspace \
+            --timeout 120 \
+            --fail-under 95 \
+            --out Xml \
+            --output-dir coverage/ \
+            --exclude-files "src/test*.rs" "benches/*"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/cobertura.xml
+          flags: rust-contract
+          fail_ci_if_error: false
+
+      - name: Upload coverage HTML artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage-report
+          path: coverage/
+          retention-days: 14
+
+  build-wasm:
+    name: Build WASM Binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-wasm-
+
+      - name: Build WASM (Release)
+        run: cargo build --target wasm32-unknown-unknown --release --verbose
+
+      - name: Get WASM binary size
+        id: wasm-size
+        run: |
+          WASM_SIZE=$(stat -c%s "target/wasm32-unknown-unknown/release/swiftremit.wasm" 2>/dev/null || echo "0")
+          WASM_SIZE_KB=$(echo "scale=2; $WASM_SIZE / 1024" | bc)
+          echo "size_bytes=$WASM_SIZE" >> $GITHUB_OUTPUT
+          echo "size_kb=$WASM_SIZE_KB" >> $GITHUB_OUTPUT
+
+      - name: Upload WASM summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const wasmSize = ${{ steps.wasm-size.outputs.size_bytes }};
+            const wasmSizeKb = ${{ steps.wasm-size.outputs.size_kb }};
+            const summary = `## WASM Build Report\n\n| Metric | Value |\n|--------|-------|\n| Binary Size | ${wasmSizeKb} KB |\n| Binary Size (bytes) | ${wasmSize} bytes |`;
+            core.summary.addRaw(summary);
+            await core.summary.write();
+
+  contract-ci:
+    name: Contract CI Status
+    runs-on: ubuntu-latest
+    needs: [test, coverage, build-wasm]
+    if: always()
+    steps:
+      - name: Check CI Status
+        run: |
+          if [[ "${{ needs.test.result }}" == "failure" || \
+                "${{ needs.coverage.result }}" == "failure" || \
+                "${{ needs.build-wasm.result }}" == "failure" ]]; then
+            echo "❌ Contract CI failed"
+            exit 1
+          fi
+          echo "✅ Contract CI passed"

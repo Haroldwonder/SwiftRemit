@@ -1,7 +1,8 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import cors from 'cors';
+import { Pool } from 'pg';
 import { AssetVerifier } from './verifier';
 import {
   getAssetVerification,
@@ -13,26 +14,95 @@ import {
   saveAnchorKycConfig,
   getUserKycStatus,
   saveUserKycStatus,
+  getPool,
+  saveAssetReport,
 } from './database';
-import { storeVerificationOnChain } from './stellar';
-import { VerificationStatus, KycStatus, AnchorKycConfig, UserKycStatus } from './types';
+import { storeVerificationOnChain, simulateSettlement } from './stellar';
+import { VerificationStatus, AnchorKycConfig } from './types';
+import { KycUpsertService } from './kyc-upsert-service';
+import { createTransferGuard, AuthenticatedRequest } from './transfer-guard';
+import { getFxRateCache } from './fx-rate-cache';
+import { correlationIdMiddleware, createLogger } from './correlation-id';
+import { getMetricsService } from './metrics';
+import { sanitizeInput } from './sanitizer';
+import docsRouter from './routes/docs';
+import { Sep24Service, Sep24InitiateRequest, Sep24ConfigError, Sep24AnchorError } from './sep24-service';
+import { AdminAuditLogService } from './admin-audit-log';
+import { saveContractEvent, queryContractEvents } from './database';
+import { remittanceEventEmitter } from './remittance/events';
 
 const app = express();
+const fxRateCache = getFxRateCache();
 const verifier = new AssetVerifier();
+const logger = createLogger('api');
+const pool = getPool();
+const metricsService = getMetricsService(pool);
 
 // Security middleware
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
-  message: 'Too many requests from this IP, please try again later.',
+// Correlation ID middleware
+app.use(correlationIdMiddleware);
+
+const kycUpsertService = new KycUpsertService(pool);
+const transferGuard = createTransferGuard(kycUpsertService);
+
+// Initialize SEP-24 service
+let sep24Service: Sep24Service | null = null;
+async function getSep24ServiceInstance(): Promise<Sep24Service> {
+  if (!sep24Service) {
+    sep24Service = new Sep24Service(pool);
+    await sep24Service.initialize();
+  }
+  return sep24Service;
+}
+
+// Per-group rate limiters
+function makeRateLimiter(max: number, windowMs = 60_000) {
+  return rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req: Request, res: Response) => {
+      const retryAfter = Math.ceil(windowMs / 1000);
+      res.set('Retry-After', String(retryAfter));
+      metricsService.incrementRateLimitExceeded(req.path);
+      res.status(429).json({
+        error: 'Too many requests',
+        retryAfter,
+      });
+    },
+  });
+}
+
+// Public endpoints: 100 req/min
+const publicLimiter = makeRateLimiter(100);
+// Webhook endpoints: 1000 req/min (higher for anchor callbacks)
+const webhookLimiter = makeRateLimiter(1000);
+// Admin endpoints: 20 req/min
+const adminLimiter = makeRateLimiter(20);
+
+app.use('/api/webhook', webhookLimiter);
+app.use('/api/kyc/config', adminLimiter);
+app.use('/api/', publicLimiter);
+
+// Metrics endpoint (excluded from rate limiting)
+app.get('/metrics', async (req: Request, res: Response) => {
+  try {
+    const metrics = await metricsService.getMetrics();
+    res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    res.send(metrics);
+  } catch (error) {
+    logger.error('Error generating metrics', error);
+    res.status(500).send('# Error generating metrics\n');
+  }
 });
 
-app.use('/api/', limiter);
+// API documentation
+app.use('/api/docs', docsRouter);
 
 // Input validation middleware
 function validateAssetParams(req: Request, res: Response, next: Function) {
@@ -49,9 +119,32 @@ function validateAssetParams(req: Request, res: Response, next: Function) {
   next();
 }
 
+function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const userId = (req.headers['x-user-id'] as string) || '';
+
+  if (!userId || typeof userId !== 'string') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  req.user = { id: userId };
+  next();
+}
+
 // Health check
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async (req: Request, res: Response) => {
+  let dbStatus: 'healthy' | 'unhealthy' = 'unhealthy';
+  try {
+    await Promise.race([
+      pool.query('SELECT 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+    ]);
+    dbStatus = 'healthy';
+  } catch {
+    // db unreachable or timed out
+  }
+
+  const status = dbStatus === 'healthy' ? 200 : 503;
+  res.status(status).json({ status: dbStatus === 'healthy' ? 'ok' : 'degraded', db: dbStatus, timestamp: new Date().toISOString() });
 });
 
 // Get asset verification status
@@ -132,6 +225,9 @@ app.post('/api/verification/report', validateAssetParams, async (req: Request, r
       return res.status(400).json({ error: 'Invalid or missing reason' });
     }
 
+    // Sanitize input to prevent XSS attacks
+    const sanitizedReason = sanitizeInput(reason);
+
     // Check if asset exists
     const existing = await getAssetVerification(assetCode, issuer);
     if (!existing) {
@@ -140,6 +236,9 @@ app.post('/api/verification/report', validateAssetParams, async (req: Request, r
 
     // Increment report count
     await reportSuspiciousAsset(assetCode, issuer);
+
+    // Save the report with sanitized reason for audit trail
+    await saveAssetReport(assetCode, issuer, sanitizedReason);
 
     // If reports exceed threshold, mark as suspicious
     const updated = await getAssetVerification(assetCode, issuer);
@@ -218,6 +317,27 @@ app.post('/api/verification/batch', async (req: Request, res: Response) => {
   }
 });
 
+// KYC status endpoint
+app.get('/api/kyc/status', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const status = await kycUpsertService.getStatusForUser(userId);
+    return res.status(200).json(status);
+  } catch (error) {
+    console.error('Error fetching KYC status:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Transfer endpoint (guarded)
+app.post('/api/transfer', authMiddleware, transferGuard, async (req: Request, res: Response) => {
+  return res.status(200).json({ success: true, message: 'Transfer allowed' });
+});
+
 // Store FX rate for transaction
 app.post('/api/fx-rate', async (req: Request, res: Response) => {
   try {
@@ -274,6 +394,28 @@ app.get('/api/fx-rate/:transactionId', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching FX rate:', error);
     res.status(500).json({ error: 'Failed to fetch FX rate' });
+  }
+});
+
+// Get current FX rate (cached)
+app.get('/api/fx-rate/current', async (req: Request, res: Response) => {
+  try {
+    const { from, to } = req.query;
+
+    if (!from || typeof from !== 'string' || from.length > 10) {
+      return res.status(400).json({ error: 'Invalid from currency' });
+    }
+
+    if (!to || typeof to !== 'string' || to.length > 10) {
+      return res.status(400).json({ error: 'Invalid to currency' });
+    }
+
+    const rate = await fxRateCache.getCurrentRate(from.toUpperCase(), to.toUpperCase());
+
+    res.json(rate);
+  } catch (error) {
+    console.error('Error fetching current FX rate:', error);
+    res.status(500).json({ error: 'Failed to fetch current FX rate' });
   }
 });
 
@@ -347,6 +489,110 @@ app.post('/api/kyc/register', async (req: Request, res: Response) => {
   }
 });
 
+// SEP-24: Initiate deposit/withdrawal flow
+app.post('/api/anchor/initiate', async (req: Request, res: Response) => {
+  try {
+    const { user_id, anchor_id, direction, asset_code, amount, user_address, user_email } = req.body;
+
+    // Validate required fields
+    if (!user_id || typeof user_id !== 'string') {
+      return res.status(400).json({ error: 'Invalid or missing user_id' });
+    }
+
+    if (!anchor_id || typeof anchor_id !== 'string') {
+      return res.status(400).json({ error: 'Invalid or missing anchor_id' });
+    }
+
+    if (!direction || (direction !== 'deposit' && direction !== 'withdrawal')) {
+      return res.status(400).json({ error: 'Invalid direction (must be deposit or withdrawal)' });
+    }
+
+    if (!asset_code || typeof asset_code !== 'string') {
+      return res.status(400).json({ error: 'Invalid or missing asset_code' });
+    }
+
+    if (!amount || typeof amount !== 'string' || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      return res.status(400).json({ error: 'Invalid or missing amount' });
+    }
+
+    const service = await getSep24ServiceInstance();
+    
+    const request: Sep24InitiateRequest = {
+      user_id,
+      anchor_id,
+      direction: direction as 'deposit' | 'withdrawal',
+      asset_code,
+      amount,
+      user_address,
+      user_email,
+    };
+
+    const result = await service.initiateFlow(request);
+
+    res.json({
+      success: true,
+      transaction_id: result.transaction_id,
+      url: result.url,
+      message: result.message,
+    });
+  } catch (error) {
+    if (error instanceof Sep24ConfigError) {
+      return res.status(400).json({ error: error.message, code: 'CONFIG_ERROR' });
+    }
+    
+    if (error instanceof Sep24AnchorError) {
+      return res.status(error.statusCode || 502).json({ 
+        error: error.message, 
+        code: 'ANCHOR_ERROR' 
+      });
+    }
+    
+    console.error('Error initiating SEP-24 flow:', error);
+    res.status(500).json({ error: 'Failed to initiate transaction' });
+  }
+});
+
+// SEP-24: Get transaction status
+app.get('/api/anchor/transaction/:transactionId', async (req: Request, res: Response) => {
+  try {
+    const { transactionId } = req.params;
+
+    if (!transactionId) {
+      return res.status(400).json({ error: 'Invalid transaction ID' });
+    }
+
+    const service = await getSep24ServiceInstance();
+    const transaction = await service.getTransactionStatus(transactionId);
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    res.json({
+      success: true,
+      transaction: {
+        transaction_id: transaction.transaction_id,
+        anchor_id: transaction.anchor_id,
+        direction: transaction.direction,
+        status: transaction.status,
+        asset_code: transaction.asset_code,
+        amount: transaction.amount,
+        amount_in: transaction.amount_in,
+        amount_out: transaction.amount_out,
+        amount_fee: transaction.amount_fee,
+        stellar_transaction_id: transaction.stellar_transaction_id,
+        external_transaction_id: transaction.external_transaction_id,
+        kyc_status: transaction.kyc_status,
+        created_at: transaction.created_at,
+        updated_at: transaction.updated_at,
+      },
+    });
+  } catch (error) {
+    console.error('Error getting transaction status:', error);
+    res.status(500).json({ error: 'Failed to get transaction status' });
+  }
+});
+
 // Check if user is KYC approved (for transfer validation)
 app.get('/api/kyc/approved/:userId', async (req: Request, res: Response) => {
   try {
@@ -364,6 +610,181 @@ app.get('/api/kyc/approved/:userId', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error checking KYC approval:', error);
     res.status(500).json({ error: 'Failed to check KYC approval' });
+  }
+});
+
+// Create remittance
+app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { sender, agent, amount, fee, expiry, memo } = req.body;
+
+    if (!sender || typeof sender !== 'string') {
+      return res.status(400).json({ error: 'Invalid or missing sender' });
+    }
+    if (!agent || typeof agent !== 'string') {
+      return res.status(400).json({ error: 'Invalid or missing agent' });
+    }
+    if (!amount || typeof amount !== 'string' || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      return res.status(400).json({ error: 'Invalid or missing amount' });
+    }
+
+    // Validate memo — optional, max 100 chars, plain text only
+    let sanitizedMemo: string | undefined;
+    if (memo !== undefined && memo !== null && memo !== '') {
+      if (typeof memo !== 'string') {
+        return res.status(400).json({ error: 'memo must be a string' });
+      }
+      if (memo.length > 100) {
+        return res.status(400).json({ error: 'memo must not exceed 100 characters' });
+      }
+      sanitizedMemo = sanitizeInput(memo);
+    }
+
+    const remittanceId = `rem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    await pool.query(
+      `INSERT INTO transactions
+         (transaction_id, anchor_id, kind, status, amount_in, memo, created_at, updated_at)
+       VALUES ($1, $2, 'withdrawal', 'pending_user_transfer_start', $3, $4, NOW(), NOW())`,
+      [remittanceId, agent, amount, sanitizedMemo ?? null]
+    );
+
+    return res.status(201).json({
+      success: true,
+      remittance: {
+        remittance_id: remittanceId,
+        sender,
+        agent,
+        amount,
+        fee: fee ?? null,
+        expiry: expiry ?? null,
+        memo: sanitizedMemo ?? null,
+        status: 'pending_user_transfer_start',
+      },
+    });
+  } catch (error) {
+    logger.error('Error creating remittance', error);
+    return res.status(500).json({ error: 'Failed to create remittance' });
+  }
+});
+
+// Get remittance by ID
+app.get('/api/remittance/:remittanceId', async (req: Request, res: Response) => {
+  try {
+    const { remittanceId } = req.params;
+
+    const result = await pool.query(
+      `SELECT transaction_id, anchor_id, status, amount_in, memo, created_at, updated_at
+         FROM transactions WHERE transaction_id = $1`,
+      [remittanceId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Remittance not found' });
+    }
+
+    const row = result.rows[0];
+    return res.json({
+      remittance_id: row.transaction_id,
+      agent: row.anchor_id,
+      status: row.status,
+      amount: row.amount_in,
+      memo: row.memo ?? null,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    });
+  } catch (error) {
+    logger.error('Error fetching remittance', error);
+    return res.status(500).json({ error: 'Failed to fetch remittance' });
+  }
+});
+
+// Simulate settlement — preview fees and payout before confirming
+app.post('/api/simulate-settlement', async (req: Request, res: Response) => {
+  try {
+    const { remittanceId } = req.body;
+
+    if (
+      remittanceId === undefined ||
+      remittanceId === null ||
+      !Number.isInteger(remittanceId) ||
+      remittanceId <= 0
+    ) {
+      return res.status(400).json({ error: 'remittanceId must be a positive integer' });
+    }
+
+    const simulation = await simulateSettlement(remittanceId);
+    res.json(simulation);
+  } catch (error) {
+    console.error('Error simulating settlement:', error);
+    res.status(500).json({ error: 'Failed to simulate settlement' });
+  }
+});
+
+// Admin audit log
+app.get('/api/admin/audit-log', async (req: Request, res: Response) => {
+  try {
+    const auditService = new AdminAuditLogService(pool);
+    const limit  = Math.min(parseInt(req.query.limit  as string) || 50, 200);
+    const offset = parseInt(req.query.offset as string) || 0;
+    const filter = {
+      admin_address: req.query.admin_address as string | undefined,
+      action:        req.query.action        as string | undefined,
+      from:  req.query.from  ? new Date(req.query.from  as string) : undefined,
+      to:    req.query.to    ? new Date(req.query.to    as string) : undefined,
+      limit,
+      offset,
+    };
+    const { entries, total } = await auditService.query(filter);
+    res.json({ total, limit, offset, entries });
+  } catch (error) {
+    logger.error('Error fetching audit log', error);
+    res.status(500).json({ error: 'Failed to fetch audit log' });
+  }
+});
+
+// ── Contract Events ──────────────────────────────────────────────────────────
+
+// Persist contract events emitted by the remittance event emitter
+remittanceEventEmitter.onStatusChange(async (event) => {
+  try {
+    await saveContractEvent({
+      event_type: event.status,
+      remittance_id: event.remittanceId ? parseInt(event.remittanceId, 10) : null,
+      actor: event.recipientId || null,
+      amount: event.amount?.toString() ?? null,
+      fee: null,
+      tx_hash: (event.metadata?.txHash as string) ?? null,
+      ledger_sequence: (event.metadata?.ledgerSequence as number) ?? null,
+      timestamp: event.timestamp,
+      raw_data: event.metadata ?? null,
+    });
+  } catch (err) {
+    logger.error('Failed to persist contract event', err);
+  }
+});
+
+// GET /api/events — query indexed contract events with filters and pagination
+app.get('/api/events', async (req: Request, res: Response) => {
+  try {
+    const limit  = Math.min(parseInt(req.query.limit  as string) || 50, 200);
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const filter = {
+      event_type:    req.query.event_type    as string | undefined,
+      actor:         req.query.actor         as string | undefined,
+      remittance_id: req.query.remittance_id ? parseInt(req.query.remittance_id as string, 10) : undefined,
+      from:          req.query.from          ? new Date(req.query.from as string) : undefined,
+      to:            req.query.to            ? new Date(req.query.to   as string) : undefined,
+      limit,
+      offset,
+    };
+
+    const { events, total } = await queryContractEvents(filter);
+    res.json({ total, limit, offset, events });
+  } catch (error) {
+    logger.error('Error fetching contract events', error);
+    res.status(500).json({ error: 'Failed to fetch contract events' });
   }
 });
 

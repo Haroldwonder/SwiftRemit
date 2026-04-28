@@ -2,23 +2,16 @@ target/
 Cargo.lock
 *.wasm
 *.optimized.wasm
+# ABI output — generated files are committed, but ignore any local overrides
+abi/*.json.local
 .soroban/
-<<<<<<< HEAD
-.kiro/settings/
-# scratch/audit workfiles
-*.txt
-
-# Environment variables (may contain secrets)
-.env
-.env.local
-examples/.env
-examples/.env.local
-/node_modules
-=======
 .env
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
 frontend/.env
->>>>>>> 927b448 (chore: local changes before syncing with main)
+backend/node_modules/
+
+.kiro
+.env.testnet.local

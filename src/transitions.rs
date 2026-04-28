@@ -1,22 +1,19 @@
 //! State transition validation for the SwiftRemit contract.
 //!
-//! This module implements a structured transaction state machine that enforces
-//! strict, deterministic state transitions to prevent inconsistent transfer statuses.
-//!
-//! # State Machine
+//! This module enforces the canonical `RemittanceStatus` state machine:
 //!
 //! ```
-//! INITIATED → SUBMITTED → PENDING_ANCHOR → COMPLETED
-//!                                        ↘ FAILED
+//! Pending → Processing → Completed
+//!         ↘            ↘
+//!           Cancelled    Cancelled
 //! ```
 //!
-//! # Rules
-//!
+//! Rules:
 //! 1. All transitions must be explicitly validated before execution
-//! 2. Terminal states (COMPLETED, FAILED) cannot transition to any other state
-//! 3. Invalid transitions are rejected with explicit errors (no panics)
-//! 4. State updates are atomic to prevent partial writes
-//! 5. Repeated submissions are idempotent (same state → same state is allowed)
+//! 2. Terminal states (Completed, Cancelled) cannot transition further
+//! 3. Invalid transitions are rejected with `ContractError::InvalidStateTransition`
+//! 4. State updates are atomic — no partial writes
+//! 5. Same-state transitions are idempotent (safe for retries)
 
 use crate::types::RemittanceStatus;
 use crate::errors::ContractError;
@@ -24,51 +21,13 @@ use soroban_sdk::Env;
 
 /// Validates if a state transition is allowed.
 ///
-/// This is the centralized validation function that enforces the state machine rules.
-/// All state changes must go through this validation to ensure consistency.
+/// Delegates to `RemittanceStatus::can_transition_to`, which encodes all
+/// valid edges of the state machine. Same-state transitions are always allowed
+/// (idempotent, safe for retry scenarios).
 ///
-/// # Arguments
+/// # Errors
 ///
-/// * `from` - Current status of the remittance
-/// * `to` - Target status to transition to
-///
-/// # Returns
-///
-/// * `Ok(())` - Transition is valid and allowed
-/// * `Err(ContractError::InvalidStateTransition)` - Transition is invalid
-///
-/// # State Transition Rules
-///
-/// ## From INITIATED
-/// - Can transition to: SUBMITTED, FAILED
-/// - Cannot transition to: PENDING_ANCHOR, COMPLETED
-///
-/// ## From SUBMITTED
-/// - Can transition to: PENDING_ANCHOR, FAILED
-/// - Cannot transition to: INITIATED, COMPLETED
-///
-/// ## From PENDING_ANCHOR
-/// - Can transition to: COMPLETED, FAILED
-/// - Cannot transition to: INITIATED, SUBMITTED
-///
-/// ## From COMPLETED (Terminal)
-/// - Cannot transition to any state
-///
-/// ## From FAILED (Terminal)
-/// - Cannot transition to any state
-///
-/// # Examples
-///
-/// ```ignore
-/// // Valid transition
-/// validate_transition(&RemittanceStatus::Initiated, &RemittanceStatus::Submitted)?;
-///
-/// // Invalid transition - will return error
-/// validate_transition(&RemittanceStatus::Initiated, &RemittanceStatus::Completed)?;
-///
-/// // Terminal state - will return error
-/// validate_transition(&RemittanceStatus::Completed, &RemittanceStatus::Failed)?;
-/// ```
+/// Returns `ContractError::InvalidStateTransition` for any disallowed transition.
 pub fn validate_transition(
     from: &RemittanceStatus,
     to: &RemittanceStatus,
@@ -78,7 +37,6 @@ pub fn validate_transition(
         return Ok(());
     }
 
-    // Use the can_transition_to method from RemittanceStatus
     if from.can_transition_to(to) {
         Ok(())
     } else {
@@ -117,13 +75,13 @@ pub fn transition_status(
 ) -> Result<(), ContractError> {
     // Validate the transition
     validate_transition(&remittance.status, &new_status)?;
-    
+
     // Log transition for debugging (only in test/debug builds)
     log_transition(env, remittance.id, &remittance.status, &new_status);
-    
+
     // Atomically update the status
     remittance.status = new_status;
-    
+
     Ok(())
 }
 
@@ -156,12 +114,16 @@ pub fn get_valid_next_states(status: &RemittanceStatus) -> soroban_sdk::Vec<Remi
 
     match status {
         RemittanceStatus::Pending => {
+            result.push_back(RemittanceStatus::Processing);
+            result.push_back(RemittanceStatus::Cancelled);
+        }
+        RemittanceStatus::Processing => {
             result.push_back(RemittanceStatus::Completed);
             result.push_back(RemittanceStatus::Cancelled);
         }
         RemittanceStatus::Completed | RemittanceStatus::Cancelled => {}
     }
-    
+
     result
 }
 
@@ -185,10 +147,10 @@ mod tests {
     use soroban_sdk::testutils::Address as _;
 
     #[test]
-    fn test_valid_transition_pending_to_completed() {
+    fn test_valid_transition_pending_to_processing() {
         assert!(validate_transition(
             &RemittanceStatus::Pending,
-            &RemittanceStatus::Completed
+            &RemittanceStatus::Processing
         )
         .is_ok());
     }
@@ -200,6 +162,34 @@ mod tests {
             &RemittanceStatus::Cancelled
         )
         .is_ok());
+    }
+
+    #[test]
+    fn test_valid_transition_processing_to_completed() {
+        assert!(validate_transition(
+            &RemittanceStatus::Processing,
+            &RemittanceStatus::Completed
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_valid_transition_processing_to_cancelled() {
+        assert!(validate_transition(
+            &RemittanceStatus::Processing,
+            &RemittanceStatus::Cancelled
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_invalid_transition_pending_to_completed() {
+        // Must go through Processing first
+        assert!(validate_transition(
+            &RemittanceStatus::Pending,
+            &RemittanceStatus::Completed
+        )
+        .is_err());
     }
 
     #[test]
@@ -225,6 +215,15 @@ mod tests {
         assert!(validate_transition(
             &RemittanceStatus::Pending,
             &RemittanceStatus::Pending
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_idempotent_transition_processing() {
+        assert!(validate_transition(
+            &RemittanceStatus::Processing,
+            &RemittanceStatus::Processing
         )
         .is_ok());
     }
@@ -263,8 +262,21 @@ mod tests {
     }
 
     #[test]
+    fn test_is_not_terminal_status_processing() {
+        assert!(!is_terminal_status(&RemittanceStatus::Processing));
+    }
+
+    #[test]
     fn test_valid_next_states_from_pending() {
         let next_states = get_valid_next_states(&RemittanceStatus::Pending);
+        assert_eq!(next_states.len(), 2);
+        assert!(next_states.contains(&RemittanceStatus::Processing));
+        assert!(next_states.contains(&RemittanceStatus::Cancelled));
+    }
+
+    #[test]
+    fn test_valid_next_states_from_processing() {
+        let next_states = get_valid_next_states(&RemittanceStatus::Processing);
         assert_eq!(next_states.len(), 2);
         assert!(next_states.contains(&RemittanceStatus::Completed));
         assert!(next_states.contains(&RemittanceStatus::Cancelled));
@@ -298,9 +310,9 @@ mod tests {
             expiry: None,
         };
 
-        let result = transition_status(&env, &mut remittance, RemittanceStatus::Completed);
+        let result = transition_status(&env, &mut remittance, RemittanceStatus::Processing);
         assert!(result.is_ok());
-        assert_eq!(remittance.status, RemittanceStatus::Completed);
+        assert_eq!(remittance.status, RemittanceStatus::Processing);
     }
 
     #[test]

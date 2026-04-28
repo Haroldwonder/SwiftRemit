@@ -1,5 +1,15 @@
 import { Pool } from 'pg';
-import { AssetVerification, VerificationStatus, FxRate, FxRateRecord, KycStatus, UserKycStatus, AnchorKycConfig } from './types';
+import {
+  AssetVerification,
+  VerificationStatus,
+  FxRate,
+  FxRateRecord,
+  KycStatus,
+  DbUserKycStatus,
+  AnchorKycConfig,
+  WebhookSubscriber,
+  WebhookDelivery,
+} from './types';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -11,7 +21,43 @@ const pool = new Pool({
 export async function initDatabase() {
   const client = await pool.connect();
   try {
-    await client.query(`
+    await client.query(`      CREATE TABLE IF NOT EXISTS transactions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        transaction_id VARCHAR(255) UNIQUE NOT NULL,
+        anchor_id VARCHAR(255),
+        kind VARCHAR(20) CHECK (kind IN ('deposit', 'withdrawal')),
+        status VARCHAR(50),
+        status_eta INTEGER,
+        amount_in DECIMAL(20, 7),
+        amount_out DECIMAL(20, 7),
+        amount_fee DECIMAL(20, 7),
+        asset_code VARCHAR(12),
+        stellar_transaction_id VARCHAR(64),
+        external_transaction_id VARCHAR(255),
+        kyc_status VARCHAR(20),
+        kyc_fields JSONB,
+        kyc_rejection_reason TEXT,
+        message TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS user_kyc_status (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR(255) NOT NULL,
+        anchor_id VARCHAR(255) NOT NULL,
+        kyc_status VARCHAR(20) NOT NULL CHECK (kyc_status IN ('pending', 'approved', 'rejected')),
+        kyc_level VARCHAR(20) CHECK (kyc_level IN ('basic', 'intermediate', 'advanced')),
+        rejection_reason TEXT,
+        verified_at TIMESTAMP NOT NULL,
+        expires_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_user_anchor UNIQUE (user_id, anchor_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kyc_status_user_id ON user_kyc_status(user_id);
+      CREATE INDEX IF NOT EXISTS idx_kyc_status_status ON user_kyc_status(kyc_status);
       CREATE TABLE IF NOT EXISTS verified_assets (
         id SERIAL PRIMARY KEY,
         asset_code VARCHAR(12) NOT NULL,
@@ -32,6 +78,17 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_asset_lookup ON verified_assets(asset_code, issuer);
       CREATE INDEX IF NOT EXISTS idx_status ON verified_assets(status);
       CREATE INDEX IF NOT EXISTS idx_last_verified ON verified_assets(last_verified);
+
+      CREATE TABLE IF NOT EXISTS asset_reports (
+        id SERIAL PRIMARY KEY,
+        asset_code VARCHAR(12) NOT NULL,
+        issuer VARCHAR(56) NOT NULL,
+        reason VARCHAR(500) NOT NULL,
+        reporter_id VARCHAR(100),
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_asset_reports_lookup ON asset_reports(asset_code, issuer);
 
       CREATE TABLE IF NOT EXISTS fx_rates (
         id SERIAL PRIMARY KEY,
@@ -77,6 +134,56 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_user_kyc_status ON user_kyc_status(user_id, anchor_id);
       CREATE INDEX IF NOT EXISTS idx_kyc_status ON user_kyc_status(status);
       CREATE INDEX IF NOT EXISTS idx_kyc_last_checked ON user_kyc_status(last_checked);
+
+      -- SEP-24 transactions table
+      CREATE TABLE IF NOT EXISTS sep24_transactions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        transaction_id VARCHAR(255) UNIQUE NOT NULL,
+        anchor_id VARCHAR(100) NOT NULL,
+        direction VARCHAR(20) NOT NULL CHECK (direction IN ('deposit', 'withdrawal')),
+        status VARCHAR(50) NOT NULL,
+        asset_code VARCHAR(12) NOT NULL,
+        amount VARCHAR(40),
+        amount_in VARCHAR(40),
+        amount_out VARCHAR(40),
+        amount_fee VARCHAR(40),
+        stellar_transaction_id VARCHAR(64),
+        external_transaction_id VARCHAR(255),
+        user_id VARCHAR(255) NOT NULL,
+        interactive_url TEXT,
+        instructions_url TEXT,
+        kyc_status VARCHAR(20),
+        kyc_web_url TEXT,
+        status_eta INTEGER,
+        last_polled TIMESTAMP,
+        message TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_sep24_transaction_id ON sep24_transactions(transaction_id);
+      CREATE INDEX IF NOT EXISTS idx_sep24_anchor_id ON sep24_transactions(anchor_id);
+      CREATE INDEX IF NOT EXISTS idx_sep24_user_id ON sep24_transactions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_sep24_status ON sep24_transactions(status);
+      CREATE INDEX IF NOT EXISTS idx_sep24_last_polled ON sep24_transactions(last_polled);
+
+      CREATE TABLE IF NOT EXISTS contract_events (
+        id              SERIAL PRIMARY KEY,
+        event_type      VARCHAR(50)  NOT NULL,
+        remittance_id   BIGINT,
+        actor           VARCHAR(56),
+        amount          NUMERIC(30, 7),
+        fee             NUMERIC(30, 7),
+        tx_hash         VARCHAR(64),
+        ledger_sequence BIGINT,
+        timestamp       TIMESTAMP    NOT NULL DEFAULT NOW(),
+        raw_data        JSONB
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ce_event_type    ON contract_events(event_type);
+      CREATE INDEX IF NOT EXISTS idx_ce_actor         ON contract_events(actor);
+      CREATE INDEX IF NOT EXISTS idx_ce_remittance_id ON contract_events(remittance_id);
+      CREATE INDEX IF NOT EXISTS idx_ce_timestamp     ON contract_events(timestamp);
     `);
     console.log('Database initialized successfully');
   } finally {
@@ -182,6 +289,19 @@ export async function reportSuspiciousAsset(
   await pool.query(query, [assetCode, issuer]);
 }
 
+export async function saveAssetReport(
+  assetCode: string,
+  issuer: string,
+  reason: string,
+  reporterId?: string
+): Promise<void> {
+  const query = `
+    INSERT INTO asset_reports (asset_code, issuer, reason, reporter_id)
+    VALUES ($1, $2, $3, $4)
+  `;
+  await pool.query(query, [assetCode, issuer, reason, reporterId || null]);
+}
+
 export async function getVerifiedAssets(limit: number = 100): Promise<AssetVerification[]> {
   const query = `
     SELECT * FROM verified_assets 
@@ -284,7 +404,7 @@ export async function getAnchorKycConfigs(): Promise<AnchorKycConfig[]> {
   }));
 }
 
-export async function saveUserKycStatus(kycStatus: UserKycStatus): Promise<void> {
+export async function saveUserKycStatus(kycStatus: DbUserKycStatus): Promise<void> {
   const query = `
     INSERT INTO user_kyc_status (
       user_id, anchor_id, status, last_checked, expires_at, rejection_reason, verification_data
@@ -310,7 +430,7 @@ export async function saveUserKycStatus(kycStatus: UserKycStatus): Promise<void>
   ]);
 }
 
-export async function getUserKycStatus(userId: string, anchorId: string): Promise<UserKycStatus | null> {
+export async function getUserKycStatus(userId: string, anchorId: string): Promise<DbUserKycStatus | null> {
   const query = `
     SELECT * FROM user_kyc_status 
     WHERE user_id = $1 AND anchor_id = $2
@@ -333,7 +453,7 @@ export async function getUserKycStatus(userId: string, anchorId: string): Promis
   };
 }
 
-export async function getUsersNeedingKycCheck(anchorId: string, minutesSinceLastCheck: number): Promise<UserKycStatus[]> {
+export async function getUsersNeedingKycCheck(anchorId: string, minutesSinceLastCheck: number): Promise<DbUserKycStatus[]> {
   const query = `
     SELECT * FROM user_kyc_status 
     WHERE anchor_id = $1 
@@ -355,7 +475,7 @@ export async function getUsersNeedingKycCheck(anchorId: string, minutesSinceLast
   }));
 }
 
-export async function getApprovedUsers(): Promise<UserKycStatus[]> {
+export async function getApprovedUsers(): Promise<DbUserKycStatus[]> {
   const query = `
     SELECT * FROM user_kyc_status 
     WHERE status = 'approved' 
@@ -375,8 +495,391 @@ export async function getApprovedUsers(): Promise<UserKycStatus[]> {
   }));
 }
 
+// ========== SEP-24 Transaction Functions ==========
+
+/**
+ * SEP-24 transaction record for database
+ */
+export interface Sep24TransactionDbRecord {
+  id?: number;
+  transaction_id: string;
+  anchor_id: string;
+  direction: 'deposit' | 'withdrawal';
+  status: string;
+  asset_code: string;
+  amount?: string;
+  amount_in?: string;
+  amount_out?: string;
+  amount_fee?: string;
+  stellar_transaction_id?: string;
+  external_transaction_id?: string;
+  user_id: string;
+  interactive_url?: string;
+  instructions_url?: string;
+  kyc_status?: string;
+  kyc_web_url?: string;
+  status_eta?: number;
+  last_polled?: Date;
+  message?: string;
+  created_at?: Date;
+  updated_at?: Date;
+}
+
+/**
+ * Save a SEP-24 transaction
+ */
+export async function saveSep24Transaction(
+  record: Omit<Sep24TransactionDbRecord, 'id' | 'created_at' | 'updated_at'>
+): Promise<void> {
+  const query = `
+    INSERT INTO sep24_transactions (
+      transaction_id, anchor_id, direction, status, asset_code,
+      amount, amount_in, amount_out, amount_fee,
+      stellar_transaction_id, external_transaction_id,
+      user_id, interactive_url, instructions_url,
+      kyc_status, kyc_web_url, status_eta, message
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+    )
+    ON CONFLICT (transaction_id) 
+    DO UPDATE SET
+      status = EXCLUDED.status,
+      amount_in = COALESCE(EXCLUDED.amount_in, sep24_transactions.amount_in),
+      amount_out = COALESCE(EXCLUDED.amount_out, sep24_transactions.amount_out),
+      amount_fee = COALESCE(EXCLUDED.amount_fee, sep24_transactions.amount_fee),
+      stellar_transaction_id = COALESCE(EXCLUDED.stellar_transaction_id, sep24_transactions.stellar_transaction_id),
+      external_transaction_id = COALESCE(EXCLUDED.external_transaction_id, sep24_transactions.external_transaction_id),
+      kyc_status = COALESCE(EXCLUDED.kyc_status, sep24_transactions.kyc_status),
+      message = COALESCE(EXCLUDED.message, sep24_transactions.message),
+      updated_at = NOW()
+  `;
+
+  await pool.query(query, [
+    record.transaction_id,
+    record.anchor_id,
+    record.direction,
+    record.status,
+    record.asset_code,
+    record.amount || null,
+    record.amount_in || null,
+    record.amount_out || null,
+    record.amount_fee || null,
+    record.stellar_transaction_id || null,
+    record.external_transaction_id || null,
+    record.user_id,
+    record.interactive_url || null,
+    record.instructions_url || null,
+    record.kyc_status || null,
+    record.kyc_web_url || null,
+    record.status_eta || null,
+    record.message || null,
+  ]);
+}
+
+/**
+ * Get a SEP-24 transaction by transaction_id
+ */
+export async function getSep24Transaction(
+  transactionId: string
+): Promise<Sep24TransactionDbRecord | null> {
+  const query = `
+    SELECT * FROM sep24_transactions 
+    WHERE transaction_id = $1
+  `;
+  const result = await pool.query(query, [transactionId]);
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return result.rows[0] as Sep24TransactionDbRecord;
+}
+
+/**
+ * Get a SEP-24 transaction by ID (numeric)
+ */
+export async function getSep24TransactionById(
+  transactionId: string
+): Promise<Sep24TransactionDbRecord | null> {
+  return getSep24Transaction(transactionId);
+}
+
+/**
+ * Get pending SEP-24 transactions for an anchor
+ */
+export async function getPendingSep24Transactions(
+  anchorId: string,
+  minutesSinceLastPoll: number
+): Promise<Sep24TransactionDbRecord[]> {
+  const query = `
+    SELECT * FROM sep24_transactions 
+    WHERE anchor_id = $1 
+      AND status NOT IN ('completed', 'refunded', 'expired', 'error')
+      AND (last_polled IS NULL OR last_polled < NOW() - INTERVAL '${minutesSinceLastPoll} minutes')
+    ORDER BY created_at ASC
+    LIMIT 50
+  `;
+  const result = await pool.query(query, [anchorId]);
+
+  return result.rows as Sep24TransactionDbRecord[];
+}
+
+/**
+ * Update SEP-24 transaction status
+ */
+export async function updateSep24TransactionStatus(
+  transactionId: string,
+  status: string,
+  amountIn?: string,
+  amountOut?: string,
+  amountFee?: string,
+  stellarTransactionId?: string,
+  externalTransactionId?: string,
+  message?: string
+): Promise<void> {
+  const query = `
+    UPDATE sep24_transactions 
+    SET status = $2,
+        amount_in = COALESCE($3, amount_in),
+        amount_out = COALESCE($4, amount_out),
+        amount_fee = COALESCE($5, amount_fee),
+        stellar_transaction_id = COALESCE($6, stellar_transaction_id),
+        external_transaction_id = COALESCE($7, external_transaction_id),
+        message = COALESCE($8, message),
+        last_polled = NOW(),
+        updated_at = NOW()
+    WHERE transaction_id = $1
+  `;
+
+  await pool.query(query, [
+    transactionId,
+    status,
+    amountIn || null,
+    amountOut || null,
+    amountFee || null,
+    stellarTransactionId || null,
+    externalTransactionId || null,
+    message || null,
+  ]);
+}
+
+/**
+ * Get all SEP-24 transactions for a user
+ */
+export async function getSep24TransactionsByUser(
+  userId: string
+): Promise<Sep24TransactionDbRecord[]> {
+  const query = `
+    SELECT * FROM sep24_transactions 
+    WHERE user_id = $1
+    ORDER BY created_at DESC
+    LIMIT 100
+  `;
+  const result = await pool.query(query, [userId]);
+
+  return result.rows as Sep24TransactionDbRecord[];
+}
+
+function mapWebhookDeliveryRow(row: Record<string, unknown>): WebhookDelivery {
+  return {
+    id: String(row.id),
+    event_type: String(row.event_type),
+    event_key: String(row.event_key),
+    subscriber_id: String(row.subscriber_id),
+    target_url: String(row.target_url),
+    payload: row.payload,
+    status: row.status as WebhookDelivery['status'],
+    attempt_count: Number(row.attempt_count),
+    max_attempts: Number(row.max_attempts),
+    next_retry_at: row.next_retry_at as Date,
+    last_error: row.last_error as string | null | undefined,
+    response_status: row.response_status as number | null | undefined,
+    delivered_at: row.delivered_at as Date | null | undefined,
+  };
+}
+
+export async function getActiveWebhookSubscribers(): Promise<WebhookSubscriber[]> {
+  const result = await pool.query(
+    `SELECT id, url, secret, active, created_at, updated_at
+     FROM webhook_subscribers
+     WHERE active = true`
+  );
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    url: String(row.url),
+    secret: row.secret as string | null,
+    active: Boolean(row.active),
+    created_at: row.created_at as Date,
+    updated_at: row.updated_at as Date,
+  }));
+}
+
+export async function enqueueWebhookDelivery(
+  eventType: string,
+  eventKey: string,
+  subscriber: WebhookSubscriber,
+  payload: unknown,
+  maxAttempts: number
+): Promise<WebhookDelivery> {
+  const result = await pool.query(
+    `INSERT INTO webhook_deliveries (
+       event_type, event_key, subscriber_id, target_url, payload,
+       max_attempts, status, attempt_count, next_retry_at
+     ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, 'pending', 0, NOW())
+     ON CONFLICT (event_type, event_key, subscriber_id)
+     DO UPDATE SET
+       payload = EXCLUDED.payload,
+       max_attempts = EXCLUDED.max_attempts,
+       status = 'pending',
+       attempt_count = 0,
+       next_retry_at = NOW(),
+       updated_at = NOW()
+     RETURNING *`,
+    [eventType, eventKey, subscriber.id, subscriber.url, JSON.stringify(payload), maxAttempts]
+  );
+  return mapWebhookDeliveryRow(result.rows[0] as Record<string, unknown>);
+}
+
+export async function getPendingWebhookDeliveries(limit: number): Promise<WebhookDelivery[]> {
+  const result = await pool.query(
+    `SELECT * FROM webhook_deliveries
+     WHERE status = 'pending' AND next_retry_at <= NOW()
+     ORDER BY next_retry_at ASC
+     LIMIT $1`,
+    [limit]
+  );
+  return result.rows.map((row) => mapWebhookDeliveryRow(row as Record<string, unknown>));
+}
+
+export async function markWebhookDeliverySuccess(id: string, responseStatus: number): Promise<void> {
+  await pool.query(
+    `UPDATE webhook_deliveries
+     SET status = 'success', response_status = $2, delivered_at = NOW(), updated_at = NOW()
+     WHERE id = $1`,
+    [id, responseStatus]
+  );
+}
+
+export async function markWebhookDeliveryFailure(
+  id: string,
+  attemptCount: number,
+  maxAttempts: number,
+  nextRetryAt: Date,
+  message: string,
+  responseStatus: number | null
+): Promise<void> {
+  const status: WebhookDelivery['status'] = attemptCount >= maxAttempts ? 'failed' : 'pending';
+  await pool.query(
+    `UPDATE webhook_deliveries
+     SET attempt_count = $2,
+         status = $3,
+         next_retry_at = $4,
+         last_error = $5,
+         response_status = $6,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [id, attemptCount, status, nextRetryAt, message, responseStatus]
+  );
+}
+
 export { pool };
 
 export function getPool(): Pool {
   return pool;
+}
+
+/** Drain and close the PostgreSQL connection pool. Safe to call multiple times. */
+export async function closePool(): Promise<void> {
+  await pool.end();
+}
+
+// ── Contract Events ──────────────────────────────────────────────────────────
+
+export interface ContractEvent {
+  id?: number;
+  event_type: string;
+  remittance_id?: number | null;
+  actor?: string | null;
+  amount?: string | null;
+  fee?: string | null;
+  tx_hash?: string | null;
+  ledger_sequence?: number | null;
+  timestamp: Date;
+  raw_data?: Record<string, unknown> | null;
+}
+
+export interface ContractEventFilter {
+  event_type?: string;
+  actor?: string;
+  remittance_id?: number;
+  from?: Date;
+  to?: Date;
+  limit?: number;
+  offset?: number;
+}
+
+export async function saveContractEvent(event: ContractEvent): Promise<void> {
+  await pool.query(
+    `INSERT INTO contract_events
+       (event_type, remittance_id, actor, amount, fee, tx_hash, ledger_sequence, timestamp, raw_data)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT DO NOTHING`,
+    [
+      event.event_type,
+      event.remittance_id ?? null,
+      event.actor ?? null,
+      event.amount ?? null,
+      event.fee ?? null,
+      event.tx_hash ?? null,
+      event.ledger_sequence ?? null,
+      event.timestamp,
+      event.raw_data ? JSON.stringify(event.raw_data) : null,
+    ]
+  );
+}
+
+export async function queryContractEvents(
+  filter: ContractEventFilter
+): Promise<{ events: ContractEvent[]; total: number }> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  if (filter.event_type) {
+    conditions.push(`event_type = $${idx++}`);
+    params.push(filter.event_type);
+  }
+  if (filter.actor) {
+    conditions.push(`actor = $${idx++}`);
+    params.push(filter.actor);
+  }
+  if (filter.remittance_id !== undefined) {
+    conditions.push(`remittance_id = $${idx++}`);
+    params.push(filter.remittance_id);
+  }
+  if (filter.from) {
+    conditions.push(`timestamp >= $${idx++}`);
+    params.push(filter.from);
+  }
+  if (filter.to) {
+    conditions.push(`timestamp <= $${idx++}`);
+    params.push(filter.to);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = Math.min(filter.limit ?? 50, 200);
+  const offset = filter.offset ?? 0;
+
+  const [dataResult, countResult] = await Promise.all([
+    pool.query(
+      `SELECT * FROM contract_events ${where} ORDER BY timestamp DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...params, limit, offset]
+    ),
+    pool.query(`SELECT COUNT(*) FROM contract_events ${where}`, params),
+  ]);
+
+  return {
+    events: dataResult.rows,
+    total: parseInt(countResult.rows[0].count, 10),
+  };
 }

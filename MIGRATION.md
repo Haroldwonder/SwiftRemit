@@ -1,293 +1,240 @@
-# Migration Guide: SwiftRemit Contract
+# SwiftRemit Contract Migration Guide
 
-This guide outlines the key changes and migration steps for upgrading to the latest version of the SwiftRemit contract, focusing on deterministic settlement hashes and batch settlement features.
+This document covers two distinct migration scenarios:
 
-## New Features
+1. **In-place WASM upgrade** — the contract address stays the same; only the
+   bytecode changes.  Call `migrate()` immediately after the upgrade.
+2. **Cross-contract migration** — state is moved from one deployed contract
+   instance to a freshly deployed one using `export_migration_snapshot` /
+   `import_migration_batch`.
 
-### 1. Deterministic Settlement Hashing
-The contract now utilizes a deterministic hashing mechanism for all settlements. This allows off-chain systems to pre-calculate settlement IDs and verify on-chain state with cryptographic certainty.
+---
 
-- **Internal Logic**: Uses SHA-256 over canonicalized fields (sender, agent, amount, fee, expiry).
-- **Public API**: `compute_settlement_hash(env, remittance_id)` allows external callers to retrieve the expected hash for any pending remittance.
+## Part 1 — In-Place WASM Upgrade Migration
 
-### 2. Batch Settlement with Netting
-To optimize gas costs and reduce token transfer overhead, the contract now supports batch settlement of multiple remittances with netting logic.
+### Background: Why Agent Keys Are at Risk
 
-- **Net Settlement**: Offsets opposing flows between the same two parties within a single batch.
-- **Max Batch Size**: 50 remittances per transaction.
-- **Function**: `batch_settle_with_netting(env, entries)`.
+Soroban persistent storage keys are XDR-encoded `contracttype` enum variants.
+When a contract is upgraded via `env.deployer().update_current_contract_wasm()`,
+the new bytecode is live immediately but **all existing storage entries remain
+unchanged**.  If the new code changes the discriminant, field order, or type of
+any `DataKey` variant, the old entries become unreadable — effectively orphaned.
 
-## Breaking Changes
+The following persistent keys are written per-agent and are at risk:
 
-### Function Signatures
-The `create_remittance` method has been simplified. The `default_currency` and `default_country` arguments have been removed in favor of a simpler 4-argument signature (plus `Env`).
+| `DataKey` variant              | Value type        | Risk                                                  |
+|-------------------------------|-------------------|-------------------------------------------------------|
+| `AgentRegistered(Address)`    | `bool`            | Orphaned if variant discriminant or Address XDR changes |
+| `AgentKycHash(Address)`       | `BytesN<32>`      | Orphaned if variant discriminant changes              |
+| `AgentStats(Address)`         | `AgentStats`      | Orphaned if `AgentStats` struct layout changes        |
+| `AgentDailyCap(Address)`      | `i128`            | Orphaned if variant discriminant changes              |
+| `AgentWithdrawals(Address)`   | `Vec<TransferRecord>` | Orphaned if `TransferRecord` layout changes       |
+| `RoleAssignment(Addr, Role)`  | `bool`            | Orphaned if `Role` enum repr changes                  |
+| `AgentList`                   | `Vec<Address>`    | **Was missing in schema v1** — must be rebuilt        |
 
-**Old Signature:**
-```rust
-pub fn create_remittance(
-    env: Env,
-    sender: Address,
-    agent: Address,
-    amount: i128,
-    currency: String,
-    country: String,
-    expiry: Option<u64>,
-) -> Result<u64, ContractError>
-```
+### Why Keys Are Not Automatically Migrated
 
-**New Signature:**
-```rust
-pub fn create_remittance(
-    env: Env,
-    sender: Address,
-    agent: Address,
-    amount: i128,
-    expiry: Option<u64>,
-) -> Result<u64, ContractError>
-```
+Soroban does not provide a built-in key-rename or schema-migration primitive.
+The runtime simply reads raw XDR bytes from the ledger using the key produced
+by the current code.  If the key encoding changed, the lookup returns `None`.
 
-### Authorization Model
-The `authorize_remittance` function has been removed. Payout confirmation is now handled directly via `confirm_payout`, which requires `require_auth` from the agent and the `Settler` role.
+Additionally, there is no way to iterate all persistent storage entries from
+within a contract — you can only read a key if you already know it.  This is
+why the `AgentList` index is critical: it is the only way to enumerate all
+registered agents so their keys can be re-written after an upgrade.
 
-## Migration Steps
+### Assumptions
 
-1. **Update Clients**: Update all off-chain clients to use the new `create_remittance` signature.
-2. **Assign Roles**: Ensure all authorized agents are assigned the `Role::Settler` using the `assign_role` function.
-3. **Verify Hashes**: Use `compute_settlement_hash` to reconcile existing pending transactions if necessary.
-# Configuration Migration Guide
+1. The `AgentList` persistent key is kept in sync with `AgentRegistered` by
+   `set_agent_registered()` (enforced since schema v2).
+2. On a v1 contract (deployed before this fix), `AgentList` may be empty.
+   In that case the admin must supply the list of known agent addresses
+   out-of-band before calling `migrate()`.
+3. `AgentStats`, `AgentDailyCap`, and `AgentWithdrawals` are performance /
+   rate-limit data.  Loss of these values degrades analytics but does not
+   affect fund safety.  They are **not** re-written by `migrate()` in v2
+   because their `DataKey` variants were not changed.  Add a v3 step if
+   their layout changes in a future upgrade.
 
-This guide helps existing developers migrate to the new environment-based configuration system.
+---
 
-## What Changed?
+## In-Place Upgrade: Step-by-Step
 
-The SwiftRemit codebase has been refactored to eliminate hardcoded configuration values and use environment variables instead. This improves:
-
-- **Maintainability**: Configuration is centralized in one place
-- **Flexibility**: Easy to configure for different environments
-- **Security**: Secrets are no longer in code
-- **Deployment**: Simplified deployment to multiple environments
-
-## Migration Steps
-
-### Step 1: Create Your Environment File
-
-Copy the example environment file to create your local configuration:
+### 1. Verify the current schema version (optional)
 
 ```bash
-cp .env.example .env
+soroban contract invoke \
+  --id <CONTRACT_ID> \
+  -- get_schema_version
 ```
 
-### Step 2: Fill In Required Values
+If the output is already `2` (or `CURRENT_SCHEMA_VERSION`), no migration is
+needed.
 
-Edit the `.env` file and provide values for required variables:
+### 2. Upgrade the WASM
 
 ```bash
-# Required for client operations
-SWIFTREMIT_CONTRACT_ID=your_contract_id_here
-USDC_TOKEN_ID=your_usdc_token_id_here
+soroban contract install --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+# Note the new WASM hash printed above, e.g. abc123...
+
+soroban contract invoke \
+  --id <CONTRACT_ID> \
+  -- upgrade \
+  --caller <ADMIN_ADDRESS> \
+  --new_wasm_hash <NEW_WASM_HASH>
 ```
 
-If you were previously using hardcoded values in `examples/client-example.js`, copy those values to your `.env` file.
-
-### Step 3: Customize Optional Settings (If Needed)
-
-Most optional settings have sensible defaults, but you can customize them:
+### 3. Call `migrate()` immediately after the upgrade
 
 ```bash
-# Network configuration
-NETWORK=testnet
-RPC_URL=https://soroban-testnet.stellar.org:443
-
-# Fee configuration
-DEFAULT_FEE_BPS=250
-
-# Transaction configuration
-TRANSACTION_FEE=100000
-TRANSACTION_TIMEOUT=30
-POLL_INTERVAL_MS=1000
-
-# Token configuration
-USDC_DECIMALS=7
-
-# Deployment configuration
-DEPLOYER_IDENTITY=deployer
-INITIAL_FEE_BPS=250
-
-# Feature flags
-ENABLE_DEBUG_LOG=true
+soroban contract invoke \
+  --id <CONTRACT_ID> \
+  -- migrate \
+  --caller <ADMIN_ADDRESS>
 ```
 
-### Step 4: Verify Configuration
+`migrate()` is **idempotent** — calling it a second time is a no-op.
 
-Test that your configuration loads correctly:
+### 4. Verify agent records are intact
 
 ```bash
-cd examples
-node config.js
+soroban contract invoke --id <CONTRACT_ID> -- is_agent_registered --agent <AGENT_ADDRESS>
 ```
 
-If there are no errors, your configuration is valid.
+Repeat for a representative sample of agents.
 
-### Step 5: Update Your Workflow
+### 5. Rollback (if validation failed)
 
-#### Running Client Code
-
-No changes needed! The client code now automatically loads configuration from `.env`:
+If `migrate()` returned `MigrationValidationFailed`:
 
 ```bash
-cd examples
-node client-example.js
+soroban contract invoke \
+  --id <CONTRACT_ID> \
+  -- rollback_migration \
+  --caller <ADMIN_ADDRESS>
 ```
 
-#### Deploying Contracts
+This restores all agent registration records from the pre-migration snapshot
+that was saved at the start of `migrate()`.
 
-Deployment scripts now read from environment variables. You can either:
+---
 
-**Option A: Use environment variables**
+## Part 2 — Cross-Contract Migration
+
+Use this path when deploying a new contract address (e.g., after a breaking
+change that requires a fresh deployment).
+
+### Prerequisites
+
+- Admin role on both source and destination contracts.
+- Destination contract already initialized (`initialize` called).
+
+### Step 1 — Initialize the destination contract
+
 ```bash
-export NETWORK=testnet
-export INITIAL_FEE_BPS=250
-./deploy.sh
+soroban contract invoke \
+  --id <DEST_CONTRACT_ID> \
+  -- initialize \
+  --admin <ADMIN_ADDRESS> \
+  --usdc_token <USDC_TOKEN_ADDRESS> \
+  --fee_bps 250 \
+  --rate_limit_cooldown 3600 \
+  --protocol_fee_bps 0 \
+  --treasury <TREASURY_ADDRESS>
 ```
 
-**Option B: Use CLI overrides**
+### Step 2 — Export the snapshot from the source contract
+
 ```bash
-./deploy.sh testnet
+soroban contract invoke \
+  --id <SOURCE_CONTRACT_ID> \
+  -- export_migration_snapshot \
+  --caller <ADMIN_ADDRESS>
 ```
 
-**Option C: Set in .env file**
+Save the returned `MigrationSnapshot` JSON.  The source contract is now
+**locked** — `create_remittance` and `confirm_payout` return `MigrationInProgress`.
+
+The snapshot now includes **full agent records** (`AgentRecord` with `address`,
+`registered`, and `kyc_hash`), not just addresses.
+
+### Step 3 — Split into batches and import
+
+Split `MigrationSnapshot.persistent_data.remittances` into chunks of at most
+`MAX_MIGRATION_BATCH_SIZE` (100) items.  Batches **must** be submitted in strict
+sequential order starting from `batch_number = 0`.  Submitting a batch whose
+`batch_number` does not equal the next expected index returns
+`InvalidMigrationBatch` (32) and leaves the destination contract in its current
+state — no partial write occurs.
+
+For each chunk:
+
 ```bash
-# In .env
-NETWORK=testnet
-INITIAL_FEE_BPS=250
-
-# Then run
-./deploy.sh
+soroban contract invoke \
+  --id <DEST_CONTRACT_ID> \
+  -- import_migration_batch \
+  --caller <ADMIN_ADDRESS> \
+  --batch '{ "batch_number": 0, "total_batches": N, "remittances": [...], "batch_hash": "..." }'
 ```
 
-## What Was Changed?
+After the final batch the destination contract automatically clears the
+`MigrationInProgress` flag.
 
-### JavaScript Client Code
+### Step 3a — Abort a failed import (rollback)
 
-**Before:**
-```javascript
-const CONFIG = {
-  network: 'testnet',
-  rpcUrl: 'https://soroban-testnet.stellar.org:443',
-  contractId: 'CAAAA...',
-  // ... hardcoded values
-};
-```
+If an import fails mid-way (e.g. a batch hash mismatch, out-of-order batch, or
+off-chain tooling error), call `abort_migration` on the **destination** contract
+to reset the state machine back to Idle:
 
-**After:**
-```javascript
-const config = require('./config');
-
-// Use config.network, config.rpcUrl, config.contractId, etc.
-```
-
-### Deployment Scripts
-
-**Before (deploy.sh):**
 ```bash
-NETWORK="testnet"
-DEPLOYER="deployer"
-# ... hardcoded values
+soroban contract invoke \
+  --id <DEST_CONTRACT_ID> \
+  -- abort_migration \
+  --caller <ADMIN_ADDRESS>
 ```
 
-**After (deploy.sh):**
+`abort_migration`:
+- Clears the `MigrationInProgress` flag (re-enables normal operations).
+- Resets the batch ordering counter so a fresh import can start from batch 0.
+- Emits a `migration_aborted` event for off-chain indexers.
+
+> **Note:** Any remittances already written by previous `import_migration_batch`
+> calls are **not** automatically removed.  If a clean slate is required,
+> re-initialize the destination contract before retrying the import.
+
+### Step 4 — Verify
+
 ```bash
-NETWORK=${NETWORK:-testnet}
-DEPLOYER=${DEPLOYER_IDENTITY:-deployer}
-INITIAL_FEE_BPS=${INITIAL_FEE_BPS:-250}
-# ... reads from environment with defaults
+soroban contract invoke --id <DEST_CONTRACT_ID> -- get_remittance --remittance_id 1
+soroban contract invoke --id <DEST_CONTRACT_ID> -- is_agent_registered --agent <AGENT_ADDRESS>
 ```
 
-### Rust Contract Code
+### Step 5 — Redirect traffic
 
-The Rust contract code remains largely unchanged. Constants like `MAX_FEE_BPS` and `FEE_DIVISOR` are still hardcoded in the contract for on-chain consistency, but they are now documented with comments explaining their purpose.
+Update off-chain services to point to `<DEST_CONTRACT_ID>`.
 
-## Breaking Changes
+---
 
-### None for Normal Usage
+## Error Reference
 
-If you were using the system normally, there are no breaking changes. The refactoring maintains backward compatibility:
+| Error                       | Code | Meaning                                                    |
+|-----------------------------|------|------------------------------------------------------------|
+| `MigrationInProgress`       | 31   | Export already called; or normal op blocked during migration |
+| `InvalidMigrationHash`      | 30   | Batch hash mismatch — data was tampered or corrupted       |
+| `InvalidMigrationBatch`     | 32   | `batch_number != expected_next_batch` or `batch_number >= total_batches` |
+| `MigrationValidationFailed` | 56   | One or more agents unreadable after `migrate()`            |
+| `NotFound`                  | 57   | No rollback snapshot exists; or `abort_migration` called when not in progress |
+| `Unauthorized`              | 20   | Caller does not have Admin role                            |
 
-- All existing functionality works the same way
-- Default values match previous hardcoded values
-- Tests continue to pass
+---
 
-### If You Modified Hardcoded Values
+## Security Notes
 
-If you previously modified hardcoded values in the code, you now need to set them via environment variables instead:
-
-1. Identify the values you changed
-2. Add them to your `.env` file
-3. Remove your code modifications
-
-## Troubleshooting
-
-### "Missing required environment variable" Error
-
-**Problem**: You're missing a required configuration value
-
-**Solution**: Add the variable to your `.env` file. Check `.env.example` for the complete list of variables.
-
-### "Configuration validation failed" Error
-
-**Problem**: A configuration value is invalid (wrong type, out of range, etc.)
-
-**Solution**: Check the error message for details. Common issues:
-- Fee values must be 0-10000
-- URLs must be HTTPS
-- Network must be 'testnet' or 'mainnet'
-- Numeric values must be valid numbers
-
-### Client Code Not Finding Configuration
-
-**Problem**: Client code can't load configuration
-
-**Solution**: 
-1. Ensure `.env` file exists in project root
-2. Ensure you're running from the correct directory
-3. Check that `dotenv` package is installed: `npm install`
-
-### Deployment Script Not Using Environment Variables
-
-**Problem**: Deployment script uses defaults instead of your values
-
-**Solution**:
-1. Export variables before running script: `export NETWORK=testnet`
-2. Or set them in `.env` file
-3. Or use CLI overrides: `./deploy.sh testnet`
-
-## Getting Help
-
-If you encounter issues during migration:
-
-1. Check the [Configuration Guide](CONFIGURATION.md) for detailed documentation
-2. Review error messages carefully - they indicate which variable is problematic
-3. Verify your `.env` file against `.env.example`
-4. Ensure all required variables are set
-5. Check that values are within valid ranges
-
-## Benefits of the New System
-
-After migration, you'll benefit from:
-
-1. **Easier Environment Management**: Switch between testnet and mainnet by changing one variable
-2. **Better Security**: Secrets are in `.env` (gitignored) instead of code
-3. **Simplified Deployment**: Deploy to multiple environments without code changes
-4. **Centralized Configuration**: All settings in one place
-5. **Validation**: Configuration errors caught at startup, not runtime
-6. **Documentation**: Clear documentation of all configuration options
-
-## Next Steps
-
-After completing migration:
-
-1. Delete any local modifications to hardcoded values
-2. Commit your updated code (but not `.env`!)
-3. Share `.env.example` with your team
-4. Update your deployment documentation
-5. Consider setting up environment-specific `.env` files (`.env.testnet`, `.env.mainnet`)
+- The `verification_hash` in `MigrationSnapshot` covers all instance and
+  persistent data plus the timestamp and ledger sequence.  Any tampering will
+  cause `InvalidMigrationHash` on import.
+- Each `MigrationBatch` carries its own `batch_hash` verified independently.
+- `migrate()` saves a `RollbackSnapshot` to instance storage before making any
+  writes.  The snapshot is cleared only after successful validation.
+- The source contract stays locked until you explicitly clear the flag (or
+  redeploy), preventing new state from being created after the snapshot.
