@@ -38,6 +38,23 @@ import {
 /** Maximum number of entries allowed in a single batch remittance call. */
 export const MAX_BATCH_SIZE = 50;
 
+function shouldAllowHttp(rpcUrl: string): boolean {
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(rpcUrl);
+  } catch {
+    return false;
+  }
+
+  if (parsedUrl.protocol !== "http:") {
+    return false;
+  }
+
+  const hostname = parsedUrl.hostname.toLowerCase();
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
 export class SwiftRemitClient {
   private readonly contract: Contract;
   private readonly server: SorobanRpc.Server;
@@ -49,7 +66,13 @@ export class SwiftRemitClient {
 
   constructor(options: SwiftRemitClientOptions) {
     this.contract = new Contract(options.contractId);
-    this.server = new SorobanRpc.Server(options.rpcUrl, { allowHttp: true });
+    const allowHttp = shouldAllowHttp(options.rpcUrl);
+    this.server = new SorobanRpc.Server(options.rpcUrl, { allowHttp });
+    if (allowHttp) {
+      console.warn(
+        `[SwiftRemitClient] Using insecure HTTP RPC connection for ${options.rpcUrl}. Restrict this to local or test environments.`
+      );
+    }
     this.networkPassphrase = options.networkPassphrase;
     this.fee = options.fee ?? BASE_FEE;
     this.retries = options.retries ?? 3;

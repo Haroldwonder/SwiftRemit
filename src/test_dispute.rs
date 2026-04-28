@@ -112,10 +112,17 @@ fn test_mark_failed_transitions_to_failed() {
     contract.register_agent(&agent);
 
     let id = contract.create_remittance(&sender, &agent, &1_000i128, &None);
+    let sender_before = balance(&env, &token, &sender);
+    let agent_before = balance(&env, &token, &agent);
+    let contract_before = balance(&env, &token, &contract.address);
+
     contract.mark_failed(&id);
 
     let r = contract.get_remittance(&id);
     assert_eq!(r.status, crate::types::RemittanceStatus::Failed);
+    assert_eq!(balance(&env, &token, &sender), sender_before);
+    assert_eq!(balance(&env, &token, &agent), agent_before);
+    assert_eq!(balance(&env, &token, &contract.address), contract_before);
 }
 
 #[test]
@@ -149,11 +156,17 @@ fn test_mark_failed_on_completed_remittance_rejected() {
 fn test_raise_dispute_transitions_to_disputed() {
     let f = setup_failed_remittance();
     let hash = evidence_hash(&f.env);
+    let sender_before = balance(&f.env, &f.token, &f.sender);
+    let agent_before = balance(&f.env, &f.token, &f.agent);
+    let contract_before = balance(&f.env, &f.token, &f.contract.address);
 
     f.contract.raise_dispute(&f.remittance_id, &hash);
 
     let r = f.contract.get_remittance(&f.remittance_id);
     assert_eq!(r.status, crate::types::RemittanceStatus::Disputed);
+    assert_eq!(balance(&f.env, &f.token, &f.sender), sender_before);
+    assert_eq!(balance(&f.env, &f.token, &f.agent), agent_before);
+    assert_eq!(balance(&f.env, &f.token, &f.contract.address), contract_before);
 }
 
 #[test]
@@ -214,6 +227,7 @@ fn test_resolve_dispute_sender_wins_full_refund() {
     let hash = evidence_hash(&f.env);
 
     let sender_before = balance(&f.env, &f.token, &f.sender);
+    let agent_before = balance(&f.env, &f.token, &f.agent);
     let contract_before = balance(&f.env, &f.token, &f.contract.address);
 
     f.contract.raise_dispute(&f.remittance_id, &hash);
@@ -226,6 +240,7 @@ fn test_resolve_dispute_sender_wins_full_refund() {
     // Sender receives the full remittance amount back
     let sender_after = balance(&f.env, &f.token, &f.sender);
     assert_eq!(sender_after - sender_before, 1_000);
+    assert_eq!(balance(&f.env, &f.token, &f.agent), agent_before);
 
     // Contract balance decreases by the full amount
     let contract_after = balance(&f.env, &f.token, &f.contract.address);
@@ -241,7 +256,9 @@ fn test_resolve_dispute_agent_wins_net_amount_to_agent() {
     let f = setup_failed_remittance();
     let hash = evidence_hash(&f.env);
 
+    let sender_before = balance(&f.env, &f.token, &f.sender);
     let agent_before = balance(&f.env, &f.token, &f.agent);
+    let contract_before = balance(&f.env, &f.token, &f.contract.address);
 
     f.contract.raise_dispute(&f.remittance_id, &hash);
     f.contract.resolve_dispute(&f.remittance_id, &false);
@@ -253,6 +270,12 @@ fn test_resolve_dispute_agent_wins_net_amount_to_agent() {
     // Agent receives net amount (amount - fee = 1000 - 25 = 975 at 2.5% fee)
     let agent_after = balance(&f.env, &f.token, &f.agent);
     assert_eq!(agent_after - agent_before, 975);
+    assert_eq!(balance(&f.env, &f.token, &f.sender), sender_before);
+
+    // Contract retains only the fee after paying the agent.
+    let contract_after = balance(&f.env, &f.token, &f.contract.address);
+    assert_eq!(contract_before - contract_after, 975);
+    assert_eq!(contract_after, 25);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
