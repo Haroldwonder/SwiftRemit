@@ -2,6 +2,7 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import { Pool } from 'pg';
 import currenciesRouter from './routes/currencies';
 import limitsRouter from './routes/limits';
 import { createAnchorsRouter } from './routes/anchors';
@@ -9,6 +10,7 @@ import docsRouter from './routes/docs';
 import settlementsRouter from './routes/settlements';
 import { createRemittancesRouter, RemittancesRouterOptions } from './routes/remittances';
 import { createAdminRouter } from './routes/admin';
+import { createAnalyticsRouter } from './routes/analytics';
 import { ErrorResponse } from './types';
 import { AnchorStore } from './db/anchorStore';
 import { Server as SocketIOServer } from 'socket.io';
@@ -77,6 +79,14 @@ export function createApp(options: AppOptions = {}): Application {
 
   // Admin utilities — read-only operations (simulate-upgrade, etc.)
   app.use('/api/admin', createAdminRouter());
+
+  // Corridor analytics (Issue #482)
+  const analyticsPool = process.env.DATABASE_URL
+    ? new Pool({ connectionString: process.env.DATABASE_URL, max: 5 })
+    : null;
+  if (analyticsPool) {
+    app.use('/api/analytics', createAnalyticsRouter(analyticsPool));
+  }
 
   // API documentation
   app.use('/api/docs', docsRouter);

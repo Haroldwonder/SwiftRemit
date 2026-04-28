@@ -6,6 +6,7 @@ import CreateRemittance from './components/CreateRemittance'
 import RemittanceList from './components/RemittanceList'
 import AgentPanel from './components/AgentPanel'
 import ErrorBoundary from './components/ErrorBoundary'
+import CorridorAnalytics from './components/CorridorAnalytics'
 
 function App() {
   const { t } = useTranslation()
@@ -64,6 +65,10 @@ function App() {
               walletAddress={walletAddress}
               contractId={contractId}
             />
+            </ErrorBoundary>
+
+            <ErrorBoundary>
+              <CorridorAnalytics />
             </ErrorBoundary>
           </>
         )}

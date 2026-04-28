@@ -56,6 +56,7 @@ export class WebhookService {
       'remittance.completed',
       'remittance.failed',
       'remittance.cancelled',
+      'kyc.expiry_warning',
     ];
 
     for (const event of request.events) {

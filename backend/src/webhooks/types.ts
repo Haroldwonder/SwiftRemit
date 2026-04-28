@@ -9,7 +9,8 @@ export type EventType =
   | 'remittance.updated'
   | 'remittance.completed'
   | 'remittance.failed'
-  | 'remittance.cancelled';
+  | 'remittance.cancelled'
+  | 'kyc.expiry_warning';
 
 export interface WebhookSubscriber {
   id: string;
@@ -85,4 +86,17 @@ export interface DeadLetterRecord {
   attempts: number;
   createdAt: Date;
   replayedAt?: Date;
+}
+
+export interface KycExpiryWarningData {
+  user_id: string;
+  anchor_id: string;
+  expires_at: string;
+  days_until_expiry: number;
+  renewal_url: string;
+}
+
+export interface KycExpiryWarningPayload extends WebhookPayload {
+  event: 'kyc.expiry_warning';
+  data: KycExpiryWarningData;
 }

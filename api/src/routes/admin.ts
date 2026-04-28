@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { ErrorResponse } from '../types';
+import { Pool } from 'pg';
+import { AdminConfirmationService, HighRiskOperation } from '../../../backend/src/admin-confirmation';
 
 function timestamp(): string {
   return new Date().toISOString();
@@ -90,6 +92,15 @@ function simulateUpgrade(wasmHashHex: string): {
     affected_storage_keys: affectedKeys,
     requires_migration: requiresMigration,
   };
+}
+
+const HIGH_RISK_OPS: HighRiskOperation[] = ['withdraw_fees', 'remove_agent', 'update_fee'];
+
+function getConfirmationService(): AdminConfirmationService | null {
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) return null;
+  const pool = new Pool({ connectionString: dbUrl });
+  return new AdminConfirmationService(pool);
 }
 
 export function createAdminRouter(): Router {
@@ -205,6 +216,94 @@ export function createAdminRouter(): Router {
       data: result,
       timestamp: timestamp(),
     });
+  });
+
+  // ── Multi-step admin confirmation (#481) ──────────────────────────────────
+
+  /**
+   * POST /api/admin/actions
+   * Initiate a high-risk operation requiring a second admin to confirm.
+   */
+  router.post('/actions', async (req: Request, res: Response) => {
+    if (!isAdminAuthorized(req)) {
+      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
+    }
+
+    const { operation, initiated_by, params } = req.body as Record<string, unknown>;
+
+    if (!operation || !HIGH_RISK_OPS.includes(operation as HighRiskOperation)) {
+      return sendError(res, 400, `operation must be one of: ${HIGH_RISK_OPS.join(', ')}`, 'INVALID_OPERATION');
+    }
+    if (typeof initiated_by !== 'string' || !initiated_by) {
+      return sendError(res, 400, 'initiated_by is required', 'MISSING_FIELD');
+    }
+
+    const svc = getConfirmationService();
+    if (!svc) return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
+
+    try {
+      await svc.initTable();
+      const action = await svc.initiate(
+        operation as HighRiskOperation,
+        initiated_by,
+        (params as Record<string, unknown>) ?? {}
+      );
+      return res.status(201).json({ success: true, data: action, timestamp: timestamp() });
+    } catch (err) {
+      return sendError(res, 500, err instanceof Error ? err.message : 'Failed to initiate action', 'INITIATE_FAILED');
+    }
+  });
+
+  /**
+   * GET /api/admin/actions
+   * List all pending (unconfirmed, non-expired) high-risk actions.
+   */
+  router.get('/actions', async (req: Request, res: Response) => {
+    if (!isAdminAuthorized(req)) {
+      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
+    }
+
+    const svc = getConfirmationService();
+    if (!svc) return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
+
+    try {
+      await svc.initTable();
+      const actions = await svc.listPending();
+      return res.json({ success: true, data: actions, timestamp: timestamp() });
+    } catch (err) {
+      return sendError(res, 500, err instanceof Error ? err.message : 'Failed to list actions', 'LIST_FAILED');
+    }
+  });
+
+  /**
+   * POST /api/admin/actions/:id/confirm
+   * Second admin confirms a pending high-risk action.
+   */
+  router.post('/actions/:id/confirm', async (req: Request, res: Response) => {
+    if (!isAdminAuthorized(req)) {
+      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
+    }
+
+    const { confirmed_by } = req.body as Record<string, unknown>;
+    if (typeof confirmed_by !== 'string' || !confirmed_by) {
+      return sendError(res, 400, 'confirmed_by is required', 'MISSING_FIELD');
+    }
+
+    const svc = getConfirmationService();
+    if (!svc) return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
+
+    try {
+      await svc.initTable();
+      const action = await svc.confirm(req.params.id, confirmed_by);
+      return res.json({ success: true, data: action, timestamp: timestamp() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Confirmation failed';
+      const isNotFound = msg.includes('not found');
+      const isExpired = msg.includes('expired');
+      const isSelf = msg.includes('cannot confirm');
+      const status = isNotFound ? 404 : isExpired || isSelf ? 409 : 500;
+      return sendError(res, status, msg, 'CONFIRM_FAILED');
+    }
   });
 
   return router;

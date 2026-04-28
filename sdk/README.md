@@ -2,6 +2,8 @@
 
 TypeScript/JavaScript client SDK for the **SwiftRemit** Soroban smart contract on Stellar.
 
+> **New to SwiftRemit?** See the [Quickstart guide](./QUICKSTART.md) for a complete end-to-end Node.js example.
+
 ## Installation
 
 ```bash

@@ -6,6 +6,8 @@ import { KycService } from './kyc-service';
 import { Sep24Service } from './sep24-service';
 import { SorobanRpc, Keypair } from '@stellar/stellar-sdk';
 import { SwiftRemitClient } from '../../sdk/src/client.js';
+import { KycExpiryNotifier } from './kyc-expiry-notifier';
+import { createWebhookStore } from './webhooks/store';
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
@@ -41,6 +43,12 @@ export async function startBackgroundJobs() {
   cron.schedule('0 0 * * *', async () => {
     console.log('Starting contract storage TTL extension...');
     await extendContractStorageTtl();
+  });
+
+  // Send KYC expiry warnings daily at 08:00 UTC
+  cron.schedule('0 8 * * *', async () => {
+    console.log('Starting KYC expiry notification job...');
+    await notifyKycExpiries();
   });
 
   console.log('Background jobs scheduled');
@@ -114,7 +122,6 @@ async function pollSep24Transactions() {
 
 /**
  * Extend contract storage TTLs to prevent data loss.
- *
  * Calls `extend_storage_ttl` on the SwiftRemit contract using the admin keypair
  * configured via environment variables. Runs daily so TTLs never expire between
  * scheduled runs.
@@ -152,5 +159,15 @@ async function extendContractStorageTtl() {
     console.log(`Contract storage TTLs extended by ${extendByLedgers} ledgers`);
   } catch (error) {
     console.error('Failed to extend contract storage TTLs:', error);
+  }
+}
+
+async function notifyKycExpiries() {
+  try {
+    const store = createWebhookStore(pool);
+    const notifier = new KycExpiryNotifier(pool, store);
+    await notifier.run();
+  } catch (error) {
+    console.error('Error in KYC expiry notification job:', error);
   }
 }
