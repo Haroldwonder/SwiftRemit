@@ -431,6 +431,15 @@ mod tests {
     use super::*;
     use soroban_sdk::{Env, String};
 
+    // Include property-based tests
+    #[cfg(test)]
+    mod property_tests;
+
+    // Re-export the calculate_fee_by_strategy function for property tests
+    pub(crate) use super::calculate_fee_by_strategy;
+    pub(crate) use super::calculate_protocol_fee;
+    pub(crate) use super::format_corridor_id;
+
     #[test]
     fn test_calculate_fee_percentage() {
         let strategy = FeeStrategy::Percentage(250); // 2.5%

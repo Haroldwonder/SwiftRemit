@@ -44,6 +44,8 @@ mod test_fee_strategy;
 #[cfg(test)]
 mod test_fee_overflow;
 #[cfg(test)]
+mod test_fee_property;
+#[cfg(test)]
 mod test_integrator_fees;
 #[cfg(test)]
 mod test_limits_and_proof;
