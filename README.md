@@ -192,31 +192,43 @@ cargo test
 
 ## Quick Start
 
-### Automated Deployment (Recommended)
+### 🚀 Complete Testnet Setup (Recommended)
 
-Run the deployment script to build, deploy, and initialize everything automatically:
+Get up and running with testnet XLM, USDC, and a full end-to-end flow:
 
 **Linux/macOS:**
 ```bash
-chmod +x deploy.sh
-./deploy.sh
-# To deploy to a specific network (default: testnet):
-./deploy.sh mainnet
+./setup-testnet.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-.\deploy.ps1
-# To deploy to a specific network (default: testnet):
-.\deploy.ps1 -Network mainnet
+.\setup-testnet.ps1
 ```
 
-This will:
-- Build and optimize the contract
-- Create/fund a `deployer` identity
-- Deploy the contract and a mock USDC token
-- Initialize the contract
-- Save contract IDs to `.env.local`
+This automated script will:
+- Generate and fund test accounts with XLM
+- Deploy SwiftRemit contract and mock USDC token
+- Register agents and mint test USDC
+- Run a complete test remittance flow
+- Save all configuration files
+
+**📖 For detailed instructions:** [QUICK_START.md](QUICK_START.md) | [TESTNET_SETUP_GUIDE.md](TESTNET_SETUP_GUIDE.md)
+
+### Contract-Only Deployment
+
+If you just need to deploy the contract:
+
+**Linux/macOS:**
+```bash
+chmod +x deploy.sh
+./deploy.sh testnet
+```
+
+**Windows (PowerShell):**
+```powershell
+.\deploy.ps1 -Network testnet
+```
 
 ### Manual Setup
 
