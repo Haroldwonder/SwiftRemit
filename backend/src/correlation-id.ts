@@ -13,6 +13,13 @@ export function getCorrelationId(): string | undefined {
 }
 
 /**
+ * Get correlation ID from Express request object
+ */
+export function getCorrelationIdFromRequest(req: Request): string | undefined {
+  return (req as any).correlationId;
+}
+
+/**
  * Set correlation ID in AsyncLocalStorage
  */
 export function setCorrelationId(id: string): void {
