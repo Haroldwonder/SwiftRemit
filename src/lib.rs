@@ -2208,7 +2208,7 @@ impl SwiftRemitContract {
 
         // Compute net settlements.
         // Gas note: netting offsets opposing flows so fewer token transfer calls are executed.
-        let net_transfers = compute_net_settlements(&env, &remittances);
+        let net_transfers = compute_net_settlements(&env, &remittances)?;
 
         // Validate net settlement calculations
         validate_net_settlement(&remittances, &net_transfers)?;
