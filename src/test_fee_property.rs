@@ -208,6 +208,7 @@ proptest! {
                         amount,
                         platform_fee: fee,
                         protocol_fee,
+                        integrator_fee: 0,
                         net_amount: net,
                         corridor: None,
                     };

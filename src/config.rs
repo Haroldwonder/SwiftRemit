@@ -27,6 +27,19 @@ pub const MAX_EXPIRED_BATCH_SIZE: u32 = 50;
 /// operations. Used by migration export/import functions to validate batch size.
 pub const MAX_MIGRATION_BATCH_SIZE: u32 = 100;
 
+/// Maximum number of remittances that can be netted in a single compute_net_settlements call.
+///
+/// This limit prevents DoS attacks via large remittance batches that could cause
+/// excessive gas consumption or ledger timeouts.
+pub const MAX_NETTING_BATCH_SIZE: u32 = 50;
+
+/// Maximum size of timestamp vector in rate limiting sliding window.
+///
+/// Caps the Vec size to prevent unbounded growth and O(n²) pruning behavior
+/// during high-activity periods. Timestamps older than the window are pruned
+/// in a single pass using retain-style filtering.
+pub const MAX_VEC_SIZE: usize = 1000;
+
 // ============================================================================
 // Fee Calculation Constants
 // ============================================================================

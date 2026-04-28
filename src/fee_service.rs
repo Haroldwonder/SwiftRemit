@@ -32,7 +32,9 @@ pub struct FeeBreakdown {
     pub platform_fee: i128,
     /// Protocol fee for treasury
     pub protocol_fee: i128,
-    /// Net amount after all fees (amount - platform_fee - protocol_fee)
+    /// Integrator fee (if applicable)
+    pub integrator_fee: i128,
+    /// Net amount after all fees (amount - platform_fee - protocol_fee - integrator_fee)
     pub net_amount: i128,
     /// Optional corridor identifier (from_country-to_country)
     pub corridor: Option<String>,
@@ -41,7 +43,7 @@ pub struct FeeBreakdown {
 impl FeeBreakdown {
     /// Validates that the fee breakdown is mathematically consistent
     ///
-    /// Ensures: amount = platform_fee + protocol_fee + net_amount
+    /// Ensures: amount = platform_fee + protocol_fee + integrator_fee + net_amount
     ///
     /// # Returns
     ///
@@ -51,6 +53,7 @@ impl FeeBreakdown {
         let total = self
             .platform_fee
             .checked_add(self.protocol_fee)
+            .and_then(|sum| sum.checked_add(self.integrator_fee))
             .and_then(|sum| sum.checked_add(self.net_amount))
             .ok_or(ContractError::Overflow)?;
 
@@ -59,7 +62,7 @@ impl FeeBreakdown {
         }
 
         // Ensure no negative values
-        if self.amount < 0 || self.platform_fee < 0 || self.protocol_fee < 0 || self.net_amount < 0
+        if self.amount < 0 || self.platform_fee < 0 || self.protocol_fee < 0 || self.integrator_fee < 0 || self.net_amount < 0
         {
             return Err(ContractError::InvalidAmount);
         }
@@ -188,6 +191,15 @@ pub fn calculate_fees_with_breakdown(
     // Calculate protocol fee
     let protocol_fee = calculate_protocol_fee(amount, protocol_fee_bps)?;
 
+    // Validate total fees don't exceed amount
+    let total_fees = platform_fee
+        .checked_add(protocol_fee)
+        .ok_or(ContractError::Overflow)?;
+    
+    if total_fees > amount {
+        return Err(ContractError::Overflow);
+    }
+
     // Calculate net amount
     let net_amount = amount
         .checked_sub(platform_fee)
@@ -198,6 +210,7 @@ pub fn calculate_fees_with_breakdown(
         amount,
         platform_fee,
         protocol_fee,
+        integrator_fee: 0,
         net_amount,
         corridor: corridor_id,
     };
@@ -244,6 +257,15 @@ pub fn calculate_fees_with_breakdown_for_sender(
     // Calculate protocol fee
     let protocol_fee = calculate_protocol_fee(amount, protocol_fee_bps)?;
 
+    // Validate total fees don't exceed amount
+    let total_fees = platform_fee
+        .checked_add(protocol_fee)
+        .ok_or(ContractError::Overflow)?;
+    
+    if total_fees > amount {
+        return Err(ContractError::Overflow);
+    }
+
     // Calculate net amount
     let net_amount = amount
         .checked_sub(platform_fee)
@@ -254,6 +276,7 @@ pub fn calculate_fees_with_breakdown_for_sender(
         amount,
         platform_fee,
         protocol_fee,
+        integrator_fee: 0,
         net_amount,
         corridor: corridor_id,
     };
@@ -527,6 +550,7 @@ mod tests {
             amount: 1000,
             platform_fee: 25,
             protocol_fee: 5,
+            integrator_fee: 0,
             net_amount: 970,
             corridor: None,
         };
@@ -540,6 +564,7 @@ mod tests {
             amount: 1000,
             platform_fee: 25,
             protocol_fee: 5,
+            integrator_fee: 0,
             net_amount: 900, // Wrong! Should be 970
             corridor: None,
         };
@@ -553,6 +578,7 @@ mod tests {
             amount: 1000,
             platform_fee: -25,
             protocol_fee: 5,
+            integrator_fee: 0,
             net_amount: 1020,
             corridor: None,
         };
@@ -588,5 +614,47 @@ mod tests {
 
         let corridor_id = format_corridor_id(&env, &from, &to);
         assert_eq!(corridor_id, String::from_str(&env, "GB-NG"));
+    }
+
+    #[test]
+    fn test_fee_breakdown_with_integrator_fee() {
+        let breakdown = FeeBreakdown {
+            amount: 1000,
+            platform_fee: 25,
+            protocol_fee: 5,
+            integrator_fee: 10,
+            net_amount: 960,
+            corridor: None,
+        };
+
+        assert!(breakdown.validate().is_ok());
+    }
+
+    #[test]
+    fn test_fee_breakdown_integrator_fee_mismatch() {
+        let breakdown = FeeBreakdown {
+            amount: 1000,
+            platform_fee: 25,
+            protocol_fee: 5,
+            integrator_fee: 10,
+            net_amount: 970, // Wrong! Should be 960 (1000 - 25 - 5 - 10)
+            corridor: None,
+        };
+
+        assert!(breakdown.validate().is_err());
+    }
+
+    #[test]
+    fn test_fee_breakdown_negative_integrator_fee() {
+        let breakdown = FeeBreakdown {
+            amount: 1000,
+            platform_fee: 25,
+            protocol_fee: 5,
+            integrator_fee: -10,
+            net_amount: 980,
+            corridor: None,
+        };
+
+        assert!(breakdown.validate().is_err());
     }
 }

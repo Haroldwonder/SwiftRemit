@@ -264,6 +264,7 @@ fn test_fee_breakdown_validate_ok() {
         amount: 1_000,
         platform_fee: 25,
         protocol_fee: 0,
+        integrator_fee: 0,
         net_amount: 975,
         corridor: None,
     };
@@ -278,6 +279,7 @@ fn test_fee_breakdown_validate_mismatch() {
         amount: 1_000,
         platform_fee: 25,
         protocol_fee: 0,
+        integrator_fee: 0,
         net_amount: 900, // wrong — doesn't sum to 1000
         corridor: None,
     };
@@ -292,6 +294,7 @@ fn test_fee_breakdown_validate_negative_amount() {
         amount: -1,
         platform_fee: 0,
         protocol_fee: 0,
+        integrator_fee: 0,
         net_amount: -1,
         corridor: None,
     };
@@ -306,6 +309,7 @@ fn test_fee_breakdown_validate_negative_fee() {
         amount: 1_000,
         platform_fee: -25,
         protocol_fee: 0,
+        integrator_fee: 0,
         net_amount: 1_025,
         corridor: None,
     };

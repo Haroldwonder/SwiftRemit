@@ -11,6 +11,7 @@ use crate::config::{
     MAX_CANCELLATIONS_PER_WINDOW,
     MAX_QUERIES_PER_WINDOW,
     TRANSFER_COOLDOWN_SECONDS,
+    MAX_VEC_SIZE,
 };
 
 #[contracttype]
@@ -73,19 +74,15 @@ pub fn check_rate_limit(
     let tag = action_tag(&action_type);
     let mut entry = get_sliding_window_entry(env, address, tag);
     let window_start = current_time.saturating_sub(RATE_LIMIT_WINDOW_SECONDS);
+    
+    // Filter timestamps in O(n) single pass; already removes stale entries
     entry.timestamps = filter_timestamps_in_window(env, &entry.timestamps, window_start);
-
-    // Cap Vec size to prevent unbounded growth regardless of pruning.
-    while entry.timestamps.len() > MAX_VEC_SIZE {
-        entry.timestamps.pop_front();
-    }
-
     entry.request_count = entry.timestamps.len();
     entry.window_start = window_start;
 
     if entry.request_count >= max_requests {
         // Save the pruned entry even on early return so stale timestamps are evicted.
-        save_sliding_window_entry(env, &entry, RATE_LIMIT_WINDOW);
+        save_sliding_window_entry(env, &entry, RATE_LIMIT_WINDOW_SECONDS);
         log_suspicious_activity(env, address, SuspiciousActivityType::RateLimitExceeded, entry.request_count);
         emit_rate_limit_exceeded(env, address, &action_type, entry.request_count);
         return Err(ContractError::RateLimitExceeded);

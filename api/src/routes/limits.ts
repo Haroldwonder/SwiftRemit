@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { currencyCodeSchema, countryCodeSchema, validateRequest } from './schemas/requestValidation';
 
 const router = Router();
 
@@ -19,6 +20,33 @@ const DEFAULT_LIMITS = {
 router.get('/', (req: Request, res: Response) => {
   const asset = typeof req.query.asset === 'string' ? req.query.asset.toUpperCase() : 'USDC';
   const country = typeof req.query.country === 'string' ? req.query.country.toUpperCase() : '';
+
+  // Validate query parameters
+  const assetValidation = currencyCodeSchema.validate(asset);
+  if (assetValidation.error) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        message: `Invalid asset: ${assetValidation.error.message}`,
+        code: 'INVALID_ASSET',
+      },
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  if (country) {
+    const countryValidation = countryCodeSchema.validate(country);
+    if (countryValidation.error) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          message: `Invalid country: ${countryValidation.error.message}`,
+          code: 'INVALID_COUNTRY',
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
 
   // Corridor-specific overrides (extensible)
   const corridorKey = `${asset}:${country}`;
