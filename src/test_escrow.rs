@@ -85,7 +85,7 @@ fn test_process_expired_escrows_refunds_ttl_expired() {
     contract.update_escrow_ttl(&admin, &1);
 
     let transfer_id = contract.create_escrow(&sender, &recipient, &500);
-    env.ledger().set(soroban_sdk::testutils::LedgerInfo { timestamp: env.ledger().timestamp() + 2, ..env.ledger().get() });
+    env.ledger().with_mut(|li| li.timestamp += 2);
 
     let mut ids = Vec::new(&env);
     ids.push_back(transfer_id);

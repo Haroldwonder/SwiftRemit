@@ -43,11 +43,7 @@ fn initialize(
 }
 
 fn advance_time(env: &Env, seconds: u64) {
-    let info = env.ledger().get();
-    env.ledger().set(LedgerInfo {
-        timestamp: info.timestamp + seconds,
-        ..info
-    });
+    env.ledger().with_mut(|li| li.timestamp += seconds);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

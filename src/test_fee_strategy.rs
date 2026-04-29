@@ -95,10 +95,7 @@ fn test_sender_volume_discount_rolls_off_after_30_days() {
     assert_eq!(client.get_remittance(&id1).fee, 450);
 
     // Advance ledger 31 days so the first volume falls out of the rolling window.
-    env.ledger().set(LedgerInfo {
-        timestamp: env.ledger().timestamp() + 31 * 24 * 60 * 60,
-        ..env.ledger().get()
-    });
+    env.ledger().with_mut(|li| li.timestamp += 31 * 24 * 60 * 60);
 
     let id2 = client.create_remittance(&sender, &agent, &9_000, &None, &None, &None, &None, &None);
     assert_eq!(client.get_remittance(&id2).fee, 450);
