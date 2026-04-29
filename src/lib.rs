@@ -488,11 +488,11 @@ impl SwiftRemitContract {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
-            settlement_config: settlement_config.clone().into(),
+            settlement_config: settlement_config.clone(),
             token: token_address.clone(),
             created_at: env.ledger().timestamp(),
             failed_at: None,
-            dispute_evidence: MaybeBytes32::None,
+            dispute_evidence: None,
         };
 
         let payout_commitment = compute_payout_commitment(&env, &remittance);
@@ -589,11 +589,11 @@ impl SwiftRemitContract {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
-            settlement_config: MaybeSettlementConfig::None,
+            settlement_config: None,
             token: usdc_token.clone(),
             created_at: env.ledger().timestamp(),
             failed_at: None,
-            dispute_evidence: MaybeBytes32::None,
+            dispute_evidence: None,
         };
 
         let payout_commitment = compute_payout_commitment(&env, &remittance);
@@ -712,11 +712,11 @@ impl SwiftRemitContract {
                 fee,
                 status: RemittanceStatus::Pending,
                 expiry: entry.expiry,
-                settlement_config: MaybeSettlementConfig::None,
+                settlement_config: None,
                 token: usdc_token.clone(),
                 created_at: env.ledger().timestamp(),
                 failed_at: None,
-                dispute_evidence: MaybeBytes32::None,
+                dispute_evidence: None,
             };
 
             let payout_commitment = compute_payout_commitment(&env, &remittance);
@@ -776,6 +776,23 @@ impl SwiftRemitContract {
         }
         // Centralized validation before business logic (returns remittance to avoid re-read)
         let mut remittance = validate_confirm_payout_request(&env, remittance_id)?;
+
+        // Validate proof against settlement config if required
+        if let Some(ref config) = remittance.settlement_config {
+            if config.require_proof {
+                match proof {
+                    None => return Err(ContractError::MissingProof),
+                    Some(ref submitted) => {
+                        let expected = get_payout_commitment(&env, remittance_id);
+                        if let Some(ref expected_hash) = expected {
+                            if !verification::verify_proof_commitment(submitted, expected_hash) {
+                                return Err(ContractError::InvalidProof);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Validate that the assigned agent is registered and authenticated before any payout execution.
         crate::storage::require_agent_authorized(&env, &remittance.agent)?;

@@ -121,7 +121,7 @@ pub fn validate_escrow_ttl(ttl: u64) -> Result<(), ContractError> {
 /// Comprehensive validation for create_remittance request.
 pub fn validate_create_remittance_request(
     env: &Env,
-    _sender: &Address,
+    sender: &Address,
     agent: &Address,
     amount: i128,
 ) -> Result<(), ContractError> {

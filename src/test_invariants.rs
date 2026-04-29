@@ -74,12 +74,12 @@ proptest! {
 
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let sender_before = token.balance(&sender);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
 
         // Contract must hold exactly the escrowed amount
         prop_assert_eq!(
@@ -120,17 +120,17 @@ proptest! {
 
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
 
         let total_before = token.balance(&sender)
             + token.balance(&contract.address)
             + token.balance(&agent)
             + token.balance(&admin); // admin doubles as treasury
 
-        contract.confirm_payout(&id, &None);
+        contract.confirm_payout(&id, &None, &None);
 
         let total_after = token.balance(&sender)
             + token.balance(&contract.address)
@@ -168,10 +168,10 @@ proptest! {
 
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
 
         let sender_before = token.balance(&sender);
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
 
         contract.cancel_remittance(&id);
 
@@ -217,9 +217,9 @@ proptest! {
 
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
         let r = contract.get_remittance(&id);
 
         prop_assert_eq!(
@@ -248,17 +248,17 @@ proptest! {
 
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None);
-        contract.confirm_payout(&id, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
+        contract.confirm_payout(&id, &None, &None);
 
         prop_assert_eq!(contract.get_remittance(&id).status, RemittanceStatus::Completed);
 
         // A second confirm_payout on a Completed remittance must fail
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            contract.confirm_payout(&id, &None);
+            contract.confirm_payout(&id, &None, &None);
         }));
         prop_assert!(
             result.is_err(),
@@ -285,9 +285,9 @@ proptest! {
 
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
         contract.cancel_remittance(&id);
 
         prop_assert_eq!(contract.get_remittance(&id).status, RemittanceStatus::Cancelled);
@@ -335,7 +335,7 @@ proptest! {
         // Intentionally NOT registering `unregistered_agent`
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            contract.create_remittance(&sender, &unregistered_agent, &amount, &None, &None, &None);
+            contract.create_remittance(&sender, &unregistered_agent, &amount, &None, &None, &None, &None, &None);
         }));
 
         prop_assert!(
@@ -389,9 +389,9 @@ proptest! {
 
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
         let r = contract.get_remittance(&id);
 
         prop_assert!(r.fee >= 0, "Fee must be non-negative");

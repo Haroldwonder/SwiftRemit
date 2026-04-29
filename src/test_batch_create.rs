@@ -27,7 +27,7 @@ mod tests {
         let fee_bps = 250; // 2.5%
         env.as_contract(&contract_id, || {
             crate::initialize(env.clone(), sender.clone(), token, fee_bps).unwrap();
-            crate::register_agent(env.clone(), agent.clone()).unwrap();
+            crate::register_agent(env.clone(), agent.clone(), None).unwrap();
         });
 
         (env, contract_id, sender)
@@ -44,9 +44,9 @@ mod tests {
 
         // Register agents
         env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent1.clone()).unwrap();
-            crate::register_agent(env.clone(), agent2.clone()).unwrap();
-            crate::register_agent(env.clone(), agent3.clone()).unwrap();
+            crate::register_agent(env.clone(), agent1.clone(), None).unwrap();
+            crate::register_agent(env.clone(), agent2.clone(), None).unwrap();
+            crate::register_agent(env.clone(), agent3.clone(), None).unwrap();
         });
 
         // Create batch entries
@@ -114,8 +114,8 @@ mod tests {
 
         // Register only agent1 and agent2
         env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent1.clone()).unwrap();
-            crate::register_agent(env.clone(), agent2.clone()).unwrap();
+            crate::register_agent(env.clone(), agent1.clone(), None).unwrap();
+            crate::register_agent(env.clone(), agent2.clone(), None).unwrap();
         });
 
         // Create batch with one unregistered agent
@@ -158,7 +158,7 @@ mod tests {
 
         let agent = Address::generate(&env);
         env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent.clone()).unwrap();
+            crate::register_agent(env.clone(), agent.clone(), None).unwrap();
         });
 
         // Create batch with 101 entries (exceeds MAX_BATCH_SIZE of 100)
@@ -205,8 +205,8 @@ mod tests {
         let agent2 = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent1.clone()).unwrap();
-            crate::register_agent(env.clone(), agent2.clone()).unwrap();
+            crate::register_agent(env.clone(), agent1.clone(), None).unwrap();
+            crate::register_agent(env.clone(), agent2.clone(), None).unwrap();
         });
 
         // Create batch with one invalid amount
@@ -244,7 +244,7 @@ mod tests {
 
         let agent = Address::generate(&env);
         env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent.clone()).unwrap();
+            crate::register_agent(env.clone(), agent.clone(), None).unwrap();
         });
 
         // Create batch with exactly 100 entries
@@ -282,8 +282,8 @@ mod tests {
         let agent2 = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent1.clone()).unwrap();
-            crate::register_agent(env.clone(), agent2.clone()).unwrap();
+            crate::register_agent(env.clone(), agent1.clone(), None).unwrap();
+            crate::register_agent(env.clone(), agent2.clone(), None).unwrap();
         });
 
         // Create batch with different amounts

@@ -73,9 +73,9 @@ fn setup_failed_remittance() -> DisputeFixture<'static> {
     let contract = make_contract(&env);
     // fee_bps=250 (2.5%), settlement_timeout=0, protocol_fee=0
     contract.initialize(&admin, &token.address, &250u32, &0u64, &0u32, &admin);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
-    let remittance_id = contract.create_remittance(&sender, &agent, &1_000i128, &None);
+    let remittance_id = contract.create_remittance(&sender, &agent, &1_000i128, &None, &None, &None, &None, &None);
 
     // Agent marks the remittance as failed
     contract.mark_failed(&remittance_id);
@@ -109,9 +109,9 @@ fn test_mark_failed_transitions_to_failed() {
 
     let contract = make_contract(&env);
     contract.initialize(&admin, &token.address, &250u32, &0u64, &0u32, &admin);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
-    let id = contract.create_remittance(&sender, &agent, &1_000i128, &None);
+    let id = contract.create_remittance(&sender, &agent, &1_000i128, &None, &None, &None, &None, &None);
     let sender_before = balance(&env, &token, &sender);
     let agent_before = balance(&env, &token, &agent);
     let contract_before = balance(&env, &token, &contract.address);
@@ -139,9 +139,9 @@ fn test_mark_failed_on_completed_remittance_rejected() {
 
     let contract = make_contract(&env);
     contract.initialize(&admin, &token.address, &250u32, &0u64, &0u32, &admin);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
-    let id = contract.create_remittance(&sender, &agent, &1_000i128, &None);
+    let id = contract.create_remittance(&sender, &agent, &1_000i128, &None, &None, &None, &None, &None);
     contract.confirm_payout(&id, &None, &None);
 
     let result = contract.try_mark_failed(&id);
@@ -183,10 +183,10 @@ fn test_raise_dispute_on_non_failed_remittance_rejected() {
 
     let contract = make_contract(&env);
     contract.initialize(&admin, &token.address, &250u32, &0u64, &0u32, &admin);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
     // Remittance is still Pending — not Failed
-    let id = contract.create_remittance(&sender, &agent, &1_000i128, &None);
+    let id = contract.create_remittance(&sender, &agent, &1_000i128, &None, &None, &None, &None, &None);
     let hash = evidence_hash(&env);
 
     let result = contract.try_raise_dispute(&id, &hash);
@@ -311,9 +311,9 @@ fn test_resolve_dispute_non_admin_rejected() {
 
     let contract2 = make_contract(&env2);
     contract2.initialize(&admin2, &token2.address, &250u32, &0u64, &0u32, &admin2);
-    contract2.register_agent(&agent2);
+    contract2.register_agent(&agent2, &None);
 
-    let id2 = contract2.create_remittance(&sender2, &agent2, &1_000i128, &None);
+    let id2 = contract2.create_remittance(&sender2, &agent2, &1_000i128, &None, &None, &None, &None, &None);
     contract2.mark_failed(&id2);
     contract2.raise_dispute(&id2, &evidence_hash(&env2));
 

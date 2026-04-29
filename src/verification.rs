@@ -47,6 +47,10 @@ mod tests {
             status: crate::RemittanceStatus::Pending,
             expiry: None,
             settlement_config: None,
+            token: Address::generate(&env),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         };
 
         let commitment = compute_payout_commitment(&env, &remittance);

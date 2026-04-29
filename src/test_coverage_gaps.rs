@@ -73,7 +73,7 @@ fn test_create_remittance_zero_amount() {
     let env = Env::default();
     let (contract, _token, _admin, agent, sender) = setup(&env);
     env.mock_all_auths();
-    contract.create_remittance(&sender, &agent, &0, &None, &None, &None);
+    contract.create_remittance(&sender, &agent, &0, &None, &None, &None, &None, &None);
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn test_create_remittance_negative_amount() {
     let env = Env::default();
     let (contract, _token, _admin, agent, sender) = setup(&env);
     env.mock_all_auths();
-    contract.create_remittance(&sender, &agent, &-1, &None, &None, &None);
+    contract.create_remittance(&sender, &agent, &-1, &None, &None, &None, &None, &None);
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn test_create_remittance_agent_not_registered() {
     let (contract, _token, _admin, _agent, sender) = setup(&env);
     let unregistered = Address::generate(&env);
     env.mock_all_auths();
-    contract.create_remittance(&sender, &unregistered, &1_000, &None, &None, &None);
+    contract.create_remittance(&sender, &unregistered, &1_000, &None, &None, &None, &None, &None);
 }
 
 // ── confirm_payout error paths ────────────────────────────────────────────────
@@ -103,7 +103,7 @@ fn test_confirm_payout_remittance_not_found() {
     let env = Env::default();
     let (contract, _token, _admin, _agent, _sender) = setup(&env);
     env.mock_all_auths();
-    contract.confirm_payout(&9999, &None);
+    contract.confirm_payout(&9999, &None, &None);
 }
 
 #[test]
@@ -112,10 +112,10 @@ fn test_confirm_payout_already_completed() {
     let env = Env::default();
     let (contract, _token, _admin, agent, sender) = setup(&env);
     env.mock_all_auths();
-    let id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None);
-    contract.confirm_payout(&id, &None);
+    let id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
+    contract.confirm_payout(&id, &None, &None);
     // Second confirm on a Completed remittance → InvalidStatus
-    contract.confirm_payout(&id, &None);
+    contract.confirm_payout(&id, &None, &None);
 }
 
 // ── cancel_remittance error paths ─────────────────────────────────────────────
@@ -135,8 +135,8 @@ fn test_cancel_remittance_already_completed() {
     let env = Env::default();
     let (contract, _token, _admin, agent, sender) = setup(&env);
     env.mock_all_auths();
-    let id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None);
-    contract.confirm_payout(&id, &None);
+    let id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
+    contract.confirm_payout(&id, &None, &None);
     contract.cancel_remittance(&id);
 }
 
@@ -186,8 +186,8 @@ fn test_withdraw_fees_after_payout() {
     let env = Env::default();
     let (contract, token, admin, agent, sender) = setup(&env);
     env.mock_all_auths();
-    let id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None);
-    contract.confirm_payout(&id, &None);
+    let id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
+    contract.confirm_payout(&id, &None, &None);
     // Fees should now be > 0
     let fees = contract.get_accumulated_fees();
     assert!(fees > 0, "expected accumulated fees after payout");
@@ -205,9 +205,9 @@ fn test_get_remittance_count_increments() {
     let (contract, _token, _admin, agent, sender) = setup(&env);
     env.mock_all_auths();
     assert_eq!(contract.get_remittance_count(), 0);
-    contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None);
+    contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
     assert_eq!(contract.get_remittance_count(), 1);
-    contract.create_remittance(&sender, &agent, &500, &None, &None, &None);
+    contract.create_remittance(&sender, &agent, &500, &None, &None, &None, &None, &None);
     assert_eq!(contract.get_remittance_count(), 2);
 }
 
@@ -217,11 +217,11 @@ fn test_get_total_volume_after_completions() {
     let (contract, _token, _admin, agent, sender) = setup(&env);
     env.mock_all_auths();
     assert_eq!(contract.get_total_volume(), 0);
-    let id1 = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None);
-    contract.confirm_payout(&id1, &None);
+    let id1 = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
+    contract.confirm_payout(&id1, &None, &None);
     assert_eq!(contract.get_total_volume(), 1_000);
-    let id2 = contract.create_remittance(&sender, &agent, &2_000, &None, &None, &None);
-    contract.confirm_payout(&id2, &None);
+    let id2 = contract.create_remittance(&sender, &agent, &2_000, &None, &None, &None, &None, &None);
+    contract.confirm_payout(&id2, &None, &None);
     assert_eq!(contract.get_total_volume(), 3_000);
 }
 
@@ -248,7 +248,7 @@ fn test_get_remittance_returns_correct_data() {
     let env = Env::default();
     let (contract, _token, _admin, agent, sender) = setup(&env);
     env.mock_all_auths();
-    let id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None);
+    let id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
     let r = contract.get_remittance(&id);
     assert_eq!(r.sender, sender);
     assert_eq!(r.agent, agent);

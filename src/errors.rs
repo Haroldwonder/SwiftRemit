@@ -241,4 +241,91 @@ pub enum ContractError {
     /// No pending admin transfer to accept.
     /// Cause: accept_admin() called when no propose_admin() has been issued.
     NoPendingAdminTransfer = 49,
+
+    /// Idempotency key conflict with different payload.
+    IdempotencyConflict = 50,
+
+    /// Proof validation failed.
+    InvalidProof = 51,
+
+    /// Proof is required but not provided.
+    MissingProof = 52,
+
+    /// Oracle address is invalid or not configured.
+    InvalidOracleAddress = 53,
+
+    /// Contract is already paused.
+    AlreadyPaused = 54,
+
+    /// Contract is not currently paused.
+    NotPaused = 55,
+
+    /// A fee update proposal is already pending.
+    ProposalAlreadyPending = 56,
+
+    /// Agent is already registered.
+    AgentAlreadyRegistered = 57,
+
+    /// Address is already an admin.
+    AlreadyAdmin = 58,
+
+    /// Not enough admins to perform this operation.
+    InsufficientAdmins = 59,
+
+    /// Governance module is already initialized.
+    GovernanceAlreadyInitialized = 60,
+
+    /// Quorum value is invalid.
+    InvalidQuorum = 61,
+
+    /// Admin has already voted on this proposal.
+    AlreadyVoted = 62,
+
+    /// Proposal state is invalid for this operation.
+    InvalidProposalState = 63,
+
+    /// Timelock duration is invalid.
+    InvalidTimelockDuration = 64,
+
+    /// Timelock is still active.
+    TimelockActive = 65,
+
+    /// Timelock has not elapsed yet.
+    TimelockNotElapsed = 66,
+
+    /// Dispute window has expired.
+    DisputeWindowExpired = 67,
+
+    /// Remittance is not in disputed state.
+    NotDisputed = 68,
+
+    /// Migration validation failed.
+    MigrationValidationFailed = 69,
+
+    /// Record not found.
+    NotFound = 70,
+
+    /// Caller is not authorized (alias for Unauthorized in upgrade context).
+    NotAuthorized = 71,
+
+    /// Invalid input provided.
+    InvalidInput = 72,
+
+    /// Pause record not found.
+    PauseRecordNotFound = 73,
+
+    /// Recipient hash is invalid.
+    InvalidRecipientHash = 74,
+
+    /// Recipient hash is missing but required.
+    MissingRecipientHash = 75,
+
+    /// Recipient hash schema version mismatch.
+    RecipientHashSchemaMismatch = 76,
+
+    /// Recipient hash does not match stored hash.
+    RecipientHashMismatch = 77,
+
+    /// Proposal not found.
+    ProposalNotFound = 78,
 }
