@@ -15,3 +15,7 @@ backend/node_modules/
 
 .kiro
 .env.testnet.local
+
+# Test artifacts
+test_snapshots/
+proptest-regressions/

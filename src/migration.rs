@@ -294,7 +294,7 @@ pub fn migrate(env: &Env) -> Result<(), ContractError> {
     }
 
     // ── Step 1: capture rollback snapshot ────────────────────────────────────
-    let agent_list = crate::storage::get_agent_list(env);
+    let agent_list = crate::storage::get_admin_list(env);
     let mut snapshot_agents: Vec<AgentRecord> = Vec::new(env);
 
     for i in 0..agent_list.len() {
@@ -347,7 +347,7 @@ pub fn migrate(env: &Env) -> Result<(), ContractError> {
     clear_rollback_snapshot(env);
 
     env.events().publish(
-        soroban_sdk::symbol_short!("migrated"),
+        (soroban_sdk::symbol_short!("migrated"),),
         CURRENT_SCHEMA_VERSION,
     );
 
@@ -414,7 +414,7 @@ pub fn rollback_migration(env: &Env) -> Result<(), ContractError> {
     clear_rollback_snapshot(env);
 
     env.events().publish(
-        soroban_sdk::symbol_short!("rolled_back"),
+        (soroban_sdk::symbol_short!("roll_back"),),
         snapshot.from_version,
     );
 
@@ -477,7 +477,7 @@ pub fn export_state(env: &Env) -> Result<MigrationSnapshot, ContractError> {
     }
 
     // Collect all registered agents via the AgentList index.
-    let agent_addresses = crate::storage::get_agent_list(env);
+    let agent_addresses = crate::storage::get_admin_list(env);
     let mut agents: Vec<AgentRecord> = Vec::new(env);
     for i in 0..agent_addresses.len() {
         let addr = agent_addresses.get_unchecked(i);

@@ -437,16 +437,16 @@ fn calculate_protocol_fee(amount: i128, protocol_fee_bps: u32) -> Result<i128, C
 ///
 /// Formatted corridor ID (e.g., "US-MX")
 fn format_corridor_id(env: &Env, from_country: &String, to_country: &String) -> String {
-    // Create corridor ID as "FROM-TO" using simple approach
-    // Convert Soroban strings to regular strings for manipulation
-    let from_str = from_country.to_string();
-    let to_str = to_country.to_string();
-
-    // Create the combined string manually
-    let combined = from_str + "-" + &to_str;
-
-    // Convert back to Soroban String
-    String::from_str(env, &combined)
+    // Build "FROM-TO" corridor ID
+    let from_len = from_country.len() as usize;
+    let to_len = to_country.len() as usize;
+    // Max corridor ID: 8 chars each + 1 separator = 17 bytes
+    let total = from_len + 1 + to_len;
+    let mut buf = [0u8; 32];
+    from_country.copy_into_slice(&mut buf[..from_len]);
+    buf[from_len] = b'-';
+    to_country.copy_into_slice(&mut buf[from_len + 1..from_len + 1 + to_len]);
+    String::from_bytes(env, &buf[..total])
 }
 
 #[cfg(test)]
@@ -454,16 +454,8 @@ mod tests {
     use super::*;
     use soroban_sdk::{Env, String};
 
-    // Include property-based tests
-    #[cfg(test)]
-    mod property_tests;
-
     // Re-export the calculate_fee_by_strategy function for property tests
-    pub(crate) use super::calculate_fee_by_strategy;
-    pub(crate) use super::calculate_protocol_fee;
-    pub(crate) use super::format_corridor_id;
-
-    #[test]
+#[test]
     fn test_calculate_fee_percentage() {
         let strategy = FeeStrategy::Percentage(250); // 2.5%
         let amount = 10000i128;

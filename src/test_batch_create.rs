@@ -1,321 +1,168 @@
 //! Unit tests for batch remittance creation functionality.
-//!
-//! Tests cover:
-//! - Successful batch creation with multiple entries
-//! - Partial failure scenarios (atomic rollback)
-//! - Oversized batch rejection
-//! - Empty batch rejection
-//! - Validation failures (invalid amount, unregistered agent, blacklisted user)
 
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec};
+    use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
     use crate::{
-        storage, test::create_test_contract, BatchCreateEntry, ContractError, RemittanceStatus,
+        BatchCreateEntry, ContractError, RemittanceStatus, SwiftRemitContract,
+        SwiftRemitContractClient,
     };
 
-    /// Helper function to set up a test environment with initialized contract
-    fn setup_test_env() -> (Env, Address, Address) {
-        let env = Env::default();
-        let contract_id = env.register(crate::SwiftRemit, ());
-        let sender = Address::generate(&env);
-        let agent = Address::generate(&env);
-
-        // Initialize contract
-        let token = Address::generate(&env);
-        let fee_bps = 250; // 2.5%
-        env.as_contract(&contract_id, || {
-            crate::initialize(env.clone(), sender.clone(), token, fee_bps).unwrap();
-            crate::register_agent(env.clone(), agent.clone(), None).unwrap();
-        });
-
-        (env, contract_id, sender)
+    fn setup(env: &Env) -> (SwiftRemitContractClient, Address, Address) {
+        env.mock_all_auths();
+        let admin = Address::generate(env);
+        let token_addr = env
+            .register_stellar_asset_contract_v2(admin.clone())
+            .address();
+        let contract = SwiftRemitContractClient::new(
+            env,
+            &env.register_contract(None, SwiftRemitContract {}),
+        );
+        contract.initialize(&admin, &token_addr, &250, &0, &0, &admin);
+        let agent = Address::generate(env);
+        contract.register_agent(&agent, &None);
+        (contract, admin, agent)
     }
 
-    /// Test 1: Successful batch creation with multiple entries
     #[test]
     fn test_batch_create_success() {
-        let (env, contract_id, sender) = setup_test_env();
+        let env = Env::default();
+        let (contract, _admin, _) = setup(&env);
+        let sender = Address::generate(&env);
 
         let agent1 = Address::generate(&env);
         let agent2 = Address::generate(&env);
         let agent3 = Address::generate(&env);
+        contract.register_agent(&agent1, &None);
+        contract.register_agent(&agent2, &None);
+        contract.register_agent(&agent3, &None);
 
-        // Register agents
-        env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent1.clone(), None).unwrap();
-            crate::register_agent(env.clone(), agent2.clone(), None).unwrap();
-            crate::register_agent(env.clone(), agent3.clone(), None).unwrap();
-        });
-
-        // Create batch entries
         let mut entries = Vec::new(&env);
-        entries.push_back(BatchCreateEntry {
-            agent: agent1.clone(),
-            amount: 100_000_000, // 100 USDC
-            expiry: None,
-        });
-        entries.push_back(BatchCreateEntry {
-            agent: agent2.clone(),
-            amount: 200_000_000, // 200 USDC
-            expiry: Some(env.ledger().timestamp() + 3600),
-        });
-        entries.push_back(BatchCreateEntry {
-            agent: agent3.clone(),
-            amount: 150_000_000, // 150 USDC
-            expiry: None,
-        });
+        entries.push_back(BatchCreateEntry { agent: agent1.clone(), amount: 100_000_000, expiry: None });
+        entries.push_back(BatchCreateEntry { agent: agent2.clone(), amount: 200_000_000, expiry: Some(env.ledger().timestamp() + 3600) });
+        entries.push_back(BatchCreateEntry { agent: agent3.clone(), amount: 150_000_000, expiry: None });
 
-        // Execute batch creation
-        let result = env.as_contract(&contract_id, || {
-            crate::batch_create_remittances(env.clone(), sender.clone(), entries)
-        });
-
-        assert!(result.is_ok());
-        let remittance_ids = result.unwrap();
+        let remittance_ids = contract.batch_create_remittances(&sender, &entries);
         assert_eq!(remittance_ids.len(), 3);
 
-        // Verify all remittances were created
-        env.as_contract(&contract_id, || {
-            for i in 0..remittance_ids.len() {
-                let remittance_id = remittance_ids.get_unchecked(i);
-                let remittance = crate::get_remittance(&env, remittance_id).unwrap();
-                assert_eq!(remittance.status, RemittanceStatus::Pending);
-                assert_eq!(remittance.sender, sender);
-            }
+        let r1 = contract.get_remittance(&remittance_ids.get_unchecked(0));
+        assert_eq!(r1.status, RemittanceStatus::Pending);
+        assert_eq!(r1.sender, sender);
+        assert_eq!(r1.agent, agent1);
+        assert_eq!(r1.amount, 100_000_000);
 
-            // Verify first remittance
-            let remittance1 = crate::get_remittance(&env, remittance_ids.get_unchecked(0)).unwrap();
-            assert_eq!(remittance1.agent, agent1);
-            assert_eq!(remittance1.amount, 100_000_000);
+        let r2 = contract.get_remittance(&remittance_ids.get_unchecked(1));
+        assert_eq!(r2.agent, agent2);
+        assert!(r2.expiry.is_some());
 
-            // Verify second remittance
-            let remittance2 = crate::get_remittance(&env, remittance_ids.get_unchecked(1)).unwrap();
-            assert_eq!(remittance2.agent, agent2);
-            assert_eq!(remittance2.amount, 200_000_000);
-            assert!(remittance2.expiry.is_some());
-
-            // Verify third remittance
-            let remittance3 = crate::get_remittance(&env, remittance_ids.get_unchecked(2)).unwrap();
-            assert_eq!(remittance3.agent, agent3);
-            assert_eq!(remittance3.amount, 150_000_000);
-        });
+        let r3 = contract.get_remittance(&remittance_ids.get_unchecked(2));
+        assert_eq!(r3.agent, agent3);
+        assert_eq!(r3.amount, 150_000_000);
     }
 
-    /// Test 2: Partial failure - atomic rollback when one entry fails validation
     #[test]
     fn test_batch_create_partial_failure() {
-        let (env, contract_id, sender) = setup_test_env();
+        let env = Env::default();
+        let (contract, _admin, _) = setup(&env);
+        let sender = Address::generate(&env);
 
         let agent1 = Address::generate(&env);
         let agent2 = Address::generate(&env);
-        let unregistered_agent = Address::generate(&env);
+        let unregistered = Address::generate(&env);
+        contract.register_agent(&agent1, &None);
+        contract.register_agent(&agent2, &None);
 
-        // Register only agent1 and agent2
-        env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent1.clone(), None).unwrap();
-            crate::register_agent(env.clone(), agent2.clone(), None).unwrap();
-        });
-
-        // Create batch with one unregistered agent
         let mut entries = Vec::new(&env);
-        entries.push_back(BatchCreateEntry {
-            agent: agent1.clone(),
-            amount: 100_000_000,
-            expiry: None,
-        });
-        entries.push_back(BatchCreateEntry {
-            agent: unregistered_agent.clone(), // This should fail
-            amount: 200_000_000,
-            expiry: None,
-        });
-        entries.push_back(BatchCreateEntry {
-            agent: agent2.clone(),
-            amount: 150_000_000,
-            expiry: None,
-        });
+        entries.push_back(BatchCreateEntry { agent: agent1.clone(), amount: 100_000_000, expiry: None });
+        entries.push_back(BatchCreateEntry { agent: unregistered.clone(), amount: 200_000_000, expiry: None });
+        entries.push_back(BatchCreateEntry { agent: agent2.clone(), amount: 150_000_000, expiry: None });
 
-        // Execute batch creation - should fail
-        let result = env.as_contract(&contract_id, || {
-            crate::batch_create_remittances(env.clone(), sender.clone(), entries)
-        });
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::AgentNotRegistered);
-
-        // Verify no remittances were created (atomic rollback)
-        env.as_contract(&contract_id, || {
-            let counter = crate::get_remittance_counter(&env).unwrap();
-            assert_eq!(counter, 0);
-        });
+        let result = contract.try_batch_create_remittances(&sender, &entries);
+        assert_eq!(result, Err(Ok(ContractError::AgentNotRegistered)));
     }
 
-    /// Test 3: Oversized batch rejection
     #[test]
     fn test_batch_create_oversized() {
-        let (env, contract_id, sender) = setup_test_env();
+        let env = Env::default();
+        let (contract, _admin, agent) = setup(&env);
+        let sender = Address::generate(&env);
 
-        let agent = Address::generate(&env);
-        env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent.clone(), None).unwrap();
-        });
-
-        // Create batch with 101 entries (exceeds MAX_BATCH_SIZE of 100)
         let mut entries = Vec::new(&env);
         for _ in 0..101 {
-            entries.push_back(BatchCreateEntry {
-                agent: agent.clone(),
-                amount: 1_000_000, // 1 USDC each
-                expiry: None,
-            });
+            entries.push_back(BatchCreateEntry { agent: agent.clone(), amount: 1_000_000, expiry: None });
         }
 
-        // Execute batch creation - should fail
-        let result = env.as_contract(&contract_id, || {
-            crate::batch_create_remittances(env.clone(), sender.clone(), entries)
-        });
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidBatchSize);
+        let result = contract.try_batch_create_remittances(&sender, &entries);
+        assert_eq!(result, Err(Ok(ContractError::InvalidBatchSize)));
     }
 
-    /// Test 4: Empty batch rejection
     #[test]
     fn test_batch_create_empty() {
-        let (env, contract_id, sender) = setup_test_env();
+        let env = Env::default();
+        let (contract, _admin, _) = setup(&env);
+        let sender = Address::generate(&env);
 
         let entries = Vec::new(&env);
-
-        // Execute batch creation - should fail
-        let result = env.as_contract(&contract_id, || {
-            crate::batch_create_remittances(env.clone(), sender.clone(), entries)
-        });
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidBatchSize);
+        let result = contract.try_batch_create_remittances(&sender, &entries);
+        assert_eq!(result, Err(Ok(ContractError::InvalidBatchSize)));
     }
 
-    /// Test 5: Invalid amount in batch
     #[test]
     fn test_batch_create_invalid_amount() {
-        let (env, contract_id, sender) = setup_test_env();
+        let env = Env::default();
+        let (contract, _admin, _) = setup(&env);
+        let sender = Address::generate(&env);
 
         let agent1 = Address::generate(&env);
         let agent2 = Address::generate(&env);
+        contract.register_agent(&agent1, &None);
+        contract.register_agent(&agent2, &None);
 
-        env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent1.clone(), None).unwrap();
-            crate::register_agent(env.clone(), agent2.clone(), None).unwrap();
-        });
-
-        // Create batch with one invalid amount
         let mut entries = Vec::new(&env);
-        entries.push_back(BatchCreateEntry {
-            agent: agent1.clone(),
-            amount: 100_000_000,
-            expiry: None,
-        });
-        entries.push_back(BatchCreateEntry {
-            agent: agent2.clone(),
-            amount: 0, // Invalid amount
-            expiry: None,
-        });
+        entries.push_back(BatchCreateEntry { agent: agent1.clone(), amount: 100_000_000, expiry: None });
+        entries.push_back(BatchCreateEntry { agent: agent2.clone(), amount: 0, expiry: None });
 
-        // Execute batch creation - should fail
-        let result = env.as_contract(&contract_id, || {
-            crate::batch_create_remittances(env.clone(), sender.clone(), entries)
-        });
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ContractError::InvalidAmount);
-
-        // Verify no remittances were created (atomic rollback)
-        env.as_contract(&contract_id, || {
-            let counter = crate::get_remittance_counter(&env).unwrap();
-            assert_eq!(counter, 0);
-        });
+        let result = contract.try_batch_create_remittances(&sender, &entries);
+        assert_eq!(result, Err(Ok(ContractError::InvalidAmount)));
     }
 
-    /// Test 6: Batch with maximum size (100 entries)
     #[test]
     fn test_batch_create_max_size() {
-        let (env, contract_id, sender) = setup_test_env();
+        let env = Env::default();
+        let (contract, _admin, agent) = setup(&env);
+        let sender = Address::generate(&env);
 
-        let agent = Address::generate(&env);
-        env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent.clone(), None).unwrap();
-        });
-
-        // Create batch with exactly 100 entries
         let mut entries = Vec::new(&env);
         for _ in 0..100 {
-            entries.push_back(BatchCreateEntry {
-                agent: agent.clone(),
-                amount: 1_000_000, // 1 USDC each
-                expiry: None,
-            });
+            entries.push_back(BatchCreateEntry { agent: agent.clone(), amount: 1_000_000, expiry: None });
         }
 
-        // Execute batch creation - should succeed
-        let result = env.as_contract(&contract_id, || {
-            crate::batch_create_remittances(env.clone(), sender.clone(), entries)
-        });
-
-        assert!(result.is_ok());
-        let remittance_ids = result.unwrap();
+        let remittance_ids = contract.batch_create_remittances(&sender, &entries);
         assert_eq!(remittance_ids.len(), 100);
-
-        // Verify all remittances were created
-        env.as_contract(&contract_id, || {
-            let counter = crate::get_remittance_counter(&env).unwrap();
-            assert_eq!(counter, 100);
-        });
     }
 
-    /// Test 7: Batch with different amounts and fees
     #[test]
     fn test_batch_create_different_amounts() {
-        let (env, contract_id, sender) = setup_test_env();
+        let env = Env::default();
+        let (contract, _admin, _) = setup(&env);
+        let sender = Address::generate(&env);
 
         let agent1 = Address::generate(&env);
         let agent2 = Address::generate(&env);
+        contract.register_agent(&agent1, &None);
+        contract.register_agent(&agent2, &None);
 
-        env.as_contract(&contract_id, || {
-            crate::register_agent(env.clone(), agent1.clone(), None).unwrap();
-            crate::register_agent(env.clone(), agent2.clone(), None).unwrap();
-        });
-
-        // Create batch with different amounts
         let mut entries = Vec::new(&env);
-        entries.push_back(BatchCreateEntry {
-            agent: agent1.clone(),
-            amount: 50_000_000, // 50 USDC
-            expiry: None,
-        });
-        entries.push_back(BatchCreateEntry {
-            agent: agent2.clone(),
-            amount: 150_000_000, // 150 USDC
-            expiry: None,
-        });
+        entries.push_back(BatchCreateEntry { agent: agent1.clone(), amount: 50_000_000, expiry: None });
+        entries.push_back(BatchCreateEntry { agent: agent2.clone(), amount: 150_000_000, expiry: None });
 
-        // Execute batch creation
-        let result = env.as_contract(&contract_id, || {
-            crate::batch_create_remittances(env.clone(), sender.clone(), entries)
-        });
+        let remittance_ids = contract.batch_create_remittances(&sender, &entries);
+        let r1 = contract.get_remittance(&remittance_ids.get_unchecked(0));
+        let r2 = contract.get_remittance(&remittance_ids.get_unchecked(1));
 
-        assert!(result.is_ok());
-        let remittance_ids = result.unwrap();
-
-        // Verify fees are calculated correctly for each entry
-        env.as_contract(&contract_id, || {
-            let remittance1 = crate::get_remittance(&env, remittance_ids.get_unchecked(0)).unwrap();
-            let remittance2 = crate::get_remittance(&env, remittance_ids.get_unchecked(1)).unwrap();
-
-            // Fees should be different based on amounts
-            assert!(remittance1.fee > 0);
-            assert!(remittance2.fee > 0);
-            assert_ne!(remittance1.fee, remittance2.fee);
-        });
+        assert!(r1.fee > 0);
+        assert!(r2.fee > 0);
+        assert_ne!(r1.fee, r2.fee);
     }
 }

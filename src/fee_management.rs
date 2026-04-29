@@ -88,7 +88,7 @@ pub fn safe_add_accumulated_fee(env: &Env, new_fee: i128) -> Result<(), Contract
     // Perform checked addition to detect overflow when combining fees.
     let new_total = current_fees
         .checked_add(new_fee)
-        .map_err(|_| ContractError::Overflow)?;
+        .ok_or(ContractError::Overflow)?;
 
     // If adding the next fee would exceed the safe cap, flush the current balance
     // and store only the incoming fee as the new accumulated total.

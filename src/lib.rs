@@ -5,6 +5,8 @@
 //! with built-in duplicate settlement protection and expiry mechanisms.
 
 #![no_std]
+#[cfg(test)]
+extern crate std;
 mod abuse_protection;
 mod asset_verification;
 mod config;
@@ -488,11 +490,11 @@ impl SwiftRemitContract {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
-            settlement_config: settlement_config.clone(),
+            settlement_config: settlement_config.clone().into(),
             token: token_address.clone(),
             created_at: env.ledger().timestamp(),
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: None.into(),
         };
 
         let payout_commitment = compute_payout_commitment(&env, &remittance);
@@ -589,11 +591,11 @@ impl SwiftRemitContract {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
-            settlement_config: None,
+            settlement_config: None.into(),
             token: usdc_token.clone(),
             created_at: env.ledger().timestamp(),
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: None.into(),
         };
 
         let payout_commitment = compute_payout_commitment(&env, &remittance);
@@ -712,11 +714,11 @@ impl SwiftRemitContract {
                 fee,
                 status: RemittanceStatus::Pending,
                 expiry: entry.expiry,
-                settlement_config: None,
+                settlement_config: None.into(),
                 token: usdc_token.clone(),
                 created_at: env.ledger().timestamp(),
                 failed_at: None,
-                dispute_evidence: None,
+                dispute_evidence: None.into(),
             };
 
             let payout_commitment = compute_payout_commitment(&env, &remittance);
@@ -778,7 +780,7 @@ impl SwiftRemitContract {
         let mut remittance = validate_confirm_payout_request(&env, remittance_id)?;
 
         // Validate proof against settlement config if required
-        if let Some(ref config) = remittance.settlement_config {
+        if let MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
             if config.require_proof {
                 match proof {
                     None => return Err(ContractError::MissingProof),

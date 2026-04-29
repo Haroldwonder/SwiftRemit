@@ -50,7 +50,7 @@ fn test_success_rate_after_confirm_payout() {
 
     let contract = create_contract(&env);
     contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
-    contract.register_agent(&agent, &soroban_sdk::Vec::new(&env));
+    contract.register_agent(&agent, &None);
     crate::storage::assign_role(&env, &agent, &crate::Role::Settler);
 
     let id = contract.create_remittance(&sender, &agent, &1000_i128, &None, &None, &None, &None, &None);
@@ -78,7 +78,7 @@ fn test_success_rate_after_mark_failed() {
 
     let contract = create_contract(&env);
     contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
-    contract.register_agent(&agent, &soroban_sdk::Vec::new(&env));
+    contract.register_agent(&agent, &None);
 
     let id = contract.create_remittance(&sender, &agent, &1000_i128, &None, &None, &None, &None, &None);
     contract.mark_failed(&id);

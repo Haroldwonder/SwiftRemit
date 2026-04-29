@@ -983,7 +983,7 @@ fn test_settlement_with_future_expiry() {
 contract.register_agent(&agent, &None);
 
     // Set expiry to 1 hour in the future
-    env.ledger().set(soroban_sdk::testutils::LedgerInfo { timestamp: 10000, ..env.ledger().get() });
+    env.ledger().with_mut(|li| li.timestamp = 10000);
     let current_time = env.ledger().timestamp();
     let expiry_time = current_time + 3600;
 
@@ -1018,7 +1018,7 @@ fn test_settlement_with_past_expiry() {
 contract.register_agent(&agent, &None);
 
     // Set expiry to 1 hour in the past
-    env.ledger().set(soroban_sdk::testutils::LedgerInfo { timestamp: 10000, ..env.ledger().get() });
+    env.ledger().with_mut(|li| li.timestamp = 10000);
     let current_time = env.ledger().timestamp();
     let expiry_time = current_time.saturating_sub(3600);
 
@@ -1266,7 +1266,7 @@ fn test_settlement_completed_event() {
     let contract = create_swiftremit_contract(&env);
     contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
 contract.register_agent(&agent, &None);
-    env.ledger().set(soroban_sdk::testutils::LedgerInfo { timestamp: 10000, ..env.ledger().get() });
+    env.ledger().with_mut(|li| li.timestamp = 10000);
     let current_time = env.ledger().timestamp();
     let expiry_time = current_time + 3600;
 

@@ -32,17 +32,13 @@ fn make_client(env: &Env) -> (SwiftRemitContractClient<'static>, Address) {
     let client = SwiftRemitContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
     let token = Address::generate(env);
-    client.initialize(&admin, &token, &30u32, &0u32, &admin, &0u32);
+    client.initialize(&admin, &token, &30u32, &0u64, &0u32, &admin);
     client.migrate_to_governance(&admin, &1u32, &0u64, &604_800u64);
     (client, admin)
 }
 
 fn advance(env: &Env, seconds: u64) {
-    let info = env.ledger().get();
-    env.ledger().set(LedgerInfo {
-        timestamp: info.timestamp + seconds,
-        ..info
-    });
+    env.ledger().with_mut(|li| li.timestamp += seconds);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,7 +112,7 @@ proptest! {
         let client = SwiftRemitContractClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
-        client.initialize(&admin, &token, &30u32, &0u32, &admin, &0u32);
+        client.initialize(&admin, &token, &30u32, &0u64, &0u32, &admin);
 
         // admin_count = 1; quorum=0 or quorum>1 should fail
         let result = client.try_migrate_to_governance(&admin, &bad_quorum, &0u64, &604_800u64);
@@ -338,7 +334,7 @@ proptest! {
         let client = SwiftRemitContractClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
-        client.initialize(&admin, &token, &30u32, &0u32, &admin, &0u32);
+        client.initialize(&admin, &token, &30u32, &0u64, &0u32, &admin);
         client.migrate_to_governance(&admin, &1u32, &0u64, &ttl);
 
         let pid = client.propose(&admin, &ProposalAction::UpdateFee(100u32));
@@ -366,7 +362,7 @@ proptest! {
         client.vote(&admin, &pid);
         client.execute(&admin, &pid);
 
-        prop_assert_eq!(client.get_platform_fee_bps().unwrap(), bps);
+        prop_assert_eq!(client.get_platform_fee_bps(), bps);
     }
 }
 
@@ -504,7 +500,7 @@ proptest! {
         let (client, admin) = make_client(&env);
 
         // Pause the contract
-        client.pause(&admin);
+        client.pause();
 
         let result = client.try_propose(&admin, &ProposalAction::UpdateFee(100u32));
         prop_assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
@@ -603,7 +599,7 @@ proptest! {
         let client = SwiftRemitContractClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
-        client.initialize(&admin, &token, &30u32, &0u32, &admin, &0u32);
+        client.initialize(&admin, &token, &30u32, &0u64, &0u32, &admin);
         client.migrate_to_governance(&admin, &1u32, &timelock, &604_800u64);
 
         let pid = client.propose(&admin, &ProposalAction::UpdateFee(100u32));

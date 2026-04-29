@@ -1,9 +1,23 @@
 #![cfg(test)]
+extern crate std;
 use crate::{SwiftRemitContract, SwiftRemitContractClient, EscrowStatus};
 use soroban_sdk::{
-    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, Events},
-    token, Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, Events, Ledger as _},
+    token, Address, BytesN, Env, IntoVal, Symbol, Vec,
 };
+
+fn has_event(env: &Env, t0: &str, t1: &str) -> bool {
+    use soroban_sdk::xdr::{ContractEventBody, ScVal, ScSymbol, StringM};
+    let sym0 = ScVal::Symbol(ScSymbol(StringM::try_from(t0).unwrap()));
+    let sym1 = ScVal::Symbol(ScSymbol(StringM::try_from(t1).unwrap()));
+    env.events().all().events().iter().any(|e| {
+        if let ContractEventBody::V0(body) = &e.body {
+            body.topics.len() >= 2 && body.topics[0] == sym0 && body.topics[1] == sym1
+        } else {
+            false
+        }
+    })
+}
 
 fn create_token_contract<'a>(env: &Env, admin: &Address) -> token::StellarAssetClient<'a> {
     token::StellarAssetClient::new(env, &env.register_stellar_asset_contract_v2(admin.clone()).address())
@@ -59,7 +73,7 @@ fn test_create_escrow_sets_expiry_from_ttl() {
 
     let contract = create_swiftremit_contract(&env);
     contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
-    contract.update_escrow_ttl(&admin, &86400);
+    contract.update_escrow_ttl(&86400);
 
     let before = env.ledger().timestamp();
     let transfer_id = contract.create_escrow(&sender, &recipient, &500);
@@ -82,10 +96,10 @@ fn test_process_expired_escrows_refunds_ttl_expired() {
 
     let contract = create_swiftremit_contract(&env);
     contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
-    contract.update_escrow_ttl(&admin, &1);
+    contract.update_escrow_ttl(&1);
 
     let transfer_id = contract.create_escrow(&sender, &recipient, &500);
-    env.ledger().set(soroban_sdk::testutils::LedgerInfo { timestamp: env.ledger().timestamp() + 2, ..env.ledger().get() });
+    env.ledger().with_mut(|li| li.timestamp += 2);
 
     let mut ids = Vec::new(&env);
     ids.push_back(transfer_id);
@@ -221,25 +235,11 @@ fn test_escrow_events_emitted() {
 
     let transfer_id = contract.create_escrow(&sender, &recipient, &500);
 
-    let events = env.events().all();
-    let create_event = events.iter().find(|e| {
-        let topic0 = e.1.get(0).and_then(|t| Symbol::try_from_val(&env, &t).ok());
-        let topic1 = e.1.get(1).and_then(|t| Symbol::try_from_val(&env, &t).ok());
-        topic0 == Some(Symbol::new(&env, "escrow"))
-            && topic1 == Some(Symbol::new(&env, "created"))
-    });
-    assert!(create_event.is_some());
+    assert!(has_event(&env, "escrow", "created"), "escrow created event not emitted");
 
     contract.release_escrow(&transfer_id);
 
-    let events = env.events().all();
-    let release_event = events.iter().find(|e| {
-        let topic0 = e.1.get(0).and_then(|t| Symbol::try_from_val(&env, &t).ok());
-        let topic1 = e.1.get(1).and_then(|t| Symbol::try_from_val(&env, &t).ok());
-        topic0 == Some(Symbol::new(&env, "escrow"))
-            && topic1 == Some(Symbol::new(&env, "released"))
-    });
-    assert!(release_event.is_some());
+    assert!(has_event(&env, "escrow", "released"), "escrow released event not emitted");
 }
 
 #[test]
@@ -264,7 +264,7 @@ fn test_raise_dispute_increments_agent_dispute_count() {
     let evidence = BytesN::from_array(&env, &[0u8; 32]);
     contract.raise_dispute(&transfer_id, &evidence);
 
-    let stats = contract.get_agent_stats(&escrow.agent);
+    let stats = contract.get_agent_stats(&escrow.recipient);
     assert_eq!(stats.dispute_count, 1);
 }
 
@@ -322,11 +322,11 @@ fn test_zero_net_position_produces_no_transfer() {
         fee: 2,
         status: RemittanceStatus::Pending,
         expiry: None,
-        settlement_config: None,
+        settlement_config: crate::MaybeSettlementConfig::None,
         token: addr_a.clone(), // placeholder
         created_at: 0,
         failed_at: None,
-        dispute_evidence: None,
+        dispute_evidence: crate::MaybeBytes32::None,
     });
 
     // B -> A: 100 (exact mirror — net is zero)
@@ -338,11 +338,11 @@ fn test_zero_net_position_produces_no_transfer() {
         fee: 2,
         status: RemittanceStatus::Pending,
         expiry: None,
-        settlement_config: None,
+        settlement_config: crate::MaybeSettlementConfig::None,
         token: addr_a.clone(), // placeholder
         created_at: 0,
         failed_at: None,
-        dispute_evidence: None,
+        dispute_evidence: crate::MaybeBytes32::None,
     });
 
     let net_transfers: Vec<NetTransfer> = compute_net_settlements(&env, &remittances).unwrap();

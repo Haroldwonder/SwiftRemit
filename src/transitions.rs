@@ -122,6 +122,10 @@ pub fn get_valid_next_states(status: &RemittanceStatus) -> soroban_sdk::Vec<Remi
             result.push_back(RemittanceStatus::Cancelled);
         }
         RemittanceStatus::Completed | RemittanceStatus::Cancelled => {}
+        RemittanceStatus::Failed => {
+            result.push_back(RemittanceStatus::Disputed);
+        }
+        RemittanceStatus::Disputed => {}
     }
 
     result
@@ -308,6 +312,11 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: soroban_sdk::Address::generate(&env),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: crate::MaybeBytes32::None,
         };
 
         let result = transition_status(&env, &mut remittance, RemittanceStatus::Processing);
@@ -329,6 +338,11 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Completed,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: soroban_sdk::Address::generate(&env),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: crate::MaybeBytes32::None,
         };
 
         let result = transition_status(&env, &mut remittance, RemittanceStatus::Pending);
@@ -351,6 +365,11 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: soroban_sdk::Address::generate(&env),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: crate::MaybeBytes32::None,
         };
 
         let result = transition_status(&env, &mut remittance, RemittanceStatus::Pending);
