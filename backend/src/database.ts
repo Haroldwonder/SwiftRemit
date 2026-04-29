@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import {
   AssetVerification,
   VerificationStatus,
@@ -11,16 +11,23 @@ import {
   WebhookDelivery,
 } from './types';
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-});
+let pool: Pool;
+try {
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  });
+} catch (error) {
+  console.error('Failed to initialize PostgreSQL pool:', error);
+  throw error;
+}
 
 export async function initDatabase() {
-  const client = await pool.connect();
+  let client: PoolClient | undefined;
   try {
+    client = await pool.connect();
     await client.query(`      CREATE TABLE IF NOT EXISTS transactions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         transaction_id VARCHAR(255) UNIQUE NOT NULL,
@@ -187,7 +194,7 @@ export async function initDatabase() {
     `);
     console.log('Database initialized successfully');
   } finally {
-    client.release();
+    client?.release();
   }
 }
 
