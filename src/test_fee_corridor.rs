@@ -133,7 +133,7 @@ fn test_create_remittance_uses_corridor_fee() {
     let sender = Address::generate(&env);
     let agent = Address::generate(&env);
     token.mint(&sender, &100_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
     // Global strategy: 2.5% (250 bps), corridor: 5% (500 bps)
     let corridor = FeeCorridor {
@@ -161,7 +161,7 @@ fn test_create_remittance_falls_back_to_global_fee_without_corridor() {
     let sender = Address::generate(&env);
     let agent = Address::generate(&env);
     token.mint(&sender, &100_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
     // No corridor set, global strategy: 2.5%
     let id = contract.create_remittance_with_corridor(
@@ -180,7 +180,7 @@ fn test_create_remittance_falls_back_when_corridor_not_configured() {
     let sender = Address::generate(&env);
     let agent = Address::generate(&env);
     token.mint(&sender, &100_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
     // Pass country codes but no corridor stored for this pair
     let id = contract.create_remittance_with_corridor(

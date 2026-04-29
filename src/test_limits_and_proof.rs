@@ -38,7 +38,7 @@ fn setup(
 
     let contract = create_swiftremit_contract(env);
     contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
     (contract, token, admin, sender, agent, token_admin)
 }
@@ -55,9 +55,9 @@ fn test_set_daily_limit_and_enforcement() {
 
     contract.set_daily_limit(&currency, &country, &1000);
 
-    let _id = contract.create_remittance(&sender, &agent, &600, &None, &None, &None);
+    let _id = contract.create_remittance(&sender, &agent, &600, &None, &None, &None, &None, &None);
 
-    let result = contract.try_create_remittance(&sender, &agent, &500, &None, &None, &None);
+    let result = contract.try_create_remittance(&sender, &agent, &500, &None, &None, &None, &None, &None);
     assert_eq!(result.unwrap_err().unwrap(), ContractError::DailySendLimitExceeded);
 
     assert_eq!(contract.get_daily_limit(&currency, &country), Some(1000));
@@ -75,14 +75,14 @@ fn test_daily_limit_rolling_24h_window_resets() {
     let country = String::from_str(&env, "GLOBAL");
     contract.set_daily_limit(&currency, &country, &1000);
 
-    let _id = contract.create_remittance(&sender, &agent, &800, &None, &None, &None);
+    let _id = contract.create_remittance(&sender, &agent, &800, &None, &None, &None, &None, &None);
 
     env.ledger().with_mut(|li| {
         li.timestamp = li.timestamp + 86_401;
     });
 
     // Window has rolled forward; this should succeed.
-    let _id2 = contract.create_remittance(&sender, &agent, &800, &None, &None, &None);
+    let _id2 = contract.create_remittance(&sender, &agent, &800, &None, &None, &None, &None, &None);
 }
 
 #[test]
@@ -103,13 +103,15 @@ fn test_confirm_payout_valid_commitment_proof() {
         &2_000,
         &None,
         &None,
+        &None,
         &Some(config),
+        &None,
     );
 
     let remittance = contract.get_remittance(&remittance_id);
     let proof = crate::verification::compute_payout_commitment(&env, &remittance);
 
-    contract.confirm_payout(&remittance_id, &Some(proof));
+    contract.confirm_payout(&remittance_id, &Some(proof), &None);
 }
 
 #[test]
@@ -130,11 +132,13 @@ fn test_confirm_payout_invalid_commitment_proof() {
         &2_000,
         &None,
         &None,
+        &None,
         &Some(config),
+        &None,
     );
 
     let bad_proof = soroban_sdk::BytesN::from_array(&env, &[7u8; 32]);
-    let result = contract.try_confirm_payout(&remittance_id, &Some(bad_proof));
+    let result = contract.try_confirm_payout(&remittance_id, &Some(bad_proof), &None);
     assert_eq!(result.unwrap_err().unwrap(), ContractError::InvalidProof);
 }
 
@@ -156,10 +160,12 @@ fn test_confirm_payout_missing_required_proof() {
         &2_000,
         &None,
         &None,
+        &None,
         &Some(config),
+        &None,
     );
 
-    let result = contract.try_confirm_payout(&remittance_id, &None);
+    let result = contract.try_confirm_payout(&remittance_id, &None, &None);
     assert_eq!(result.unwrap_err().unwrap(), ContractError::MissingProof);
 }
 
@@ -252,9 +258,9 @@ fn test_process_expired_remittances_only_processes_eligible_ids() {
         li.timestamp = 10_000;
     });
 
-    let active_id = contract.create_remittance(&sender, &agent, &1_000, &Some(10_100), &None, &None);
-    let expired_id = contract.create_remittance(&sender, &agent, &2_000, &Some(10_001), &None, &None);
-    let already_cancelled_id = contract.create_remittance(&sender, &agent, &500, &Some(10_001), &None, &None);
+    let active_id = contract.create_remittance(&sender, &agent, &1_000, &Some(10_100), &None, &None, &None, &None);
+    let expired_id = contract.create_remittance(&sender, &agent, &2_000, &Some(10_001), &None, &None, &None, &None);
+    let already_cancelled_id = contract.create_remittance(&sender, &agent, &500, &Some(10_001), &None, &None, &None, &None);
     contract.cancel_remittance(&already_cancelled_id);
 
     env.ledger().with_mut(|li| {
@@ -305,12 +311,12 @@ fn test_batch_netting_opposing_flow_scenario_one() {
     env.mock_all_auths();
 
     let (contract, _token, _admin, p1, p2, _token_admin) = setup(&env);
-    contract.register_agent(&p1);
-    contract.register_agent(&p2);
+    contract.register_agent(&p1, &None);
+    contract.register_agent(&p2, &None);
 
-    let id1 = contract.create_remittance(&p1, &p2, &5_000, &None, &None, &None);
-    let id2 = contract.create_remittance(&p2, &p1, &3_000, &None, &None, &None);
-    let id3 = contract.create_remittance(&p1, &p2, &2_000, &None, &None, &None);
+    let id1 = contract.create_remittance(&p1, &p2, &5_000, &None, &None, &None, &None, &None);
+    let id2 = contract.create_remittance(&p2, &p1, &3_000, &None, &None, &None, &None, &None);
+    let id3 = contract.create_remittance(&p1, &p2, &2_000, &None, &None, &None, &None, &None);
 
     let expected_fees = contract.get_remittance(&id1).fee
         + contract.get_remittance(&id2).fee
@@ -333,14 +339,14 @@ fn test_batch_netting_opposing_flow_scenario_two() {
 
     let (contract, _token, _admin, p1, p2, _token_admin) = setup(&env);
     let p3 = Address::generate(&env);
-    contract.register_agent(&p1);
-    contract.register_agent(&p2);
-    contract.register_agent(&p3);
+    contract.register_agent(&p1, &None);
+    contract.register_agent(&p2, &None);
+    contract.register_agent(&p3, &None);
 
-    let id1 = contract.create_remittance(&p1, &p2, &4_000, &None, &None, &None);
-    let id2 = contract.create_remittance(&p2, &p1, &1_500, &None, &None, &None);
-    let id3 = contract.create_remittance(&p2, &p3, &2_000, &None, &None, &None);
-    let id4 = contract.create_remittance(&p3, &p2, &500, &None, &None, &None);
+    let id1 = contract.create_remittance(&p1, &p2, &4_000, &None, &None, &None, &None, &None);
+    let id2 = contract.create_remittance(&p2, &p1, &1_500, &None, &None, &None, &None, &None);
+    let id3 = contract.create_remittance(&p2, &p3, &2_000, &None, &None, &None, &None, &None);
+    let id4 = contract.create_remittance(&p3, &p2, &500, &None, &None, &None, &None, &None);
 
     let expected_fees = contract.get_remittance(&id1).fee
         + contract.get_remittance(&id2).fee
@@ -367,16 +373,16 @@ fn test_batch_netting_opposing_flow_scenario_three() {
     let p3 = Address::generate(&env);
     let p4 = Address::generate(&env);
 
-    contract.register_agent(&p1);
-    contract.register_agent(&p2);
-    contract.register_agent(&p3);
-    contract.register_agent(&p4);
+    contract.register_agent(&p1, &None);
+    contract.register_agent(&p2, &None);
+    contract.register_agent(&p3, &None);
+    contract.register_agent(&p4, &None);
 
-    let id1 = contract.create_remittance(&p1, &p2, &8_000, &None, &None, &None);
-    let id2 = contract.create_remittance(&p2, &p1, &3_500, &None, &None, &None);
-    let id3 = contract.create_remittance(&p3, &p4, &6_000, &None, &None, &None);
-    let id4 = contract.create_remittance(&p4, &p3, &2_000, &None, &None, &None);
-    let id5 = contract.create_remittance(&p1, &p2, &500, &None, &None, &None);
+    let id1 = contract.create_remittance(&p1, &p2, &8_000, &None, &None, &None, &None, &None);
+    let id2 = contract.create_remittance(&p2, &p1, &3_500, &None, &None, &None, &None, &None);
+    let id3 = contract.create_remittance(&p3, &p4, &6_000, &None, &None, &None, &None, &None);
+    let id4 = contract.create_remittance(&p4, &p3, &2_000, &None, &None, &None, &None, &None);
+    let id5 = contract.create_remittance(&p1, &p2, &500, &None, &None, &None, &None, &None);
 
     let expected_fees = contract.get_remittance(&id1).fee
         + contract.get_remittance(&id2).fee

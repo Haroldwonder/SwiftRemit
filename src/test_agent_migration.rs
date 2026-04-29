@@ -217,7 +217,7 @@ fn test_import_snapshot_restores_agent_records() {
     // Create a remittance so the snapshot is non-trivial.
     let sender = Address::generate(&env);
     token.mint(&sender, &50_000);
-    src.create_remittance(&sender, &agent1, &10_000, &None, &None, &None);
+    src.create_remittance(&sender, &agent1, &10_000, &None, &None, &None, &None, &None);
 
     let snapshot = src.export_migration_snapshot(&admin);
 

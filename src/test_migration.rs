@@ -71,13 +71,13 @@ fn test_export_sets_migration_in_progress() {
     let agent = Address::generate(&env);
 
     token.mint(&sender, &10_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
     // Export locks the contract
     contract.export_migration_snapshot(&admin);
 
     // create_remittance must now fail with MigrationInProgress (error code 30)
-    let result = contract.try_create_remittance(&sender, &agent, &1000, &None, &None, &None);
+    let result = contract.try_create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
     assert_eq!(
         result.unwrap_err().unwrap(),
         ContractError::MigrationInProgress
@@ -193,11 +193,11 @@ fn test_full_export_import_cycle_with_remittances() {
     let agent = Address::generate(&env);
 
     token.mint(&sender, &100_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
     // Create a few remittances
-    let id1 = contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None);
-    let id2 = contract.create_remittance(&sender, &agent, &20_000, &None, &None, &None);
+    let id1 = contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None, &None, &None);
+    let id2 = contract.create_remittance(&sender, &agent, &20_000, &None, &None, &None, &None, &None);
 
     // Export — locks the contract
     let snapshot = contract.export_migration_snapshot(&admin);
@@ -218,7 +218,7 @@ fn test_full_export_import_cycle_with_remittances() {
     contract.import_migration_batch(&admin, &batch);
 
     // Lock cleared — normal ops resume
-    let id3 = contract.create_remittance(&sender, &agent, &5_000, &None, &None, &None);
+    let id3 = contract.create_remittance(&sender, &agent, &5_000, &None, &None, &None, &None, &None);
     assert_eq!(id3, 3);
 }
 
@@ -232,15 +232,15 @@ fn test_migration_blocks_confirm_payout() {
     let agent = Address::generate(&env);
 
     token.mint(&sender, &50_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
-    let remittance_id = contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None);
+    let remittance_id = contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None, &None, &None);
 
     // Lock via export
     contract.export_migration_snapshot(&admin);
 
     // confirm_payout must be blocked
-    let result = contract.try_confirm_payout(&remittance_id, &None);
+    let result = contract.try_confirm_payout(&remittance_id, &None, &None);
     assert_eq!(
         result.unwrap_err().unwrap(),
         ContractError::MigrationInProgress

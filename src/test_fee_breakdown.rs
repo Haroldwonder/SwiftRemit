@@ -35,7 +35,7 @@ fn test_fee_breakdown_percentage_strategy_basic() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Test percentage strategy: 2.5%
     let amount = 10000i128;
@@ -69,7 +69,7 @@ fn test_fee_breakdown_percentage_different_amounts() {
 
     // Set 5% fee
     client.initialize(&admin, &token.address, &500, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Small amount
     let breakdown_small = client.get_fee_breakdown(&1000i128, &None, &None);
@@ -108,7 +108,7 @@ fn test_fee_breakdown_percentage_with_protocol_fee() {
 
     // Set platform fee: 2.5%, protocol fee: 0.5%
     client.initialize(&admin, &token.address, &250, &0, &50, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     let amount = 10000i128;
     let breakdown = client.get_fee_breakdown(&amount, &None, &None);
@@ -146,7 +146,7 @@ fn test_fee_breakdown_flat_strategy() {
 
     // Set flat fee: 100 units
     client.update_fee_strategy(&admin, &FeeStrategy::Flat(100));
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Small amount
     let breakdown_small = client.get_fee_breakdown(&1000i128, &None, &None);
@@ -180,7 +180,7 @@ fn test_fee_breakdown_flat_strategy_with_protocol_fee() {
     // Flat fee: 100, Protocol fee: 1%
     client.initialize(&admin, &token.address, &250, &0, &100, &treasury);
     client.update_fee_strategy(&admin, &FeeStrategy::Flat(100));
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     let amount = 10000i128;
     let breakdown = client.get_fee_breakdown(&amount, &None, &None);
@@ -218,7 +218,7 @@ fn test_fee_breakdown_dynamic_tier1() {
 
     // Set dynamic strategy: 4% base
     client.update_fee_strategy(&admin, &FeeStrategy::Dynamic(400));
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Tier 1: < 1000 -> 4%
     let amount = 500_0000000i128;
@@ -250,7 +250,7 @@ fn test_fee_breakdown_dynamic_tier2() {
 
     // Set dynamic strategy: 4% base
     client.update_fee_strategy(&admin, &FeeStrategy::Dynamic(400));
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Tier 2: 1000-10000 -> 80% of 4% = 3.2%
     let amount = 5000_0000000i128;
@@ -282,7 +282,7 @@ fn test_fee_breakdown_dynamic_tier3() {
 
     // Set dynamic strategy: 4% base
     client.update_fee_strategy(&admin, &FeeStrategy::Dynamic(400));
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Tier 3: > 10000 -> 60% of 4% = 2.4%
     let amount = 20000_0000000i128;
@@ -315,7 +315,7 @@ fn test_fee_breakdown_with_corridor_identifier() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     let from_country = String::from_str(&env, "US");
     let to_country = String::from_str(&env, "MX");
@@ -347,7 +347,7 @@ fn test_fee_breakdown_without_countries() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     let amount = 10000i128;
     let breakdown = client.get_fee_breakdown(&amount, &None, &None);
@@ -373,7 +373,7 @@ fn test_fee_breakdown_partial_corridor_info() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     let from_country = String::from_str(&env, "US");
     let amount = 10000i128;
@@ -410,7 +410,7 @@ fn test_fee_breakdown_zero_amount() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Should panic on zero amount
     client.get_fee_breakdown(&0i128, &None, &None);
@@ -434,7 +434,7 @@ fn test_fee_breakdown_negative_amount() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Should panic on negative amount
     client.get_fee_breakdown(&-1000i128, &None, &None);
@@ -461,7 +461,7 @@ fn test_fee_breakdown_very_small_amount() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Minimum amount: 1
     let breakdown = client.get_fee_breakdown(&1i128, &None, &None);
@@ -488,7 +488,7 @@ fn test_fee_breakdown_very_large_amount() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Very large amount
     let large_amount = 1_000_000_000_000_000i128;
@@ -520,7 +520,7 @@ fn test_fee_breakdown_consistency() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &50, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     let amount = 10000i128;
     let breakdown = client.get_fee_breakdown(&amount, &None, &None);
@@ -548,7 +548,7 @@ fn test_fee_breakdown_multiple_calls_consistent() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     let amount = 10000i128;
 

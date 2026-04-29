@@ -81,7 +81,7 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let token_client = token::Client::new(&env, &token.address);
@@ -96,8 +96,7 @@ proptest! {
             &sender,
             &agent,
             &amount,
-            &None
-        );
+            &None, &None, &None, &None, &None);
 
         // Verify total balance unchanged
         let after_create_total = token_client.balance(&sender)
@@ -128,7 +127,7 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let token_client = token::Client::new(&env, &token.address);
@@ -138,8 +137,7 @@ proptest! {
             &sender,
             &agent,
             &amount,
-            &None
-        );
+            &None, &None, &None, &None, &None);
 
         // Record balance before settlement
         let before_settle_total = token_client.balance(&sender)
@@ -148,7 +146,7 @@ proptest! {
             + token_client.balance(&admin); // treasury
 
         // Settle remittance
-        contract.confirm_payout(&remittance_id, &None);
+        contract.confirm_payout(&remittance_id, &None, &None);
 
         // Verify total balance unchanged
         let after_settle_total = token_client.balance(&sender)
@@ -180,7 +178,7 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
 
         let token_client = token::Client::new(&env, &token.address);
 
@@ -189,8 +187,7 @@ proptest! {
             &sender,
             &agent,
             &amount,
-            &None
-        );
+            &None, &None, &None, &None, &None);
 
         // Record balance before cancel
         let before_cancel_total = token_client.balance(&sender)
@@ -238,7 +235,7 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let token_client = token::Client::new(&env, &token.address);
@@ -248,10 +245,9 @@ proptest! {
             &sender,
             &agent,
             &amount,
-            &None
-        );
+            &None, &None, &None, &None, &None);
 
-        contract.confirm_payout(&remittance_id, &None);
+        contract.confirm_payout(&remittance_id, &None, &None);
 
         // Verify all balances are non-negative
         prop_assert!(token_client.balance(&sender) >= 0,
@@ -280,15 +276,14 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let remittance_id = contract.create_remittance(
             &sender,
             &agent,
             &amount,
-            &None
-        );
+            &None, &None, &None, &None, &None);
 
         let remittance = contract.get_remittance(&remittance_id);
 
@@ -330,8 +325,8 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
-        contract.register_agent(&party_a);
-        contract.register_agent(&party_b);
+        contract.register_agent(&party_a, &None);
+        contract.register_agent(&party_b, &None);
 
         // Create remittances in original order
         let mut remittances_forward = SorobanVec::new(&env);
@@ -345,9 +340,7 @@ proptest! {
             let remittance_id = contract.create_remittance(
                 sender,
                 agent,
-                &amount,
-                &None
-            );
+                &amount, &None, &None, &None, &None, &None);
 
             let remittance = contract.get_remittance(&remittance_id);
             remittances_forward.push_back(remittance);
@@ -365,9 +358,7 @@ proptest! {
             let remittance_id = contract.create_remittance(
                 sender,
                 agent,
-                &amount,
-                &None
-            );
+                &amount, &None, &None, &None, &None, &None);
 
             let remittance = contract.get_remittance(&remittance_id);
             remittances_reverse.push_back(remittance);
@@ -419,14 +410,13 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
 
         let remittance_id = contract.create_remittance(
             &sender,
             &agent,
             &amount,
-            &None
-        );
+            &None, &None, &None, &None, &None);
 
         let remittance = contract.get_remittance(&remittance_id);
 
@@ -465,7 +455,7 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let mut expected_total_fees = 0i128;
@@ -476,13 +466,12 @@ proptest! {
                 &sender,
                 &agent,
                 &amount,
-                &None
-            );
+                &None, &None, &None, &None, &None);
 
             let remittance = contract.get_remittance(&remittance_id);
             expected_total_fees += remittance.fee;
 
-            contract.confirm_payout(&remittance_id, &None);
+            contract.confirm_payout(&remittance_id, &None, &None);
         }
 
         let accumulated_fees = contract.get_accumulated_fees();
@@ -518,7 +507,7 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         // Create remittance - should start in Pending
@@ -526,15 +515,14 @@ proptest! {
             &sender,
             &agent,
             &amount,
-            &None
-        );
+            &None, &None, &None, &None, &None);
 
         let remittance = contract.get_remittance(&remittance_id);
         prop_assert_eq!(remittance.status, crate::RemittanceStatus::Pending,
             "New remittance not in Pending state");
 
         // Settle remittance - should transition to Settled
-        contract.confirm_payout(&remittance_id, &None);
+        contract.confirm_payout(&remittance_id, &None, &None);
 
         let remittance = contract.get_remittance(&remittance_id);
         prop_assert_eq!(remittance.status, crate::RemittanceStatus::Completed,
@@ -559,15 +547,14 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
 
         // Create remittance
         let remittance_id = contract.create_remittance(
             &sender,
             &agent,
             &amount,
-            &None
-        );
+            &None, &None, &None, &None, &None);
 
         // Cancel remittance - should transition to Cancelled
         contract.cancel_remittance(&remittance_id);
@@ -604,7 +591,7 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
-        contract.register_agent(&agent);
+        contract.register_agent(&agent, &None);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let token_client = token::Client::new(&env, &token.address);
@@ -614,16 +601,15 @@ proptest! {
             &sender,
             &agent,
             &amount,
-            &None
-        );
+            &None, &None, &None, &None, &None);
 
-        contract.confirm_payout(&remittance_id, &None);
+        contract.confirm_payout(&remittance_id, &None, &None);
 
         let agent_balance_after_first = token_client.balance(&agent);
 
         // Attempt duplicate settlement - should fail
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            contract.confirm_payout(&remittance_id, &None);
+            contract.confirm_payout(&remittance_id, &None, &None);
         }));
 
         prop_assert!(result.is_err(), "Duplicate settlement was not prevented");
@@ -663,8 +649,8 @@ proptest! {
 
         let contract = create_swiftremit_contract(&env);
         contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
-        contract.register_agent(&party_a);
-        contract.register_agent(&party_b);
+        contract.register_agent(&party_a, &None);
+        contract.register_agent(&party_b, &None);
 
         let mut remittances = SorobanVec::new(&env);
         let mut expected_total_fees = 0i128;
@@ -680,9 +666,7 @@ proptest! {
             let remittance_id = contract.create_remittance(
                 sender,
                 agent,
-                &amount,
-                &None
-            );
+                &amount, &None, &None, &None, &None, &None);
 
             let remittance = contract.get_remittance(&remittance_id);
             expected_total_fees += remittance.fee;

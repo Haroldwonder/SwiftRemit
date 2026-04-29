@@ -51,10 +51,10 @@ fn test_blacklisted_sender_cannot_create_remittance() {
     let agent = Address::generate(&env);
 
     token.mint(&sender, &10_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
     contract.blacklist_user(&sender);
 
-    let result = contract.try_create_remittance(&sender, &agent, &1_000, &None, &None, &None);
+    let result = contract.try_create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::UserBlacklisted)));
 }
 
@@ -68,14 +68,14 @@ fn test_remove_from_blacklist_allows_remittance_again() {
     let agent = Address::generate(&env);
 
     token.mint(&sender, &10_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
     contract.blacklist_user(&sender);
     contract.remove_from_blacklist(&sender);
 
     assert_eq!(env.auths().len(), 1);
     assert_eq!(env.auths()[0].0, admin);
 
-    let remittance_id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None);
+    let remittance_id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
     let remittance = contract.get_remittance(&remittance_id);
 
     assert_eq!(remittance.sender, sender);
@@ -183,15 +183,15 @@ fn test_confirm_payout_blocked_while_paused_and_allowed_after_unpause() {
     let agent = Address::generate(&env);
 
     token.mint(&sender, &10_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
-    let remittance_id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None);
+    let remittance_id = contract.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
 
     contract.pause();
 
-    let paused_result = contract.try_confirm_payout(&remittance_id, &None);
+    let paused_result = contract.try_confirm_payout(&remittance_id, &None, &None);
     assert_eq!(paused_result, Err(Ok(ContractError::ContractPaused)));
 
     contract.unpause();
-    contract.confirm_payout(&remittance_id, &None);
+    contract.confirm_payout(&remittance_id, &None, &None);
 }
