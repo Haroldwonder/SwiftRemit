@@ -20,7 +20,7 @@ pub enum Role {
 ///
 /// # State Machine
 ///
-/// ```
+/// ```text
 /// Pending → Processing → Completed
 ///         ↘            ↘
 ///           Cancelled    Cancelled
@@ -123,6 +123,17 @@ pub struct SettlementConfig {
     pub oracle_address: Option<Address>,
 }
 
+/// Contracttype-compatible wrapper for Option<SettlementConfig>.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybeSettlementConfig {
+    None,
+    Some(SettlementConfig),
+}
+impl From<Option<SettlementConfig>> for MaybeSettlementConfig {
+    fn from(o: Option<SettlementConfig>) -> Self { match o { None => Self::None, Some(v) => Self::Some(v) } }
+}
+
 /// Escrow status for locked funds
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -166,7 +177,7 @@ pub struct Remittance {
     /// Optional expiry timestamp (seconds since epoch) for settlement
     pub expiry: Option<u64>,
     /// Optional settlement configuration for proof validation
-    pub settlement_config: Option<SettlementConfig>,
+    pub settlement_config: MaybeSettlementConfig,
     /// The specific token address used for this remittance
     pub token: Address,
     /// Ledger timestamp when the remittance was created
@@ -197,6 +208,14 @@ pub struct AgentStats {
 pub struct BatchSettlementEntry {
     /// The unique ID of the remittance to settle
     pub remittance_id: u64,
+}
+
+/// Volume history bucket for rolling sender discount calculations.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SenderVolumeEntry {
+    pub bucket_start: u64,
+    pub amount: i128,
 }
 
 /// Entry for batch remittance creation.
@@ -267,6 +286,17 @@ pub enum PauseReason {
     ExternalThreat,
 }
 
+/// Contracttype-compatible wrapper for Option<PauseReason>.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybePauseReason {
+    None,
+    Some(PauseReason),
+}
+impl From<Option<PauseReason>> for MaybePauseReason {
+    fn from(o: Option<PauseReason>) -> Self { match o { None => Self::None, Some(v) => Self::Some(v) } }
+}
+
 /// Persistent record of a pause event.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -300,7 +330,7 @@ pub struct CircuitBreakerStatus {
     /// Whether the contract is currently paused.
     pub is_paused: bool,
     /// Active pause reason, or `None` when not paused.
-    pub pause_reason: Option<PauseReason>,
+    pub pause_reason: MaybePauseReason,
     /// Ledger timestamp of the active pause, or `None` when not paused.
     pub pause_timestamp: Option<u64>,
     /// Configured timelock duration in seconds (0 = no timelock).

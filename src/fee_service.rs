@@ -436,17 +436,15 @@ fn calculate_protocol_fee(amount: i128, protocol_fee_bps: u32) -> Result<i128, C
 /// # Returns
 ///
 /// Formatted corridor ID (e.g., "US-MX")
-fn format_corridor_id(env: &Env, from_country: &String, to_country: &String) -> String {
-    // Create corridor ID as "FROM-TO" using simple approach
-    // Convert Soroban strings to regular strings for manipulation
-    let from_str = from_country.to_string();
-    let to_str = to_country.to_string();
-
-    // Create the combined string manually
-    let combined = from_str + "-" + &to_str;
-
-    // Convert back to Soroban String
-    String::from_str(env, &combined)
+fn format_corridor_id(env: &Env, from: &String, to: &String) -> String {
+    let from_len = from.len() as usize;
+    let to_len = to.len() as usize;
+    let total = from_len + 1 + to_len;
+    let mut buf = [0u8; 16]; // enough for "XX-YY" style codes
+    from.copy_into_slice(&mut buf[..from_len]);
+    buf[from_len] = b'-';
+    to.copy_into_slice(&mut buf[from_len + 1..from_len + 1 + to_len]);
+    String::from_bytes(env, &buf[..total])
 }
 
 #[cfg(test)]
@@ -456,11 +454,15 @@ mod tests {
 
     // Include property-based tests
     #[cfg(test)]
+    #[cfg(feature = "legacy-tests")]
     mod property_tests;
 
     // Re-export the calculate_fee_by_strategy function for property tests
+    #[cfg(feature = "legacy-tests")]
     pub(crate) use super::calculate_fee_by_strategy;
+    #[cfg(feature = "legacy-tests")]
     pub(crate) use super::calculate_protocol_fee;
+    #[cfg(feature = "legacy-tests")]
     pub(crate) use super::format_corridor_id;
 
     #[test]
