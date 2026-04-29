@@ -1,7 +1,21 @@
 #![cfg(test)]
+extern crate std;
 
 use crate::{ContractError, SwiftRemitContract, SwiftRemitContractClient};
-use soroban_sdk::{symbol_short, testutils::{Address as _, Events}, token, Address, Env, TryFromVal};
+use soroban_sdk::{symbol_short, testutils::{Address as _, Events}, token, Address, Env};
+
+fn has_event(env: &Env, t0: &str, t1: &str) -> bool {
+    use soroban_sdk::xdr::{ContractEventBody, ScVal, ScSymbol, StringM};
+    let sym0 = ScVal::Symbol(ScSymbol(StringM::try_from(t0).unwrap()));
+    let sym1 = ScVal::Symbol(ScSymbol(StringM::try_from(t1).unwrap()));
+    env.events().all().events().iter().any(|e| {
+        if let ContractEventBody::V0(body) = &e.body {
+            body.topics.len() >= 2 && body.topics[0] == sym0 && body.topics[1] == sym1
+        } else {
+            false
+        }
+    })
+}
 
 fn setup<'a>(env: &'a Env) -> (SwiftRemitContractClient<'a>, Address) {
     let admin = Address::generate(env);
@@ -69,13 +83,6 @@ fn test_update_treasury_emits_event() {
 
     contract.update_treasury(&admin, &new_treasury);
 
-    let events = env.events().all();
-    let found = events.iter().any(|e| {
-        let topic0 = e.1.get(0)
-            .and_then(|t| soroban_sdk::Symbol::try_from_val(&env, &t).ok());
-        let topic1 = e.1.get(1)
-            .and_then(|t| soroban_sdk::Symbol::try_from_val(&env, &t).ok());
-        topic0 == Some(symbol_short!("treasury")) && topic1 == Some(symbol_short!("upd"))
-    });
+    let found = has_event(&env, "treasury", "upd");
     assert!(found, "treasury_upd event was not emitted");
 }

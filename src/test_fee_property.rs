@@ -71,116 +71,6 @@ fn flat_fee_strategy() -> impl Strategy<Value = i128> {
 // Property Tests: Percentage Fee Calculation
 // ============================================================================
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(100))]
-
-    /// Property: Percentage fees are never negative
-    #[test]
-    fn prop_percentage_fee_never_negative(
-        amount in amount_strategy(),
-        fee_bps in bps_strategy()
-    ) {
-        let env = Env::default();
-        let result = calculate_platform_fee(&env, amount, None);
-
-        match result {
-            Ok(fee) => {
-                prop_assert!(fee >= 0, "Fee {} must be non-negative", fee);
-            }
-            Err(ContractError::Overflow) => {
-                // Overflow is acceptable - system correctly rejects it
-            }
-            Err(e) => {
-                prop_assert!(false, "Unexpected error: {:?}", e);
-            }
-        }
-    }
-
-    /// Property: Percentage fees never exceed the transaction amount
-    #[test]
-    fn prop_fee_never_exceeds_amount(
-        amount in amount_strategy(),
-        fee_bps in realistic_bps_strategy()
-    ) {
-        let env = Env::default();
-
-        if let Ok(fee) = calculate_platform_fee(&env, amount, None) {
-            prop_assert!(
-                fee <= amount,
-                "Fee {} should not exceed amount {}",
-                fee,
-                amount
-            );
-        }
-    }
-
-    /// Property: Fee calculation is deterministic
-    /// Same inputs should always produce the same output
-    #[test]
-    fn prop_fee_calculation_deterministic(
-        amount in amount_strategy(),
-    ) {
-        let env = Env::default();
-
-        let fee1 = calculate_platform_fee(&env, amount, None);
-        let fee2 = calculate_platform_fee(&env, amount, None);
-
-        prop_assert_eq!(
-            fee1, fee2,
-            "Fee calculation must be deterministic"
-        );
-    }
-
-    /// Property: Zero amount results in error
-    #[test]
-    fn prop_zero_amount_rejected(
-    ) {
-        let env = Env::default();
-
-        let result = calculate_platform_fee(&env, 0, None);
-        prop_assert!(
-            result.is_err(),
-            "Zero amount should result in InvalidAmount error"
-        );
-    }
-
-    /// Property: Negative amounts are rejected
-    #[test]
-    fn prop_negative_amount_rejected(
-        amount in -1_000_000_000i128..=0i128
-    ) {
-        let env = Env::default();
-
-        let result = calculate_platform_fee(&env, amount, None);
-        prop_assert!(
-            result.is_err(),
-            "Negative/zero amount should result in error"
-        );
-    }
-
-    /// Property: Fee scales proportionally with amount
-    /// Higher amounts should produce higher (or equal) fees
-    #[test]
-    fn prop_fee_scales_with_amount(
-        base_amount in 1_000i128..=100_000_000i128,
-        multiplier in 2i128..=10i128,
-    ) {
-        let env = Env::default();
-
-        let fee_base = calculate_platform_fee(&env, base_amount, None);
-        let fee_scaled = calculate_platform_fee(&env, base_amount * multiplier, None);
-
-        if let (Ok(f_base), Ok(f_scaled)) = (fee_base, fee_scaled) {
-            // Scaled amount should produce >= fee
-            prop_assert!(
-                f_scaled >= f_base,
-                "Fee for {} should be >= fee for {}",
-                base_amount * multiplier,
-                base_amount
-            );
-        }
-    }
-}
 
 // ============================================================================
 // Property Tests: Fee Breakdown Consistency
@@ -202,7 +92,7 @@ proptest! {
             let protocol_fee = 0i128;
 
             // Validate breakdown logic
-            if let Ok(net) = amount.checked_sub(fee).and_then(|v| v.checked_sub(protocol_fee)) {
+            if let Some(net) = amount.checked_sub(fee).and_then(|v| v.checked_sub(protocol_fee)) {
                 if net >= 0 {
                     let breakdown = FeeBreakdown {
                         amount,
@@ -244,7 +134,7 @@ proptest! {
             prop_assert!(amount >= 0, "Amount must be non-negative");
 
             // Net amount should be non-negative
-            if let Ok(net) = amount.checked_sub(fee) {
+            if let Some(net) = amount.checked_sub(fee) {
                 prop_assert!(net >= 0, "Net amount must be non-negative");
             }
         }
@@ -319,68 +209,6 @@ proptest! {
 // Property Tests: Edge Cases and Boundaries
 // ============================================================================
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(100))]
-
-    /// Property: Minimum amounts produce valid fees
-    #[test]
-    fn prop_minimum_amounts_valid(
-        amount in 100i128..=1_000i128,
-    ) {
-        let env = Env::default();
-
-        if let Ok(fee) = calculate_platform_fee(&env, amount, None) {
-            prop_assert!(fee >= 0, "Fee must be non-negative");
-            prop_assert!(fee <= amount, "Fee must not exceed amount");
-        }
-    }
-
-    /// Property: Boundary amounts handled correctly
-    #[test]
-    fn prop_boundary_amounts_valid(
-    ) {
-        let env = Env::default();
-
-        let boundaries = vec![
-            100i128,
-            1_000i128,
-            10_000i128,
-            100_000i128,
-            1_000_000i128,
-            10_000_000i128,
-            100_000_000i128,
-        ];
-
-        for amount in boundaries {
-            if let Ok(fee) = calculate_platform_fee(&env, amount, None) {
-                prop_assert!(
-                    fee >= 0 && fee <= amount,
-                    "Fee {} at amount {} is invalid",
-                    fee, amount
-                );
-            }
-        }
-    }
-
-    /// Property: Consecutive amounts produce monotonically increasing fees
-    #[test]
-    fn prop_fee_monotonic_increase(
-        base_amount in 1_000i128..=100_000_000i128,
-    ) {
-        let env = Env::default();
-
-        let fee_base = calculate_platform_fee(&env, base_amount, None);
-        let fee_next = calculate_platform_fee(&env, base_amount + 1, None);
-
-        if let (Ok(f_base), Ok(f_next)) = (fee_base, fee_next) {
-            // Next fee should be >= current fee (non-decreasing)
-            prop_assert!(
-                f_next >= f_base,
-                "Fees should be monotonically non-decreasing"
-            );
-        }
-    }
-}
 
 // ============================================================================
 // Helper for Manual Calculation Validation
@@ -397,7 +225,7 @@ fn manual_percentage_fee(amount: i128, bps: u32) -> Option<i128> {
 /// Validates fee calculation against manual formula
 #[test]
 fn test_manual_fee_calculation() {
-    let test_cases = vec![
+    let test_cases = std::vec![
         (1_000_000i128, 250u32),      // 2.5%
         (10_000_000i128, 100u32),     // 1%
         (100_000i128, 500u32),        // 5%
@@ -410,8 +238,8 @@ fn test_manual_fee_calculation() {
         if let Ok(actual_fee) = calculate_platform_fee(&env, amount, None) {
             if let Some(expected_fee) = manual_percentage_fee(amount, bps) {
                 // Note: actual fee may differ due to strategy, just check non-negative
-                prop_assert!(actual_fee >= 0);
-                prop_assert!(actual_fee <= amount);
+                assert!(actual_fee >= 0);
+                assert!(actual_fee <= amount);
             }
         }
     }

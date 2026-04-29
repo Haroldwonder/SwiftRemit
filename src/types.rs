@@ -155,6 +155,49 @@ pub struct Escrow {
     pub status: EscrowStatus,
 }
 
+/// Contracttype-compatible Option wrapper for SettlementConfig.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybeSettlementConfig {
+    None,
+    Some(SettlementConfig),
+}
+
+impl From<Option<SettlementConfig>> for MaybeSettlementConfig {
+    fn from(opt: Option<SettlementConfig>) -> Self {
+        match opt {
+            None => MaybeSettlementConfig::None,
+            Some(v) => MaybeSettlementConfig::Some(v),
+        }
+    }
+}
+
+impl From<MaybeSettlementConfig> for Option<SettlementConfig> {
+    fn from(m: MaybeSettlementConfig) -> Self {
+        match m {
+            MaybeSettlementConfig::None => None,
+            MaybeSettlementConfig::Some(v) => Some(v),
+        }
+    }
+}
+
+/// Contracttype-compatible Option wrapper for BytesN<32>.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybeBytes32 {
+    None,
+    Some(soroban_sdk::BytesN<32>),
+}
+
+impl From<Option<soroban_sdk::BytesN<32>>> for MaybeBytes32 {
+    fn from(opt: Option<soroban_sdk::BytesN<32>>) -> Self {
+        match opt {
+            None => MaybeBytes32::None,
+            Some(v) => MaybeBytes32::Some(v),
+        }
+    }
+}
+
 /// A remittance transaction record.
 ///
 /// Contains all information about a cross-border remittance including
@@ -185,7 +228,7 @@ pub struct Remittance {
     /// Ledger timestamp when the agent marked it as failed, if applicable
     pub failed_at: Option<u64>,
     /// Hash of evidence provided by the sender during a dispute
-    pub dispute_evidence: Option<soroban_sdk::BytesN<32>>,
+    pub dispute_evidence: MaybeBytes32,
 }
 
 #[contracttype]

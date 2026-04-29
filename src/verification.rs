@@ -50,7 +50,7 @@ mod tests {
             token: Address::generate(&env),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: crate::MaybeBytes32::None,
         };
 
         let commitment = compute_payout_commitment(&env, &remittance);

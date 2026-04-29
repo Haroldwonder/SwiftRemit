@@ -1,7 +1,8 @@
 use soroban_sdk::{contracttype, Env};
 
-use crate::storage::{get_admin_count, get_accumulated_fees, get_remittance_counter, has_admin, is_paused};
+use crate::storage::{get_accumulated_fees, get_remittance_counter, has_admin, is_paused};
 use crate::circuit_breaker_storage::{get_active_pause_seq, get_pause_record_by_seq};
+use crate::MaybePauseReason;
 
 /// Health check response for contract monitoring.
 #[contracttype]
@@ -23,7 +24,6 @@ pub fn health(env: &Env) -> HealthStatus {
     let total_remittances = get_remittance_counter(env).unwrap_or(0);
     let accumulated_fees = get_accumulated_fees(env).unwrap_or(0);
 
-    // Surface the pause reason from the most recent pause record when paused
     let pause_reason = if paused {
         get_active_pause_seq(env)
             .and_then(|seq| get_pause_record_by_seq(env, seq))
