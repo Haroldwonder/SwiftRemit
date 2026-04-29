@@ -7,7 +7,7 @@
 
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
-use crate::{AgentStats, ContractError, DailyLimit, Remittance, TransferRecord};
+use crate::{AgentStats, ContractError, DailyLimit, Remittance, SenderVolumeEntry, TransferRecord};
 
 /// Storage keys for the SwiftRemit contract.
 ///
@@ -164,6 +164,50 @@ enum DataKey {
 
     /// Pending admin address proposed by current admin (2-step transfer, #365)
     PendingAdmin,
+    // === Token Fee ===
+    TokenFeeBps(soroban_sdk::Address),
+    // === Agent Stats & Reputation ===
+    AgentStats(soroban_sdk::Address),
+    AgentDailyCap(soroban_sdk::Address),
+    AgentWithdrawals(soroban_sdk::Address),
+    MinAgentReputation,
+    // === Dispute ===
+    DisputeWindow,
+    // === Partial Payout ===
+    DisbursedAmount(u64),
+    // === Idempotency ===
+    IdempotencyRecord(soroban_sdk::String),
+    IdempotencyTTL,
+    RemittanceIdempotencyKey(u64),
+    // === Payout Commitment ===
+    PayoutCommitment(u64),
+    // === Analytics ===
+    TotalRemittanceCount,
+    TotalCompletedVolume,
+    MaxExpiredBatchSize,
+    // === Governance ===
+    GovernanceInitialized,
+    GovernanceQuorum,
+    GovernanceTimelockSeconds,
+    GovernanceProposalTtl,
+    GovernanceProposalCounter,
+    GovernanceProposal(u64),
+    GovernanceVote(u64, soroban_sdk::Address),
+    // === Migration ===
+    MigrationInProgress,
+    // === Recipient Verification ===
+    RecipientHash(u64),
+    // === Admin/Agent Lists ===
+    AdminList,
+    AgentList,
+    // === Active Fee Proposal ===
+    ActiveFeeProposal,
+    // === Sender Remittances ===
+    SenderRemittances(soroban_sdk::Address),
+    // === Rate Limit ===
+    RateLimitConfig,
+    RateLimitWindow(soroban_sdk::Address),
+
 }
 
 /// Checks if the contract has an admin configured.
@@ -1875,4 +1919,29 @@ pub fn set_pending_admin(env: &Env, new_admin: &Address) {
 /// Clears the pending admin proposal.
 pub fn clear_pending_admin(env: &Env) {
     env.storage().instance().remove(&DataKey::PendingAdmin);
+}
+
+// === Agent List Index ===
+pub fn get_agent_list(env: &Env) -> soroban_sdk::Vec<Address> {
+    env.storage().instance().get(&DataKey::AgentList).unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+pub fn add_agent_to_list(env: &Env, agent: &Address) {
+    let mut list = get_agent_list(env);
+    for i in 0..list.len() { if list.get_unchecked(i) == *agent { return; } }
+    list.push_back(agent.clone());
+    env.storage().instance().set(&DataKey::AgentList, &list);
+}
+pub fn remove_agent_from_list(env: &Env, agent: &Address) {
+    let list = get_agent_list(env);
+    let mut new_list: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(env);
+    for i in 0..list.len() { let e = list.get_unchecked(i); if e != *agent { new_list.push_back(e); } }
+    env.storage().instance().set(&DataKey::AgentList, &new_list);
+}
+
+// === Min Agent Reputation Threshold ===
+pub fn get_min_agent_reputation(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::MinAgentReputation).unwrap_or(0)
+}
+pub fn set_min_agent_reputation(env: &Env, threshold: u32) {
+    env.storage().instance().set(&DataKey::MinAgentReputation, &threshold);
 }

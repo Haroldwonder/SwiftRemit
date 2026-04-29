@@ -322,7 +322,7 @@ fn test_zero_net_position_produces_no_transfer() {
         fee: 2,
         status: RemittanceStatus::Pending,
         expiry: None,
-        settlement_config: None,
+        settlement_config: crate::MaybeSettlementConfig::None,
         token: addr_a.clone(), // placeholder
         created_at: 0,
         failed_at: None,
@@ -338,7 +338,7 @@ fn test_zero_net_position_produces_no_transfer() {
         fee: 2,
         status: RemittanceStatus::Pending,
         expiry: None,
-        settlement_config: None,
+        settlement_config: crate::MaybeSettlementConfig::None,
         token: addr_a.clone(), // placeholder
         created_at: 0,
         failed_at: None,

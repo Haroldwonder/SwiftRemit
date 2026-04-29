@@ -347,7 +347,7 @@ pub fn migrate(env: &Env) -> Result<(), ContractError> {
     clear_rollback_snapshot(env);
 
     env.events().publish(
-        soroban_sdk::symbol_short!("migrated"),
+        (soroban_sdk::symbol_short!("migrated"),),
         CURRENT_SCHEMA_VERSION,
     );
 
@@ -414,7 +414,7 @@ pub fn rollback_migration(env: &Env) -> Result<(), ContractError> {
     clear_rollback_snapshot(env);
 
     env.events().publish(
-        soroban_sdk::symbol_short!("rolled_back"),
+        (soroban_sdk::symbol_short!("rolled_ba"),),
         snapshot.from_version,
     );
 

@@ -59,7 +59,7 @@ struct DirectionalFlow {
 /// Returns `ContractError::InvalidBatchSize` if remittances.len() > MAX_NETTING_BATCH_SIZE
 pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Result<Vec<NetTransfer>, ContractError> {
     // Validate batch size to prevent DoS via large remittance batches
-    if remittances.len() > MAX_NETTING_BATCH_SIZE as usize {
+    if remittances.len() > MAX_NETTING_BATCH_SIZE {
         return Err(ContractError::InvalidBatchSize);
     }
 
@@ -244,6 +244,11 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         // B -> A: 90
@@ -255,6 +260,11 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         let net_transfers = compute_net_settlements(&env, &remittances).unwrap();
@@ -290,6 +300,11 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         // B -> A: 100
@@ -301,6 +316,11 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         let net_transfers = compute_net_settlements(&env, &remittances).unwrap();
@@ -327,6 +347,11 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         // B -> C: 50
@@ -338,6 +363,11 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         // C -> A: 30
@@ -349,6 +379,11 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         let net_transfers = compute_net_settlements(&env, &remittances).unwrap();
@@ -380,6 +415,11 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         remittances.push_back(Remittance {
@@ -390,6 +430,11 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         let net_transfers = compute_net_settlements(&env, &remittances).unwrap();
@@ -413,6 +458,11 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
         remittances1.push_back(Remittance {
             id: 2,
@@ -422,6 +472,11 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         // Second ordering (reversed)
@@ -434,6 +489,11 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
         remittances2.push_back(Remittance {
             id: 1,
@@ -443,6 +503,11 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: None,
         });
 
         let net1 = compute_net_settlements(&env, &remittances1).unwrap();

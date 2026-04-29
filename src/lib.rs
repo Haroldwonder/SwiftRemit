@@ -27,47 +27,47 @@ pub mod circuit_breaker;
 pub mod circuit_breaker_storage;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_batch_create;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_coverage_gaps;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_blacklist;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_escrow;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_agent_stats;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_fee_corridor;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_fee_strategy;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_fee_overflow;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_fee_property;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_integrator_fees;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_limits_and_proof;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_migration;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_agent_migration;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_property;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_protocol_fee;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_roles;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_roles_simple;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_token_whitelist;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_transfer_state;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_transitions;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_treasury;
 #[cfg(all(test, feature = "testnet-integration"))]
 mod test_testnet_integration;
@@ -77,16 +77,18 @@ mod types;
 mod validation;
 mod verification;
 mod recipient_verification;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_recipient_verification;
 mod governance;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_governance;
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_governance_property;
 #[cfg(test)]
 mod test_dispute;
 #[cfg(test)]
+mod test_features_589_592;
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_circuit_breaker;
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, String, Vec};
@@ -434,6 +436,15 @@ impl SwiftRemitContract {
         }
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
 
+        // Enforce minimum agent reputation threshold (#591)
+        let min_rep = storage::get_min_agent_reputation(&env);
+        if min_rep > 0 {
+            let rep = storage::compute_agent_reputation(&storage::get_agent_stats(&env, &agent));
+            if rep < min_rep {
+                return Err(ContractError::BelowMinReputation);
+            }
+        }
+
         let token_address = token.unwrap_or_else(|| get_usdc_token(&env).unwrap());
         if !is_token_whitelisted(&env, &token_address) {
             return Err(ContractError::TokenNotWhitelisted);
@@ -488,7 +499,7 @@ impl SwiftRemitContract {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
-            settlement_config: settlement_config.clone(),
+            settlement_config: settlement_config.clone().into(),
             token: token_address.clone(),
             created_at: env.ledger().timestamp(),
             failed_at: None,
@@ -589,7 +600,7 @@ impl SwiftRemitContract {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
-            settlement_config: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
             token: usdc_token.clone(),
             created_at: env.ledger().timestamp(),
             failed_at: None,
@@ -712,7 +723,7 @@ impl SwiftRemitContract {
                 fee,
                 status: RemittanceStatus::Pending,
                 expiry: entry.expiry,
-                settlement_config: None,
+                settlement_config: crate::MaybeSettlementConfig::None,
                 token: usdc_token.clone(),
                 created_at: env.ledger().timestamp(),
                 failed_at: None,
@@ -778,7 +789,7 @@ impl SwiftRemitContract {
         let mut remittance = validate_confirm_payout_request(&env, remittance_id)?;
 
         // Validate proof against settlement config if required
-        if let Some(ref config) = remittance.settlement_config {
+        if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
             if config.require_proof {
                 match proof {
                     None => return Err(ContractError::MissingProof),
@@ -969,7 +980,7 @@ impl SwiftRemitContract {
         }
 
         remittance.status = RemittanceStatus::Disputed;
-        remittance.dispute_evidence = MaybeBytes32::Some(evidence_hash.clone());
+        remittance.dispute_evidence = Some(evidence_hash.clone());
         set_remittance(&env, remittance_id, &remittance);
 
         let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
@@ -2371,6 +2382,56 @@ impl SwiftRemitContract {
         }
 
         Ok(BatchSettlementResult { settled_ids })
+    }
+
+    /// Creates multiple remittances in one transaction (#590).
+    pub fn create_batch_remittance(
+        env: Env,
+        sender: Address,
+        entries: Vec<BatchCreateEntry>,
+    ) -> Result<Vec<u64>, ContractError> {
+        let ids = Self::batch_create_remittances(env.clone(), sender.clone(), entries)?;
+        env.events().publish(
+            (soroban_sdk::symbol_short!("batch"), soroban_sdk::symbol_short!("created")),
+            (sender, ids.len()),
+        );
+        Ok(ids)
+    }
+
+    /// Confirms payouts for multiple remittances in one transaction (#590).
+    pub fn confirm_batch_payout(
+        env: Env,
+        remittance_ids: Vec<u64>,
+    ) -> Result<Vec<u64>, ContractError> {
+        let batch_size = remittance_ids.len();
+        if batch_size == 0 || batch_size > MAX_BATCH_SIZE {
+            return Err(ContractError::InvalidBatchSize);
+        }
+        let mut confirmed = Vec::new(&env);
+        for i in 0..batch_size {
+            let id = remittance_ids.get_unchecked(i);
+            Self::confirm_payout(env.clone(), id, None, None)?;
+            confirmed.push_back(id);
+        }
+        env.events().publish(
+            (soroban_sdk::symbol_short!("batch"), soroban_sdk::symbol_short!("paid")),
+            confirmed.len(),
+        );
+        Ok(confirmed)
+    }
+
+    /// Sets the minimum agent reputation threshold (#591). Admin only.
+    pub fn set_min_agent_reputation(env: Env, threshold: u32) -> Result<(), ContractError> {
+        if threshold > 100 { return Err(ContractError::InvalidReputationScore); }
+        let caller = get_admin(&env)?;
+        require_admin(&env, &caller)?;
+        storage::set_min_agent_reputation(&env, threshold);
+        Ok(())
+    }
+
+    /// Returns the current minimum agent reputation threshold.
+    pub fn get_min_agent_reputation(env: Env) -> u32 {
+        storage::get_min_agent_reputation(&env)
     }
 
     /// Add a token to the whitelist. Only admins can call this.

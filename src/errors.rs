@@ -328,4 +328,7 @@ pub enum ContractError {
 
     /// Proposal not found.
     ProposalNotFound = 78,
+
+    /// Agent reputation is below the minimum threshold.
+    BelowMinReputation = 79,
 }
