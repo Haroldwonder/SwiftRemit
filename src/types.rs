@@ -20,7 +20,7 @@ pub enum Role {
 ///
 /// # State Machine
 ///
-/// ```
+/// ```text
 /// Pending → Processing → Completed
 ///         ↘            ↘
 ///           Cancelled    Cancelled
@@ -121,6 +121,17 @@ pub struct SettlementConfig {
     pub require_proof: bool,
     /// Oracle/signer address for proof validation (required if require_proof is true)
     pub oracle_address: Option<Address>,
+}
+
+/// Contracttype-compatible wrapper for Option<SettlementConfig>.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybeSettlementConfig {
+    None,
+    Some(SettlementConfig),
+}
+impl From<Option<SettlementConfig>> for MaybeSettlementConfig {
+    fn from(o: Option<SettlementConfig>) -> Self { match o { None => Self::None, Some(v) => Self::Some(v) } }
 }
 
 /// Escrow status for locked funds
@@ -242,6 +253,14 @@ pub struct BatchSettlementEntry {
     pub remittance_id: u64,
 }
 
+/// Volume history bucket for rolling sender discount calculations.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SenderVolumeEntry {
+    pub bucket_start: u64,
+    pub amount: i128,
+}
+
 /// Entry for batch remittance creation.
 /// Each entry represents a single remittance to be created in a batch.
 #[contracttype]
@@ -310,30 +329,15 @@ pub enum PauseReason {
     ExternalThreat,
 }
 
-/// Optional PauseReason wrapper for contract storage.
+/// Contracttype-compatible wrapper for Option<PauseReason>.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MaybePauseReason {
     None,
     Some(PauseReason),
 }
-
 impl From<Option<PauseReason>> for MaybePauseReason {
-    fn from(opt: Option<PauseReason>) -> Self {
-        match opt {
-            None => MaybePauseReason::None,
-            Some(v) => MaybePauseReason::Some(v),
-        }
-    }
-}
-
-impl From<MaybePauseReason> for Option<PauseReason> {
-    fn from(m: MaybePauseReason) -> Self {
-        match m {
-            MaybePauseReason::None => None,
-            MaybePauseReason::Some(v) => Some(v),
-        }
-    }
+    fn from(o: Option<PauseReason>) -> Self { match o { None => Self::None, Some(v) => Self::Some(v) } }
 }
 
 /// Persistent record of a pause event.

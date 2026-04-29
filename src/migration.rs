@@ -414,7 +414,7 @@ pub fn rollback_migration(env: &Env) -> Result<(), ContractError> {
     clear_rollback_snapshot(env);
 
     env.events().publish(
-        (soroban_sdk::symbol_short!("roll_back"),),
+        (soroban_sdk::symbol_short!("rolled_ba"),),
         snapshot.from_version,
     );
 

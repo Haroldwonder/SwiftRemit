@@ -227,7 +227,7 @@ fn emit_action_recorded(env: &Env, address: &Address, action_type: &ActionType, 
 mod tests {
     use super::*;
     use crate::SwiftRemitContract;
-    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _, LedgerInfo}, Env};
 
     #[test]
     fn test_rate_limit_allows_within_limit() {
@@ -322,7 +322,7 @@ mod tests {
             record_action(&env, &address, ActionType::Transfer);
 
             // One second before cooldown expires: still blocked
-            env.ledger().with_mut(|l| l.timestamp = TRANSFER_COOLDOWN_SECONDS - 1);
+            { let mut info = env.ledger().get(); info.timestamp = TRANSFER_COOLDOWN_SECONDS - 1; env.ledger().set(info); }
             assert_eq!(
                 check_cooldown(&env, &address, ActionType::Transfer).unwrap_err(),
                 ContractError::CooldownActive,
@@ -330,7 +330,7 @@ mod tests {
             );
 
             // Exactly at cooldown boundary: still blocked (time_since_last == cooldown_period - 1 < cooldown_period)
-            env.ledger().with_mut(|l| l.timestamp = TRANSFER_COOLDOWN_SECONDS);
+            { let mut info = env.ledger().get(); info.timestamp = TRANSFER_COOLDOWN_SECONDS; env.ledger().set(info); }
             // time_since_last = TRANSFER_COOLDOWN_SECONDS - 0 = TRANSFER_COOLDOWN_SECONDS, which is NOT < cooldown_period
             // so this should be allowed
             assert!(
@@ -339,7 +339,7 @@ mod tests {
             );
 
             // After cooldown: allowed
-            env.ledger().with_mut(|l| l.timestamp = TRANSFER_COOLDOWN_SECONDS + 1);
+            { let mut info = env.ledger().get(); info.timestamp = TRANSFER_COOLDOWN_SECONDS + 1; env.ledger().set(info); }
             assert!(
                 check_cooldown(&env, &address, ActionType::Transfer).is_ok(),
                 "cooldown should be expired after the boundary"
