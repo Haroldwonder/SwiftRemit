@@ -164,6 +164,50 @@ enum DataKey {
 
     /// Pending admin address proposed by current admin (2-step transfer, #365)
     PendingAdmin,
+
+    // === Token Fee ===
+    TokenFeeBps(Address),
+
+    // === Migration ===
+    MigrationInProgress,
+
+    // === Agent Stats ===
+    AgentStats(Address),
+
+    // === Idempotency ===
+    IdempotencyRecord(String),
+    IdempotencyTTL,
+    MaxExpiredBatchSize,
+    RemittanceIdempotencyKey(u64),
+
+    // === Payout Commitment ===
+    PayoutCommitment(u64),
+
+    // === Analytics ===
+    TotalRemittanceCount,
+    TotalCompletedVolume,
+
+    // === Dispute ===
+    DisputeWindow,
+    DisbursedAmount(u64),
+
+    // === Agent Caps ===
+    AgentDailyCap(Address),
+    AgentWithdrawals(Address),
+
+    // === Recipient Hash ===
+    RecipientHash(u64),
+
+    // === Governance ===
+    GovernanceProposalCounter,
+    GovernanceProposal(u64),
+    GovernanceVote(u64, Address),
+    GovernanceQuorum,
+    GovernanceTimelockSeconds,
+    GovernanceProposalTtl,
+    AdminList,
+    ActiveFeeProposal,
+    GovernanceInitialized,
 }
 
 /// Checks if the contract has an admin configured.
@@ -352,9 +396,9 @@ pub fn set_agent_registered(env: &Env, agent: &Address, registered: bool) {
 
     // Keep the AgentList index in sync so agents can be iterated during migration.
     if registered {
-        add_agent_to_list(env, agent);
+        add_admin_to_list(env, agent);
     } else {
-        remove_agent_from_list(env, agent);
+        remove_admin_from_list(env, agent);
     }
 }
 
@@ -741,6 +785,14 @@ pub fn set_user_transfers(env: &Env, user: &Address, transfers: &Vec<TransferRec
     env.storage()
         .persistent()
         .set(&DataKey::UserTransfers(user.clone()), transfers);
+}
+
+/// A bucketed volume entry for rolling sender discount calculations.
+#[soroban_sdk::contracttype]
+#[derive(Clone)]
+pub struct SenderVolumeEntry {
+    pub bucket_start: u64,
+    pub amount: i128,
 }
 
 pub fn get_sender_volume_history(env: &Env, sender: &Address) -> Vec<SenderVolumeEntry> {

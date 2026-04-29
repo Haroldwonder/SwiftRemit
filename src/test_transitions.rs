@@ -1,4 +1,7 @@
 #![cfg(test)]
+extern crate std;
+#[allow(unused_imports)]
+use std::prelude::rust_2021::*;
 
 use crate::{SwiftRemitContract, SwiftRemitContractClient, RemittanceStatus};
 use soroban_sdk::{testutils::Address as _, token, Address, Env};
@@ -338,7 +341,7 @@ proptest! {
 #[test]
 fn test_state_machine_graph_coverage() {
     // Verify all expected transitions exist
-    let valid_transitions = vec![
+    let valid_transitions = std::vec![
         (RemittanceStatus::Pending, RemittanceStatus::Processing),
         (RemittanceStatus::Pending, RemittanceStatus::Cancelled),
         (RemittanceStatus::Pending, RemittanceStatus::Failed),
@@ -360,8 +363,8 @@ fn test_state_machine_graph_coverage() {
 
 #[test]
 fn test_terminal_states_comprehensive() {
-    let terminal_states = vec![RemittanceStatus::Completed, RemittanceStatus::Cancelled];
-    let all_states = vec![
+    let terminal_states = std::vec![RemittanceStatus::Completed, RemittanceStatus::Cancelled];
+    let all_states = std::vec![
         RemittanceStatus::Pending,
         RemittanceStatus::Processing,
         RemittanceStatus::Completed,

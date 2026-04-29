@@ -226,7 +226,7 @@ fn test_public_is_token_whitelisted_query() {
     assert!(!contract.is_token_whitelisted(&other_token.address));
 
     // Whitelisting updates the public query value.
-    contract.whitelist_token(&admin, &other_token.address);
+    contract.add_whitelisted_token(&other_token.address);
     assert!(contract.is_token_whitelisted(&other_token.address));
 }
 

@@ -10,6 +10,9 @@
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    #[allow(unused_imports)]
+    use std::prelude::rust_2021::*;
     use crate::fee_management::{
         safe_add_accumulated_fee, trigger_flush, would_trigger_flush, MAX_FEES, get_remaining_fee_capacity,
     };
@@ -18,6 +21,22 @@ mod tests {
     };
     use soroban_sdk::testutils::*;
     use soroban_sdk::{symbol_short, token, Address, Env, Symbol};
+    #[allow(unused_imports)]
+    use soroban_sdk::testutils::Address as _;
+
+    /// Check if any emitted event has the given two symbol topics.
+    fn has_event(env: &Env, t0: &str, t1: &str) -> bool {
+        use soroban_sdk::xdr::{ContractEventBody, ScVal, ScSymbol, StringM};
+        let sym0 = ScVal::Symbol(ScSymbol(StringM::try_from(t0).unwrap()));
+        let sym1 = ScVal::Symbol(ScSymbol(StringM::try_from(t1).unwrap()));
+        env.events().all().events().iter().any(|e| {
+            if let ContractEventBody::V0(body) = &e.body {
+                body.topics.len() >= 2 && body.topics[0] == sym0 && body.topics[1] == sym1
+            } else {
+                false
+            }
+        })
+    }
 
     /// Helper function to set up test environment with initialized contract state
     fn setup_test_env() -> (Env, Address, Address) {
@@ -25,8 +44,8 @@ mod tests {
         env.mock_all_auths();
 
         // Create mock token and treasury addresses
-        let usdc_token = Address::random(&env);
-        let treasury = Address::random(&env);
+        let usdc_token = Address::generate(&env);
+        let treasury = Address::generate(&env);
 
         // Register the mock token contract
         env.register_stellar_asset_contract(usdc_token.clone());
@@ -155,13 +174,7 @@ mod tests {
         assert_eq!(get_accumulated_fees(&env), Ok(large_fee));
 
         // Verify a fee flush event was emitted.
-        let flush_event_found = env.events().all().iter().any(|event| {
-            let topic0 = event.1.get(0)
-                .and_then(|t| Symbol::try_from_val(&env, &t).ok());
-            let topic1 = event.1.get(1)
-                .and_then(|t| Symbol::try_from_val(&env, &t).ok());
-            topic0 == Some(symbol_short!("fee")) && topic1 == Some(symbol_short!("flushed"))
-        });
+        let flush_event_found = has_event(&env, "fee", "flushed");
         assert!(flush_event_found, "expected a fees.flushed event");
     }
 
@@ -239,13 +252,7 @@ mod tests {
         // After manual flush, counter must reset to zero.
         assert_eq!(get_accumulated_fees(&env), Ok(0));
 
-        let flush_event_found = env.events().all().iter().any(|event| {
-            let topic0 = event.1.get(0)
-                .and_then(|t| Symbol::try_from_val(&env, &t).ok());
-            let topic1 = event.1.get(1)
-                .and_then(|t| Symbol::try_from_val(&env, &t).ok());
-            topic0 == Some(symbol_short!("fee")) && topic1 == Some(symbol_short!("flushed"))
-        });
+        let flush_event_found = has_event(&env, "fee", "flushed");
         assert!(flush_event_found, "expected a fees.flushed event");
     }
 

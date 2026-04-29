@@ -270,6 +270,7 @@ fn build_single_batch(env: &Env, snapshot: &MigrationSnapshot) -> MigrationBatch
                 RemittanceStatus::Pending => 0,
                 RemittanceStatus::Completed => 1,
                 RemittanceStatus::Cancelled => 2,
+                _ => 3,
             };
             data.append(&Bytes::from_array(env, &[status_byte]));
             if let Some(expiry) = r.expiry {

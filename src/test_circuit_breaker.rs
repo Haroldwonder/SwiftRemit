@@ -17,7 +17,7 @@ fn setup() -> (Env, SwiftRemitContractClient<'static>, Address) {
     );
     let admin = Address::generate(&env);
     let token = Address::generate(&env);
-    client.initialize(&admin, &token, &250u32, &0u32, &0u32, &admin);
+    client.initialize(&admin, &token, &250u32, &0u64, &0u32, &admin);
     // quorum = 2 so a single vote never auto-unpauses
     client.set_unpause_quorum(&admin, &2u32);
     (env, client, admin)

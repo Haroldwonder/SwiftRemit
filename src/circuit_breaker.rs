@@ -213,15 +213,15 @@ pub fn build_status(env: &Env) -> CircuitBreakerStatus {
     let (pause_reason, pause_timestamp) = if paused {
         if let Some(seq) = cb_storage::get_active_pause_seq(env) {
             if let Some(record) = cb_storage::get_pause_record_by_seq(env, seq) {
-                (Some(record.reason), Some(record.timestamp))
+                (crate::MaybePauseReason::Some(record.reason), Some(record.timestamp))
             } else {
-                (None, None)
+                (crate::MaybePauseReason::None, None)
             }
         } else {
-            (None, None)
+            (crate::MaybePauseReason::None, None)
         }
     } else {
-        (None, None)
+        (crate::MaybePauseReason::None, None)
     };
 
     CircuitBreakerStatus {

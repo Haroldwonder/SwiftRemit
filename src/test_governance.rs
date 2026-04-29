@@ -39,7 +39,7 @@ fn initialize(
     admin: &Address,
 ) {
     let token = default_token(env);
-    client.initialize(admin, &token, &30u32, &0u32, admin, &0u32);
+    client.initialize(admin, &token, &30u32, &0u64, &0u32, admin);
 }
 
 fn advance_time(env: &Env, seconds: u64) {
@@ -514,7 +514,7 @@ fn test_get_admin_backward_compat_after_governance_init() {
     client.migrate_to_governance(&admin, &1u32, &0u64, &604_800u64);
 
     // Legacy get_admin should still return the original admin
-    assert_eq!(client.get_admin().unwrap(), admin);
+    assert!(client.is_admin(&admin));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

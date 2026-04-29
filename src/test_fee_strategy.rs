@@ -1,8 +1,9 @@
 #![cfg(test)]
+extern crate std;
 
 use crate::{SwiftRemitContract, SwiftRemitContractClient, FeeStrategy};
 use soroban_sdk::{
-    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, LedgerInfo},
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, LedgerInfo, Ledger as _},
     token, Address, Env, IntoVal, Symbol,
 };
 
@@ -120,18 +121,17 @@ fn test_batch_remittances_apply_cumulative_sender_volume_discount() {
     client.initialize(&admin, &token.address, &500, &0, &0, &treasury);
     client.register_agent(&agent, &None);
 
-    let entries = vec![
-        crate::BatchCreateEntry {
-            agent: agent.clone(),
-            amount: 7_000,
-            expiry: None,
-        },
-        crate::BatchCreateEntry {
-            agent: agent.clone(),
-            amount: 7_000,
-            expiry: None,
-        },
-    ];
+    let mut entries = soroban_sdk::Vec::new(&env);
+    entries.push_back(crate::BatchCreateEntry {
+        agent: agent.clone(),
+        amount: 7_000,
+        expiry: None,
+    });
+    entries.push_back(crate::BatchCreateEntry {
+        agent: agent.clone(),
+        amount: 7_000,
+        expiry: None,
+    });
 
     let remittance_ids = client.batch_create_remittances(&sender, &entries);
     assert_eq!(remittance_ids.len(), 2);
@@ -331,7 +331,7 @@ mod property_tests {
                 FeeStrategy::Dynamic(dynamic_bps),
             ] {
                 crate::storage::set_fee_strategy(&env, strategy);
-                let b = calculate_fees_with_breakdown(&env, amount, None).unwrap();
+                let b = calculate_fees_with_breakdown(&env, amount, None, None).unwrap();
                 prop_assert!(b.platform_fee >= 0, "platform_fee < 0: strategy={:?} amount={}", strategy, amount);
                 prop_assert!(b.net_amount >= 0, "net_amount < 0: strategy={:?} amount={}", strategy, amount);
             }
@@ -349,7 +349,7 @@ mod property_tests {
             crate::storage::set_fee_strategy(&env, &FeeStrategy::Percentage(fee_bps));
             crate::storage::set_protocol_fee_bps(&env, protocol_fee_bps).unwrap();
 
-            let b = calculate_fees_with_breakdown(&env, amount, None).unwrap();
+            let b = calculate_fees_with_breakdown(&env, amount, None, None).unwrap();
 
             prop_assert_eq!(
                 b.net_amount + b.platform_fee + b.protocol_fee,
@@ -374,9 +374,9 @@ mod property_tests {
             let tier2 = 5_000_0000000i128;      // 1000–10000 range → 80% of base
             let tier3 = 50_000_0000000i128;     // > 10_000_0000000 → 60% of base
 
-            let b1 = calculate_fees_with_breakdown(&env, tier1, None).unwrap();
-            let b2 = calculate_fees_with_breakdown(&env, tier2, None).unwrap();
-            let b3 = calculate_fees_with_breakdown(&env, tier3, None).unwrap();
+            let b1 = calculate_fees_with_breakdown(&env, tier1, None, None).unwrap();
+            let b2 = calculate_fees_with_breakdown(&env, tier2, None, None).unwrap();
+            let b3 = calculate_fees_with_breakdown(&env, tier3, None, None).unwrap();
 
             // Effective rate in bps = platform_fee * 10000 / amount
             let rate1 = b1.platform_fee * 10000 / tier1;

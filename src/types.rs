@@ -144,6 +144,49 @@ pub struct Escrow {
     pub status: EscrowStatus,
 }
 
+/// Contracttype-compatible Option wrapper for SettlementConfig.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybeSettlementConfig {
+    None,
+    Some(SettlementConfig),
+}
+
+impl From<Option<SettlementConfig>> for MaybeSettlementConfig {
+    fn from(opt: Option<SettlementConfig>) -> Self {
+        match opt {
+            None => MaybeSettlementConfig::None,
+            Some(v) => MaybeSettlementConfig::Some(v),
+        }
+    }
+}
+
+impl From<MaybeSettlementConfig> for Option<SettlementConfig> {
+    fn from(m: MaybeSettlementConfig) -> Self {
+        match m {
+            MaybeSettlementConfig::None => None,
+            MaybeSettlementConfig::Some(v) => Some(v),
+        }
+    }
+}
+
+/// Contracttype-compatible Option wrapper for BytesN<32>.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybeBytes32 {
+    None,
+    Some(soroban_sdk::BytesN<32>),
+}
+
+impl From<Option<soroban_sdk::BytesN<32>>> for MaybeBytes32 {
+    fn from(opt: Option<soroban_sdk::BytesN<32>>) -> Self {
+        match opt {
+            None => MaybeBytes32::None,
+            Some(v) => MaybeBytes32::Some(v),
+        }
+    }
+}
+
 /// A remittance transaction record.
 ///
 /// Contains all information about a cross-border remittance including
@@ -166,7 +209,7 @@ pub struct Remittance {
     /// Optional expiry timestamp (seconds since epoch) for settlement
     pub expiry: Option<u64>,
     /// Optional settlement configuration for proof validation
-    pub settlement_config: Option<SettlementConfig>,
+    pub settlement_config: MaybeSettlementConfig,
     /// The specific token address used for this remittance
     pub token: Address,
     /// Ledger timestamp when the remittance was created
@@ -174,7 +217,7 @@ pub struct Remittance {
     /// Ledger timestamp when the agent marked it as failed, if applicable
     pub failed_at: Option<u64>,
     /// Hash of evidence provided by the sender during a dispute
-    pub dispute_evidence: Option<soroban_sdk::BytesN<32>>,
+    pub dispute_evidence: MaybeBytes32,
 }
 
 #[contracttype]
@@ -267,6 +310,32 @@ pub enum PauseReason {
     ExternalThreat,
 }
 
+/// Optional PauseReason wrapper for contract storage.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybePauseReason {
+    None,
+    Some(PauseReason),
+}
+
+impl From<Option<PauseReason>> for MaybePauseReason {
+    fn from(opt: Option<PauseReason>) -> Self {
+        match opt {
+            None => MaybePauseReason::None,
+            Some(v) => MaybePauseReason::Some(v),
+        }
+    }
+}
+
+impl From<MaybePauseReason> for Option<PauseReason> {
+    fn from(m: MaybePauseReason) -> Self {
+        match m {
+            MaybePauseReason::None => None,
+            MaybePauseReason::Some(v) => Some(v),
+        }
+    }
+}
+
 /// Persistent record of a pause event.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -300,7 +369,7 @@ pub struct CircuitBreakerStatus {
     /// Whether the contract is currently paused.
     pub is_paused: bool,
     /// Active pause reason, or `None` when not paused.
-    pub pause_reason: Option<PauseReason>,
+    pub pause_reason: MaybePauseReason,
     /// Ledger timestamp of the active pause, or `None` when not paused.
     pub pause_timestamp: Option<u64>,
     /// Configured timelock duration in seconds (0 = no timelock).

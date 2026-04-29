@@ -227,7 +227,7 @@ fn emit_action_recorded(env: &Env, address: &Address, action_type: &ActionType, 
 mod tests {
     use super::*;
     use crate::SwiftRemitContract;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env};
 
     #[test]
     fn test_rate_limit_allows_within_limit() {
@@ -385,7 +385,7 @@ mod tests {
             let tag = action_tag(&ActionType::Transfer);
             let entry = get_sliding_window_entry(&env, &address, tag);
             assert!(
-                entry.timestamps.len() <= MAX_VEC_SIZE,
+                entry.timestamps.len() <= MAX_VEC_SIZE as u32,
                 "timestamps Vec exceeded MAX_VEC_SIZE: {} > {}",
                 entry.timestamps.len(),
                 MAX_VEC_SIZE,

@@ -233,6 +233,11 @@ impl TransactionController {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
+            created_at: env.ledger().timestamp(),
+            failed_at: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: usdc_token.clone(),
+            dispute_evidence: crate::MaybeBytes32::None,
         };
 
         crate::storage::set_remittance(env, remittance_id, &remittance);
