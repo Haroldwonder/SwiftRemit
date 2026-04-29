@@ -10,6 +10,8 @@ export interface FxRateResponse {
   cached: boolean;
   /** True when the rate is served from a stale cache entry due to a provider error (e.g. 429) */
   stale?: boolean;
+  /** Age in seconds of a stale rate served during provider fallback */
+  stale_age_seconds?: number;
 }
 
 export interface FxRateCacheOptions {
@@ -18,6 +20,7 @@ export interface FxRateCacheOptions {
   refreshBeforeExpirySeconds?: number;
   externalApiUrl?: string;
   externalApiKey?: string;
+  staleAgeWarningThresholdSeconds?: number;
 }
 
 export class FxRateCache {
@@ -28,6 +31,7 @@ export class FxRateCache {
   private refreshBeforeExpirySeconds: number;
   private externalApiUrl: string;
   private externalApiKey: string;
+  private staleAgeWarningThresholdSeconds: number;
   private refreshTimers: Map<string, NodeJS.Timeout>;
 
   constructor(options: FxRateCacheOptions = {}) {
@@ -43,6 +47,8 @@ export class FxRateCache {
       checkperiod: options.checkPeriodSeconds || 120,
       useClones: false,
     });
+
+    this.staleAgeWarningThresholdSeconds = options.staleAgeWarningThresholdSeconds ?? 60;
 
     // Listen for cache expiry events
     this.cache.on('expired', (key: string) => {
@@ -84,10 +90,16 @@ export class FxRateCache {
       if (axios.isAxiosError(error) && error.response?.status === 429) {
         const stale = this.staleCache.get(cacheKey);
         if (stale) {
-          console.warn(`FX provider rate-limited (429) for ${fromUpper}/${toUpper}; serving stale rate`);
+          const staleAgeSeconds = this.getStaleAgeSeconds(stale);
+          const message = `FX provider rate-limited (429) for ${fromUpper}/${toUpper}; serving stale rate (${staleAgeSeconds}s old)`;
+          if (staleAgeSeconds >= this.staleAgeWarningThresholdSeconds) {
+            console.warn(message);
+          } else {
+            console.info(message);
+          }
           // Schedule a jittered background retry so all pairs don't hammer the API simultaneously
           this.scheduleJitteredRetry(cacheKey, fromUpper, toUpper);
-          return { ...stale, cached: true, stale: true };
+          return { ...stale, cached: true, stale: true, stale_age_seconds: staleAgeSeconds };
         }
       }
       throw error;
@@ -140,6 +152,10 @@ export class FxRateCache {
   /**
    * Schedule background refresh before cache expires
    */
+  private getStaleAgeSeconds(stale: FxRateResponse): number {
+    return Math.max(0, Math.floor((Date.now() - new Date(stale.timestamp).getTime()) / 1000));
+  }
+
   private scheduleBackgroundRefresh(cacheKey: string, from: string, to: string): void {
     // Clear any existing timer
     this.clearRefreshTimer(cacheKey);
