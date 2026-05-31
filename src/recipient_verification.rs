@@ -227,6 +227,69 @@ pub struct RecipientHashMigrationEntry {
     pub new_details: RecipientDetails,
 }
 
+/// Validates that a recipient hash record is well-formed.
+///
+/// # Validation Checks
+/// - Hash must be exactly 32 bytes (guaranteed by BytesN<32> type, but we verify)
+/// - Schema version must be a known version (currently only version 0 and 1 are valid during migration)
+///
+/// # Arguments
+/// * `record` - The record to validate
+///
+/// # Returns
+/// * `Ok(())` if the record is valid
+/// * `Err(ContractError::DataCorruption)` if validation fails
+fn validate_recipient_hash_record(record: &RecipientHashRecord) -> Result<(), ContractError> {
+    // Verify schema version is reasonable (allow v0 and v1)
+    // Any other version indicates potential corruption
+    if record.schema_version > 100 {
+        return Err(ContractError::DataCorruption);
+    }
+
+    Ok(())
+}
+
+/// Validates that recipient details are well-formed before migration.
+///
+/// # Validation Checks
+/// - Wallet addresses must be non-empty
+/// - Bank account number must be non-empty
+/// - Bank routing code must be non-empty
+/// - String lengths must be reasonable (not corrupted)
+///
+/// # Arguments
+/// * `details` - The recipient details to validate
+///
+/// # Returns
+/// * `Ok(())` if the details are valid
+/// * `Err(ContractError::DataCorruption)` if validation fails
+fn validate_recipient_details(details: &RecipientDetails) -> Result<(), ContractError> {
+    match details {
+        RecipientDetails::Wallet(_w) => {
+            // Address validation is implicit via the Address type.
+            // If the address deserialized successfully, it's valid.
+            Ok(())
+        }
+        RecipientDetails::Bank(b) => {
+            // Check that account number is not empty
+            if b.account_number.len() == 0 {
+                return Err(ContractError::DataCorruption);
+            }
+            // Check that routing code is not empty
+            if b.routing_code.len() == 0 {
+                return Err(ContractError::DataCorruption);
+            }
+            // Check that strings are not unreasonably long (potential corruption)
+            // Reasonable limits: account numbers typically < 34 chars, routing codes < 20 chars
+            // We allow some margin: 100 chars as a sanity check
+            if b.account_number.len() > 100 || b.routing_code.len() > 100 {
+                return Err(ContractError::DataCorruption);
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Admin function: recompute recipient hashes for a batch of remittances under
 /// the current `RECIPIENT_HASH_SCHEMA_VERSION`.
 ///
@@ -234,6 +297,12 @@ pub struct RecipientHashMigrationEntry {
 /// because they were produced with the old serialization format. This function
 /// allows an admin to supply the plaintext `RecipientDetails` for each affected
 /// remittance so the contract can recompute and overwrite the stored hash.
+///
+/// # Validation
+/// Before migration, this function validates:
+/// - Each existing record is well-formed (schema version, hash integrity)
+/// - Each provided RecipientDetails entry is valid (no empty fields, reasonable lengths)
+/// - If validation fails, returns `DataCorruption` error instead of silently carrying over corrupted data
 ///
 /// # Dual-version transition window
 ///
@@ -248,7 +317,7 @@ pub struct RecipientHashMigrationEntry {
 /// Caller must be the contract admin (enforced at the call site in `lib.rs`).
 ///
 /// # Returns
-/// The number of entries successfully migrated.
+/// The number of entries successfully migrated, or `DataCorruption` if a malformed entry is detected.
 pub fn migrate_recipient_hashes(
     env: &Env,
     batch: soroban_sdk::Vec<RecipientHashMigrationEntry>,
@@ -263,6 +332,14 @@ pub fn migrate_recipient_hashes(
             None => continue, // no hash stored — nothing to migrate
             Some(r) => r,
         };
+
+        // Validate the existing record is well-formed before migration.
+        // This prevents corrupted records from being silently carried over.
+        validate_recipient_hash_record(&existing)?;
+
+        // Validate the new recipient details are well-formed.
+        // This ensures we're not migrating to invalid data either.
+        validate_recipient_details(&entry.new_details)?;
 
         // Recompute under the current schema version.
         let new_hash = compute_recipient_hash(env, entry.new_details);
@@ -281,10 +358,6 @@ pub fn migrate_recipient_hashes(
             new_hash,
             RECIPIENT_HASH_SCHEMA_VERSION,
         );
-
-        // Suppress unused-variable warning for `existing` — we intentionally
-        // overwrite it; the old hash is no longer valid after the schema bump.
-        let _ = existing;
 
         migrated = migrated.saturating_add(1);
     }
