@@ -172,10 +172,12 @@ pub fn validate_cancel_remittance_request(
 /// Returns the fees amount to avoid re-reading in the caller.
 pub fn validate_withdraw_fees_request(
     env: &Env,
-    _to: &Address,
+    to: &Address,
 ) -> Result<i128, ContractError> {
-    // Address type is guaranteed valid by the Soroban SDK runtime; no further
-    // address validation is required or possible at the contract level.
+    // Prevent fees from being sent to the contract itself, which would lock them (#609)
+    if *to == env.current_contract_address() {
+        return Err(ContractError::InvalidAddress);
+    }
     let fees = crate::get_accumulated_fees(env)?;
     validate_fees_available(fees)?;
     Ok(fees)
