@@ -666,28 +666,21 @@ impl SwiftRemitContract {
 
         sender.require_auth();
 
-        // Validate all entries before any state changes
+        // Validate all entries and accumulate total before any state changes
         let mut total_amount: i128 = 0;
         for i in 0..batch_size {
             let entry = entries.get_unchecked(i);
             validate_create_remittance_request(&env, &sender, &entry.agent, entry.amount)?;
-
-            // Check daily limit for each entry
-            let default_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
-            let default_country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
-            enforce_daily_send_limit(
-                &env,
-                &sender,
-                &default_currency,
-                &default_country,
-                entry.amount,
-            )?;
-
-            // Accumulate total amount
             total_amount = total_amount
                 .checked_add(entry.amount)
                 .ok_or(ContractError::Overflow)?;
         }
+
+        // Pre-validate the entire batch total against the daily limit atomically (#611)
+        // This ensures no partial batch can sneak past the limit one entry at a time
+        let default_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
+        let default_country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
+        enforce_daily_send_limit(&env, &sender, &default_currency, &default_country, total_amount)?;
 
         // Transfer total amount in a single token transfer
         let usdc_token = get_usdc_token(&env)?;
@@ -780,6 +773,7 @@ impl SwiftRemitContract {
     /// Requires Settler role.
     pub fn confirm_payout(
         env: Env,
+        agent: Address,
         remittance_id: u64,
         proof: Option<soroban_sdk::BytesN<32>>,
         recipient_details_hash: Option<BytesN<32>>,
@@ -789,6 +783,11 @@ impl SwiftRemitContract {
         }
         // Centralized validation before business logic (returns remittance to avoid re-read)
         let mut remittance = validate_confirm_payout_request(&env, remittance_id)?;
+
+        // Verify the caller is the specific agent assigned to this remittance (#608)
+        if agent != remittance.agent {
+            return Err(ContractError::Unauthorized);
+        }
 
         // Validate proof against settlement config if required
         if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
@@ -944,6 +943,11 @@ impl SwiftRemitContract {
         remittance.status = RemittanceStatus::Failed;
         remittance.failed_at = Some(env.ledger().timestamp());
         set_remittance(&env, remittance_id, &remittance);
+
+        // Clear idempotency key on Failed so the same key can be reused to retry (#610)
+        if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
+            storage::remove_idempotency_record(&env, &idem_key);
+        }
 
         let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
         stats.failed_settlements += 1;
@@ -2403,6 +2407,7 @@ impl SwiftRemitContract {
     /// Confirms payouts for multiple remittances in one transaction (#590).
     pub fn confirm_batch_payout(
         env: Env,
+        agent: Address,
         remittance_ids: Vec<u64>,
     ) -> Result<Vec<u64>, ContractError> {
         let batch_size = remittance_ids.len();
@@ -2412,7 +2417,7 @@ impl SwiftRemitContract {
         let mut confirmed = Vec::new(&env);
         for i in 0..batch_size {
             let id = remittance_ids.get_unchecked(i);
-            Self::confirm_payout(env.clone(), id, None, None)?;
+            Self::confirm_payout(env.clone(), agent.clone(), id, None, None)?;
             confirmed.push_back(id);
         }
         env.events().publish(
