@@ -365,8 +365,8 @@ proptest! {
         }
 
         // Compute net settlements for both orders
-        let net_forward = crate::netting::compute_net_settlements(&env, &remittances_forward).unwrap();
-        let net_reverse = crate::netting::compute_net_settlements(&env, &remittances_reverse).unwrap();
+        let net_forward = crate::netting::compute_net_settlements(&env, &remittances_forward).unwrap().net_transfers;
+        let net_reverse = crate::netting::compute_net_settlements(&env, &remittances_reverse).unwrap().net_transfers;
 
         // Results should be identical
         prop_assert_eq!(net_forward.len(), net_reverse.len(),
@@ -674,7 +674,7 @@ proptest! {
         }
 
         // Compute net settlements
-        let net_transfers = crate::netting::compute_net_settlements(&env, &remittances).unwrap();
+        let net_transfers = crate::netting::compute_net_settlements(&env, &remittances).unwrap().net_transfers;
 
         // Sum fees from net transfers
         let mut net_total_fees = 0i128;

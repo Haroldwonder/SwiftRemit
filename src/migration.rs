@@ -37,7 +37,7 @@
 
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Vec, xdr::ToXdr};
 
-use crate::{config::MAX_MIGRATION_BATCH_SIZE, ContractError, Remittance, RemittanceStatus};
+use crate::{config::MAX_MIGRATION_BATCH_SIZE, AgentStats, ContractError, Remittance, RemittanceStatus};
 
 // ─── Schema version ──────────────────────────────────────────────────────────
 
@@ -126,6 +126,15 @@ pub struct MigrationVerification {
     pub timestamp: u64,
 }
 
+/// Per-agent performance and cap data captured in a rollback snapshot.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AgentStatsSnapshot {
+    pub address: Address,
+    pub stats: AgentStats,
+    pub daily_cap: i128,
+}
+
 /// Pre-migration rollback snapshot stored in instance storage.
 ///
 /// Captured by `migrate()` before any writes so the state can be restored
@@ -139,6 +148,8 @@ pub struct RollbackSnapshot {
     pub ledger_sequence: u32,
     /// All agent records at the time of snapshot.
     pub agents: Vec<AgentRecord>,
+    /// Per-agent stats and daily cap — restored on rollback to prevent data loss.
+    pub agent_stats_snapshot: Vec<AgentStatsSnapshot>,
 }
 
 // ─── Instance key for schema version ─────────────────────────────────────────
@@ -294,17 +305,23 @@ pub fn migrate(env: &Env) -> Result<(), ContractError> {
     }
 
     // ── Step 1: capture rollback snapshot ────────────────────────────────────
-    let agent_list = crate::storage::get_admin_list(env);
+    let agent_list = crate::storage::get_agent_list(env);
     let mut snapshot_agents: Vec<AgentRecord> = Vec::new(env);
+    let mut stats_snapshot: Vec<AgentStatsSnapshot> = Vec::new(env);
 
     for i in 0..agent_list.len() {
         let addr = agent_list.get_unchecked(i);
         let registered = crate::storage::is_agent_registered(env, &addr);
         let kyc_hash = crate::storage::get_agent_kyc_hash(env, &addr);
         snapshot_agents.push_back(AgentRecord {
-            address: addr,
+            address: addr.clone(),
             registered,
             kyc_hash,
+        });
+        stats_snapshot.push_back(AgentStatsSnapshot {
+            address: addr.clone(),
+            stats: crate::storage::get_agent_stats(env, &addr),
+            daily_cap: crate::storage::get_agent_daily_cap(env, &addr),
         });
     }
 
@@ -312,6 +329,7 @@ pub fn migrate(env: &Env) -> Result<(), ContractError> {
         from_version: current_version,
         ledger_sequence: env.ledger().sequence(),
         agents: snapshot_agents.clone(),
+        agent_stats_snapshot: stats_snapshot,
     };
     save_rollback_snapshot(env, &rollback);
 
@@ -405,6 +423,13 @@ pub fn rollback_migration(env: &Env) -> Result<(), ContractError> {
         if let Some(ref hash) = record.kyc_hash {
             crate::storage::set_agent_kyc_hash(env, &record.address, hash);
         }
+    }
+
+    // Restore agent stats and daily caps.
+    for i in 0..snapshot.agent_stats_snapshot.len() {
+        let entry = snapshot.agent_stats_snapshot.get_unchecked(i);
+        crate::storage::set_agent_stats(env, &entry.address, &entry.stats);
+        crate::storage::set_agent_daily_cap(env, &entry.address, entry.daily_cap);
     }
 
     // Restore the schema version to what it was before the migration attempt.

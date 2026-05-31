@@ -345,7 +345,7 @@ fn test_zero_net_position_produces_no_transfer() {
         dispute_evidence: crate::MaybeBytes32::None,
     });
 
-    let net_transfers: Vec<NetTransfer> = compute_net_settlements(&env, &remittances).unwrap();
+    let net_transfers: Vec<NetTransfer> = compute_net_settlements(&env, &remittances).unwrap().net_transfers;
 
     // Zero net position must be skipped — no transfer entry produced
     assert_eq!(

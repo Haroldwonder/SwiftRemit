@@ -315,6 +315,11 @@ pub fn cleanup_expired_proposals(
             if proposal.state == ProposalState::Expired
                 || proposal.state == ProposalState::Executed
             {
+                if let ProposalAction::UpdateFee(_) = &proposal.action {
+                    if get_active_fee_proposal(env) == Some(id) {
+                        set_active_fee_proposal(env, None);
+                    }
+                }
                 delete_proposal(env, id);
                 emit_proposal_cleaned_up(env, id);
             }

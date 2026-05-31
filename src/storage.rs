@@ -1585,8 +1585,9 @@ pub fn add_disbursed_amount(env: &Env, remittance_id: u64, amount: i128) -> Resu
 
 // === Per-Agent Daily Withdrawal Cap ===
 
-/// Rolling 24-hour window in seconds.
-pub const AGENT_CAP_WINDOW_SECONDS: u64 = 86_400;
+/// Rolling 24-hour window in seconds. Derives from the shared daily-limit constant
+/// so both limits always use the same window boundary.
+pub const AGENT_CAP_WINDOW_SECONDS: u64 = crate::config::DAILY_LIMIT_WINDOW_SECONDS;
 
 /// Returns the per-agent daily withdrawal cap (0 = no cap).
 pub fn get_agent_daily_cap(env: &Env, agent: &Address) -> i128 {

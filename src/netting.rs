@@ -2,6 +2,17 @@ use soroban_sdk::{contracttype, Address, Env, Map, Vec};
 
 use crate::{ContractError, Remittance, RemittanceStatus, config::MAX_NETTING_BATCH_SIZE};
 
+/// Result of a netting computation, pairing net transfers with IDs that were
+/// excluded because they are in a non-nettable state (Failed or Disputed).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct NettingResult {
+    /// Minimal set of net transfers to execute on-chain.
+    pub net_transfers: Vec<NetTransfer>,
+    /// Remittance IDs that were skipped due to Failed or Disputed status.
+    pub skipped_ids: Vec<u64>,
+}
+
 /// Represents a net transfer between two parties after offsetting opposing flows.
 /// This structure ensures deterministic ordering by always placing the party
 /// with the lexicographically smaller address as party_a.
@@ -57,17 +68,26 @@ struct DirectionalFlow {
 ///
 /// # Errors
 /// Returns `ContractError::InvalidBatchSize` if remittances.len() > MAX_NETTING_BATCH_SIZE
-pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Result<Vec<NetTransfer>, ContractError> {
+pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Result<NettingResult, ContractError> {
     // Validate batch size to prevent DoS via large remittance batches
     if remittances.len() > MAX_NETTING_BATCH_SIZE {
         return Err(ContractError::InvalidBatchSize);
     }
 
     let mut flows: Vec<DirectionalFlow> = Vec::new(env);
+    let mut skipped_ids: Vec<u64> = Vec::new(env);
 
     // Extract all directional flows from remittances
     for i in 0..remittances.len() {
         let remittance = remittances.get_unchecked(i);
+
+        // Track Failed/Disputed remittances so callers can reconcile them.
+        if remittance.status == RemittanceStatus::Failed
+            || remittance.status == RemittanceStatus::Disputed
+        {
+            skipped_ids.push_back(remittance.id);
+            continue;
+        }
 
         // Only process pending remittances
         if remittance.status != RemittanceStatus::Pending {
@@ -102,7 +122,7 @@ pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Resu
     }
 
     // Convert map to vector of NetTransfer structs
-    let mut result: Vec<NetTransfer> = Vec::new(env);
+    let mut net_transfers: Vec<NetTransfer> = Vec::new(env);
     let keys = net_map.keys();
 
     for i in 0..keys.len() {
@@ -112,7 +132,7 @@ pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Resu
         // Skip zero-value net positions — attempting a zero-value token transfer
         // would fail or produce unexpected behaviour (Issue #421).
         if net_amount != 0 {
-            result.push_back(NetTransfer {
+            net_transfers.push_back(NetTransfer {
                 party_a: key.0.clone(),
                 party_b: key.1.clone(),
                 net_amount,
@@ -121,7 +141,7 @@ pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Resu
         }
     }
 
-    Ok(result)
+    Ok(NettingResult { net_transfers, skipped_ids })
 }
 
 /// Normalizes a pair of addresses to ensure deterministic ordering.
@@ -267,7 +287,8 @@ mod tests {
             dispute_evidence: None,
         });
 
-        let net_transfers = compute_net_settlements(&env, &remittances).unwrap();
+        let result = compute_net_settlements(&env, &remittances).unwrap();
+        let net_transfers = result.net_transfers;
 
         assert_eq!(net_transfers.len(), 1);
         let transfer = net_transfers.get_unchecked(0);
@@ -323,7 +344,8 @@ mod tests {
             dispute_evidence: None,
         });
 
-        let net_transfers = compute_net_settlements(&env, &remittances).unwrap();
+        let result = compute_net_settlements(&env, &remittances).unwrap();
+        let net_transfers = result.net_transfers;
 
         // Complete offset should result in no transfers
         assert_eq!(net_transfers.len(), 0);
@@ -386,7 +408,8 @@ mod tests {
             dispute_evidence: None,
         });
 
-        let net_transfers = compute_net_settlements(&env, &remittances).unwrap();
+        let result = compute_net_settlements(&env, &remittances).unwrap();
+        let net_transfers = result.net_transfers;
 
         // Should have 3 net transfers (one for each pair)
         assert_eq!(net_transfers.len(), 3);
@@ -437,7 +460,8 @@ mod tests {
             dispute_evidence: None,
         });
 
-        let net_transfers = compute_net_settlements(&env, &remittances).unwrap();
+        let result = compute_net_settlements(&env, &remittances).unwrap();
+        let net_transfers = result.net_transfers;
 
         assert!(validate_net_settlement(&remittances, &net_transfers).is_ok());
     }
@@ -510,8 +534,8 @@ mod tests {
             dispute_evidence: None,
         });
 
-        let net1 = compute_net_settlements(&env, &remittances1).unwrap();
-        let net2 = compute_net_settlements(&env, &remittances2).unwrap();
+        let net1 = compute_net_settlements(&env, &remittances1).unwrap().net_transfers;
+        let net2 = compute_net_settlements(&env, &remittances2).unwrap().net_transfers;
 
         // Results should be identical regardless of input order
         assert_eq!(net1.len(), net2.len());
