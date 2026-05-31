@@ -185,15 +185,19 @@ pub fn do_vote_unpause(env: &Env, caller: &Address) -> Result<(), ContractError>
         return Err(ContractError::AlreadyVoted);
     }
 
+    // Reject votes after quorum has already been reached to prevent spurious
+    // state writes and events in the same pause cycle.
+    let quorum = cb_storage::get_unpause_quorum(env);
+    if cb_storage::get_vote_count(env, pause_seq) >= quorum {
+        return Err(ContractError::AlreadyVoted);
+    }
+
     // Record the vote and increment the count.
     cb_storage::record_vote(env, pause_seq, caller);
     let new_count = cb_storage::get_vote_count(env, pause_seq)
         .checked_add(1)
         .ok_or(ContractError::Overflow)?;
     cb_storage::set_vote_count(env, pause_seq, new_count);
-
-    // Auto-unpause when quorum is reached (timelock still applies).
-    let quorum = cb_storage::get_unpause_quorum(env);
     if new_count >= quorum {
         // bypass_timelock_quorum = false: timelock is still enforced.
         do_emergency_unpause(env, caller, false)?;
