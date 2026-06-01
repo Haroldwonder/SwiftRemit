@@ -72,6 +72,7 @@ export default function DisputeResolution() {
   const [auditLog, setAuditLog] = useState<AuditLogItem[]>([]);
   const [resolving, setResolving] = useState<string | number | null>(null);
   const [confirmOpen, setConfirmOpen] = useState<ConfirmState | null>(null);
+  const [resolvedTxHash, setResolvedTxHash] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchDisputes();
@@ -122,6 +123,7 @@ export default function DisputeResolution() {
     setConfirmOpen(null);
     setResolving(id);
     setError(null);
+    setResolvedTxHash(null);
     try {
       const res = await fetch(`${API_URL}/api/disputes/${id}/resolve`, {
         method: 'POST',
@@ -129,6 +131,9 @@ export default function DisputeResolution() {
         body: JSON.stringify({ in_favour_of_sender: inFavourOfSender }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as Record<string, unknown>;
+      const txHash = typeof data.tx_hash === 'string' ? data.tx_hash : null;
+      setResolvedTxHash(txHash);
       await fetchDisputes();
       await fetchAuditLog();
     } catch (e: unknown) {
@@ -143,6 +148,21 @@ export default function DisputeResolution() {
       <h2>Dispute Resolution</h2>
 
       {error && <div className="error" role="alert">{error}</div>}
+
+      {resolvedTxHash && (
+        <div role="status" style={{ background: '#f0fff4', border: '1px solid #9ae6b4', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', fontSize: '0.85rem' }}>
+          ✅ Dispute resolved on-chain.{' '}
+          <strong>Tx:</strong>{' '}
+          <a
+            href={`https://stellar.expert/explorer/public/tx/${resolvedTxHash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ wordBreak: 'break-all' }}
+          >
+            {resolvedTxHash}
+          </a>
+        </div>
+      )}
 
       {confirmOpen && (
         <div

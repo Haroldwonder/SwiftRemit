@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+
 import './Toast.css';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
@@ -22,19 +23,45 @@ interface ToastItemProps {
   onDismiss: (id: string) => void;
 }
 
+const DEFAULT_DURATION: Record<ToastType, number> = {
+  error: 5000,
+  success: 3000,
+  info: 4000,
+  warning: 4000,
+};
+
 function ToastItem({ toast, onDismiss }: ToastItemProps) {
-  const duration = toast.duration ?? 4000;
+  const duration = toast.duration ?? DEFAULT_DURATION[toast.type];
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remainingRef = useRef(duration);
+  const startRef = useRef<number>(0);
+
+  const startTimer = useCallback(() => {
+    if (duration <= 0) return;
+    startRef.current = Date.now();
+    timerRef.current = setTimeout(() => onDismiss(toast.id), remainingRef.current);
+  }, [duration, toast.id, onDismiss]);
+
+  const pauseTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      remainingRef.current -= Date.now() - startRef.current;
+    }
+  }, []);
 
   useEffect(() => {
-    if (duration > 0) {
-      timerRef.current = setTimeout(() => onDismiss(toast.id), duration);
-    }
+    startTimer();
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [toast.id, duration, onDismiss]);
+  }, [startTimer]);
 
   return (
-    <div className={`toast ${toast.type}`} role="alert" aria-live="polite">
+    <div
+      className={`toast ${toast.type}`}
+      role="alert"
+      aria-live="polite"
+      onMouseEnter={pauseTimer}
+      onMouseLeave={startTimer}
+    >
       <span className="toast-icon" aria-hidden="true">{ICONS[toast.type]}</span>
       <span className="toast-message">{toast.message}</span>
       <button

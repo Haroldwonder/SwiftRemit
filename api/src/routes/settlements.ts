@@ -138,6 +138,7 @@ router.post('/simulate', (req: Request, res: Response) => {
   }
 
   // Basic input validation
+  const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
   for (const r of remittances) {
     if (
       typeof r !== 'object' ||
@@ -151,6 +152,18 @@ router.post('/simulate', (req: Request, res: Response) => {
         success: false,
         error: {
           message: 'Each remittance must have sender, agent (strings) and amount, fee (numbers)',
+          code: 'INVALID_INPUT',
+        },
+        timestamp: new Date().toISOString(),
+      };
+      return res.status(400).json(err);
+    }
+    const item = r as SimulateRemittanceInput;
+    if (!STELLAR_ADDRESS_RE.test(item.sender) || !STELLAR_ADDRESS_RE.test(item.agent)) {
+      const err: ErrorResponse = {
+        success: false,
+        error: {
+          message: 'sender and agent must be valid Stellar addresses (G... 56 characters)',
           code: 'INVALID_INPUT',
         },
         timestamp: new Date().toISOString(),
