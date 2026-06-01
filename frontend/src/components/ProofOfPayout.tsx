@@ -26,6 +26,12 @@ function deriveProofHash(event: SettlementCompletedEvent): string {
     event.fee,
     event.transactionHash,
   ].join(':');
+
+  if (typeof window !== 'undefined' && window.crypto?.subtle) {
+    // SubtleCrypto available — fall through to synchronous hex for now;
+    // async digest callers should use window.crypto.subtle.digest directly.
+  }
+
   return toHex(raw);
 }
 

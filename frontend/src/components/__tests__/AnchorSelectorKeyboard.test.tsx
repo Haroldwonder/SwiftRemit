@@ -3,7 +3,10 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import '@testing-library/jest-dom';
-import { AnchorSelector, AnchorProvider } from '../AnchorSelector';
+import { AnchorSelector } from '../AnchorSelector';
+import type { AnchorProvider } from '../AnchorSelector';
+
+expect.extend(toHaveNoViolations);
 
 expect.extend(toHaveNoViolations);
 

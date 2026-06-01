@@ -616,6 +616,7 @@ impl SwiftRemitContract {
         set_remittance_counter(&env, remittance_id);
         set_transfer_state(&env, remittance_id, RemittanceStatus::Pending)?;
         storage::record_sender_volume(&env, &sender, amount, env.ledger().timestamp())?;
+        storage::append_sender_remittance(&env, &sender, remittance_id);
 
         Ok(remittance_id)
     }
@@ -2083,13 +2084,16 @@ impl SwiftRemitContract {
     }
 
     /// Set daily send limit for a currency/country pair (admin only).
+    ///
+    /// `limit` must be greater than zero. Zero is rejected to prevent
+    /// silently blocking all corridor transfers via an ambiguous no-op limit.
     pub fn set_daily_limit(
         env: Env,
         currency: String,
         country: String,
         limit: i128,
     ) -> Result<(), ContractError> {
-        if limit < 0 {
+        if limit <= 0 {
             return Err(ContractError::InvalidAmount);
         }
 

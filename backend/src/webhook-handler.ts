@@ -10,6 +10,10 @@ import type { RemittanceCreatedWebhookPayload } from './types';
 import { validateAnchorToml } from './anchor-toml-validator';
 import { recordWebhookNonce } from './database';
 
+class WebhookAuthError extends Error {
+  constructor(message: string) { super(message); this.name = 'WebhookAuthError'; }
+}
+
 interface WebhookRequest extends Request {
   rawBody?: string;
 }
@@ -178,6 +182,10 @@ export class WebhookHandler {
       });
 
     } catch (error) {
+      if (error instanceof WebhookAuthError) {
+        res.status(403).json({ error: error.message });
+        return;
+      }
       console.error('Webhook processing error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
@@ -301,20 +309,45 @@ export class WebhookHandler {
 
   /**
    * Handle dispute_raised contract event.
-   * Logs the dispute and notifies relevant webhook subscribers.
+   * Validates transaction state, enforces the 7-day dispute window, and transitions to 'disputed'.
    */
   private async handleDisputeRaised(payload: any): Promise<void> {
-    const { remittance_id, sender, evidence_hash, ledger_sequence, timestamp } = payload;
-    console.info(
-      `[dispute_raised] remittance_id=${remittance_id} sender=${sender} ` +
-      `evidence_hash=${evidence_hash} ledger=${ledger_sequence} ts=${timestamp}`
+    const transaction_id: string | undefined = payload.transaction_id || payload.remittance_id;
+    if (!transaction_id) throw new Error('Missing transaction_id in dispute_raised payload');
+
+    const result = await this.pool.query<{ status: string }>(
+      'SELECT status FROM transactions WHERE transaction_id = $1',
+      [transaction_id]
     );
+    const currentStatus = result.rows[0]?.status;
+    if (!currentStatus) throw new Error(`Transaction not found: ${transaction_id}`);
+
+    const allowedPreStates = ['failed', 'error'];
+    if (!allowedPreStates.includes(currentStatus)) {
+      throw new Error(`Cannot raise dispute on transaction in state: ${currentStatus}`);
+    }
+
+    if (payload.failed_at) {
+      const failedAt = new Date(payload.failed_at);
+      const windowMs = 7 * 24 * 3600 * 1000;
+      if (Date.now() - failedAt.getTime() > windowMs) {
+        throw new Error('Dispute window has expired (>7 days since failure)');
+      }
+    }
+
+    await this.pool.query(
+      'UPDATE transactions SET status = $1, updated_at = NOW() WHERE transaction_id = $2',
+      ['disputed', transaction_id]
+    );
+
+    const { sender, evidence_hash, ledger_sequence, timestamp } = payload;
+    console.info(`[dispute_raised] tx=${transaction_id} sender=${sender} evidence=${evidence_hash}`);
     await this.pool.query(
       `INSERT INTO dispute_audit_log
          (remittance_id, event_type, sender, evidence_hash, ledger_sequence, event_timestamp, recorded_at)
        VALUES ($1, 'raised', $2, $3, $4, to_timestamp($5), NOW())
        ON CONFLICT DO NOTHING`,
-      [remittance_id, sender, evidence_hash, ledger_sequence, timestamp]
+      [transaction_id, sender, evidence_hash, ledger_sequence, timestamp]
     ).catch((err: Error) => {
       console.warn('[dispute_raised] audit log insert failed (table may not exist):', err.message);
     });
@@ -322,21 +355,42 @@ export class WebhookHandler {
 
   /**
    * Handle dispute_resolved contract event.
-   * Logs the resolution outcome and notifies relevant webhook subscribers.
+   * Requires admin_id in payload. Transitions 'disputed' transactions to 'refunded' or 'completed'.
    */
   private async handleDisputeResolved(payload: any): Promise<void> {
-    const { remittance_id, admin, in_favour_of_sender, resulting_status, ledger_sequence, timestamp } = payload;
-    console.info(
-      `[dispute_resolved] remittance_id=${remittance_id} admin=${admin} ` +
-      `in_favour_of_sender=${in_favour_of_sender} resulting_status=${resulting_status} ` +
-      `ledger=${ledger_sequence} ts=${timestamp}`
+    const { admin_id, transaction_id: txId, remittance_id, resolution } = payload;
+
+    if (!admin_id) {
+      throw new WebhookAuthError('Admin ID required for dispute resolution');
+    }
+
+    const transaction_id = txId || remittance_id;
+    if (!transaction_id) throw new Error('Missing transaction_id in dispute_resolved payload');
+
+    const result = await this.pool.query<{ status: string }>(
+      'SELECT status FROM transactions WHERE transaction_id = $1',
+      [transaction_id]
     );
+    const currentStatus = result.rows[0]?.status;
+    if (!currentStatus) throw new Error(`Transaction not found: ${transaction_id}`);
+    if (currentStatus !== 'disputed') {
+      throw new Error(`Cannot resolve dispute on transaction in state: ${currentStatus}`);
+    }
+
+    const newStatus = resolution === 'sender' ? 'refunded' : 'completed';
+    await this.pool.query(
+      'UPDATE transactions SET status = $1, updated_at = NOW() WHERE transaction_id = $2',
+      [newStatus, transaction_id]
+    );
+
+    const { admin, in_favour_of_sender, resulting_status, ledger_sequence, timestamp } = payload;
+    console.info(`[dispute_resolved] tx=${transaction_id} admin=${admin_id} resolution=${resolution}`);
     await this.pool.query(
       `INSERT INTO dispute_audit_log
          (remittance_id, event_type, admin_address, in_favour_of_sender, resulting_status, ledger_sequence, event_timestamp, recorded_at)
        VALUES ($1, 'resolved', $2, $3, $4, $5, to_timestamp($6), NOW())
        ON CONFLICT DO NOTHING`,
-      [remittance_id, admin, in_favour_of_sender, resulting_status, ledger_sequence, timestamp]
+      [transaction_id, admin || admin_id, in_favour_of_sender, resulting_status, ledger_sequence, timestamp]
     ).catch((err: Error) => {
       console.warn('[dispute_resolved] audit log insert failed (table may not exist):', err.message);
     });

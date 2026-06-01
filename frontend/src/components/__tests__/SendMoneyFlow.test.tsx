@@ -4,6 +4,64 @@ import userEvent from '@testing-library/user-event';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { SendMoneyFlow } from '../SendMoneyFlow';
 
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string, opts?: Record<string, unknown>) => {
+      const map: Record<string, string | ((o: Record<string, unknown>) => string)> = {
+        'sendMoney.title': 'Send Money',
+        'sendMoney.stepLabel': (o) => `Step ${o.step} of 5: ${o.name}`,
+        'sendMoney.amount': 'Amount',
+        'sendMoney.asset': 'Asset',
+        'sendMoney.recipient': 'Recipient',
+        'sendMoney.memo': 'Memo',
+        'sendMoney.memoOptional': '(optional)',
+        'sendMoney.memoPlaceholder': 'Optional memo',
+        'sendMoney.continue': 'Continue',
+        'sendMoney.back': 'Back',
+        'sendMoney.confirm': 'Confirm Transaction',
+        'sendMoney.confirming': 'Confirming…',
+        'sendMoney.success': 'Transaction confirmed successfully',
+        'sendMoney.txHash': 'TX Hash:',
+        'sendMoney.viewOnExpert': 'View on Stellar Expert',
+        'sendMoney.errors.amountRequired': 'Amount is required',
+        'sendMoney.errors.amountInvalid': 'Amount must be greater than zero',
+        'sendMoney.errors.assetRequired': 'Please select an asset',
+        'sendMoney.errors.incomplete': 'Please fill in all required fields',
+        'sendMoney.errors.rejected': 'Transaction rejected',
+        'sendMoney.errors.freighterNotInstalled': 'Freighter not installed',
+        'sendMoney.errors.failed': 'Transaction failed',
+        'sendMoney.review.amount': 'Amount',
+        'sendMoney.review.asset': 'Asset',
+        'sendMoney.review.recipient': 'Recipient',
+        'sendMoney.review.memo': 'Memo',
+        'sendMoney.limits.loading': 'Loading limits…',
+        'sendMoney.limits.error': 'Could not load limits',
+        'sendMoney.limits.min': `Min: ${opts?.value} ${opts?.asset}`,
+        'sendMoney.limits.max': `Max: ${opts?.value} ${opts?.asset}`,
+        'sendMoney.limits.dailyRemaining': `Daily remaining: ${opts?.value} ${opts?.asset}`,
+        'sendMoney.limits.approachingLimit': 'Approaching daily limit',
+      };
+      const val = map[key];
+      if (!val) return key;
+      return typeof val === 'function' ? val(opts ?? {}) : val;
+    },
+  }),
+}));
+
+vi.mock('@stellar/stellar-sdk', () => ({
+  Asset: { native: () => ({}) },
+  TransactionBuilder: vi.fn(),
+  Networks: { TESTNET: 'Test', PUBLIC: 'Public' },
+  BASE_FEE: '100',
+  Memo: { text: vi.fn() },
+  Operation: { payment: vi.fn() },
+  Horizon: { Server: vi.fn().mockImplementation(() => ({ loadAccount: vi.fn(), submitTransaction: vi.fn() })) },
+}));
+
+vi.mock('@stellar/freighter-api', () => ({
+  signTransaction: vi.fn(),
+}));
+
 expect.extend(toHaveNoViolations);
 
 // ---------------------------------------------------------------------------
@@ -400,6 +458,7 @@ describe('SendMoneyFlow', () => {
     it('has no a11y violations on the confirmation step', async () => {
       const { container } = render(<SendMoneyFlow />);
       fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: '100' } });
+      await fillAndAdvanceToReview('100', 'USDC', VALID_RECIPIENT);
       fireEvent.click(screen.getByRole('button', { name: /continue/i }));
       await waitFor(() => expect(screen.getByRole('button', { name: /confirm/i })).toBeInTheDocument());
       const results = await axe(container);

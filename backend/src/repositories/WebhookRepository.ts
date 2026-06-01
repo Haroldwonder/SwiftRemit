@@ -64,7 +64,7 @@ export class WebhookRepository {
   async getPending(limit: number): Promise<WebhookDelivery[]> {
     const result = await this.pool.query(
       `SELECT * FROM webhook_deliveries
-       WHERE status = 'pending' AND next_retry_at <= NOW()
+       WHERE status = 'pending' AND next_retry_at <= NOW() AND attempt_count < max_attempts
        ORDER BY next_retry_at ASC LIMIT $1`,
       [limit]
     );

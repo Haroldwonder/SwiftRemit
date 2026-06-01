@@ -5,7 +5,7 @@ import { storeVerificationOnChain } from './stellar';
 import { KycService } from './kyc-service';
 import { Sep24Service } from './sep24-service';
 import { SorobanRpc, Keypair } from '@stellar/stellar-sdk';
-import { SwiftRemitClient } from '../../sdk/src/client.js';
+import { SwiftRemitClient } from '@swiftremit/sdk';
 import { KycExpiryNotifier } from './kyc-expiry-notifier';
 import { createWebhookStore } from './webhooks/store';
 

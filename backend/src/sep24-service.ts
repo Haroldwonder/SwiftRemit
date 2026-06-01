@@ -163,13 +163,17 @@ export class Sep24Service {
   private anchorConfigs: Map<string, AnchorSep24Config> = new Map();
   private httpClient: AxiosInstance;
   private dispatcher: WebhookDispatcher;
+  anchorTimeoutHours: number;
+  timeoutWebhookUrl: string | undefined;
+  private stalledTransactionsTotal = 0;
 
   constructor(pool: Pool) {
     this.pool = pool;
     this.anchorTimeoutHours = parseFloat(process.env.ANCHOR_TIMEOUT_HOURS ?? '24');
     this.timeoutWebhookUrl = process.env.ANCHOR_TIMEOUT_WEBHOOK_URL;
+    const httpTimeoutMs = parseInt(process.env.SEP24_HTTP_TIMEOUT_MS ?? '30000', 10);
     this.httpClient = axios.create({
-      timeout: 30000, // 30 second timeout for SEP-24 requests
+      timeout: httpTimeoutMs,
     });
     this.dispatcher = new WebhookDispatcher();
   }
@@ -369,11 +373,22 @@ export class Sep24Service {
 
     for (const transaction of pendingTransactions) {
       try {
-        // Check for anchor timeout on pending_anchor status
         const createdAt = transaction.created_at || new Date();
-        const timeSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60);
-        
-        if (timeSinceCreation > config.timeout_minutes) {
+        const timeSinceCreationMinutes = (Date.now() - createdAt.getTime()) / (1000 * 60);
+        const timeSinceCreationHours = timeSinceCreationMinutes / 60;
+
+        // Stall detection: pending_anchor transactions older than anchorTimeoutHours → error
+        if (
+          transaction.status === 'pending_anchor' &&
+          timeSinceCreationHours >= this.anchorTimeoutHours
+        ) {
+          await updateSep24TransactionStatus(transaction.transaction_id, 'error');
+          this.stalledTransactionsTotal++;
+          continue;
+        }
+
+        // Check for anchor timeout (expired refund flow)
+        if (timeSinceCreationMinutes > config.timeout_minutes) {
           // Trigger refund flow (idempotent)
           await this.processExpiredRefund(transaction);
           continue;
@@ -501,7 +516,6 @@ export class Sep24Service {
       try {
         const response: AxiosResponse<Sep24TransactionStatusResponse> = await this.httpClient.get(url, {
           headers: { 'Accept': 'application/json' },
-          timeout: 10000,
         });
         return response.data;
       } catch (error) {

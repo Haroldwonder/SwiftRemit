@@ -108,4 +108,59 @@ describe('WebhookDispatcher', () => {
     expect(args[4]).toContain('status 500');
     expect(args[5]).toBe(500);
   });
+
+  describe('retry exhaustion and dead-letter queue', () => {
+    it('moves delivery to dead-letter queue when max retries are exhausted', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+
+      // attempt_count = 4, max_attempts = 5 → next attempt is 5 = max → dead-letter
+      const delivery = makeDelivery('dlq-1', subscriberA.url, 4);
+      vi.mocked(getPendingWebhookDeliveries).mockResolvedValue([delivery]);
+
+      const dispatcher = new WebhookDispatcher(fetchMock as unknown as typeof fetch);
+      await dispatcher.retryPendingDeliveries();
+
+      expect(markWebhookDeliveryFailure).toHaveBeenCalledTimes(1);
+
+      const args = vi.mocked(markWebhookDeliveryFailure).mock.calls[0];
+      const nextAttempt = args[1] as number;
+      const maxAttempts = args[2] as number;
+
+      // nextAttempt >= maxAttempts means the database will set status = 'failed' (dead-letter)
+      expect(nextAttempt).toBe(5);
+      expect(maxAttempts).toBe(5);
+      expect(nextAttempt >= maxAttempts).toBe(true);
+      expect(markWebhookDeliverySuccess).not.toHaveBeenCalled();
+    });
+
+    it('replays a dead-letter delivery when it is reset to pending', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+
+      // Simulates a dead-letter delivery (attempt_count = max_attempts) that was
+      // reset to pending status for replay
+      const delivery = makeDelivery('dlq-replay-1', subscriberA.url, 5);
+      vi.mocked(getPendingWebhookDeliveries).mockResolvedValue([delivery]);
+
+      const dispatcher = new WebhookDispatcher(fetchMock as unknown as typeof fetch);
+      await dispatcher.retryPendingDeliveries();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(markWebhookDeliverySuccess).toHaveBeenCalledOnce();
+      expect(markWebhookDeliverySuccess).toHaveBeenCalledWith(delivery.id, 200);
+    });
+
+    it('does not re-queue a replayed dead-letter delivery on success', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+
+      const delivery = makeDelivery('dlq-replay-2', subscriberA.url, 5);
+      vi.mocked(getPendingWebhookDeliveries).mockResolvedValue([delivery]);
+
+      const dispatcher = new WebhookDispatcher(fetchMock as unknown as typeof fetch);
+      await dispatcher.retryPendingDeliveries();
+
+      expect(markWebhookDeliverySuccess).toHaveBeenCalledOnce();
+      expect(enqueueWebhookDelivery).not.toHaveBeenCalled();
+      expect(markWebhookDeliveryFailure).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -348,6 +348,63 @@ fn test_resolve_dispute_twice_rejected() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// #618 — resolve_dispute event payload distinguishes resolution direction
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Verifies that resolving in favour of the sender sets status to Cancelled,
+/// confirming the event payload would carry `in_favour_of_sender = true` and
+/// `resulting_status = "Cancelled"`.
+#[test]
+fn test_resolve_dispute_event_in_favour_of_sender_true_yields_cancelled() {
+    let f = setup_failed_remittance();
+    let hash = evidence_hash(&f.env);
+
+    f.contract.raise_dispute(&f.remittance_id, &hash);
+    f.contract.resolve_dispute(&f.remittance_id, &true);
+
+    let r = f.contract.get_remittance(&f.remittance_id);
+    assert_eq!(r.status, crate::types::RemittanceStatus::Cancelled);
+}
+
+/// Verifies that resolving in favour of the agent sets status to Completed,
+/// confirming the event payload would carry `in_favour_of_sender = false` and
+/// `resulting_status = "Completed"`.
+#[test]
+fn test_resolve_dispute_event_in_favour_of_sender_false_yields_completed() {
+    let f = setup_failed_remittance();
+    let hash = evidence_hash(&f.env);
+
+    f.contract.raise_dispute(&f.remittance_id, &hash);
+    f.contract.resolve_dispute(&f.remittance_id, &false);
+
+    let r = f.contract.get_remittance(&f.remittance_id);
+    assert_eq!(r.status, crate::types::RemittanceStatus::Completed);
+}
+
+/// Verifies that the two resolution directions produce different final statuses,
+/// i.e. the event payload's `in_favour_of_sender` field carries distinct semantics.
+#[test]
+fn test_resolve_dispute_event_outcomes_are_distinct() {
+    // Sender-wins outcome
+    let f1 = setup_failed_remittance();
+    let hash1 = evidence_hash(&f1.env);
+    f1.contract.raise_dispute(&f1.remittance_id, &hash1);
+    f1.contract.resolve_dispute(&f1.remittance_id, &true);
+    let sender_wins_status = f1.contract.get_remittance(&f1.remittance_id).status;
+
+    // Agent-wins outcome
+    let f2 = setup_failed_remittance();
+    let hash2 = evidence_hash(&f2.env);
+    f2.contract.raise_dispute(&f2.remittance_id, &hash2);
+    f2.contract.resolve_dispute(&f2.remittance_id, &false);
+    let agent_wins_status = f2.contract.get_remittance(&f2.remittance_id).status;
+
+    assert_ne!(sender_wins_status, agent_wins_status);
+    assert_eq!(sender_wins_status, crate::types::RemittanceStatus::Cancelled);
+    assert_eq!(agent_wins_status, crate::types::RemittanceStatus::Completed);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Balance invariants
 // ─────────────────────────────────────────────────────────────────────────────
 

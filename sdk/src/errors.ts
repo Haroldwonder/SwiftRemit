@@ -243,7 +243,7 @@ export function parseContractError(raw: unknown): SwiftRemitError | null {
     const match = message.match(pattern);
     if (match) {
       const code = parseInt(match[1], 10) as ErrorCode;
-      if (code in ErrorCode) {
+      if (Object.values(ErrorCode).includes(code)) {
         return new SwiftRemitError(code, message);
       }
     }

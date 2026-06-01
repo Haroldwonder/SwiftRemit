@@ -104,7 +104,9 @@ vi.mock('../stellar', () => ({
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const createMockPool = (): Pool => ({}) as Pool;
+const createMockPool = (): Pool => ({
+  query: vi.fn().mockResolvedValue({ rows: [] }),
+}) as unknown as Pool;
 
 function seedExpiredTransaction(overrides: Record<string, unknown> = {}): string {
   const txnId = `txn-expired-${Date.now()}`;

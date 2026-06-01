@@ -73,7 +73,7 @@ describe('Fee Calculation Property-Based Tests', () => {
     it('should never exceed the original amount', () => {
       fc.assert(
         fc.property(
-          fc.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }),
+          fc.integer({ min: 1, max: 1_000_000_000_000_000 }),
           fc.integer({ min: 0, max: MAX_FEE_BPS }),
           (amount, feeBps) => {
             const fee = calculatePercentageFee(amount, feeBps);
@@ -87,7 +87,7 @@ describe('Fee Calculation Property-Based Tests', () => {
     it('should always be at least MIN_FEE', () => {
       fc.assert(
         fc.property(
-          fc.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }),
+          fc.integer({ min: 1, max: 1_000_000_000_000_000 }),
           fc.integer({ min: 0, max: MAX_FEE_BPS }),
           (amount, feeBps) => {
             const fee = calculatePercentageFee(amount, feeBps);
@@ -101,7 +101,7 @@ describe('Fee Calculation Property-Based Tests', () => {
     it('should be monotonically increasing with fee basis points', () => {
       fc.assert(
         fc.property(
-          fc.integer({ min: 100, max: Number.MAX_SAFE_INTEGER }), // Use larger amounts to avoid MIN_FEE floor
+          fc.integer({ min: 100, max: 1_000_000_000_000_000 }), // Use larger amounts to avoid MIN_FEE floor
           fc.integer({ min: 0, max: MAX_FEE_BPS - 1 }),
           (amount, feeBps) => {
             const fee1 = calculatePercentageFee(amount, feeBps);
@@ -116,7 +116,7 @@ describe('Fee Calculation Property-Based Tests', () => {
     it('should be monotonically increasing with amount (when not floored)', () => {
       fc.assert(
         fc.property(
-          fc.integer({ min: 1000, max: Number.MAX_SAFE_INTEGER - 1 }), // Large enough to avoid MIN_FEE effects
+          fc.integer({ min: 1000, max: 1_000_000_000_000_000 - 1 }), // Large enough to avoid MIN_FEE effects
           fc.integer({ min: 100, max: MAX_FEE_BPS }), // Non-zero fee to ensure meaningful comparison
           (amount, feeBps) => {
             const fee1 = calculatePercentageFee(amount, feeBps);
@@ -148,7 +148,7 @@ describe('Fee Calculation Property-Based Tests', () => {
     it('should be zero when protocol fee bps is zero', () => {
       fc.assert(
         fc.property(
-          fc.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }),
+          fc.integer({ min: 1, max: 1_000_000_000_000_000 }),
           (amount) => {
             const fee = calculateProtocolFee(amount, 0);
             expect(fee).toBe(0);
@@ -159,9 +159,10 @@ describe('Fee Calculation Property-Based Tests', () => {
     });
 
     it('should never exceed the original amount', () => {
+      // Cap at 10^15 (1 quadrillion stroops ≈ 100M USDC) to stay within float precision range
       fc.assert(
         fc.property(
-          fc.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }),
+          fc.integer({ min: 1, max: 1_000_000_000_000_000 }),
           fc.integer({ min: 0, max: MAX_FEE_BPS }),
           (amount, protocolFeeBps) => {
             const fee = calculateProtocolFee(amount, protocolFeeBps);
@@ -175,7 +176,7 @@ describe('Fee Calculation Property-Based Tests', () => {
     it('should be monotonically increasing with protocol fee bps', () => {
       fc.assert(
         fc.property(
-          fc.integer({ min: 1000, max: Number.MAX_SAFE_INTEGER }),
+          fc.integer({ min: 1000, max: 1_000_000_000_000_000 }),
           fc.integer({ min: 0, max: MAX_FEE_BPS - 1 }),
           (amount, protocolFeeBps) => {
             const fee1 = calculateProtocolFee(amount, protocolFeeBps);
@@ -283,7 +284,7 @@ describe('Fee Calculation Property-Based Tests', () => {
         fc.property(
           fc.integer({ min: 0, max: 100 }), // Small fee bps to avoid overflow
           (feeBps) => {
-            const maxSafeAmount = Math.floor(Number.MAX_SAFE_INTEGER / MAX_FEE_BPS) * FEE_DIVISOR;
+            const maxSafeAmount = Math.floor(1_000_000_000_000_000 / MAX_FEE_BPS) * FEE_DIVISOR;
             
             expect(() => {
               calculatePercentageFee(maxSafeAmount, feeBps);

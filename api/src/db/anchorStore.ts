@@ -110,7 +110,7 @@ export interface AnchorStore {
 }
 
 export class PostgresAnchorStore implements AnchorStore {
-  constructor(private readonly db: Queryable) {}
+  constructor(private readonly db: Pool) {}
 
   async initializeSchema(): Promise<void> {
     await this.db.query(FULL_SCHEMA_SQL);
@@ -318,8 +318,21 @@ export class PostgresAnchorStore implements AnchorStore {
   }
 
   async delete(id: string): Promise<boolean> {
-    const result = await this.db.query('DELETE FROM anchors WHERE id = $1', [id]);
-    return (result.rowCount ?? 0) > 0;
+    const conn = await this.db.connect();
+    try {
+      await conn.query('BEGIN');
+      await conn.query('DELETE FROM webhook_subscriptions WHERE anchor_id = $1', [id]);
+      await conn.query('DELETE FROM kyc_configurations WHERE anchor_id = $1', [id]);
+      await conn.query('DELETE FROM sep24_transactions WHERE anchor_id = $1', [id]);
+      const result = await conn.query('DELETE FROM anchors WHERE id = $1', [id]);
+      await conn.query('COMMIT');
+      return (result.rowCount ?? 0) > 0;
+    } catch (err) {
+      await conn.query('ROLLBACK');
+      throw err;
+    } finally {
+      conn.release();
+    }
   }
 }
 

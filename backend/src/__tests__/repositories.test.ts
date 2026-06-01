@@ -29,11 +29,20 @@ describe('RemittanceRepository', () => {
     expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('sender_address'), ['GABC', 10, 0]);
   });
 
-  it('upsert calls pool.query', async () => {
-    const pool = mockPool([]);
+  it('upsert uses a transaction with row-level lock', async () => {
+    const clientQuery = vi.fn().mockResolvedValue({ rows: [] });
+    const clientRelease = vi.fn();
+    const pool = {
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+      connect: vi.fn().mockResolvedValue({ query: clientQuery, release: clientRelease }),
+    } as any;
     const repo = new RemittanceRepository(pool);
     await repo.upsert({ transaction_id: 'tx-1' });
-    expect(pool.query).toHaveBeenCalledOnce();
+    expect(pool.connect).toHaveBeenCalledOnce();
+    expect(clientQuery).toHaveBeenCalledWith('BEGIN');
+    expect(clientQuery).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE'), ['tx-1']);
+    expect(clientQuery).toHaveBeenCalledWith('COMMIT');
+    expect(clientRelease).toHaveBeenCalled();
   });
 });
 

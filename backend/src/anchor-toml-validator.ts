@@ -31,6 +31,14 @@ export async function fetchAnchorToml(homeDomain: string): Promise<TomlData> {
   });
 
   const data: TomlData = toml.parse(response.data);
+
+  const missingFields: string[] = [];
+  if (!data.SIGNING_KEY) missingFields.push('SIGNING_KEY');
+  if (!data.NETWORK_PASSPHRASE) missingFields.push('NETWORK_PASSPHRASE');
+  if (missingFields.length > 0) {
+    throw new Error(`stellar.toml missing required fields: ${missingFields.join(', ')}`);
+  }
+
   tomlCache.set(cacheKey, data);
   logger.debug('Fetched and cached stellar.toml', { homeDomain });
   return data;

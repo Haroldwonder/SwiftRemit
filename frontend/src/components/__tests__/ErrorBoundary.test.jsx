@@ -28,8 +28,8 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>
     );
     expect(screen.getByText('Something Went Wrong')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Try Again/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Reload Page/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reload/i })).toBeInTheDocument();
   });
 
   it('shows error details in development mode', () => {
@@ -63,20 +63,22 @@ describe('ErrorBoundary', () => {
   });
 
   it('retries and renders children on retry button click', () => {
-    const { rerender } = render(
+    let shouldThrow = true;
+    function ConditionalChild() {
+      if (shouldThrow) throw new Error('Test error');
+      return <NormalComponent />;
+    }
+
+    render(
       <ErrorBoundary>
-        <ThrowError />
+        <ConditionalChild />
       </ErrorBoundary>
     );
 
-    const retryButton = screen.getByRole('button', { name: /Try Again/ });
+    // Stop throwing before triggering retry so the re-render succeeds
+    shouldThrow = false;
+    const retryButton = screen.getByRole('button', { name: /Retry/i });
     fireEvent.click(retryButton);
-
-    rerender(
-      <ErrorBoundary>
-        <NormalComponent />
-      </ErrorBoundary>
-    );
 
     expect(screen.getByText('Normal content')).toBeInTheDocument();
   });
@@ -103,7 +105,7 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>
     );
 
-    expect(screen.getByText(/Error ID:/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Error ID:/).length).toBeGreaterThan(0);
 
     process.env.NODE_ENV = originalEnv;
   });
@@ -130,7 +132,12 @@ describe('ErrorBoundary', () => {
   });
 
   it('reloads page when reload button is clicked', () => {
-    const reloadSpy = vi.spyOn(window.location, 'reload').mockImplementation(() => {});
+    const reloadMock = vi.fn();
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, reload: reloadMock },
+      writable: true,
+      configurable: true,
+    });
 
     render(
       <ErrorBoundary>
@@ -138,12 +145,10 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>
     );
 
-    const reloadButton = screen.getByRole('button', { name: /Reload Page/ });
+    const reloadButton = screen.getByRole('button', { name: /Reload/i });
     fireEvent.click(reloadButton);
 
-    expect(reloadSpy).toHaveBeenCalled();
-
-    reloadSpy.mockRestore();
+    expect(reloadMock).toHaveBeenCalled();
   });
 
   it('renders normal children without errors', () => {

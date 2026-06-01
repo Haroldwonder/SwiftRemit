@@ -26,22 +26,43 @@ export class KycExpiryNotifier {
    * Returns the number of notifications dispatched.
    */
   async run(): Promise<number> {
-    const result = await this.pool.query<{
-      user_id: string;
-      anchor_id: string;
-      expires_at: Date;
-    }>(
-      `SELECT user_id, anchor_id, expires_at
-       FROM user_kyc_status
-       WHERE expires_at IS NOT NULL
-         AND expires_at > NOW()
-         AND expires_at <= NOW() + INTERVAL '${WARN_DAYS} days'
-         AND status = 'approved'`
-    );
+    const maxRetries = 5;
+    const baseDelayMs = 1000;
+
+    const queryRows = async (): Promise<Array<{ user_id: string; anchor_id: string; expires_at: Date }>> => {
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const result = await this.pool.query<{
+            user_id: string;
+            anchor_id: string;
+            expires_at: Date;
+          }>(
+            `SELECT user_id, anchor_id, expires_at
+             FROM user_kyc_status
+             WHERE expires_at IS NOT NULL
+               AND expires_at > NOW()
+               AND expires_at <= NOW() + INTERVAL '${WARN_DAYS} days'
+               AND status = 'approved'`
+          );
+          return result.rows;
+        } catch (err) {
+          if (attempt === maxRetries) {
+            console.error('KYC expiry notifier: DB query failed after max retries', err);
+            return [];
+          }
+          const delay = baseDelayMs * 2 ** attempt;
+          console.error(`KYC expiry notifier: DB query failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms`, err);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+      return [];
+    };
+
+    const rows = await queryRows();
 
     let dispatched = 0;
 
-    for (const row of result.rows) {
+    for (const row of rows) {
       const expiresAt = new Date(row.expires_at);
       const daysUntilExpiry = Math.ceil(
         (expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24)

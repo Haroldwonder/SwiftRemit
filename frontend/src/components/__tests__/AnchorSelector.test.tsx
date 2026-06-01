@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { AnchorSelector, AnchorProvider } from '../AnchorSelector';
+import { AnchorSelector } from '../AnchorSelector';
+import type { AnchorProvider } from '../AnchorSelector';
+
+expect.extend(toHaveNoViolations);
 
 expect.extend(toHaveNoViolations);
 

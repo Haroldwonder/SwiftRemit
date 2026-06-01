@@ -23,7 +23,7 @@ export interface Remittance {
 }
 
 type Queryable = {
-  query(text: string, params?: unknown[]): Promise<QueryResult<unknown>>;
+  query(text: string, params?: unknown[]): Promise<QueryResult<Record<string, unknown>>>;
 };
 
 type RemittanceRow = {
@@ -95,7 +95,7 @@ export interface RemittanceStore {
   /**
    * Query remittances with cursor-based pagination.
    * 
-   * @param cursor - Opaque cursor token (base64-encoded created_at timestamp)
+   * @param cursor - Opaque cursor token (base64-encoded JSON payload with created_at and id)
    * @param limit - Max items to return (1-100)
    * @param agentId - Optional filter by agent
    * @param status - Optional filter by status
@@ -165,7 +165,7 @@ export class PostgresRemittanceStore implements RemittanceStore {
 
   /**
    * Cursor-based pagination for remittances.
-   * Cursor encodes the created_at timestamp of the last seen record.
+   * Cursor encodes the created_at timestamp and id of the last seen record.
    */
   async queryWithCursor(
     cursor: string | null,
@@ -176,12 +176,29 @@ export class PostgresRemittanceStore implements RemittanceStore {
     const params: unknown[] = [];
     let paramIndex = 1;
 
-    // Decode cursor to get the timestamp boundary
+    // Decode cursor to get the pagination boundary.
     let cursorTimestamp: Date | null = null;
+    let cursorId: string | null = null;
+
     if (cursor) {
       try {
         const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
-        cursorTimestamp = new Date(decoded);
+        const parsed = JSON.parse(decoded);
+
+        if (typeof parsed === 'string') {
+          cursorTimestamp = new Date(parsed);
+        } else if (
+          parsed &&
+          typeof parsed === 'object' &&
+          'created_at' in parsed &&
+          'id' in parsed
+        ) {
+          cursorTimestamp = new Date((parsed as any).created_at);
+          cursorId = String((parsed as any).id);
+        } else {
+          throw new Error('Invalid cursor payload');
+        }
+
         if (isNaN(cursorTimestamp.getTime())) {
           throw new Error('Invalid cursor timestamp');
         }
@@ -193,8 +210,16 @@ export class PostgresRemittanceStore implements RemittanceStore {
     // Build WHERE clause
     const conditions: string[] = [];
     if (cursorTimestamp) {
-      conditions.push(`created_at < $${paramIndex++}`);
-      params.push(cursorTimestamp);
+      if (cursorId) {
+        conditions.push(
+          `(created_at < $${paramIndex} OR (created_at = $${paramIndex} AND id < $${paramIndex + 1}))`
+        );
+        params.push(cursorTimestamp, cursorId);
+        paramIndex += 2;
+      } else {
+        conditions.push(`created_at < $${paramIndex++}`);
+        params.push(cursorTimestamp);
+      }
     }
     if (agentId) {
       conditions.push(`agent_id = $${paramIndex++}`);
@@ -226,7 +251,9 @@ export class PostgresRemittanceStore implements RemittanceStore {
     let nextCursor: string | null = null;
     if (hasMore && items.length > 0) {
       const lastItem = items[items.length - 1];
-      nextCursor = Buffer.from(lastItem.created_at).toString('base64');
+      nextCursor = Buffer.from(
+        JSON.stringify({ created_at: lastItem.created_at, id: lastItem.id })
+      ).toString('base64');
     }
 
     return { items, nextCursor, hasMore };

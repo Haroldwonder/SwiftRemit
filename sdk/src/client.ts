@@ -1,6 +1,6 @@
 import {
   Contract,
-  SorobanRpc,
+  rpc as SorobanRpc,
   TransactionBuilder,
   Networks,
   BASE_FEE,
@@ -19,8 +19,14 @@ import type {
   BatchCreateEntry,
   GovernanceConfig,
   DailyLimitStatus,
+  Proposal,
+  RemittanceEvent,
+  RemittanceEventType,
+  SubscribeOptions,
+  Unsubscribe,
 } from "./types.js";
-import { parseContractError } from "./errors.js";
+import { parseContractError, SwiftRemitError, ErrorCode } from "./errors.js";
+import { withRetry } from "./retry.js";
 import {
   parseRemittance,
   parseAgentStats,
@@ -463,10 +469,13 @@ export class SwiftRemitClient {
     entries: BatchCreateEntry[]
   ): Promise<Transaction> {
     if (entries.length === 0) {
-      throw new Error("Batch must contain at least one entry");
+      throw new SwiftRemitError(ErrorCode.InvalidBatchSize, "Batch must contain at least one entry");
     }
     if (entries.length > MAX_BATCH_SIZE) {
-      throw new Error(`Batch size ${entries.length} exceeds MAX_BATCH_SIZE (${MAX_BATCH_SIZE})`);
+      throw new SwiftRemitError(
+        ErrorCode.InvalidBatchSize,
+        `Batch size ${entries.length} exceeds MAX_BATCH_SIZE (${MAX_BATCH_SIZE})`
+      );
     }
     const entriesScVal = xdr.ScVal.scvVec(
       entries.map((e) =>
@@ -716,5 +725,78 @@ export class SwiftRemitClient {
       addressToScVal(sourceAddress),
       u64ToScVal(proposalId),
     ]);
+  }
+
+  /**
+   * Subscribe to remittance contract events via polling.
+   * Returns an unsubscribe function that stops polling when called.
+   */
+  subscribeToRemittanceEvents(
+    callback: (event: RemittanceEvent) => void,
+    options: SubscribeOptions = {}
+  ): Unsubscribe {
+    let active = true;
+    let cursor = options.cursor;
+
+    const poll = async (): Promise<void> => {
+      while (active) {
+        try {
+          const result = await this.server.getEvents({
+            filters: [
+              {
+                type: "contract",
+                contractIds: [this.contract.contractId()],
+              },
+            ],
+            ...(cursor ? { cursor } : {}),
+          } as Parameters<typeof this.server.getEvents>[0]);
+
+          for (const raw of (result as { events: unknown[] }).events) {
+            const e = raw as {
+              pagingToken: string;
+              ledger: number;
+              ledgerClosedAt: string;
+              topic: { toXDR: () => Buffer }[];
+              value: { toXDR: () => Buffer };
+            };
+            cursor = e.pagingToken;
+
+            const typeSymbol = xdr.ScVal.fromXDR(e.topic[0].toXDR());
+            const type = scValToNative(typeSymbol) as RemittanceEventType;
+            const idVal = xdr.ScVal.fromXDR(e.topic[1].toXDR());
+            const remittanceId = BigInt(scValToNative(idVal));
+
+            if (
+              options.remittanceId !== undefined &&
+              remittanceId !== options.remittanceId
+            ) {
+              continue;
+            }
+
+            const event: RemittanceEvent = {
+              type,
+              remittanceId,
+              ledger: e.ledger,
+              ledgerClosedAt: e.ledgerClosedAt,
+              raw: {
+                topics: e.topic.map((t) => t.toXDR().toString("base64")),
+                value: e.value.toXDR().toString("base64"),
+              },
+            };
+            callback(event);
+          }
+
+          await new Promise((r) => setTimeout(r, 5_000));
+        } catch {
+          if (!active) break;
+          await new Promise((r) => setTimeout(r, 1_000));
+        }
+      }
+    };
+
+    poll();
+    return () => {
+      active = false;
+    };
   }
 }

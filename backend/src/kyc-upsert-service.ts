@@ -8,6 +8,8 @@ export class ValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ValidationError';
+    // Restore prototype chain so `instanceof ValidationError` works after transpilation
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 

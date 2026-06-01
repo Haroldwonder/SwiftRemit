@@ -86,7 +86,7 @@ describe('ProofOfPayout', () => {
     render(<ProofOfPayout remittanceId={42} />);
 
     await waitFor(() => {
-      const link = screen.getByText('View on Stellar Expert →');
+      const link = screen.getByText('Verify on Stellar Expert →');
       expect(link).toBeInTheDocument();
       expect(link.closest('a')).toHaveAttribute(
         'href',
@@ -180,6 +180,11 @@ describe('ProofOfPayout', () => {
         transactionHash: 'abc123',
         amount: '100',
         recipient: 'GXXXXXX',
+        fee: '1',
+        asset: 'USDC',
+        sender: 'GSENDER',
+        agent: 'GAGENT',
+        ledgerSequence: 1000,
         timestamp: '2026-01-01T00:00:00Z',
       });
       const { container } = render(<ProofOfPayout remittanceId={42} />);

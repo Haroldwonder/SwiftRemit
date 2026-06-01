@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import './SendMoneyFlow.css';
+import * as StellarSdk from '@stellar/stellar-sdk';
+import { signTransaction } from '@stellar/freighter-api';
+import { useTranslation } from 'react-i18next';
 import type { DailyLimitStatus } from '../../../sdk/src/types.js';
 
 type FlowStep = 1 | 2 | 3 | 4 | 5;
@@ -20,11 +23,15 @@ interface CorridorLimits {
 
 interface SendMoneyFlowProps {
   assets?: string[];
+  /** Stellar public key of the sender (for wallet-based submission) */
+  senderAddress?: string;
+  /** Stellar public key used for on-chain tx submission (same as senderAddress) */
+  senderPublicKey?: string;
+  /** Network to use for on-chain tx submission */
+  network?: 'TESTNET' | 'PUBLIC';
   onConfirm?: (payload: ConfirmPayload) => Promise<void>;
   /** Optional: fetch daily limit status for the sender/currency/country corridor */
   getDailyLimitStatus?: (currency: string, country: string) => Promise<DailyLimitStatus>;
-  /** Sender address used for limit queries */
-  senderAddress?: string;
   /** ISO 3166-1 alpha-2 destination country (e.g. "NG") */
   destinationCountry?: string;
 }
@@ -52,8 +59,11 @@ const ASSET_ISSUERS: Partial<Record<string, string>> = {
 /** Threshold at which we show the "approaching limit" warning (90%) */
 const APPROACHING_THRESHOLD = 0.9;
 
-function isValidRecipient(input: string): boolean {
-  return /^G[A-Z2-7]{55}$/.test(input.trim());
+function isValidRecipient(input: string, senderAddress?: string): boolean {
+  const trimmed = input.trim();
+  if (!/^G[A-Z2-7]{55}$/.test(trimmed)) return false;
+  if (senderAddress && trimmed === senderAddress.trim()) return false;
+  return true;
 }
 
 function resolveAsset(assetCode: string): StellarSdk.Asset {
@@ -116,11 +126,21 @@ async function buildAndSubmitTransaction(
   return result.hash;
 }
 
+const STEPS: Record<FlowStep, string> = {
+  1: 'Amount',
+  2: 'Asset',
+  3: 'Recipient',
+  4: 'Review',
+  5: 'Confirm',
+};
+
 export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   assets = DEFAULT_ASSETS,
+  senderAddress,
+  senderPublicKey,
+  network = 'TESTNET',
   onConfirm,
   getDailyLimitStatus,
-  senderAddress,
   destinationCountry = 'NG',
 }) => {
   const { t } = useTranslation();
@@ -132,9 +152,21 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [txHash, setTxHash] = useState<string | null>(null);
   const [limitStatus, setLimitStatus] = useState<DailyLimitStatus | null>(null);
+  const [limitsLoading, setLimitsLoading] = useState(false);
+  const [limitsError, setLimitsError] = useState<string | null>(null);
+  const [limits, setLimits] = useState<CorridorLimits | null>(null);
+  const [fxFetchedAt, setFxFetchedAt] = useState<number | null>(null);
+  const [fxSecondsLeft, setFxSecondsLeft] = useState<number | null>(null);
+  const [fxExpired, setFxExpired] = useState(false);
 
   const parsedAmount = useMemo(() => Number(amount), [amount]);
+
+  const isApproachingLimit = useMemo(() => {
+    if (!limits || !parsedAmount) return false;
+    return parsedAmount >= limits.dailyRemaining * APPROACHING_THRESHOLD;
+  }, [limits, parsedAmount]);
 
   // Fetch daily limit status when asset is selected
   useEffect(() => {
@@ -145,6 +177,26 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
       .catch(() => { /* non-critical — silently ignore */ });
     return () => { cancelled = true; };
   }, [asset, destinationCountry, getDailyLimitStatus, senderAddress]);
+
+  // Record when the FX rate was fetched (entering review step)
+  useEffect(() => {
+    if (step === 4 || step === 5) {
+      setFxFetchedAt(Date.now());
+      setFxExpired(false);
+    }
+  }, [step]);
+
+  // Countdown timer for FX rate expiry on review step
+  useEffect(() => {
+    if ((step !== 4 && step !== 5) || fxFetchedAt === null) return;
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - fxFetchedAt;
+      const remaining = Math.max(0, Math.ceil((FX_TTL_MS - elapsed) / 1000));
+      setFxSecondsLeft(remaining);
+      if (remaining === 0) setFxExpired(true);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [step, fxFetchedAt]);
 
   const validateCurrentStep = (): string | null => {
     if (step === 1) {
@@ -158,8 +210,10 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
       return t('sendMoney.errors.assetRequired');
     }
 
-    if (step === 3 && !isValidRecipient(recipient)) {
-      return t('sendMoney.errors.recipientInvalid');
+    if (step === 3 && !isValidRecipient(recipient, senderAddress)) {
+      return senderAddress && recipient.trim() === senderAddress.trim()
+        ? 'Recipient cannot be your own address.'
+        : 'Recipient must be a valid Stellar public key.';
     }
 
     return null;
@@ -339,26 +393,37 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
 
     if (step === 4 || step === 5) {
       return (
-        <dl className="flow-review">
-          <div>
-            <dt>{t('sendMoney.review.amount')}</dt>
-            <dd>{amount || '-'}</dd>
-          </div>
-          <div>
-            <dt>{t('sendMoney.review.asset')}</dt>
-            <dd>{asset || '-'}</dd>
-          </div>
-          <div>
-            <dt>{t('sendMoney.review.recipient')}</dt>
-            <dd>{recipient || '-'}</dd>
-          </div>
-          {memo.trim() && (
+        <>
+          <dl className="flow-review">
             <div>
-              <dt>{t('sendMoney.review.memo')}</dt>
-              <dd>{memo.trim()}</dd>
+              <dt>{t('sendMoney.review.amount')}</dt>
+              <dd>{amount || '-'}</dd>
             </div>
+            <div>
+              <dt>{t('sendMoney.review.asset')}</dt>
+              <dd>{asset || '-'}</dd>
+            </div>
+            <div>
+              <dt>{t('sendMoney.review.recipient')}</dt>
+              <dd>{recipient || '-'}</dd>
+            </div>
+            {memo.trim() && (
+              <div>
+                <dt>{t('sendMoney.review.memo')}</dt>
+                <dd>{memo.trim()}</dd>
+              </div>
+            )}
+          </dl>
+          {fxExpired ? (
+            <p className="flow-fx-expired" role="alert">
+              Rate expired — please go back and refresh.
+            </p>
+          ) : fxSecondsLeft !== null && (
+            <p className="flow-fx-countdown" aria-live="polite">
+              Rate refreshes in {fxSecondsLeft}s
+            </p>
           )}
-        </dl>
+        </>
       );
     }
 
@@ -438,7 +503,6 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
                 className="flow-button primary"
                 onClick={confirmTransfer}
                 disabled={isSubmitting}
-                aria-label="Confirm and submit transaction"
               >
                 {isSubmitting ? t('sendMoney.confirming') : t('sendMoney.confirm')}
               </button>

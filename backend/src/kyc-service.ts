@@ -1,6 +1,7 @@
 import axios, { AxiosResponse } from 'axios';
 import { KycStatus, DbUserKycStatus, AnchorKycConfig } from './types';
-import { getAnchorKycConfigs, getUsersNeedingKycCheck, saveUserKycStatus, getApprovedUsers } from './database';
+import { getAnchorKycConfigs, getUsersNeedingKycCheck, saveUserKycStatus, getApprovedUsers, getPool } from './database';
+import { getMetricsService } from './metrics';
 import { updateKycStatusOnChain } from './stellar';
 
 interface Sep12KycResponse {
@@ -35,6 +36,7 @@ function calcBackoff(attempt: number, baseDelayMs: number): number {
 
 export class KycService {
   private configs: Map<string, AnchorKycConfig> = new Map();
+  private metricsService = getMetricsService(getPool());
 
   async initialize(): Promise<void> {
     const configs = await getAnchorKycConfigs();
@@ -43,10 +45,13 @@ export class KycService {
   }
 
   async pollAllAnchors(): Promise<void> {
+    this.metricsService.recordKycPollerRun();
+
     for (const [anchorId, config] of this.configs) {
       try {
         await this.pollAnchorKycStatus(anchorId, config);
       } catch (error) {
+        this.metricsService.recordKycPollFailure();
         console.error(`Failed to poll KYC status for anchor ${anchorId}:`, error);
       }
     }

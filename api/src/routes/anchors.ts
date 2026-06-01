@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { timingSafeEqual } from 'crypto';
 import { AnchorProvider, AnchorListResponse, AnchorDetailResponse } from '../types/anchor';
 import { ErrorResponse } from '../types';
 import {
@@ -88,7 +89,22 @@ function requireAdminApiKey(adminApiKey?: string) {
     }
 
     const requestApiKey = req.header('x-api-key');
-    if (!requestApiKey || requestApiKey !== adminApiKey) {
+    if (!requestApiKey) {
+      return sendError(res, 401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+
+    // Use timing-safe comparison to prevent timing attacks
+    try {
+      const keysMatch = timingSafeEqual(
+        Buffer.from(requestApiKey),
+        Buffer.from(adminApiKey),
+      );
+      if (!keysMatch) {
+        return sendError(res, 401, 'Unauthorized', 'UNAUTHORIZED');
+      }
+    } catch {
+      // timingSafeEqual throws if buffers are different lengths
+      // This is expected for invalid keys, treat as unauthorized
       return sendError(res, 401, 'Unauthorized', 'UNAUTHORIZED');
     }
 

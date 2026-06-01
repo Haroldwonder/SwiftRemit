@@ -1,4 +1,4 @@
-import { Server, Horizon } from '@stellar/stellar-sdk';
+import { Horizon } from '@stellar/stellar-sdk';
 
 export interface RemittanceCompletedEvent {
   remittanceId: string;
@@ -25,11 +25,13 @@ interface ContractEventValue {
  * Service for fetching Soroban contract events from Horizon
  */
 export class HorizonService {
-  private server: Server;
+  private server: Horizon.Server;
   private contractId: string;
+  /** Last successfully fetched fee per remittance ID (fallback cache) */
+  private feeCache = new Map<number, string>();
 
   constructor(horizonUrl?: string, contractId?: string) {
-    this.server = new Server(
+    this.server = new Horizon.Server(
       horizonUrl || import.meta.env.VITE_HORIZON_URL || 'https://soroban-testnet.stellar.org'
     );
     this.contractId = contractId || import.meta.env.VITE_CONTRACT_ID || '';
@@ -120,40 +122,60 @@ export class HorizonService {
   }
 
   /**
-   * Fetch the fee from the remittance_created event
+   * Fetch the fee from the remittance_created event.
+   * Retries up to 3 times with exponential backoff on 429 responses.
+   * Falls back to the last cached value if all retries are exhausted.
    */
   private async fetchRemittanceFee(remittanceId: number): Promise<string> {
-    try {
-      const eventsPage = await this.server
-        .events()
-        .forContract(this.contractId)
-        .limit(200)
-        .order('desc')
-        .call();
+    const MAX_RETRIES = 3;
+    const BASE_DELAY_MS = 500;
 
-      for (const event of eventsPage.records) {
-        const eventData = event as any;
-        
-        if (
-          eventData.topic &&
-          eventData.topic.length >= 2 &&
-          this.parseScVal(eventData.topic[0]) === 'remit' &&
-          this.parseScVal(eventData.topic[1]) === 'created'
-        ) {
-          const eventRemittanceId = this.parseScVal(eventData.value?._value?.[3]);
-          
-          if (eventRemittanceId === remittanceId.toString()) {
-            // Fee is at index 7 in the created event
-            return this.parseScVal(eventData.value._value[7]);
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const eventsPage = await this.server
+          .events()
+          .forContract(this.contractId)
+          .limit(200)
+          .order('desc')
+          .call();
+
+        for (const event of eventsPage.records) {
+          const eventData = event as any;
+
+          if (
+            eventData.topic &&
+            eventData.topic.length >= 2 &&
+            this.parseScVal(eventData.topic[0]) === 'remit' &&
+            this.parseScVal(eventData.topic[1]) === 'created'
+          ) {
+            const eventRemittanceId = this.parseScVal(eventData.value?._value?.[3]);
+
+            if (eventRemittanceId === remittanceId.toString()) {
+              const fee = this.parseScVal(eventData.value._value[7]);
+              this.feeCache.set(remittanceId, fee);
+              return fee;
+            }
           }
         }
-      }
 
-      return '0';
-    } catch (error) {
-      console.error('Error fetching remittance fee:', error);
-      return '0';
+        return this.feeCache.get(remittanceId) ?? '0';
+      } catch (error: any) {
+        const isRateLimit =
+          error?.response?.status === 429 ||
+          (error?.message && error.message.includes('429'));
+
+        if (isRateLimit && attempt < MAX_RETRIES) {
+          const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+
+        console.error('Error fetching remittance fee:', error);
+        return this.feeCache.get(remittanceId) ?? '0';
+      }
     }
+
+    return this.feeCache.get(remittanceId) ?? '0';
   }
 
   /**

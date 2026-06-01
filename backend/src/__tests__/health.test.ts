@@ -1,7 +1,7 @@
 /**
  * Tests for /health endpoint DB probe (issue #432)
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import request from 'supertest';
 
 // ---------------------------------------------------------------------------
@@ -89,7 +89,11 @@ vi.mock('../correlation-id', () => ({
 }));
 
 // Import app AFTER mocks are set up
-const { default: app } = await import('../api');
+let app: import('express').Express;
+beforeAll(async () => {
+  const module = await import('../api');
+  app = module.default;
+});
 
 // ---------------------------------------------------------------------------
 // Tests

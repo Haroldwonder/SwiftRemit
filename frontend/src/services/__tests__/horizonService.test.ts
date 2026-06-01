@@ -4,20 +4,23 @@ import { HorizonService } from '../horizonService';
 // Mock the Stellar SDK
 vi.mock('@stellar/stellar-sdk', () => {
   const mockEventsCall = vi.fn();
-  
-  return {
-    Server: vi.fn().mockImplementation(() => ({
-      events: () => ({
-        forContract: () => ({
-          limit: () => ({
-            order: () => ({
-              call: mockEventsCall,
-            }),
+  const mockServerImpl = () => ({
+    events: () => ({
+      forContract: () => ({
+        limit: () => ({
+          order: () => ({
+            call: mockEventsCall,
           }),
         }),
       }),
-    })),
-    Horizon: {},
+    }),
+  });
+
+  return {
+    Server: vi.fn().mockImplementation(mockServerImpl),
+    Horizon: {
+      Server: vi.fn().mockImplementation(mockServerImpl),
+    },
   };
 });
 

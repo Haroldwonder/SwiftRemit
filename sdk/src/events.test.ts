@@ -10,8 +10,8 @@ vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@stellar/stellar-sdk")>();
   return {
     ...actual,
-    SorobanRpc: {
-      ...actual.SorobanRpc,
+    rpc: {
+      ...((actual as unknown as Record<string, unknown>)["rpc"] as object),
       Server: class {
         constructor(...args: unknown[]) {
           mockServerConstructor(...args);

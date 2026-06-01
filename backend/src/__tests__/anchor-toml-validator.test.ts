@@ -27,8 +27,8 @@ describe('validateAnchorToml', () => {
   });
 
   it('returns true when SIGNING_KEY matches', async () => {
-    vi.mocked(axios.get).mockResolvedValue({ data: `SIGNING_KEY = "${SIGNING_KEY}"` });
-    vi.mocked(toml.parse).mockReturnValue({ SIGNING_KEY });
+    vi.mocked(axios.get).mockResolvedValue({ data: `SIGNING_KEY = "${SIGNING_KEY}"\nNETWORK_PASSPHRASE = "Test SDF Network ; September 2015"` });
+    vi.mocked(toml.parse).mockReturnValue({ SIGNING_KEY, NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015' });
 
     const result = await validateAnchorToml(DOMAIN, SIGNING_KEY);
     expect(result).toBe(true);

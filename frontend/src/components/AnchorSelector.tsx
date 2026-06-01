@@ -173,9 +173,14 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
         triggerRef.current?.focus();
         break;
       case 'Tab':
-        // Close on tab and allow default behavior
-        setIsOpen(false);
-        setFocusedIndex(-1);
+        // Trap focus: cycle through options instead of leaving the dropdown
+        e.preventDefault();
+        if (anchors.length === 0) break;
+        if (e.shiftKey) {
+          setFocusedIndex(prev => (prev > 0 ? prev - 1 : anchors.length - 1));
+        } else {
+          setFocusedIndex(prev => (prev < anchors.length - 1 ? prev + 1 : 0));
+        }
         break;
     }
   }, [isOpen, focusedIndex, anchors, selectedAnchor]);
@@ -243,7 +248,6 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
           aria-expanded={isOpen}
           aria-labelledby={`${listboxId}-label`}
           aria-controls={isOpen ? listboxId : undefined}
-          aria-activedescendant={isOpen && focusedIndex >= 0 ? `${listboxId}-option-${focusedIndex}` : undefined}
         >
           {selectedAnchor ? (
             <div className="selected-anchor">

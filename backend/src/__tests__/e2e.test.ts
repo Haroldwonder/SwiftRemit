@@ -48,12 +48,18 @@ const { db, resetDb, seedTransaction, handleQuery, mockPool } = vi.hoisted(() =>
     fx: new Map<string, FxRow>(),
     tx: new Map<string, TxRow>(),
     anchorConfigs: new Map<string, any>(),
+    seenNonces: new Set<string>(),
     fxIdSeq: 1,
   };
 
   function resetDb() {
-    db.kyc.clear(); db.fx.clear(); db.tx.clear();
-    db.anchorConfigs.clear(); db.fxIdSeq = 1;
+    // Clear in FK-safe order: dependents first, then parents
+    db.fx.clear();          // fx_rates → transactions
+    db.tx.clear();          // transactions → anchor_kyc_configs, user_kyc_status
+    db.kyc.clear();         // user_kyc_status (no dependents)
+    db.anchorConfigs.clear(); // anchor_kyc_configs (no dependents)
+    db.seenNonces.clear();
+    db.fxIdSeq = 1;
   }
 
   function seedTransaction(row: Partial<TxRow> & { transaction_id: string; kind: string; status: string }) {
@@ -119,7 +125,14 @@ const { db, resetDb, seedTransaction, handleQuery, mockPool } = vi.hoisted(() =>
       const row = db.tx.get(params[0]);
       return makeResult(row ? [{ status: row.status }] : []);
     }
-    // transactions — update status
+    // transactions — simple status-only update (dispute handlers use 2 params: [status, txId])
+    if (s.includes('UPDATE TRANSACTIONS') && s.includes('SET STATUS') && params.length === 2) {
+      const [status, txId] = params;
+      const row = db.tx.get(txId);
+      if (row) { row.status = status; row.updated_at = new Date(); }
+      return makeResult(row ? [row] : []);
+    }
+    // transactions — full update status (stateManager uses 10 params)
     if (s.includes('UPDATE TRANSACTIONS') && s.includes('SET STATUS')) {
       const txId = params[params.length - 2];
       const row = db.tx.get(txId);
@@ -224,6 +237,13 @@ vi.mock('../database', async (importOriginal) => {
     getApprovedUsers: vi.fn(async () =>
       [...db.kyc.values()].filter(r => r.kyc_status === 'approved')
     ),
+    // Nonce tracking: track seen nonces in memory
+    recordWebhookNonce: vi.fn(async (nonce: string) => {
+      if (db.seenNonces.has(nonce)) return false;
+      db.seenNonces.add(nonce);
+      return true;
+    }),
+    purgeExpiredWebhookNonces: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -268,8 +288,8 @@ async function sendWebhook(body: object) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  resetDb();
   vi.clearAllMocks();
+  resetDb();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -618,15 +638,18 @@ describe('Webhook security', () => {
     expect(res.status).toBe(401);
   });
 
-  it('rejects replay attack — duplicate nonce', async () => {
+  it('handles duplicate nonce idempotently (returns 200 with duplicate flag)', async () => {
     seedTransaction({ transaction_id: 'tx-replay', kind: 'deposit', status: 'pending_anchor' });
     const body = { event_type: 'deposit_update', transaction_id: 'tx-replay', status: 'pending_stellar' };
     const { signature, timestamp, nonce } = signWebhook(body);
 
     const headers = { 'x-signature': signature, 'x-timestamp': timestamp, 'x-nonce': nonce, 'x-anchor-id': ANCHOR_ID };
-    await request(app).post('/webhooks/anchor').set(headers).send(body);
+    const first = await request(app).post('/webhooks/anchor').set(headers).send(body);
+    expect(first.status).toBe(200);
     const res = await request(app).post('/webhooks/anchor').set(headers).send(body);
-    expect(res.status).toBe(401);
+    // Duplicate nonces are accepted idempotently (DB deduplication layer)
+    expect(res.status).toBe(200);
+    expect(res.body.duplicate).toBe(true);
   });
 
   it('rejects webhook with stale timestamp (>5 min old)', async () => {

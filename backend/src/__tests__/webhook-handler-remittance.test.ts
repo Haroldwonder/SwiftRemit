@@ -12,6 +12,11 @@ vi.mock('../webhook-dispatcher', () => ({
   })),
 }));
 
+vi.mock('../database', () => ({
+  recordWebhookNonce: vi.fn().mockResolvedValue(true),
+  purgeExpiredWebhookNonces: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { WebhookHandler } from '../webhook-handler';
 
 function buildMockPool(secret: string): Pool {

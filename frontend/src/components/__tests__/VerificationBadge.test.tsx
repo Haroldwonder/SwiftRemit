@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { VerificationBadge, VerificationStatus, AssetVerification } from '../VerificationBadge';
+import { VerificationBadge, VerificationStatus } from '../VerificationBadge';
+import type { AssetVerification } from '../VerificationBadge';
+
+expect.extend(toHaveNoViolations);
 
 expect.extend(toHaveNoViolations);
 

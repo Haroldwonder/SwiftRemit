@@ -21,6 +21,10 @@ export interface StatusUpdatedPayload {
 /** Shape of the decoded JWT used for WebSocket auth */
 export interface AuthenticatedUser {
   userId: string;
-  /** Remittance IDs this user is allowed to watch */
+  /** Remittance IDs this user is allowed to watch as sender */
   remittanceIds?: string[];
+  /** Remittance IDs this user is assigned to as agent */
+  agentRemittanceIds?: string[];
+  /** User role — 'agent' grants access to remittances where the user is the assigned agent */
+  role?: string;
 }

@@ -156,7 +156,7 @@ export class WebhookDispatcher {
       const isFormEncoded = contentType === 'application/x-www-form-urlencoded';
       const serialized = isFormEncoded
         ? new URLSearchParams(
-            Object.entries(payload as Record<string, unknown>).reduce<Record<string, string>>(
+            Object.entries(payload as unknown as Record<string, unknown>).reduce<Record<string, string>>(
               (acc, [k, v]) => {
                 acc[k] = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
                 return acc;

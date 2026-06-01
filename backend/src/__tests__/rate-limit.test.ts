@@ -43,7 +43,10 @@ vi.mock('../transfer-guard', () => ({
 vi.mock('../fx-rate-cache', () => ({
   getFxRateCache: vi.fn(() => ({ getCurrentRate: vi.fn().mockResolvedValue({}) })),
 }));
-vi.mock('../routes/docs', () => ({ default: { use: vi.fn(), get: vi.fn() } }));
+vi.mock('../routes/docs', () => {
+  const mockRouter = Object.assign(vi.fn((_req: any, _res: any, next: any) => next()), { use: vi.fn(), get: vi.fn() });
+  return { default: mockRouter };
+});
 
 describe('Rate limiting', () => {
   it('returns 429 with Retry-After header when limit exceeded', async () => {

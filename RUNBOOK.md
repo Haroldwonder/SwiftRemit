@@ -426,6 +426,80 @@ Recommended: run a scheduled job (weekly) to bump TTL on all active remittances 
 
 ---
 
+## 7. Rotate ADMIN_SECRET_KEY (Service-Level Key)
+
+The `ADMIN_SECRET_KEY` environment variable holds the Stellar keypair used by `backend/src/stellar.ts` to sign Soroban transactions. Because it lives in an environment variable, a compromised key cannot be revoked without a service redeployment. Follow this procedure to rotate it safely.
+
+### Recommended: Use a Secrets Manager
+
+Store `ADMIN_SECRET_KEY` in **AWS Secrets Manager** or **HashiCorp Vault** instead of a plain environment variable. Both support automatic rotation and instant revocation without redeployment:
+
+- **AWS Secrets Manager**: create a secret of type `Other`, enable automatic rotation with a Lambda rotator, and inject the value at runtime via the AWS SDK or the ECS/EKS secrets injection mechanism.
+- **HashiCorp Vault**: use the `transit` or `kv-v2` secret engine; rotate with `vault kv put` and have the service read the secret at startup via the Vault Agent sidecar or SDK.
+
+### Manual Rotation Procedure
+
+**Step 1 — generate a new Stellar keypair:**
+
+```bash
+stellar keys generate new-admin --network mainnet
+stellar keys address new-admin   # note the new public key
+```
+
+**Step 2 — authorize the new key on-chain** (add it as an admin via governance; see Section 3):
+
+```bash
+soroban contract invoke \
+  --id $CONTRACT_ID \
+  --source $ADMIN_IDENTITY \
+  --network $NETWORK \
+  -- \
+  propose \
+  --proposer $CURRENT_ADMIN_ADDRESS \
+  --action '{"AddAdmin": "<NEW_ADMIN_PUBLIC_KEY>"}'
+# vote and execute as described in Section 3
+```
+
+**Step 3 — update the secret in your secrets manager or deployment config:**
+
+```bash
+# AWS Secrets Manager example
+aws secretsmanager put-secret-value \
+  --secret-id swiftremit/admin-secret-key \
+  --secret-string '{"ADMIN_SECRET_KEY":"<new_secret_key>"}'
+```
+
+**Step 4 — redeploy or restart the backend service** so it picks up the new key.
+
+**Step 5 — revoke the old key on-chain** (RemoveAdmin via governance; see Section 3):
+
+```bash
+soroban contract invoke \
+  --id $CONTRACT_ID \
+  --source $ADMIN_IDENTITY \
+  --network $NETWORK \
+  -- \
+  propose \
+  --proposer $NEW_ADMIN_ADDRESS \
+  --action '{"RemoveAdmin": "<OLD_ADMIN_PUBLIC_KEY>"}'
+# vote and execute as described in Section 3
+```
+
+**Step 6 — verify** the old key no longer has admin rights:
+
+```bash
+soroban contract invoke \
+  --id $CONTRACT_ID \
+  --source $ADMIN_IDENTITY \
+  --network $NETWORK \
+  -- \
+  get_admin_count
+```
+
+Confirm the count reflects only the new key. Post a rotation notice in `#incidents` with the ledger sequence of the RemoveAdmin execution.
+
+---
+
 ## 8. Escalation Contacts and SLA Targets
 
 | Severity | Definition | Response SLA | Resolution SLA | Escalation Path |
@@ -434,6 +508,16 @@ Recommended: run a scheduled job (weekly) to bump TTL on all active remittances 
 | P1 | Webhook delivery failures > 10% | 30 min | 4 hours | On-call engineer → Backend lead |
 | P2 | Migration stuck / partial state | 1 hour | 8 hours | On-call engineer → Contract lead |
 | P3 | TTL warnings / non-critical degradation | 4 hours | 24 hours | On-call engineer |
+
+## Prometheus alerting rules
+The repository includes `monitoring/alerts.yml` with the recommended Prometheus alerting rules for SwiftRemit backend health.
+
+- `SwiftRemitWebhookDeliveryFailureRateHigh`: alerts when webhook delivery failures exceed 10% over 10 minutes.
+- `SwiftRemitKycPollFailureRateHigh`: alerts when KYC poll failures exceed 20% of poll cycles over 5 minutes.
+- `SwiftRemitFxCacheMissRateHigh`: alerts when FX cache misses exceed 15% of FX cache lookups over 5 minutes.
+- `SwiftRemitAccumulatedFeesThresholdExceeded`: alerts when accumulated fees exceed the configured operational threshold.
+
+**Note:** These alerts are shipped in `monitoring/alerts.yml` and should be imported into the production Prometheus alertmanager configuration.
 
 **Escalation contacts:**
 

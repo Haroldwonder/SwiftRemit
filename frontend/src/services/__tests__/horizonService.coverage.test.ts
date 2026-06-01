@@ -7,11 +7,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { HorizonService } from '../horizonService';
 
 vi.mock('@stellar/stellar-sdk', () => {
+  const mockServerImpl = () => ({ events: vi.fn() });
   return {
-    Server: vi.fn().mockImplementation(() => ({
-      events: vi.fn(),
-    })),
-    Horizon: {},
+    Server: vi.fn().mockImplementation(mockServerImpl),
+    Horizon: {
+      Server: vi.fn().mockImplementation(mockServerImpl),
+    },
   };
 });
 

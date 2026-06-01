@@ -22,6 +22,11 @@ describe('Currency API Routes', () => {
       expect(response.body.status).toBe('ok');
       expect(response.body.timestamp).toBeDefined();
       expect(response.body.uptime).toBeGreaterThanOrEqual(0);
+      expect(response.body.checks).toBeDefined();
+      expect(response.body.checks.database).toBeDefined();
+      expect(response.body.checks.contract).toBeDefined();
+      expect(['ok', 'error', 'not_configured']).toContain(response.body.checks.database.status);
+      expect(['ok', 'error', 'not_configured']).toContain(response.body.checks.contract.status);
     });
   });
 

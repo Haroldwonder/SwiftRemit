@@ -68,10 +68,11 @@ export async function withSpan<T>(
   attributes?: Record<string, string | number | boolean>
 ): Promise<T> {
   const tracer = getTracer();
-  return tracer.startActiveSpan(name, async (span) => {
-    if (attributes) {
-      span.setAttributes(attributes);
-    }
+  const span = tracer.startSpan(name);
+  if (attributes) {
+    span.setAttributes(attributes);
+  }
+  return context.with(trace.setSpan(context.active(), span), async () => {
     try {
       const result = await fn(span);
       span.setStatus({ code: SpanStatusCode.OK });

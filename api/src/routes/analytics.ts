@@ -9,6 +9,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
 import { ErrorResponse } from '../types';
 
@@ -48,10 +49,30 @@ function sendError(res: Response, status: number, message: string, code: string)
   return res.status(status).json({ success: false, error: { message, code }, timestamp: timestamp() });
 }
 
-export function createAnalyticsRouter(pool: Pool): Router {
-  const router = Router();
+function requireAdminApiKey(adminApiKey?: string) {
+  return (req: Request, res: Response, next: () => void): void | Response<ErrorResponse> => {
+    if (!adminApiKey) {
+      return sendError(res, 500, 'Analytics admin API key is not configured', 'ADMIN_NOT_CONFIGURED');
+    }
+    const requestApiKey = req.header('x-api-key');
+    if (!requestApiKey) {
+      return sendError(res, 401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+    try {
+      const keysMatch = timingSafeEqual(Buffer.from(requestApiKey), Buffer.from(adminApiKey));
+      if (!keysMatch) return sendError(res, 401, 'Unauthorized', 'UNAUTHORIZED');
+    } catch {
+      return sendError(res, 401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+    next();
+  };
+}
 
-  router.get('/corridors', async (req: Request, res: Response) => {
+export function createAnalyticsRouter(pool: Pool, adminApiKey?: string): Router {
+  const router = Router();
+  const adminAuth = requireAdminApiKey(adminApiKey ?? process.env.ANALYTICS_ADMIN_API_KEY);
+
+  router.get('/corridors', adminAuth, async (req: Request, res: Response) => {
     const rangeParam = typeof req.query.range === 'string' ? req.query.range : '30d';
 
     if (!VALID_RANGES[rangeParam]) {

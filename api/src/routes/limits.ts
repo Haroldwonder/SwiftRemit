@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { currencyCodeSchema, countryCodeSchema, validateRequest } from './schemas/requestValidation';
+import { currencyCodeSchema, countryCodeSchema, validateRequest } from '../schemas/requestValidation';
 
 const router = Router();
 
@@ -74,3 +74,52 @@ router.get('/', (req: Request, res: Response) => {
 });
 
 export default router;
+
+/**
+ * GET /api/limits/:currency/:country
+ * Returns the corridor-specific daily limit for a currency/country pair.
+ */
+router.get('/:currency/:country', (req: Request, res: Response) => {
+  const currency = req.params.currency.toUpperCase();
+  const country = req.params.country.toUpperCase();
+
+  const currencyValidation = currencyCodeSchema.validate(currency);
+  if (currencyValidation.error) {
+    return res.status(400).json({
+      success: false,
+      error: { message: `Invalid currency: ${currencyValidation.error.message}`, code: 'INVALID_CURRENCY' },
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  const countryValidation = countryCodeSchema.validate(country);
+  if (countryValidation.error) {
+    return res.status(400).json({
+      success: false,
+      error: { message: `Invalid country: ${countryValidation.error.message}`, code: 'INVALID_COUNTRY' },
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  const corridorKey = `${currency}:${country}`;
+  const overrides: Record<string, Partial<typeof DEFAULT_LIMITS>> = {
+    'USDC:NG': { max: 5000, dailyLimit: 3000 },
+    'USDC:GH': { max: 4000, dailyLimit: 2500 },
+    'XLM:NG': { max: 50000, dailyLimit: 30000 },
+  };
+
+  const limits = { ...DEFAULT_LIMITS, ...(overrides[corridorKey] ?? {}) };
+
+  return res.json({
+    success: true,
+    data: {
+      currency,
+      country,
+      min: limits.min,
+      max: limits.max,
+      dailyLimit: limits.dailyLimit,
+      dailyRemaining: limits.dailyLimit,
+    },
+    timestamp: new Date().toISOString(),
+  });
+});

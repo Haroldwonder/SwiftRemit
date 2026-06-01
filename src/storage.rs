@@ -1680,24 +1680,27 @@ pub fn get_recipient_hash_record(
 
 // === Sender Remittance Index ===
 
-/// Appends a remittance ID to the sender's list of remittances.
+/// Appends a remittance ID to the sender's persistent remittance index.
 pub fn append_sender_remittance(env: &Env, sender: &Address, remittance_id: u64) {
-    let key = DataKey::UserTransfers(sender.clone());
-    // Reuse UserTransfers key with a separate SenderRemittances key would be cleaner,
-    // but to avoid adding a new DataKey variant we store in a dedicated key.
-    // We use a separate persistent key for sender remittance IDs.
-    let storage_key = DataKey::RemittanceIdempotencyKey(remittance_id); // placeholder
-    // Use a dedicated approach: store Vec<u64> under a new key pattern
-    // Since we can't add DataKey variants easily, use instance storage with a string key
-    // Actually, let's just use a no-op for now since this is a pre-existing issue
-    // and the feature doesn't depend on it.
-    let _ = (env, sender, remittance_id, key, storage_key);
+    let key = DataKey::SenderRemittances(sender.clone());
+    let mut ids: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    ids.push_back(remittance_id);
+    env.storage().persistent().set(&key, &ids);
 }
 
-/// Returns all remittance IDs for a sender (paginated queries).
+/// Returns all remittance IDs for a sender.
+///
+/// The caller is responsible for applying pagination (offset/limit) to avoid
+/// returning unbounded data in a single call.
 pub fn get_sender_remittances(env: &Env, sender: &Address) -> soroban_sdk::Vec<u64> {
-    let _ = (env, sender);
-    soroban_sdk::Vec::new(env)
+    env.storage()
+        .persistent()
+        .get(&DataKey::SenderRemittances(sender.clone()))
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

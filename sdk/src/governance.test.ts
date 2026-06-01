@@ -1,24 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { parseProposal } from "../src/convert.js";
 import type { Proposal } from "../src/types.js";
-import { xdr, nativeToScVal } from "@stellar/stellar-sdk";
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function makeProposalScVal(overrides: Record<string, unknown> = {}): xdr.ScVal {
-  const base = {
-    id: 1,
-    proposer: "GABC",
-    action: { UpdateFee: 300 },
-    state: { Pending: {} },
-    created_at: 1000,
-    expiry: 2000,
-    approval_count: 1,
-    approval_timestamp: null,
-    ...overrides,
-  };
-  return nativeToScVal(base);
-}
+import { makeProposalScVal } from "../src/test-utils.js";
 
 // ─── parseProposal ────────────────────────────────────────────────────────────
 
