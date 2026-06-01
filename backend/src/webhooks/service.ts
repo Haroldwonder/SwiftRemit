@@ -27,6 +27,8 @@ export interface WebhookRegistrationResponse {
   createdAt?: Date;
 }
 
+const MAX_WEBHOOKS_PER_ACCOUNT = 10;
+
 export class WebhookService {
   private store: IWebhookStore;
   private dispatcher: WebhookDispatcher;
@@ -67,6 +69,12 @@ export class WebhookService {
       if (!validEvents.includes(event)) {
         throw new Error(`Invalid event type: ${event}`);
       }
+    }
+
+    // Enforce maximum webhook count per account
+    const existing = await this.store.getAllWebhooks();
+    if (existing.length >= MAX_WEBHOOKS_PER_ACCOUNT) {
+      throw new Error(`Maximum webhook limit of ${MAX_WEBHOOKS_PER_ACCOUNT} webhooks per account reached`);
     }
 
     // Register in store

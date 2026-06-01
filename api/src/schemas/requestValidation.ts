@@ -104,17 +104,30 @@ export const withdrawFeesSchema = Joi.object({
 }).unknown(false);
 
 /**
+ * Validate memo field (Stellar text memo: max 28 bytes per Stellar spec)
+ */
+export const memoSchema = Joi.string()
+  .max(28)
+  .optional()
+  .messages({
+    'string.max': 'memo must not exceed 28 characters (Stellar text memo limit)',
+  });
+
+/**
  * Remittance: Create remittance request validation
  */
 export const createRemittanceSchema = Joi.object({
   sender: stellarAddressSchema,
   agent: stellarAddressSchema,
   amount: positiveAmountSchema,
+  memo: memoSchema,
   token: Joi.string()
     .pattern(STELLAR_ADDRESS_PATTERN)
+    .max(56)
     .optional()
     .messages({
       'string.pattern.base': 'token must be a valid Stellar address if provided',
+      'string.max': 'token must not exceed 56 characters',
     }),
 }).unknown(false);
 

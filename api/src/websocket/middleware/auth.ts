@@ -30,12 +30,18 @@ declare module 'socket.io' {
 function extractToken(socket: Socket): string | null {
   const authToken = socket.handshake.auth?.token;
   if (typeof authToken === 'string' && authToken.length > 0) {
-    return authToken.replace(/^Bearer\s+/i, '');
+    if (authToken.toLowerCase().startsWith('bearer ')) {
+      return authToken.slice(7);
+    }
+    return authToken;
   }
 
   const queryToken = socket.handshake.query?.token;
   if (typeof queryToken === 'string' && queryToken.length > 0) {
-    return queryToken.replace(/^Bearer\s+/i, '');
+    if (queryToken.toLowerCase().startsWith('bearer ')) {
+      return queryToken.slice(7);
+    }
+    return queryToken;
   }
 
   return null;
