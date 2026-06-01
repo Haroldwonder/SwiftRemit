@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import ErrorBoundary from '../ErrorBoundary';
+
+expect.extend(toHaveNoViolations);
 
 const ThrowError = () => {
   throw new Error('Test error');
@@ -152,5 +155,27 @@ describe('ErrorBoundary', () => {
 
     expect(screen.getByText('Normal content')).toBeInTheDocument();
     expect(screen.queryByText('Something Went Wrong')).not.toBeInTheDocument();
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations in error fallback state', async () => {
+      const { container } = render(
+        <ErrorBoundary>
+          <ThrowError />
+        </ErrorBoundary>
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations when rendering normal children', async () => {
+      const { container } = render(
+        <ErrorBoundary>
+          <NormalComponent />
+        </ErrorBoundary>
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
   });
 });

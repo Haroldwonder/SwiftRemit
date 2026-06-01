@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import { ProofOfPayout } from '../ProofOfPayout';
 import * as horizonServiceModule from '../../services/horizonService';
+
+expect.extend(toHaveNoViolations);
 
 // Mock the horizon service
 vi.mock('../../services/horizonService', () => ({
@@ -160,6 +163,29 @@ describe('ProofOfPayout', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Capture an image as proof/)).toBeInTheDocument();
+    });
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations in loading state', async () => {
+      vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockReturnValue(new Promise(() => {}));
+      const { container } = render(<ProofOfPayout remittanceId={42} />);
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations when proof data is displayed', async () => {
+      vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
+        remittanceId: '42',
+        transactionHash: 'abc123',
+        amount: '100',
+        recipient: 'GXXXXXX',
+        timestamp: '2026-01-01T00:00:00Z',
+      });
+      const { container } = render(<ProofOfPayout remittanceId={42} />);
+      await waitFor(() => expect(screen.queryByText(/loading/i)).not.toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
   });
 });

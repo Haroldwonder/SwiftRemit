@@ -9,8 +9,11 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import { TransactionHistory } from '../TransactionHistory';
 import type { TransactionHistoryItem } from '../TransactionHistory';
+
+expect.extend(toHaveNoViolations);
 
 afterEach(cleanup);
 
@@ -88,5 +91,25 @@ describe('TransactionHistory – loading state', () => {
 
     expect(screen.getByText('Loading more transactions...')).toBeInTheDocument();
     expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations with transaction list', async () => {
+      const { container } = render(
+        <TransactionHistory transactions={[BASE_TX]} defaultView="table" />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations with memo visible', async () => {
+      const tx = { ...BASE_TX, memo: 'Invoice #1234' };
+      const { container } = render(
+        <TransactionHistory transactions={[tx]} defaultView="table" />
+      );
+      fireEvent.click(screen.getByRole('button', { name: /expand/i }));
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
   });
 });

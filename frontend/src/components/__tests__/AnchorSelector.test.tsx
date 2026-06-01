@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import { AnchorSelector, AnchorProvider } from '../AnchorSelector';
+
+expect.extend(toHaveNoViolations);
 
 describe('AnchorSelector', () => {
   const mockAnchor: AnchorProvider = {
@@ -220,6 +223,47 @@ describe('AnchorSelector', () => {
     fireEvent.click(screen.getByText('Choose an anchor provider...'));
     await waitFor(() => {
       expect(screen.getByText('⭐ 4.8')).toBeInTheDocument();
+    });
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations in loading state', async () => {
+      (global.fetch as any).mockImplementation(() => new Promise(() => {}));
+      const { container } = render(<AnchorSelector onSelect={vi.fn()} />);
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations in error state', async () => {
+      (global.fetch as any).mockRejectedValueOnce(new Error('Network error'));
+      const { container } = render(<AnchorSelector onSelect={vi.fn()} />);
+      await waitFor(() => expect(screen.getByText('Failed to connect to anchor service')).toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations when anchor list is rendered', async () => {
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, data: [mockAnchor, mockAnchor2] }),
+      });
+      const { container } = render(<AnchorSelector onSelect={vi.fn()} />);
+      await waitFor(() => expect(screen.getByText('Choose an anchor provider...')).toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations when dropdown is open', async () => {
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, data: [mockAnchor] }),
+      });
+      const { container } = render(<AnchorSelector onSelect={vi.fn()} />);
+      await waitFor(() => expect(screen.getByText('Choose an anchor provider...')).toBeInTheDocument());
+      fireEvent.click(screen.getByText('Choose an anchor provider...'));
+      await waitFor(() => expect(screen.getByText('Test Anchor')).toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
   });
 });

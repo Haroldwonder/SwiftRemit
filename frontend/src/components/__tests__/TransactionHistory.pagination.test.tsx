@@ -1,8 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import { TransactionHistory, TransactionHistoryItem } from '../TransactionHistory';
 import '@testing-library/jest-dom';
+
+expect.extend(toHaveNoViolations);
 
 const mockTransactions: TransactionHistoryItem[] = Array.from({ length: 25 }, (_, i) => ({
   id: `tx-${i}`,
@@ -199,5 +202,24 @@ describe('TransactionHistory Pagination', () => {
 
     expect(screen.getByText(/Page 1 of 3/)).toBeInTheDocument();
     expect(screen.getByText(/Showing 1–10 of 25 transactions/)).toBeInTheDocument();
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations on first page', async () => {
+      const { container } = render(
+        <TransactionHistory transactions={mockTransactions} pageSize={10} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations on second page', async () => {
+      const { container } = render(
+        <TransactionHistory transactions={mockTransactions} pageSize={10} />
+      );
+      fireEvent.click(screen.getByLabelText('Next page'));
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
   });
 });

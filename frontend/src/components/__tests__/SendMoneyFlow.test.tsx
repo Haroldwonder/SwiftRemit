@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import { SendMoneyFlow } from '../SendMoneyFlow';
+
+expect.extend(toHaveNoViolations);
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -384,6 +387,23 @@ describe('SendMoneyFlow', () => {
       expect(screen.getByRole('option', { name: 'BTC' })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: 'ETH' })).toBeInTheDocument();
       expect(screen.queryByRole('option', { name: 'XLM' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations on initial render', async () => {
+      const { container } = render(<SendMoneyFlow />);
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations on the confirmation step', async () => {
+      const { container } = render(<SendMoneyFlow />);
+      fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: '100' } });
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /confirm/i })).toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
   });
 });

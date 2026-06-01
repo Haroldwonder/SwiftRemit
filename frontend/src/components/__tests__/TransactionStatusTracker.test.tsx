@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import { TransactionStatusTracker, TransactionProgressStatus } from '../TransactionStatusTracker';
+
+expect.extend(toHaveNoViolations);
 
 describe('TransactionStatusTracker', () => {
   beforeEach(() => {
@@ -660,5 +663,51 @@ describe('TransactionStatusTracker', () => {
 
       expect(screen.queryByText(/auto-updating/)).not.toBeInTheDocument();
       vi.useFakeTimers();
+    });
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations in initiated state', async () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="initiated" enablePolling={false} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations in processing state', async () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="processing" enablePolling={false} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations in completed state', async () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="completed" enablePolling={false} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations in failed state', async () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="failed" enablePolling={false} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations when refresh button is present', async () => {
+      const { container } = render(
+        <TransactionStatusTracker
+          currentStatus="processing"
+          onRefresh={vi.fn().mockResolvedValue(undefined)}
+          enablePolling={false}
+        />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
   });

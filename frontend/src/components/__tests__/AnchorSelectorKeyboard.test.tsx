@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import '@testing-library/jest-dom';
 import { AnchorSelector, AnchorProvider } from '../AnchorSelector';
+
+expect.extend(toHaveNoViolations);
 
 const mockAnchors: AnchorProvider[] = [
   {
@@ -315,6 +318,33 @@ describe('AnchorSelector Keyboard Navigation', () => {
       await waitFor(() => {
         expect(trigger).toHaveFocus();
       });
+    });
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations with the trigger button rendered', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: mockAnchors }),
+      });
+      const { container } = render(<AnchorSelector onSelect={vi.fn()} />);
+      await waitFor(() => screen.getByRole('button', { name: /select anchor provider/i }));
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations when the listbox is open', async () => {
+      const user = userEvent.setup();
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: mockAnchors }),
+      });
+      const { container } = render(<AnchorSelector onSelect={vi.fn()} />);
+      const trigger = await waitFor(() => screen.getByRole('button', { name: /select anchor provider/i }));
+      await user.click(trigger);
+      await waitFor(() => screen.getByRole('listbox'));
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
   });
 });

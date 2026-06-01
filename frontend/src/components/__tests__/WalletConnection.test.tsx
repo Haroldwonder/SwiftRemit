@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import { WalletConnection } from '../WalletConnection';
 import * as freighterApi from '@stellar/freighter-api';
+
+expect.extend(toHaveNoViolations);
 
 // Mock the Freighter API
 vi.mock('@stellar/freighter-api', () => ({
@@ -537,6 +540,26 @@ describe('WalletConnection', () => {
       });
       expect(screen.getByText(/not connected/i)).toBeInTheDocument();
       expect(freighterApi.isConnected).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations in disconnected state', async () => {
+      vi.mocked(freighterApi.isConnected).mockResolvedValue({ isConnected: false });
+      const { container } = render(<WalletConnection />);
+      await waitFor(() => expect(screen.queryByText(/connecting/i)).not.toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations in connected state', async () => {
+      vi.mocked(freighterApi.isConnected).mockResolvedValue({ isConnected: true });
+      vi.mocked(freighterApi.getAddress).mockResolvedValue({ address: MOCK_PUBLIC_KEY });
+      vi.mocked(freighterApi.getNetwork).mockResolvedValue({ network: 'testnet', networkPassphrase: '' });
+      const { container } = render(<WalletConnection />);
+      await waitFor(() => expect(screen.getByText(/connected/i)).toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
   });
 });
