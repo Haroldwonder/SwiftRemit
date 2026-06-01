@@ -133,6 +133,9 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [limitStatus, setLimitStatus] = useState<DailyLimitStatus | null>(null);
+  const [fxFetchedAt, setFxFetchedAt] = useState<number | null>(null);
+  const [fxSecondsLeft, setFxSecondsLeft] = useState<number | null>(null);
+  const [fxExpired, setFxExpired] = useState(false);
 
   const parsedAmount = useMemo(() => Number(amount), [amount]);
 
@@ -145,6 +148,26 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
       .catch(() => { /* non-critical — silently ignore */ });
     return () => { cancelled = true; };
   }, [asset, destinationCountry, getDailyLimitStatus, senderAddress]);
+
+  // Record when the FX rate was fetched (entering review step)
+  useEffect(() => {
+    if (step === 4 || step === 5) {
+      setFxFetchedAt(Date.now());
+      setFxExpired(false);
+    }
+  }, [step]);
+
+  // Countdown timer for FX rate expiry on review step
+  useEffect(() => {
+    if ((step !== 4 && step !== 5) || fxFetchedAt === null) return;
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - fxFetchedAt;
+      const remaining = Math.max(0, Math.ceil((FX_TTL_MS - elapsed) / 1000));
+      setFxSecondsLeft(remaining);
+      if (remaining === 0) setFxExpired(true);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [step, fxFetchedAt]);
 
   const validateCurrentStep = (): string | null => {
     if (step === 1) {
@@ -339,26 +362,37 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
 
     if (step === 4 || step === 5) {
       return (
-        <dl className="flow-review">
-          <div>
-            <dt>{t('sendMoney.review.amount')}</dt>
-            <dd>{amount || '-'}</dd>
-          </div>
-          <div>
-            <dt>{t('sendMoney.review.asset')}</dt>
-            <dd>{asset || '-'}</dd>
-          </div>
-          <div>
-            <dt>{t('sendMoney.review.recipient')}</dt>
-            <dd>{recipient || '-'}</dd>
-          </div>
-          {memo.trim() && (
+        <>
+          <dl className="flow-review">
             <div>
-              <dt>{t('sendMoney.review.memo')}</dt>
-              <dd>{memo.trim()}</dd>
+              <dt>{t('sendMoney.review.amount')}</dt>
+              <dd>{amount || '-'}</dd>
             </div>
+            <div>
+              <dt>{t('sendMoney.review.asset')}</dt>
+              <dd>{asset || '-'}</dd>
+            </div>
+            <div>
+              <dt>{t('sendMoney.review.recipient')}</dt>
+              <dd>{recipient || '-'}</dd>
+            </div>
+            {memo.trim() && (
+              <div>
+                <dt>{t('sendMoney.review.memo')}</dt>
+                <dd>{memo.trim()}</dd>
+              </div>
+            )}
+          </dl>
+          {fxExpired ? (
+            <p className="flow-fx-expired" role="alert">
+              Rate expired — please go back and refresh.
+            </p>
+          ) : fxSecondsLeft !== null && (
+            <p className="flow-fx-countdown" aria-live="polite">
+              Rate refreshes in {fxSecondsLeft}s
+            </p>
           )}
-        </dl>
+        </>
       );
     }
 
