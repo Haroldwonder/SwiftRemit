@@ -143,13 +143,16 @@ export function createAdminRouter(): Router {
    * @openapi
    * /api/admin/simulate-upgrade:
    *   post:
-   *     summary: Simulate a contract upgrade (read-only)
+   *     summary: Simulate a contract upgrade (read-only, requires 2FA)
    *     description: >
    *       Returns a preview of the storage migrations that would be applied if
    *       the supplied WASM hash were used in a real upgrade proposal.  No
-   *       on-chain state is modified.
+   *       on-chain state is modified. Requires admin API key and a valid
+   *       confirmation token from a second admin.
    *     tags:
    *       - Admin
+   *     security:
+   *       - ApiKeyAuth: []
    *     requestBody:
    *       required: true
    *       content:
@@ -158,11 +161,15 @@ export function createAdminRouter(): Router {
    *             type: object
    *             required:
    *               - wasm_hash
+   *               - confirmation_token
    *             properties:
    *               wasm_hash:
    *                 type: string
    *                 description: 64-character hex-encoded 32-byte WASM hash
    *                 example: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+   *               confirmation_token:
+   *                 type: string
+   *                 description: Confirmation token from second admin
    *     responses:
    *       200:
    *         description: Simulation result
@@ -195,10 +202,25 @@ export function createAdminRouter(): Router {
    *                   type: string
    *                   format: date-time
    *       400:
-   *         description: Invalid wasm_hash
+   *         description: Invalid wasm_hash or missing confirmation_token
+   *       401:
+   *         description: Unauthorized or invalid confirmation token
    */
-  router.post('/simulate-upgrade', (req: Request, res: Response) => {
-    const { wasm_hash } = req.body as Record<string, unknown>;
+  router.post('/simulate-upgrade', async (req: Request, res: Response) => {
+    if (!isAdminAuthorized(req)) {
+      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
+    }
+
+    const { wasm_hash, confirmation_token } = req.body as Record<string, unknown>;
+
+    if (!confirmation_token || typeof confirmation_token !== 'string') {
+      return sendError(
+        res,
+        400,
+        'confirmation_token is required for this high-risk operation',
+        'MISSING_CONFIRMATION_TOKEN',
+      );
+    }
 
     if (!isValidWasmHash(wasm_hash)) {
       return sendError(
@@ -209,13 +231,32 @@ export function createAdminRouter(): Router {
       );
     }
 
-    const result = simulateUpgrade(wasm_hash);
+    // Verify the confirmation token
+    const svc = getConfirmationService();
+    if (!svc) {
+      return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
+    }
 
-    res.json({
-      success: true,
-      data: result,
-      timestamp: timestamp(),
-    });
+    try {
+      await svc.initTable();
+      const action = await svc.verify(confirmation_token);
+
+      if (!action) {
+        return sendError(res, 401, 'Invalid or expired confirmation token', 'INVALID_CONFIRMATION_TOKEN');
+      }
+
+      // Token is valid, proceed with simulation
+      const result = simulateUpgrade(wasm_hash);
+
+      res.json({
+        success: true,
+        data: result,
+        timestamp: timestamp(),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Confirmation verification failed';
+      return sendError(res, 401, msg, 'CONFIRMATION_VERIFICATION_FAILED');
+    }
   });
 
   // ── Multi-step admin confirmation (#481) ──────────────────────────────────
