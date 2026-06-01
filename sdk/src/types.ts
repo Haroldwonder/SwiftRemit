@@ -184,12 +184,17 @@ export interface GovernanceConfig {
 }
 
 export interface DailyLimitStatus {
-  /** Configured corridor limit in stroops (0 = no limit set) */
+  /** Configured corridor limit in stroops (0 = no limit set). 1 USDC = 10_000_000 stroops. */
   limit: bigint;
-  /** Amount already sent in the current 24-hour window (stroops) */
+  /** Amount already sent in the current 24-hour window, in stroops. */
   used: bigint;
-  /** Remaining sendable amount in the current window (stroops) */
+  /** Remaining sendable amount in the current window, in stroops. */
   remaining: bigint;
   /** Timestamp when the current 24-hour window resets */
   resetsAt: Date;
+}
+
+/** Convert a stroops value to a human-readable USDC amount (7 decimal places). */
+export function stroopsToUsdc(stroops: bigint): number {
+  return Number(stroops) / 10_000_000;
 }
