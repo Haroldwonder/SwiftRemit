@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import './KycStatusBadge.css';
 
-type KycStatus = 'pending' | 'approved' | 'rejected';
+type KycStatus = 'pending' | 'approved' | 'rejected' | 'expired';
 type KycLevel = 'basic' | 'intermediate' | 'advanced';
 
 interface AnchorKycRecord {
@@ -85,8 +85,15 @@ export const KycStatusBadge: React.FC<KycStatusBadgeProps> = ({
   };
 
   const badgeClass = status ? `kyc-badge-${status.overall_status}` : 'kyc-badge-pending';
-  const badgeText = status ? status.overall_status.toUpperCase() : 'PENDING';
-  const badgeIcon = status?.overall_status === 'approved' ? '✓' : status?.overall_status === 'rejected' ? '✕' : '⏳';
+  const badgeText = status
+    ? status.overall_status === 'expired'
+      ? 'KYC EXPIRED — Renew Now'
+      : status.overall_status.toUpperCase()
+    : 'PENDING';
+  const badgeIcon =
+    status?.overall_status === 'approved' ? '✓' :
+    status?.overall_status === 'rejected' ? '✕' :
+    status?.overall_status === 'expired' ? '⚠' : '⏳';
 
   const handleClick = () => {
     if (showDetails && status) {

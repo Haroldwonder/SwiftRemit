@@ -35,6 +35,11 @@
   background: var(--color-error-dark);
 }
 
+.kyc-badge-expired {
+  background: #b7791f;
+  color: #fff;
+}
+
 .kyc-modal-overlay {
   position: fixed;
   inset: 0;
