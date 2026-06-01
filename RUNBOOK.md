@@ -48,7 +48,107 @@ Confirm `paused: true` and `pause_reason` matches the reason supplied.
 
 ---
 
-## 2. Unpause After Incident Resolution
+## 2. Circuit Breaker: Multi-Admin Vote-to-Unpause
+
+The circuit breaker is a quorum-gated safety mechanism that prevents a single compromised admin from unilaterally resuming contract operations after an emergency pause. All three phases below must be completed in order.
+
+### Phase 1 — Trigger the emergency pause
+
+Any single admin can pause immediately (see **Section 1** for the full procedure):
+
+```bash
+soroban contract invoke \
+  --id $CONTRACT_ID \
+  --source $ADMIN_IDENTITY \
+  --network $NETWORK \
+  -- \
+  emergency_pause \
+  --caller $ADMIN_ADDRESS \
+  --reason SecurityIncident
+```
+
+Notify all other admins in `#incidents` immediately so they can participate in the quorum vote.
+
+### Phase 2 — Coordinate the vote-to-unpause quorum
+
+**Check current quorum state** (run this before and after each vote):
+
+```bash
+soroban contract invoke \
+  --id $CONTRACT_ID \
+  --source $ADMIN_IDENTITY \
+  --network $NETWORK \
+  -- \
+  health
+```
+
+Inspect the response for:
+- `paused: true` — confirms the pause is active
+- `pause_votes` — number of admins who have already voted to unpause
+- `required_votes` — quorum threshold that must be reached
+- `timelock_remaining` — seconds remaining before the timelock expires (must reach 0 before unpause is accepted)
+
+**Each admin must cast a vote independently:**
+
+```bash
+soroban contract invoke \
+  --id $CONTRACT_ID \
+  --source $ADMIN_IDENTITY \
+  --network $NETWORK \
+  -- \
+  vote_unpause \
+  --caller $ADMIN_ADDRESS
+```
+
+Repeat this command for every admin until `pause_votes >= required_votes`. Once quorum is reached **and** the timelock has elapsed, the contract unpauses automatically.
+
+**Tracking votes during a live incident:**
+
+1. Designate one admin as incident commander to collect confirmation messages in `#incidents`.
+2. Each admin posts their `ADMIN_ADDRESS` and transaction hash after voting.
+3. The incident commander re-runs the `health` query after each vote to confirm `pause_votes` increments.
+4. Do not proceed to Phase 3 until `pause_votes >= required_votes` is confirmed in `health` output.
+
+### Phase 3 — Emergency unpause (last resort only)
+
+Use `emergency_unpause` **only** when:
+- Quorum cannot be reached (e.g., admins are unreachable), **and**
+- The situation requires immediate contract resumption to prevent greater harm, **and**
+- A post-incident review will be conducted to address the quorum failure.
+
+```bash
+soroban contract invoke \
+  --id $CONTRACT_ID \
+  --source $ADMIN_IDENTITY \
+  --network $NETWORK \
+  -- \
+  emergency_unpause \
+  --caller $ADMIN_ADDRESS
+```
+
+> **Warning:** `emergency_unpause` bypasses quorum. It should be treated as a break-glass action. Document the justification in the incident GitHub issue before executing.
+
+Verify the contract is running normally after either path:
+
+```bash
+soroban contract invoke \
+  --id $CONTRACT_ID \
+  --source $ADMIN_IDENTITY \
+  --network $NETWORK \
+  -- \
+  health
+```
+
+Confirm `paused: false` and `pause_votes: 0` (votes are cleared on unpause).
+
+**After completing the circuit breaker procedure:**
+- Close the incident GitHub issue with a summary of which path was taken (quorum or last-resort).
+- Post a resolution notice in `#incidents` including the ledger sequence of the unpause.
+- If `emergency_unpause` was used, open a follow-up issue tagged `security-review` to evaluate whether the admin quorum configuration needs adjustment.
+
+---
+
+## 3. Unpause After Incident Resolution
 
 Unpausing requires admin quorum votes (default: 1). If a timelock is configured, the elapsed time since the pause must exceed `timelock_seconds` before the unpause is accepted.
 
@@ -97,7 +197,7 @@ Confirm `paused: false`.
 
 ---
 
-## 3. Rotate Admin Keys via Governance Proposal
+## 4. Rotate Admin Keys via Governance Proposal
 
 Admin key rotation uses the on-chain governance module. The process is: propose → vote → execute (after timelock).
 
@@ -169,7 +269,7 @@ soroban contract invoke \
 
 ---
 
-## 4. Handle a Stuck Migration
+## 5. Handle a Stuck Migration
 
 A migration can become stuck if a batch import fails mid-flight or the contract is paused during migration.
 
@@ -229,7 +329,7 @@ soroban contract invoke \
 
 ---
 
-## 5. Replay Failed Webhook Deliveries
+## 6. Replay Failed Webhook Deliveries
 
 The webhook dispatcher persists delivery attempts in the `webhook_deliveries` table. Failed deliveries can be replayed via the backend admin API.
 
@@ -283,7 +383,7 @@ psql $DATABASE_URL -c "
 
 ---
 
-## 6. Extend Contract Storage TTL
+## 7. Extend Contract Storage TTL
 
 Soroban persistent storage entries expire after a set number of ledgers. Extend TTL before entries expire to avoid data loss.
 
@@ -326,7 +426,7 @@ Recommended: run a scheduled job (weekly) to bump TTL on all active remittances 
 
 ---
 
-## 7. Escalation Contacts and SLA Targets
+## 8. Escalation Contacts and SLA Targets
 
 | Severity | Definition | Response SLA | Resolution SLA | Escalation Path |
 |----------|-----------|-------------|----------------|-----------------|
