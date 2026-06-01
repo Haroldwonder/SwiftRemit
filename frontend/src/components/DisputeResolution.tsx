@@ -65,6 +65,8 @@ function parseAuditLogResponse(value: unknown): AuditLogItem[] {
   return value;
 }
 
+const PAGE_SIZE = 10;
+
 export default function DisputeResolution() {
   const [disputes, setDisputes] = useState<DisputeItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,20 +74,27 @@ export default function DisputeResolution() {
   const [auditLog, setAuditLog] = useState<AuditLogItem[]>([]);
   const [resolving, setResolving] = useState<string | number | null>(null);
   const [confirmOpen, setConfirmOpen] = useState<ConfirmState | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
 
   useEffect(() => {
-    void fetchDisputes();
+    void fetchDisputes(1);
     void fetchAuditLog();
   }, []);
 
-  async function fetchDisputes() {
+  async function fetchDisputes(pageNum: number) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/api/remittances?status=Disputed`);
+      const res = await fetch(
+        `${API_URL}/api/remittances?status=Disputed&page=${pageNum}&pageSize=${PAGE_SIZE}`
+      );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: unknown = await res.json();
-      setDisputes(parseDisputesResponse(data));
+      const items = parseDisputesResponse(data);
+      setDisputes(items);
+      setPage(pageNum);
+      setHasMore(items.length === PAGE_SIZE);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
       setDisputes([]);
@@ -129,7 +138,7 @@ export default function DisputeResolution() {
         body: JSON.stringify({ in_favour_of_sender: inFavourOfSender }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await fetchDisputes();
+      await fetchDisputes(page);
       await fetchAuditLog();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
@@ -223,6 +232,13 @@ export default function DisputeResolution() {
               </li>
             ))}
           </ul>
+        )}
+        {!loading && (disputes.length > 0 || page > 1) && (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px' }}>
+            <button onClick={() => void fetchDisputes(page - 1)} disabled={page <= 1} aria-label="Previous page">← Prev</button>
+            <span>Page {page}</span>
+            <button onClick={() => void fetchDisputes(page + 1)} disabled={!hasMore} aria-label="Next page">Next →</button>
+          </div>
         )}
       </section>
 
