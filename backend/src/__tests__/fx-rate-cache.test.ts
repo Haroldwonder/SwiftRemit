@@ -149,6 +149,18 @@ describe('FxRateCache', () => {
       await expect(cache.getCurrentRate('USD', 'EUR')).rejects.toMatchObject({ isAxiosError: true });
     });
 
+    it('propagates provider error when both live and stale cache are empty on first request', async () => {
+      // No prior successful fetch → stale cache is also empty.
+      // Provider outage (non-429) on the very first request must not be swallowed.
+      const providerError = new Error('Service Unavailable');
+      vi.mocked(axios.get).mockRejectedValueOnce(providerError);
+
+      cache = new FxRateCache({ ttlSeconds: 60 });
+
+      await expect(cache.getCurrentRate('USD', 'PHP')).rejects.toThrow('Failed to fetch FX rate');
+      expect(axios.get).toHaveBeenCalledTimes(1);
+    });
+
     it('includes API key in request headers when provided', async () => {
       const mockResponse = {
         data: {
