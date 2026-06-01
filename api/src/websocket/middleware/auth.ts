@@ -80,6 +80,8 @@ export function createAuthMiddleware() {
       socket.data.user = {
         userId: decoded.userId ?? decoded.sub ?? '',
         remittanceIds: decoded.remittanceIds,
+        agentRemittanceIds: decoded.agentRemittanceIds,
+        role: decoded.role,
       };
 
       next();

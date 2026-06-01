@@ -32,24 +32,35 @@ export function remittanceRoom(remittanceId: string): string {
 /**
  * Checks whether the authenticated user is allowed to watch a remittance.
  *
- * If the JWT contains an explicit `remittanceIds` allowlist, the requested
- * ID must be in that list. If the JWT has no allowlist (e.g. an admin token),
- * access is granted to all remittances.
- *
- * Replace or extend this function when a real remittance ownership lookup
- * against the database is available.
+ * Returns true if:
+ *   - The user has no allowlists (admin / service token)
+ *   - The user is the sender and the remittanceId is in their remittanceIds
+ *   - The user is an agent and the remittanceId is in their agentRemittanceIds
  */
 function userCanAccessRemittance(socket: Socket, remittanceId: string): boolean {
   const { user } = socket.data;
 
   if (!user) return false;
 
-  // No allowlist on the token → grant access (admin / service token)
-  if (!user.remittanceIds || user.remittanceIds.length === 0) {
+  const hasSenderList = user.remittanceIds && user.remittanceIds.length > 0;
+  const hasAgentList = user.agentRemittanceIds && user.agentRemittanceIds.length > 0;
+
+  // No allowlists on the token → grant access (admin / service token)
+  if (!hasSenderList && !hasAgentList) {
     return true;
   }
 
-  return user.remittanceIds.includes(remittanceId);
+  // Grant access if the user is the sender of this remittance
+  if (hasSenderList && user.remittanceIds!.includes(remittanceId)) {
+    return true;
+  }
+
+  // Grant access if the user is the assigned agent for this remittance
+  if (hasAgentList && user.agentRemittanceIds!.includes(remittanceId)) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
