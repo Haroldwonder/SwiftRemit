@@ -20,6 +20,7 @@ interface CorridorLimits {
 
 interface SendMoneyFlowProps {
   assets?: string[];
+  senderAddress?: string;
   onConfirm?: (payload: ConfirmPayload) => Promise<void>;
   /** Optional: fetch daily limit status for the sender/currency/country corridor */
   getDailyLimitStatus?: (currency: string, country: string) => Promise<DailyLimitStatus>;
@@ -52,8 +53,11 @@ const ASSET_ISSUERS: Partial<Record<string, string>> = {
 /** Threshold at which we show the "approaching limit" warning (90%) */
 const APPROACHING_THRESHOLD = 0.9;
 
-function isValidRecipient(input: string): boolean {
-  return /^G[A-Z2-7]{55}$/.test(input.trim());
+function isValidRecipient(input: string, senderAddress?: string): boolean {
+  const trimmed = input.trim();
+  if (!/^G[A-Z2-7]{55}$/.test(trimmed)) return false;
+  if (senderAddress && trimmed === senderAddress.trim()) return false;
+  return true;
 }
 
 function resolveAsset(assetCode: string): StellarSdk.Asset {
@@ -118,6 +122,7 @@ async function buildAndSubmitTransaction(
 
 export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   assets = DEFAULT_ASSETS,
+  senderAddress,
   onConfirm,
   getDailyLimitStatus,
   senderAddress,
@@ -181,8 +186,10 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
       return t('sendMoney.errors.assetRequired');
     }
 
-    if (step === 3 && !isValidRecipient(recipient)) {
-      return t('sendMoney.errors.recipientInvalid');
+    if (step === 3 && !isValidRecipient(recipient, senderAddress)) {
+      return senderAddress && recipient.trim() === senderAddress.trim()
+        ? 'Recipient cannot be your own address.'
+        : 'Recipient must be a valid Stellar public key.';
     }
 
     return null;
