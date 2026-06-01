@@ -49,6 +49,21 @@ export function correlationIdMiddleware(req: Request, res: Response, next: NextF
 /**
  * Enhanced logger with correlation ID support
  */
+const SENSITIVE_FIELDS = new Set([
+  'secret_key', 'private_key', 'password', 'kyc_fields',
+  'token', 'authorization', 'secret', 'api_key',
+]);
+
+function redact(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(redact);
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([k, v]) =>
+      [k, SENSITIVE_FIELDS.has(k) ? '[REDACTED]' : redact(v)]
+    )
+  );
+}
+
 export class StructuredLogger {
   private context: string;
 
@@ -64,7 +79,7 @@ export class StructuredLogger {
       context: this.context,
       correlationId,
       message,
-      ...(data && { data }),
+      ...(data && { data: redact(data) }),
     };
     return JSON.stringify(logEntry);
   }
