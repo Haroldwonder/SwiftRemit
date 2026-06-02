@@ -55,6 +55,52 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
       - run: cargo test --verbose
 
+  # ── TypeScript type checking ───────────────────────────────────────────────
+  backend-typecheck:
+    name: Backend typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - run: npx tsc --noEmit
+        working-directory: backend
+
+  api-typecheck:
+    name: API typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+      - run: npm ci
+        working-directory: api
+      - run: npx tsc --noEmit
+        working-directory: api
+
+  frontend-typecheck:
+    name: Frontend typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npx tsc --noEmit
+        working-directory: frontend
+
   # ── Backend (Node.js / TypeScript) ─────────────────────────────────────────
   backend-lint:
     name: Backend lint
@@ -192,10 +238,13 @@ jobs:
       - rust-fmt
       - rust-clippy
       - rust-test
+      - backend-typecheck
       - backend-lint
       - backend-test
+      - api-typecheck
       - api-lint
       - api-test
+      - frontend-typecheck
       - frontend-lint
       - frontend-coverage
     if: always()
