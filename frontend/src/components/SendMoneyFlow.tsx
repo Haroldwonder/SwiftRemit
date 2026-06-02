@@ -265,7 +265,9 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
       }
     } catch (confirmError) {
       const msg = confirmError instanceof Error ? confirmError.message : '';
-      if (
+      if (msg.toLowerCase().includes('issuer not configured')) {
+        setError(t('sendMoney.errors.assetIssuerNotConfigured', { asset }));
+      } else if (
         msg.toLowerCase().includes('rejected') ||
         msg.toLowerCase().includes('denied') ||
         msg.toLowerCase().includes('user rejected')
