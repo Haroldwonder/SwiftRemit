@@ -14,10 +14,10 @@ testnet-integration = []
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = "25.3.1"
+soroban-sdk = "26.0.1"
 
 [dev-dependencies]
-soroban-sdk = { version = "25.3.1", features = ["testutils"] }
+soroban-sdk = { version = "26.0.1", features = ["testutils"] }
 proptest = "1.4"
 criterion = "0.5"
 # Used only by the testnet-integration test suite (gated by feature flag).
