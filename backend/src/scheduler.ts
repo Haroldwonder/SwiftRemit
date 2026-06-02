@@ -8,6 +8,7 @@ import { SorobanRpc, Keypair } from '@stellar/stellar-sdk';
 import { SwiftRemitClient } from '@swiftremit/sdk';
 import { KycExpiryNotifier } from './kyc-expiry-notifier';
 import { createWebhookStore } from './webhooks/store';
+import { withAdvisoryLock } from './distributed-lock';
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
@@ -23,32 +24,47 @@ export async function startBackgroundJobs() {
 
   // Run every 6 hours
   cron.schedule('0 */6 * * *', async () => {
-    console.log('Starting periodic asset revalidation...');
-    await revalidateStaleAssets();
+    const ran = await withAdvisoryLock(pool, 'revalidate-stale-assets', async () => {
+      console.log('Starting periodic asset revalidation...');
+      await revalidateStaleAssets();
+    });
+    if (!ran) console.log('revalidate-stale-assets: skipped (another instance holds the lock)');
   });
 
   // Run KYC polling every 30 minutes
   cron.schedule('*/30 * * * *', async () => {
-    console.log('Starting KYC status polling...');
-    await pollKycStatuses();
+    const ran = await withAdvisoryLock(pool, 'poll-kyc-statuses', async () => {
+      console.log('Starting KYC status polling...');
+      await pollKycStatuses();
+    });
+    if (!ran) console.log('poll-kyc-statuses: skipped (another instance holds the lock)');
   });
 
   // Run SEP-24 transaction polling every 2 minutes
   cron.schedule('*/2 * * * *', async () => {
-    console.log('Starting SEP-24 transaction polling...');
-    await pollSep24Transactions();
+    const ran = await withAdvisoryLock(pool, 'poll-sep24-transactions', async () => {
+      console.log('Starting SEP-24 transaction polling...');
+      await pollSep24Transactions();
+    });
+    if (!ran) console.log('poll-sep24-transactions: skipped (another instance holds the lock)');
   });
 
   // Extend contract storage TTLs daily to prevent data loss
   cron.schedule('0 0 * * *', async () => {
-    console.log('Starting contract storage TTL extension...');
-    await extendContractStorageTtl();
+    const ran = await withAdvisoryLock(pool, 'extend-contract-storage-ttl', async () => {
+      console.log('Starting contract storage TTL extension...');
+      await extendContractStorageTtl();
+    });
+    if (!ran) console.log('extend-contract-storage-ttl: skipped (another instance holds the lock)');
   });
 
   // Send KYC expiry warnings daily at 08:00 UTC
   cron.schedule('0 8 * * *', async () => {
-    console.log('Starting KYC expiry notification job...');
-    await notifyKycExpiries();
+    const ran = await withAdvisoryLock(pool, 'notify-kyc-expiries', async () => {
+      console.log('Starting KYC expiry notification job...');
+      await notifyKycExpiries();
+    });
+    if (!ran) console.log('notify-kyc-expiries: skipped (another instance holds the lock)');
   });
 
   console.log('Background jobs scheduled');
