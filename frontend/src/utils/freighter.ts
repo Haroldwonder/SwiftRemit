@@ -53,6 +53,9 @@ export class FreighterService {
   }
 
   static isNetworkMismatch(walletNetwork: NetworkType, expectedNetwork: NetworkType): boolean {
+    if (!this.isInstalled()) {
+      return false;
+    }
     return walletNetwork !== expectedNetwork;
   }
 }
