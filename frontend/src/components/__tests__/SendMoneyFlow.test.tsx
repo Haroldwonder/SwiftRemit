@@ -457,6 +457,7 @@ describe('SendMoneyFlow', () => {
 
     it('has no a11y violations on the confirmation step', async () => {
       const { container } = render(<SendMoneyFlow />);
+      fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: '100' } });
       await fillAndAdvanceToReview('100', 'USDC', VALID_RECIPIENT);
       fireEvent.click(screen.getByRole('button', { name: /continue/i }));
       await waitFor(() => expect(screen.getByRole('button', { name: /confirm/i })).toBeInTheDocument());

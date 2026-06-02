@@ -452,6 +452,8 @@ describe('Timeout Handling', () => {
     process.env.SEP24_ENABLED_ANCHOR_TEST = 'true';
     process.env.SEP24_SERVER_ANCHOR_TEST = serverUrl + '/sep24';
     process.env.SEP24_POLL_INTERVAL_ANCHOR_TEST = '1';
+    // Very short timeout (1 ms) so the hanging server triggers a timeout error
+    process.env.SEP24_TIMEOUT_ANCHOR_TEST = '1';
     process.env.SEP24_TIMEOUT_ANCHOR_TEST = '1';
     // Short HTTP timeout so the hanging mock server triggers timeout quickly
     process.env.SEP24_HTTP_TIMEOUT_MS = '200';

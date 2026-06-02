@@ -8,6 +8,8 @@ import type { AnchorProvider } from '../AnchorSelector';
 
 expect.extend(toHaveNoViolations);
 
+expect.extend(toHaveNoViolations);
+
 const mockAnchors: AnchorProvider[] = [
   {
     id: 'anchor-1',

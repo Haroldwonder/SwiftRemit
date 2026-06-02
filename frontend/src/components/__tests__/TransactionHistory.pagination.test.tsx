@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
+import { TransactionHistory, TransactionHistoryItem } from '../TransactionHistory';
 import { TransactionHistory } from '../TransactionHistory';
 import type { TransactionHistoryItem } from '../TransactionHistory';
 import '@testing-library/jest-dom';
