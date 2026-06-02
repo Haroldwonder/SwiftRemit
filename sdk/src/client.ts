@@ -131,10 +131,20 @@ export class SwiftRemitClient {
       throw new Error(`Submit failed: ${JSON.stringify(sendResult.errorResult)}`);
     }
 
-    let getResult = await this.server.getTransaction(sendResult.hash);
+    let getResult = await withRetry(
+      () => this.server.getTransaction(sendResult.hash),
+      this.retries,
+      this.retryDelayMs,
+      this.retryBackoffFactor
+    );
     while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
       await new Promise((r) => setTimeout(r, 1000));
-      getResult = await this.server.getTransaction(sendResult.hash);
+      getResult = await withRetry(
+        () => this.server.getTransaction(sendResult.hash),
+        this.retries,
+        this.retryDelayMs,
+        this.retryBackoffFactor
+      );
     }
 
     if (getResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
