@@ -267,9 +267,15 @@ cargo test -- --nocapture
 # Run specific test
 cargo test test_name
 
-# Run property-based tests
+# Run the FULL test suite including legacy tests (required before submitting a PR)
 cargo test --features legacy-tests
 ```
+
+> **Important:** `cargo test` alone does **not** run the complete test suite.
+> The `--features legacy-tests` flag enables additional test modules that cover
+> historical behaviour, deprecated code paths, and regression tests for previously
+> fixed bugs. Always run `cargo test --features legacy-tests` before opening a PR
+> to ensure no legacy behaviour has been broken.
 
 #### Backend Tests
 ```bash
@@ -407,9 +413,9 @@ troubleshooting section.
 
 2. **Run all tests** and ensure they pass:
    ```bash
-   cargo test                    # Rust tests
-   cd backend && npm test        # Backend tests
-   cd api && npm test            # API tests
+   cargo test --features legacy-tests   # Full Rust test suite (including legacy tests)
+   cd backend && npm test               # Backend tests
+   cd api && npm test                   # API tests
    ```
 
 3. **Run linters**:
