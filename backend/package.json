@@ -22,7 +22,7 @@
     "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
     "@opentelemetry/instrumentation-express": "^0.63.0",
     "@opentelemetry/instrumentation-http": "^0.215.0",
-    "@opentelemetry/instrumentation-pg": "^0.67.0",
+    "@opentelemetry/instrumentation-pg": "^0.70.0",
     "@opentelemetry/resources": "^2.7.0",
     "@opentelemetry/sdk-node": "^0.215.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
