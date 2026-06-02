@@ -10,6 +10,8 @@ export interface WebhookPayload {
 
 export class WebhookVerifier {
   private readonly replayWindow: number;
+  /** Secondary sanity-check window (10 minutes) to account for clock skew. */
+  private readonly timestampWindow: number = 10 * 60 * 1000;
   private readonly processedNonces: Set<string>;
 
   constructor(replayWindowSeconds: number = 300) {
@@ -68,18 +70,16 @@ export class WebhookVerifier {
   }
 
   /**
-   * Validate timestamp to prevent replay attacks
+   * Secondary sanity-check: reject timestamps outside a generous 10-minute
+   * window to catch obviously stale or future-dated webhooks.
+   * Primary replay protection is nonce-based (validateNonce).
    */
   validateTimestamp(timestamp: string): boolean {
     const webhookTime = new Date(timestamp).getTime();
-    const now = Date.now();
-    
     if (isNaN(webhookTime)) {
       return false;
     }
-
-    const timeDiff = Math.abs(now - webhookTime);
-    return timeDiff <= this.replayWindow;
+    return Math.abs(Date.now() - webhookTime) <= this.timestampWindow;
   }
 
   /**
