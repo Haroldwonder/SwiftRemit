@@ -19,7 +19,7 @@ soroban-sdk = "25.3.1"
 [dev-dependencies]
 soroban-sdk = { version = "25.3.1", features = ["testutils"] }
 proptest = "1.4"
-criterion = "0.5"
+criterion = "0.8"
 # Used only by the testnet-integration test suite (gated by feature flag).
 reqwest = { version = "0.12.5", features = ["json", "blocking"] }
 serde = { version = "1.0", features = ["derive"] }
