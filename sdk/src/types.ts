@@ -98,6 +98,11 @@ export interface SwiftRemitClientOptions {
   rpcUrl: string;
   /** Base fee for transactions in stroops (default: 100) */
   fee?: string;
+  /**
+   * Timeout in seconds for all network requests (default: 30).
+   * Prevents requests from hanging indefinitely on poor mobile connections.
+   */
+  timeoutMs?: number;
 }
 
 export interface GovernanceConfig {

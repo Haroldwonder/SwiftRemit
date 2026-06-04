@@ -37,12 +37,27 @@ export class SwiftRemitClient {
   private readonly server: SorobanRpc.Server;
   private readonly networkPassphrase: string;
   private readonly fee: string;
+  private readonly timeoutMs: number;
 
   constructor(options: SwiftRemitClientOptions) {
     this.contract = new Contract(options.contractId);
     this.server = new SorobanRpc.Server(options.rpcUrl, { allowHttp: true });
     this.networkPassphrase = options.networkPassphrase;
     this.fee = options.fee ?? BASE_FEE;
+    this.timeoutMs = (options.timeoutMs ?? 30) * 1000;
+  }
+
+  /** Reject a promise after `this.timeoutMs` milliseconds. */
+  private withTimeout<T>(promise: Promise<T>): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Network request timed out after ${this.timeoutMs}ms`)),
+          this.timeoutMs
+        )
+      ),
+    ]);
   }
 
   // ─── Transaction helpers ────────────────────────────────────────────────────
@@ -56,7 +71,7 @@ export class SwiftRemitClient {
     method: string,
     args: xdr.ScVal[]
   ): Promise<Transaction> {
-    const account = await this.server.getAccount(sourceAddress);
+    const account = await this.withTimeout(this.server.getAccount(sourceAddress));
     const tx = new TransactionBuilder(account, {
       fee: this.fee,
       networkPassphrase: this.networkPassphrase,
@@ -65,7 +80,7 @@ export class SwiftRemitClient {
       .setTimeout(30)
       .build();
 
-    const simResult = await this.server.simulateTransaction(tx);
+    const simResult = await this.withTimeout(this.server.simulateTransaction(tx));
     if (SorobanRpc.Api.isSimulationError(simResult)) {
       throw new Error(`Simulation failed: ${simResult.error}`);
     }
@@ -78,15 +93,15 @@ export class SwiftRemitClient {
     keypair: Keypair
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     tx.sign(keypair);
-    const sendResult = await this.server.sendTransaction(tx);
+    const sendResult = await this.withTimeout(this.server.sendTransaction(tx));
     if (sendResult.status === "ERROR") {
       throw new Error(`Submit failed: ${JSON.stringify(sendResult.errorResult)}`);
     }
 
-    let getResult = await this.server.getTransaction(sendResult.hash);
+    let getResult = await this.withTimeout(this.server.getTransaction(sendResult.hash));
     while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
       await new Promise((r) => setTimeout(r, 1000));
-      getResult = await this.server.getTransaction(sendResult.hash);
+      getResult = await this.withTimeout(this.server.getTransaction(sendResult.hash));
     }
 
     if (getResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
@@ -102,7 +117,7 @@ export class SwiftRemitClient {
     method: string,
     args: xdr.ScVal[]
   ): Promise<xdr.ScVal> {
-    const account = await this.server.getAccount(sourceAddress);
+    const account = await this.withTimeout(this.server.getAccount(sourceAddress));
     const tx = new TransactionBuilder(account, {
       fee: this.fee,
       networkPassphrase: this.networkPassphrase,
@@ -111,7 +126,7 @@ export class SwiftRemitClient {
       .setTimeout(30)
       .build();
 
-    const sim = await this.server.simulateTransaction(tx);
+    const sim = await this.withTimeout(this.server.simulateTransaction(tx));
     if (SorobanRpc.Api.isSimulationError(sim)) {
       throw new Error(`Simulation failed: ${sim.error}`);
     }
