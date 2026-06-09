@@ -36,7 +36,7 @@
     "@types/joi": "^17.2.3",
     "@types/js-yaml": "^4.0.9",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^20.10.0",
+    "@types/node": "^25.9.2",
     "@types/pg": "^8.10.9",
     "@types/supertest": "^7.2.0",
     "@types/swagger-ui-express": "^4.1.6",
