@@ -19,3 +19,23 @@ backend/node_modules/
 # Test artifacts
 test_snapshots/
 proptest-regressions/
+
+# IDE / editor artifacts
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Node artifacts (api, sdk, examples)
+api/node_modules/
+sdk/node_modules/
+examples/node_modules/
+
+# Build outputs
+dist/
+out/
+

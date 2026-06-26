@@ -424,6 +424,12 @@ pub enum ProposalAction {
     UpdateQuorum(u32),
     /// Update the governance execution timelock in seconds.
     UpdateTimelock(u64),
+    /// Add the given token address to the asset allowlist (#832).
+    /// Enables remittances denominated in that Stellar-native asset.
+    WhitelistAsset(Address),
+    /// Adjust the minimum agent reputation threshold (#833).
+    /// Agents with a score below this value cannot accept new remittances.
+    AdjustReputationThreshold(u32),
 }
 
 /// Lifecycle state of a governance proposal.

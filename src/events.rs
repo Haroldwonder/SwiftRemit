@@ -514,6 +514,26 @@ pub fn emit_proposal_cleaned_up(env: &Env, proposal_id: u64) {
     );
 }
 
+/// Emits when an agent's reputation score falls below the minimum threshold (#833).
+/// Fired during the reputation gate check in `create_remittance`.
+pub fn emit_agent_suspended(env: &Env, agent: Address, reputation: u32, min_threshold: u32) {
+    emit_event!(env, "agent", "suspnded", agent, reputation, min_threshold);
+}
+
+/// Emits when an agent's reputation score drops below the minimum threshold (#833).
+///
+/// Fired at the point of the failed eligibility check inside `create_remittance`
+/// so off-chain systems can detect and flag low-reputation agents automatically.
+///
+/// # Topics
+/// `("agent", "suspended")`
+///
+/// # Payload
+/// `(schema_version, ledger_sequence, ledger_timestamp, agent, reputation_score, min_threshold)`
+pub fn emit_agent_suspended(env: &Env, agent: Address, reputation: u32, min_threshold: u32) {
+    emit_event!(env, "agent", "suspnded", agent, reputation, min_threshold);
+}
+
 /// Emits when a cross-contract migration is aborted and state is reset to Idle.
 pub fn emit_migration_aborted(env: &Env, caller: Address) {
     env.events().publish(

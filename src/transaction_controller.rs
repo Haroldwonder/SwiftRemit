@@ -376,6 +376,36 @@ impl TransactionController {
             .wrapping_add(timestamp)
     }
 
+    /// Pre-confirm lifecycle hook: validates user eligibility and KYC before payout confirmation.
+    ///
+    /// Called at the start of `confirm_payout` to ensure the remittance sender still
+    /// meets all eligibility requirements before any state mutation occurs.
+    pub fn pre_confirm_validation(env: &Env, remittance: &Remittance) -> Result<(), ContractError> {
+        Self::validate_eligibility(env, &remittance.sender)?;
+        Self::confirm_kyc(env, &remittance.sender)?;
+        Ok(())
+    }
+
+    /// Post-cancel cleanup hook: removes any controller-layer bookkeeping when a
+    /// remittance is cancelled so stale records do not persist.
+    ///
+    /// Called at the end of `cancel_remittance` after the refund transfer succeeds.
+    pub fn post_cancel_cleanup(env: &Env, remittance_id: u64) -> Result<(), ContractError> {
+        // Remove the transaction record if one was stored by the controller
+        if let Ok(mut record) = crate::storage::get_transaction_record(env, remittance_id) {
+            record.state = TransactionState::RolledBack;
+            // Persist the updated state so audit trails remain accurate
+            let _ = crate::storage::set_transaction_record(env, remittance_id, &record);
+        }
+        // Cancel any pending anchor operation
+        if let Ok(remittance_id_mapped) =
+            crate::storage::get_anchor_transaction(env, remittance_id)
+        {
+            let _ = Self::cancel_anchor_operation(env, remittance_id_mapped);
+        }
+        Ok(())
+    }
+
     /// Get transaction status
     pub fn get_transaction_status(
         env: &Env,

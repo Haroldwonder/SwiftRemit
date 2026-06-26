@@ -443,6 +443,8 @@ impl SwiftRemitContract {
         if min_rep > 0 {
             let rep = storage::compute_agent_reputation(&storage::get_agent_stats(&env, &agent));
             if rep < min_rep {
+                // #833: emit agent_suspended event so off-chain monitors can react
+                events::emit_agent_suspended(&env, agent.clone(), rep, min_rep);
                 return Err(ContractError::BelowMinReputation);
             }
         }
@@ -789,6 +791,10 @@ impl SwiftRemitContract {
         if agent != remittance.agent {
             return Err(ContractError::Unauthorized);
         }
+
+        // #831: Pre-confirm lifecycle hook — validates sender eligibility and KYC
+        // before any state mutation occurs.
+        transaction_controller::TransactionController::pre_confirm_validation(&env, &remittance)?;
 
         // Validate proof against settlement config if required
         if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
@@ -1256,6 +1262,10 @@ impl SwiftRemitContract {
         if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
             storage::remove_idempotency_record(&env, &idem_key);
         }
+
+        // #831: Post-cancel cleanup — removes controller-layer bookkeeping entries
+        // so stale transaction records and anchor mappings do not persist after cancellation.
+        transaction_controller::TransactionController::post_cancel_cleanup(&env, remittance_id)?;
 
         Ok(())
     }
@@ -3286,5 +3296,106 @@ impl SwiftRemitContract {
         get_admin(&env)?;
         require_admin(&env, &caller)?;
         migration::abort_migration(&env, &caller)
+    }
+
+    /// Executes net settlement for a batch of remittances in a single contract call (#834).
+    ///
+    /// Computes the minimal set of net token transfers between agents by offsetting
+    /// opposing flows (e.g. A→B 100 and B→A 90 produce a single net transfer of 10
+    /// from A to B). Only the net difference moves on-chain, reducing transfer volume.
+    ///
+    /// # Authorization
+    /// Caller must be a registered admin (settlement operator).
+    ///
+    /// # Parameters
+    /// - `operator`: Admin/operator address — must authenticate and hold Admin role.
+    /// - `remittance_ids`: IDs of Pending remittances to net and settle (max 50).
+    ///
+    /// # Returns
+    /// `BatchSettlementResult` with the list of settled remittance IDs.
+    ///
+    /// # Errors
+    /// - `Unauthorized` / `NotInitialized` — operator is not an admin
+    /// - `ContractPaused` — contract is paused
+    /// - `InvalidBatchSize` — empty or over-limit batch
+    /// - `RemittanceNotFound` — unknown remittance ID
+    /// - `InvalidStatus` — remittance is not Pending
+    /// - `DuplicateSettlement` — already settled
+    /// - `SettlementExpired` — remittance has expired
+    /// - `NetSettlementValidationFailed` — netting math error
+    pub fn execute_net_settlement(
+        env: Env,
+        operator: Address,
+        remittance_ids: Vec<u64>,
+    ) -> Result<BatchSettlementResult, ContractError> {
+        // Operator must authenticate and hold Admin role
+        operator.require_auth();
+        require_role_admin(&env, &operator)?;
+
+        if is_paused(&env) {
+            return Err(ContractError::ContractPaused);
+        }
+
+        let batch_size = remittance_ids.len();
+        if batch_size == 0 || batch_size > MAX_NETTING_BATCH_SIZE {
+            return Err(ContractError::InvalidBatchSize);
+        }
+
+        // Load and validate all remittances upfront
+        let mut remittances = Vec::new(&env);
+        for i in 0..batch_size {
+            let id = remittance_ids.get_unchecked(i);
+            let remittance = get_remittance(&env, id)?;
+
+            if remittance.status != RemittanceStatus::Pending {
+                return Err(ContractError::InvalidStatus);
+            }
+            if has_settlement_hash(&env, id) {
+                return Err(ContractError::DuplicateSettlement);
+            }
+            if let Some(expiry) = remittance.expiry {
+                if env.ledger().timestamp() > expiry {
+                    return Err(ContractError::SettlementExpired);
+                }
+            }
+            remittances.push_back(remittance);
+        }
+
+        // Compute and validate net transfers
+        let netting_result = compute_net_settlements(&env, &remittances)?;
+        validate_net_settlement(&remittances, &netting_result.net_transfers)?;
+
+        let usdc_token = get_usdc_token(&env)?;
+        let token_client = token::Client::new(&env, &usdc_token);
+
+        // Execute each net transfer
+        for i in 0..netting_result.net_transfers.len() {
+            let transfer = netting_result.net_transfers.get_unchecked(i);
+            if transfer.net_amount == 0 {
+                continue;
+            }
+            let (from, to, amount) = if transfer.net_amount > 0 {
+                (transfer.party_a.clone(), transfer.party_b.clone(), transfer.net_amount)
+            } else {
+                (transfer.party_b.clone(), transfer.party_a.clone(), -transfer.net_amount)
+            };
+            let payout = amount.checked_sub(transfer.total_fees).ok_or(ContractError::Overflow)?;
+            token_client.transfer(&env.current_contract_address(), &to, &payout);
+            safe_add_accumulated_fee(&env, transfer.total_fees)?;
+            emit_settlement_completed(&env, 0, from, to, usdc_token.clone(), payout);
+        }
+
+        // Mark all remittances completed
+        let mut settled_ids = Vec::new(&env);
+        for i in 0..remittances.len() {
+            let mut remittance = remittances.get_unchecked(i);
+            remittance.status = RemittanceStatus::Completed;
+            set_remittance(&env, remittance.id, &remittance);
+            set_settlement_hash(&env, remittance.id);
+            emit_remittance_completed(&env, remittance.id, remittance.sender, remittance.agent);
+            settled_ids.push_back(remittance.id);
+        }
+
+        Ok(BatchSettlementResult { settled_ids })
     }
 }
