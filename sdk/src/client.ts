@@ -20,6 +20,7 @@ import type {
   GovernanceConfig,
   DailyLimitStatus,
   Proposal,
+  PartialPayoutRecord,
   RemittanceEvent,
   RemittanceEventType,
   SubscribeOptions,
@@ -649,6 +650,56 @@ export class SwiftRemitClient {
       addressToScVal(caller),
       addressToScVal(newAdmin),
     ]);
+  }
+
+  // ── #835: Partial payout history ───────────────────────────────────────────
+
+  /**
+   * Returns the full disbursement history for a remittance's partial payouts.
+   *
+   * Each record includes the amount disbursed, the cumulative total, and the
+   * remaining amount — allowing SDK consumers to track payout progress without
+   * additional on-chain queries.
+   */
+  async getPartialPayoutHistory(
+    sourceAddress: string,
+    remittanceId: bigint
+  ): Promise<PartialPayoutRecord[]> {
+    const val = await this.simulateCall(
+      sourceAddress,
+      "get_partial_payout_history",
+      [u64ToScVal(remittanceId)]
+    );
+    const native = scValToNative(val) as Array<Record<string, unknown>>;
+    return native.map((r) => ({
+      amount: BigInt(r["amount"] as number),
+      totalDisbursed: BigInt(r["total_disbursed"] as number),
+      remainingAmount: BigInt(r["remaining_amount"] as number),
+      timestamp: BigInt(r["timestamp"] as number),
+      ledgerSequence: Number(r["ledger_sequence"]),
+    }));
+  }
+
+  // ── #836: Time-based remittance expiry ──────────────────────────────────────
+
+  /** Expire a pending remittance after its expiry window (permissionless). */
+  async expireRemittance(
+    caller: string,
+    remittanceId: bigint
+  ): Promise<Transaction> {
+    return this.prepareTransaction(caller, "expire_remittance", [
+      u64ToScVal(remittanceId),
+    ]);
+  }
+
+  /** Get the global remittance auto-expiry window in seconds (0 = disabled). */
+  async getRemittanceExpiryWindow(sourceAddress: string): Promise<bigint> {
+    const val = await this.simulateCall(
+      sourceAddress,
+      "get_remittance_expiry_window",
+      []
+    );
+    return BigInt(scValToNative(val) as number);
   }
 
   /** Confirm partial payout (agent only). */

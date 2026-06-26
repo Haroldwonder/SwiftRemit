@@ -270,6 +270,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         // B -> A: 90
@@ -286,6 +287,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         let result = compute_net_settlements(&env, &remittances).unwrap();
@@ -327,6 +329,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         // B -> A: 100
@@ -343,6 +346,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         let result = compute_net_settlements(&env, &remittances).unwrap();
@@ -375,6 +379,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         // B -> C: 50
@@ -391,6 +396,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         // C -> A: 30
@@ -407,6 +413,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         let result = compute_net_settlements(&env, &remittances).unwrap();
@@ -444,6 +451,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         remittances.push_back(Remittance {
@@ -459,6 +467,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         let result = compute_net_settlements(&env, &remittances).unwrap();
@@ -488,6 +497,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
         remittances1.push_back(Remittance {
             id: 2,
@@ -502,6 +512,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         // Second ordering (reversed)
@@ -519,6 +530,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
         remittances2.push_back(Remittance {
             id: 1,
@@ -533,6 +545,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         });
 
         let net1 = compute_net_settlements(&env, &remittances1).unwrap().net_transfers;
@@ -573,6 +586,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         }
     }
 

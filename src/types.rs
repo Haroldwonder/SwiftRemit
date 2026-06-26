@@ -123,17 +123,6 @@ pub struct SettlementConfig {
     pub oracle_address: Option<Address>,
 }
 
-/// Contracttype-compatible wrapper for Option<SettlementConfig>.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MaybeSettlementConfig {
-    None,
-    Some(SettlementConfig),
-}
-impl From<Option<SettlementConfig>> for MaybeSettlementConfig {
-    fn from(o: Option<SettlementConfig>) -> Self { match o { None => Self::None, Some(v) => Self::Some(v) } }
-}
-
 /// Escrow status for locked funds
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -229,6 +218,8 @@ pub struct Remittance {
     pub failed_at: Option<u64>,
     /// Hash of evidence provided by the sender during a dispute
     pub dispute_evidence: MaybeBytes32,
+    /// Ledger timestamp after which anyone can call expire_remittance to refund the sender
+    pub expires_at: Option<u64>,
 }
 
 #[contracttype]
@@ -471,4 +462,25 @@ pub struct Proposal {
     pub approval_count: u32,
     /// Ledger timestamp when quorum was reached (set on Approved transition).
     pub approval_timestamp: Option<u64>,
+    /// Ledger timestamp before which the proposal cannot be executed (timelock enforced).
+    pub execute_after: Option<u64>,
+}
+
+/// Record of a single partial payout disbursement for a remittance.
+///
+/// Stored per remittance to enable cumulative payout state reconstruction
+/// without additional on-chain queries.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartialPayoutRecord {
+    /// Amount disbursed in this payout
+    pub amount: i128,
+    /// Cumulative total disbursed (including this payout)
+    pub total_disbursed: i128,
+    /// Remaining amount left to disburse (net_payout - total_disbursed)
+    pub remaining_amount: i128,
+    /// Ledger timestamp when this disbursement occurred
+    pub timestamp: u64,
+    /// Ledger sequence when this disbursement occurred
+    pub ledger_sequence: u32,
 }

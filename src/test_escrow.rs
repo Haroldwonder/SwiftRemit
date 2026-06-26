@@ -327,6 +327,7 @@ fn test_zero_net_position_produces_no_transfer() {
         created_at: 0,
         failed_at: None,
         dispute_evidence: crate::MaybeBytes32::None,
+        expires_at: None,
     });
 
     // B -> A: 100 (exact mirror — net is zero)
@@ -343,6 +344,7 @@ fn test_zero_net_position_produces_no_transfer() {
         created_at: 0,
         failed_at: None,
         dispute_evidence: crate::MaybeBytes32::None,
+        expires_at: None,
     });
 
     let net_transfers: Vec<NetTransfer> = compute_net_settlements(&env, &remittances).unwrap().net_transfers;

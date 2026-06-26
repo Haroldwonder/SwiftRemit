@@ -44,6 +44,8 @@ export function parseRemittance(val: xdr.ScVal): Remittance {
     createdAt: BigInt(createdAt),
     failedAt:
       map["failed_at"] != null ? BigInt(map["failed_at"] as number) : null,
+    expiresAt:
+      map["expires_at"] != null ? BigInt(map["expires_at"] as number) : null,
   };
 }
 
@@ -175,6 +177,10 @@ export function parseProposal(val: xdr.ScVal): Proposal {
     approvalTimestamp:
       map["approval_timestamp"] != null
         ? BigInt(map["approval_timestamp"] as number)
+        : null,
+    executeAfter:
+      map["execute_after"] != null
+        ? BigInt(map["execute_after"] as number)
         : null,
   };
 }

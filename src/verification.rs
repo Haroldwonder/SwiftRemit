@@ -51,6 +51,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: crate::MaybeBytes32::None,
+            expires_at: None,
         };
 
         let commitment = compute_payout_commitment(&env, &remittance);

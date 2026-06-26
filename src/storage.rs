@@ -175,6 +175,9 @@ enum DataKey {
     DisputeWindow,
     // === Partial Payout ===
     DisbursedAmount(u64),
+    PartialPayoutHistory(u64),
+    // === Remittance Expiry Window ===
+    RemittanceExpiryWindow,
     // === Idempotency ===
     IdempotencyRecord(soroban_sdk::String),
     IdempotencyTTL,
@@ -1610,6 +1613,50 @@ pub fn add_disbursed_amount(env: &Env, remittance_id: u64, amount: i128) -> Resu
         .persistent()
         .set(&DataKey::DisbursedAmount(remittance_id), &next);
     Ok(())
+}
+
+/// Appends a partial payout record to the remittance's disbursement history.
+pub fn append_partial_payout_record(
+    env: &Env,
+    remittance_id: u64,
+    record: crate::PartialPayoutRecord,
+) {
+    let mut history: Vec<crate::PartialPayoutRecord> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::PartialPayoutHistory(remittance_id))
+        .unwrap_or_else(|| Vec::new(env));
+    history.push_back(record);
+    env.storage()
+        .persistent()
+        .set(&DataKey::PartialPayoutHistory(remittance_id), &history);
+}
+
+/// Returns the full list of partial payout records for a remittance.
+pub fn get_partial_payout_history(
+    env: &Env,
+    remittance_id: u64,
+) -> Vec<crate::PartialPayoutRecord> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PartialPayoutHistory(remittance_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Returns the global remittance auto-expiry window in seconds (0 = disabled).
+pub fn get_remittance_expiry_window(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RemittanceExpiryWindow)
+        .unwrap_or(0)
+}
+
+/// Sets the global remittance auto-expiry window in seconds.
+/// A value of 0 disables auto-expiry for newly created remittances.
+pub fn set_remittance_expiry_window(env: &Env, seconds: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::RemittanceExpiryWindow, &seconds);
 }
 
 // === Per-Agent Daily Withdrawal Cap ===

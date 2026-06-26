@@ -206,6 +206,17 @@ pub fn normalize_symbol(_env: &Env, symbol: &soroban_sdk::String) -> Result<soro
     Ok(symbol.clone())
 }
 
+/// Validates that an evidence hash is a 32-byte SHA-256 commitment.
+///
+/// Rejects hashes that are not exactly 32 bytes, returning a descriptive error
+/// so callers know precisely what constraint was violated.
+pub fn validate_evidence_hash(hash: &soroban_sdk::Bytes) -> Result<(), ContractError> {
+    if hash.len() != 32 {
+        return Err(ContractError::MalformedEvidenceHash);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

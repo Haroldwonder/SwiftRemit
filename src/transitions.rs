@@ -316,6 +316,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         };
 
         let result = transition_status(&env, &mut remittance, RemittanceStatus::Processing);
@@ -343,6 +344,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         };
 
         let result = transition_status(&env, &mut remittance, RemittanceStatus::Pending);
@@ -371,6 +373,7 @@ mod tests {
             created_at: 0,
             failed_at: None,
             dispute_evidence: None,
+            expires_at: None,
         };
 
         let result = transition_status(&env, &mut remittance, RemittanceStatus::Pending);

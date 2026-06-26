@@ -16,7 +16,9 @@ export type RemittanceEventType =
   | "completed"
   | "cancelled"
   | "failed"
-  | "disputed";
+  | "disputed"
+  | "partial_payout"
+  | "expired";
 
 /** A decoded contract event from the Stellar ledger. */
 export interface RemittanceEvent {
@@ -71,6 +73,22 @@ export interface Remittance {
   token: string;
   createdAt: bigint;
   failedAt: bigint | null;
+  /** Ledger timestamp after which anyone can call expireRemittance to refund the sender */
+  expiresAt: bigint | null;
+}
+
+/** A single partial payout disbursement record for a remittance. */
+export interface PartialPayoutRecord {
+  /** Amount disbursed in this payout */
+  amount: bigint;
+  /** Cumulative total disbursed including this payout */
+  totalDisbursed: bigint;
+  /** Remaining amount after this payout */
+  remainingAmount: bigint;
+  /** Ledger timestamp of this disbursement */
+  timestamp: bigint;
+  /** Ledger sequence number of this disbursement */
+  ledgerSequence: number;
 }
 
 export interface AgentStats {
@@ -172,6 +190,8 @@ export interface Proposal {
   expiry: bigint;
   approvalCount: number;
   approvalTimestamp: bigint | null;
+  /** Ledger timestamp before which the proposal cannot be executed (timelock enforced). */
+  executeAfter: bigint | null;
 }
 
 export interface GovernanceConfig {

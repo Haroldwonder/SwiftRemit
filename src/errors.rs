@@ -332,4 +332,7 @@ pub enum ContractError {
 
     /// Agent reputation is below the minimum threshold.
     BelowMinReputation = 79,
+
+    /// Evidence hash for a dispute is not a valid 32-byte SHA-256 commitment.
+    MalformedEvidenceHash = 80,
 }
