@@ -147,6 +147,30 @@ app.get('/health', async (req: Request, res: Response) => {
   res.status(status).json({ status: dbStatus === 'healthy' ? 'ok' : 'degraded', db: dbStatus, timestamp: new Date().toISOString() });
 });
 
+app.get('/health/db', async (req: Request, res: Response) => {
+  try {
+    await Promise.race([
+      pool.query('SELECT 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+    ]);
+    res.status(200).json({
+      status: 'ok',
+      pool: {
+        active: pool.totalCount - pool.idleCount,
+        idle: pool.idleCount,
+        waiting: pool.waitingCount,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch {
+    res.status(503).json({
+      status: 'error',
+      error: 'Database unreachable',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 // Get asset verification status
 app.get('/api/verification/:assetCode/:issuer', async (req: Request, res: Response) => {
   try {

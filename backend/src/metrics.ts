@@ -16,10 +16,12 @@ export class MetricsService {
     swiftremit_webhook_dead_letter_count: 0,
     swiftremit_kyc_poll_runs_total: 0,
     swiftremit_kyc_poll_failures_total: 0,
-    db_pool_available_connections: 0,
     kyc_poller_last_run_timestamp_seconds: 0,
     contract_event_indexer_lag_ledgers: 0,
     swiftremit_rate_limit_exceeded_total: {} as Record<string, number>,
+    db_pool_active_connections: 0,
+    db_pool_idle_connections: 0,
+    db_pool_waiting_connections: 0,
   };
 
   // FX rate staleness metrics
@@ -187,8 +189,10 @@ export class MetricsService {
    * Update all metrics
    */
   async updateAllMetrics(): Promise<void> {
-    // Pool available connections (totalCount - idleCount gives busy; idleCount = available)
-    this.metrics.db_pool_available_connections = (this.pool as any).idleCount ?? 0;
+    const p = this.pool as any;
+    this.metrics.db_pool_idle_connections = p.idleCount ?? 0;
+    this.metrics.db_pool_waiting_connections = p.waitingCount ?? 0;
+    this.metrics.db_pool_active_connections = (p.totalCount ?? 0) - (p.idleCount ?? 0);
 
     await Promise.all([
       this.updateSettlementMetrics(),
@@ -257,10 +261,18 @@ export class MetricsService {
     lines.push('# TYPE fx_rate_cache_misses_total counter');
     lines.push(`fx_rate_cache_misses_total ${this.fxCacheMissesTotal}`);
 
-    // DB pool available connections gauge
-    lines.push('# HELP db_pool_available_connections Number of idle (available) connections in the PostgreSQL pool');
-    lines.push('# TYPE db_pool_available_connections gauge');
-    lines.push(`db_pool_available_connections ${this.metrics.db_pool_available_connections}`);
+    // DB pool connection gauges
+    lines.push('# HELP db_pool_active_connections Number of active (checked-out) connections in the PostgreSQL pool');
+    lines.push('# TYPE db_pool_active_connections gauge');
+    lines.push(`db_pool_active_connections ${this.metrics.db_pool_active_connections}`);
+
+    lines.push('# HELP db_pool_idle_connections Number of idle connections in the PostgreSQL pool');
+    lines.push('# TYPE db_pool_idle_connections gauge');
+    lines.push(`db_pool_idle_connections ${this.metrics.db_pool_idle_connections}`);
+
+    lines.push('# HELP db_pool_waiting_connections Number of requests waiting for a connection from the PostgreSQL pool');
+    lines.push('# TYPE db_pool_waiting_connections gauge');
+    lines.push(`db_pool_waiting_connections ${this.metrics.db_pool_waiting_connections}`);
 
     // KYC poller last run timestamp
     lines.push('# HELP kyc_poller_last_run_timestamp_seconds Unix timestamp of the last successful KYC poller run');
