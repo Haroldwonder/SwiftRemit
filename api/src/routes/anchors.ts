@@ -7,6 +7,7 @@ import {
   getDefaultAnchorStore,
   isAnchorStatus,
 } from '../db/anchorStore';
+import { encodeCursor, decodeCursor } from '../services/cursor-pagination';
 
 type RouterOptions = {
   store?: AnchorStore;
@@ -121,11 +122,12 @@ export function createAnchorsRouter(options: RouterOptions = {}): Router {
 
 /**
  * GET /api/anchors
- * Returns all available anchor providers
+ * Returns all available anchor providers with cursor-based pagination
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { status, currency } = req.query;
+    const { status, currency, cursor, limit: limitStr } = req.query;
+    const limit = Math.min(parseInt(limitStr as string) || 20, 100);
 
     // Accept currencies[] (multi) or currency (single, backward-compat)
     const rawCurrencies = req.query['currencies[]'];
@@ -135,17 +137,38 @@ router.get('/', async (req: Request, res: Response) => {
         )
       : undefined;
 
-    const filteredAnchors = await getStore().list({
+    let filteredAnchors = await getStore().list({
       status: typeof status === 'string' ? status : undefined,
       currency: typeof currency === 'string' ? currency : undefined,
       currencies,
     });
 
-    const response: AnchorListResponse = {
+    // Apply cursor-based pagination
+    let startIdx = 0;
+    if (cursor) {
+      try {
+        const decodedId = decodeCursor(cursor as string);
+        startIdx = filteredAnchors.findIndex(a => String(a.id) === decodedId);
+        if (startIdx >= 0) startIdx++;
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'Invalid cursor', code: 'INVALID_CURSOR' },
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    const items = filteredAnchors.slice(startIdx, startIdx + limit);
+    const hasMore = startIdx + limit < filteredAnchors.length;
+    const nextCursor = hasMore && items.length > 0 ? encodeCursor(items[items.length - 1].id) : null;
+
+    const response = {
       success: true,
-      data: filteredAnchors,
-      count: filteredAnchors.length,
-      timestamp: timestamp(),
+      data: items,
+      next_cursor: nextCursor,
+      has_more: hasMore,
+      timestamp: new Date().toISOString(),
     };
 
     res.json(response);

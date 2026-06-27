@@ -10,6 +10,9 @@ import {
 import { RemittanceCreatedWebhookPayload, Sep24ExpiredRefundWebhookPayload, WebhookDelivery, WebhookSubscriber } from './types';
 
 const MAX_RETRIES = 5;
+const RETRY_BASE_MS = parseInt(process.env.WEBHOOK_RETRY_BASE_MS || '1000', 10);
+const RETRY_MAX_MS = parseInt(process.env.WEBHOOK_RETRY_MAX_MS || '300000', 10);
+const RETRY_JITTER_PERCENT = parseInt(process.env.WEBHOOK_RETRY_JITTER_PERCENT || '20', 10);
 const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
 
 export class WebhookDispatcher {
@@ -132,6 +135,12 @@ export class WebhookDispatcher {
   }
 
   private retryDelayMs(attempt: number): number {
-    return 1000 * attempt;
+    const exponentialDelay = RETRY_BASE_MS * Math.pow(2, attempt - 1);
+    const capped = Math.min(exponentialDelay, RETRY_MAX_MS);
+    const jitterRange = (capped * RETRY_JITTER_PERCENT) / 100;
+    const jitter = (Math.random() - 0.5) * 2 * jitterRange;
+    const finalDelay = Math.max(0, capped + jitter);
+    console.log(`Webhook retry attempt ${attempt}: exponential=${exponentialDelay}ms, capped=${capped}ms, jitter=${jitter.toFixed(0)}ms, final=${finalDelay.toFixed(0)}ms`);
+    return finalDelay;
   }
 }

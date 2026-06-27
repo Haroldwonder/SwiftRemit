@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { ErrorResponse } from '../types';
 import { Pool } from 'pg';
 import { AdminConfirmationService, HighRiskOperation } from '../admin-confirmation';
+import { Readable } from 'stream';
 import axios from 'axios';
 
 function timestamp(): string {
@@ -104,8 +105,183 @@ function getConfirmationService(): AdminConfirmationService | null {
   return new AdminConfirmationService(pool);
 }
 
+function escapeCsvField(field: string | number | null | undefined): string {
+  if (field === null || field === undefined) return '';
+  const str = String(field);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+async function* streamRemittancesCsv(
+  pool: Pool,
+  fromDate?: Date,
+  toDate?: Date,
+  status?: string
+): AsyncGenerator<string> {
+  const headers = [
+    'id',
+    'sender',
+    'recipient',
+    'agent',
+    'amount',
+    'fee',
+    'currency',
+    'status',
+    'corridor',
+    'created_at',
+    'updated_at',
+    'memo',
+  ];
+  
+  yield headers.map(escapeCsvField).join(',') + '\n';
+
+  const query = `
+    SELECT id, sender, recipient, agent, amount, fee, currency, status, corridor, created_at, updated_at, memo
+    FROM remittances
+    WHERE 1=1
+      ${fromDate ? 'AND created_at >= $1' : ''}
+      ${toDate ? `AND created_at <= ${fromDate ? '$2' : '$1'}` : ''}
+      ${status ? `AND status = ${toDate ? '$3' : fromDate ? '$2' : '$1'}` : ''}
+    ORDER BY created_at ASC
+  `;
+
+  const params: (Date | string)[] = [];
+  if (fromDate) params.push(fromDate);
+  if (toDate) params.push(toDate);
+  if (status) params.push(status);
+
+  const client = await pool.connect();
+  try {
+    const query_text = `
+      SELECT id, sender, recipient, agent, amount, fee, currency, status, corridor, created_at, updated_at, memo
+      FROM remittances
+      ${fromDate || toDate || status ? 'WHERE' : ''}
+      ${fromDate ? 'created_at >= $1' : ''}
+      ${toDate ? (fromDate ? 'AND' : '') + ' created_at <= $' + (params.length + 1) : ''}
+      ${status ? (fromDate || toDate ? 'AND' : '') + ' status = $' + (params.length + 1) : ''}
+      ORDER BY created_at ASC
+    `;
+
+    const stream = client.query(query_text, params);
+    
+    for await (const row of stream) {
+      const csvRow = [
+        row.id,
+        row.sender,
+        row.recipient,
+        row.agent,
+        row.amount,
+        row.fee,
+        row.currency,
+        row.status,
+        row.corridor,
+        row.created_at,
+        row.updated_at,
+        row.memo || '',
+      ];
+      yield csvRow.map(escapeCsvField).join(',') + '\n';
+    }
+  } finally {
+    client.release();
+  }
+}
+
 export function createAdminRouter(): Router {
   const router = Router();
+
+  /**
+   * @openapi
+   * /api/admin/remittances/export:
+   *   get:
+   *     summary: Export remittances to CSV (admin only)
+   *     description: >
+   *       Stream remittance records as CSV for compliance reporting.
+   *       Supports filtering by date range and status. Uses cursor streaming to avoid OOM.
+   *       Requires admin authentication via x-api-key header.
+   *     tags:
+   *       - Admin
+   *     security:
+   *       - ApiKeyAuth: []
+   *     parameters:
+   *       - name: from
+   *         in: query
+   *         required: false
+   *         description: Start date (ISO 8601)
+   *         schema:
+   *           type: string
+   *       - name: to
+   *         in: query
+   *         required: false
+   *         description: End date (ISO 8601)
+   *         schema:
+   *           type: string
+   *       - name: status
+   *         in: query
+   *         required: false
+   *         description: Filter by status
+   *         schema:
+   *           type: string
+   *           enum: [Pending, Processing, Completed, Cancelled, Failed, Disputed]
+   *     responses:
+   *       200:
+   *         description: CSV stream
+   *         content:
+   *           text/csv:
+   *             schema:
+   *               type: string
+   *       401:
+   *         description: Unauthorized
+   */
+  router.get('/remittances/export', async (req: Request, res: Response) => {
+    if (!isAdminAuthorized(req)) {
+      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
+    }
+
+    const { from, to, status } = req.query as Record<string, string | undefined>;
+    
+    let fromDate: Date | undefined;
+    let toDate: Date | undefined;
+
+    if (from) {
+      fromDate = new Date(from);
+      if (isNaN(fromDate.getTime())) {
+        return sendError(res, 400, 'Invalid from date format', 'INVALID_FROM_DATE');
+      }
+    }
+
+    if (to) {
+      toDate = new Date(to);
+      if (isNaN(toDate.getTime())) {
+        return sendError(res, 400, 'Invalid to date format', 'INVALID_TO_DATE');
+      }
+    }
+
+    if (status && !['Pending', 'Processing', 'Completed', 'Cancelled', 'Failed', 'Disputed'].includes(status)) {
+      return sendError(res, 400, 'Invalid status', 'INVALID_STATUS');
+    }
+
+    const dbUrl = process.env.DATABASE_URL;
+    if (!dbUrl) {
+      return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
+    }
+
+    const pool = new Pool({ connectionString: dbUrl });
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="remittances-${new Date().toISOString()}.csv"`);
+
+    try {
+      const generator = streamRemittancesCsv(pool, fromDate, toDate, status);
+      for await (const chunk of generator) {
+        res.write(chunk);
+      }
+    } finally {
+      res.end();
+      await pool.end();
+    }
+  });
 
   /**
    * @openapi

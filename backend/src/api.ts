@@ -33,6 +33,7 @@ import { Sep24Service, Sep24InitiateRequest, Sep24ConfigError, Sep24AnchorError 
 import { AdminAuditLogService } from './admin-audit-log';
 import { saveContractEvent, queryContractEvents } from './database';
 import { remittanceEventEmitter } from './remittance/events';
+import { handleKycWebhook } from './kyc-webhook-handler';
 import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
 
 const app = express();
@@ -874,5 +875,16 @@ app.get('/api/events', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch contract events' });
   }
 });
+
+// ── SEP-12 KYC Webhook ──────────────────────────────────────────────────────
+
+/**
+ * POST /webhooks/kyc/:anchor_id
+ * 
+ * Receive KYC status updates from anchors via webhook push.
+ * Reduces polling load for anchors that support push notifications.
+ * Falls back to polling for anchors that don't.
+ */
+app.post('/webhooks/kyc/:anchor_id', webhookLimiter, handleKycWebhook);
 
 export default app;
