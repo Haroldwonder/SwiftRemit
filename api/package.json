@@ -24,9 +24,11 @@
     "joi": "^17.11.0",
     "js-yaml": "^4.2.0",
     "jsonwebtoken": "^9.0.3",
+    "node-cache": "^5.1.2",
     "pg": "^8.21.0",
     "socket.io": "^4.8.3",
     "swagger-ui-express": "^5.0.0",
+    "uuid": "^9.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
