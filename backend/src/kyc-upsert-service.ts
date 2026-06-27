@@ -2,7 +2,7 @@ import { Pool } from 'pg';
 import { KycRecord, KycStatus, UserKycStatus, AnchorKycRecord } from './types';
 import { setKycApprovedOnChain, KycOnChainResult } from './stellar-kyc';
 
-const VALID_STATUSES: KycStatus[] = ['pending', 'approved', 'rejected'];
+const VALID_STATUSES: KycStatus[] = ['pending', 'approved', 'rejected', 're_verification_pending'];
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -127,6 +127,12 @@ export class KycUpsertService {
       expires_at: r.expires_at ?? undefined,
       rejection_reason: r.rejection_reason ?? undefined,
     }));
+
+    // Re-verification always blocks, regardless of other approved records
+    const inReVerification = rows.some(r => r.kyc_status === 're_verification_pending');
+    if (inReVerification) {
+      return { overall_status: 'pending', can_transfer: false, reason: 're_verification_pending', anchors, last_checked: now };
+    }
 
     // Check for at least one non-expired approved record
     const hasApproved = rows.some(

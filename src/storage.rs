@@ -5,6 +5,46 @@
 //! Uses both instance storage (contract-level config) and persistent storage
 //! (per-entity data).
 
+// ============================================================================
+// Architecture: Storage Tiers
+// ============================================================================
+//
+// The SwiftRemit contract employs a tiered storage strategy to optimize for
+// Soroban's ledger entry limits and minimize storage operations:
+//
+// ## Tier 1: Instance Storage (Hot Tier)
+// - Contains contract-level configuration and small scalars
+// - Accessed frequently for every operation (fee rates, token address, counters)
+// - Limited to ~50 entries total per contract
+// - Examples: Admin, UsdcToken, PlatformFeeBps, RemittanceCounter, AccumulatedFees
+// - Use: `env.storage().instance().get/set()`
+//
+// ## Tier 2: Persistent Storage - Short-lived Entities
+// - Remittances, settlements, and transfers with bounded lifetime
+// - TTL managed via ledger extensions (valid for hours to days)
+// - High cardinality but time-bounded access patterns
+// - Examples: Remittance(u64), TransferState(u64), DisbursedAmount(u64)
+// - Use: `env.storage().persistent().get/set()`
+//
+// ## Tier 3: Persistent Storage - Long-lived Metadata
+// - User preferences, agent records, and configuration that persists
+// - Accessed infrequently, no TTL expiration
+// - Lower cardinality but permanent storage
+// - Examples: AgentRegistered(Address), UserBlacklisted(Address), FeeCorridor(from, to)
+//
+// ## Migration Strategy
+// - Schema changes use migration keys (MigrationInProgress)
+// - Old keys migrated to new formats during contract upgrades
+// - SettlementPacked replaces scattered settlement flags
+// - See migration.rs for upgrade paths
+//
+// ## Design Principles
+// - Hot path optimization: Fee parameters and counters in instance storage
+// - Avoid redundant reads: packed structs for compound operations
+// - TTL-aware: Processing remittances extended during state changes
+// - Idempotent writes: Skip if value unchanged to save ledger entries
+// ============================================================================
+
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 use crate::{AgentStats, ContractError, DailyLimit, Remittance, SenderVolumeEntry, TransferRecord};
@@ -205,9 +245,13 @@ enum DataKey {
     ActiveFeeProposal,
     // === Sender Remittances ===
     SenderRemittances(soroban_sdk::Address),
+    // === Agent Remittances ===
+    AgentRemittances(soroban_sdk::Address),
     // === Rate Limit ===
     RateLimitConfig,
     RateLimitWindow(soroban_sdk::Address),
+    // === Abuse Protection ===
+    AbuseCooldownDecayRateBps,
 
 }
 
@@ -786,14 +830,6 @@ pub fn set_user_transfers(env: &Env, user: &Address, transfers: &Vec<TransferRec
     env.storage()
         .persistent()
         .set(&DataKey::UserTransfers(user.clone()), transfers);
-}
-
-/// A bucketed volume entry for rolling sender discount calculations.
-#[soroban_sdk::contracttype]
-#[derive(Clone)]
-pub struct SenderVolumeEntry {
-    pub bucket_start: u64,
-    pub amount: i128,
 }
 
 pub fn get_sender_volume_history(env: &Env, sender: &Address) -> Vec<SenderVolumeEntry> {
@@ -1721,6 +1757,18 @@ pub fn append_sender_remittance(env: &Env, sender: &Address, remittance_id: u64)
     env.storage().persistent().set(&key, &ids);
 }
 
+/// Appends a remittance ID to the agent's persistent remittance index.
+pub fn append_agent_remittance(env: &Env, agent: &Address, remittance_id: u64) {
+    let key = DataKey::AgentRemittances(agent.clone());
+    let mut ids: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    ids.push_back(remittance_id);
+    env.storage().persistent().set(&key, &ids);
+}
+
 /// Returns all remittance IDs for a sender.
 ///
 /// The caller is responsible for applying pagination (offset/limit) to avoid
@@ -1729,6 +1777,14 @@ pub fn get_sender_remittances(env: &Env, sender: &Address) -> soroban_sdk::Vec<u
     env.storage()
         .persistent()
         .get(&DataKey::SenderRemittances(sender.clone()))
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+
+/// Returns all remittance IDs for an agent.
+pub fn get_agent_remittances(env: &Env, agent: &Address) -> soroban_sdk::Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AgentRemittances(agent.clone()))
         .unwrap_or_else(|| soroban_sdk::Vec::new(env))
 }
 
@@ -2024,4 +2080,25 @@ pub fn extend_remittance_ttl(env: &Env, remittance_id: u64, ledgers: u32) {
     if env.storage().persistent().has(&key) {
         env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
     }
+}
+
+// === Abuse Cooldown Decay Rate ===
+
+/// Returns the configured abuse cooldown decay rate in basis points.
+///
+/// The decay rate controls how quickly cooldown periods shrink after violations.
+/// A rate of 5000 bps (50%) halves the cooldown each decay step (every 24h).
+/// Returns 5000 (50%) by default if not explicitly configured.
+pub fn get_abuse_cooldown_decay_rate_bps(env: &Env) -> u128 {
+    env.storage()
+        .instance()
+        .get::<DataKey, u32>(&DataKey::AbuseCooldownDecayRateBps)
+        .unwrap_or(5_000) as u128
+}
+
+/// Sets the abuse cooldown decay rate in basis points (0–10000).
+pub fn set_abuse_cooldown_decay_rate_bps(env: &Env, rate_bps: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AbuseCooldownDecayRateBps, &rate_bps);
 }

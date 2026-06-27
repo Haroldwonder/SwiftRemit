@@ -9,9 +9,10 @@ import {
 } from '@stellar/stellar-sdk';
 import { AssetVerification, VerificationStatus } from './types';
 import { getStellarRuntimeConfig } from './stellar-network';
+import { correlationFetch } from './stellar-fetch';
 
 const { rpcUrl, networkPassphrase } = getStellarRuntimeConfig();
-const server = new SorobanRpc.Server(rpcUrl);
+const server = new SorobanRpc.Server(rpcUrl, { allowHttp: true, fetch: correlationFetch });
 
 export async function getBaseFee(): Promise<string> {
   const envFee = process.env.STELLAR_BASE_FEE;

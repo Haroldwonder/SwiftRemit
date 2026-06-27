@@ -238,3 +238,59 @@ Update off-chain services to point to `<DEST_CONTRACT_ID>`.
   writes.  The snapshot is cleared only after successful validation.
 - The source contract stays locked until you explicitly clear the flag (or
   redeploy), preventing new state from being created after the snapshot.
+
+---
+
+## Post-Upgrade Hash Verification (#846)
+
+After any upgrade, verify that payout commitment hashes are unchanged to confirm
+no state corruption occurred during the WASM swap or migration step.
+
+### Automated (unit tests — no network required)
+
+```bash
+cargo test test_migrate_preserves_commitment_hashes -- --nocapture
+```
+
+This test:
+1. Creates remittances and records their commitment hashes.
+2. Runs `migration::migrate()` directly.
+3. Re-fetches each hash and asserts byte-for-byte equality.
+
+### Manual (testnet)
+
+For every in-flight remittance ID known prior to the upgrade:
+
+```bash
+# Before upgrade — save to file
+soroban contract invoke --id <CONTRACT_ID> \
+  -- get_settlement_hash --remittance_id <ID> > hash_before_$ID.json
+
+# After upgrade + migrate — compare
+soroban contract invoke --id <CONTRACT_ID> \
+  -- get_settlement_hash --remittance_id <ID> > hash_after_$ID.json
+
+diff hash_before_$ID.json hash_after_$ID.json
+```
+
+A non-empty diff means state corruption — initiate rollback immediately.
+
+### Post-Unpause Cooldown
+
+After calling `emergency_unpause`, the contract automatically enters a 1-hour
+cooldown window during which per-sender rate limits are halved.  The default
+period is configurable:
+
+```bash
+# Set cooldown to 30 minutes (admin required)
+soroban contract invoke --id <CONTRACT_ID> \
+  -- set_cooldown_period \
+  --caller <ADMIN_ADDRESS> \
+  --seconds 1800
+
+# Check current cooldown and last-unpause timestamp
+soroban contract invoke --id <CONTRACT_ID> -- get_circuit_breaker_status
+```
+
+The cooldown period can also be changed via governance proposal
+(`UpdateCooldownPeriod` action) without requiring a contract upgrade.

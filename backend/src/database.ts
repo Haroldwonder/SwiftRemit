@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg';
+import crypto from 'crypto';
 import {
   AssetVerification,
   VerificationStatus,
@@ -449,7 +450,7 @@ export async function getUsersNeedingKycCheck(anchorId: string, minutesSinceLast
     SELECT * FROM user_kyc_status 
     WHERE anchor_id = $1 
       AND last_checked < NOW() - INTERVAL '${minutesSinceLastCheck} minutes'
-      AND status IN ('pending', 'approved')
+      AND status IN ('pending', 'approved', 're_verification_pending')
     ORDER BY last_checked ASC
     LIMIT 100
   `;
@@ -705,7 +706,7 @@ function mapWebhookDeliveryRow(row: Record<string, unknown>): WebhookDelivery {
 
 export async function getActiveWebhookSubscribers(): Promise<WebhookSubscriber[]> {
   const result = await getPool().query(
-    `SELECT id, url, secret, active, created_at, updated_at
+    `SELECT id, url, secret, previous_secret, secret_rotated_at, active, created_at, updated_at
      FROM webhook_subscribers
      WHERE active = true`
   );
@@ -713,10 +714,51 @@ export async function getActiveWebhookSubscribers(): Promise<WebhookSubscriber[]
     id: String(row.id),
     url: String(row.url),
     secret: row.secret as string | null,
+    previous_secret: row.previous_secret as string | null,
+    secret_rotated_at: row.secret_rotated_at as Date | null,
     active: Boolean(row.active),
     created_at: row.created_at as Date,
     updated_at: row.updated_at as Date,
   }));
+}
+
+export async function getWebhookSubscriberById(id: string): Promise<WebhookSubscriber | null> {
+  const result = await getPool().query(
+    `SELECT id, url, secret, previous_secret, secret_rotated_at, active, created_at, updated_at
+     FROM webhook_subscribers
+     WHERE id = $1`,
+    [id]
+  );
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return {
+    id: String(row.id),
+    url: String(row.url),
+    secret: row.secret as string | null,
+    previous_secret: row.previous_secret as string | null,
+    secret_rotated_at: row.secret_rotated_at as Date | null,
+    active: Boolean(row.active),
+    created_at: row.created_at as Date,
+    updated_at: row.updated_at as Date,
+  };
+}
+
+export async function rotateWebhookSecret(id: string): Promise<{ newSecret: string; rotatedAt: Date }> {
+  const newSecret = crypto.randomBytes(32).toString('hex');
+  const result = await getPool().query(
+    `UPDATE webhook_subscribers
+     SET previous_secret = secret,
+         secret = $2,
+         secret_rotated_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING secret_rotated_at`,
+    [id, newSecret]
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw new Error(`Webhook subscriber not found: ${id}`);
+  }
+  return { newSecret, rotatedAt: result.rows[0].secret_rotated_at as Date };
 }
 
 export async function enqueueWebhookDelivery(
@@ -795,9 +837,10 @@ export function getPool(): Pool {
     }
     pool = new Pool({
       connectionString,
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
+      max: parseInt(process.env.DB_POOL_MAX ?? '20', 10),
+      min: parseInt(process.env.DB_POOL_MIN ?? '2', 10),
+      idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS ?? '30000', 10),
+      connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT_MS ?? '2000', 10),
     });
   }
   return pool;

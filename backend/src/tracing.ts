@@ -18,6 +18,7 @@ import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import { trace, context, propagation, SpanStatusCode, Span } from '@opentelemetry/api';
+import { getCorrelationId } from './correlation-id';
 
 const enabled = process.env.OTEL_ENABLED !== 'false';
 
@@ -69,6 +70,7 @@ export async function withSpan<T>(
 ): Promise<T> {
   const tracer = getTracer();
   const span = tracer.startSpan(name);
+  span.setAttribute('correlation_id', getCorrelationId() ?? '');
   if (attributes) {
     span.setAttributes(attributes);
   }

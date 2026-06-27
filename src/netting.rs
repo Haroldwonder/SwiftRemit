@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Address, Env, Map, Vec};
 
-use crate::{ContractError, Remittance, RemittanceStatus, config::MAX_NETTING_BATCH_SIZE};
+use crate::{ContractError, MaybeBytes32, Remittance, RemittanceStatus, config::MAX_NETTING_BATCH_SIZE};
 
 /// Result of a netting computation, pairing net transfers with IDs that were
 /// excluded because they are in a non-nettable state (Failed or Disputed).
@@ -269,7 +269,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         // B -> A: 90
@@ -285,7 +285,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         let result = compute_net_settlements(&env, &remittances).unwrap();
@@ -326,7 +326,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         // B -> A: 100
@@ -342,7 +342,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         let result = compute_net_settlements(&env, &remittances).unwrap();
@@ -374,7 +374,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         // B -> C: 50
@@ -390,7 +390,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         // C -> A: 30
@@ -406,7 +406,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         let result = compute_net_settlements(&env, &remittances).unwrap();
@@ -443,7 +443,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         remittances.push_back(Remittance {
@@ -458,7 +458,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         let result = compute_net_settlements(&env, &remittances).unwrap();
@@ -487,7 +487,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
         remittances1.push_back(Remittance {
             id: 2,
@@ -501,7 +501,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         // Second ordering (reversed)
@@ -518,7 +518,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
         remittances2.push_back(Remittance {
             id: 1,
@@ -532,7 +532,7 @@ mod tests {
             token: addr_a.clone(),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         });
 
         let net1 = compute_net_settlements(&env, &remittances1).unwrap().net_transfers;
@@ -572,7 +572,7 @@ mod tests {
             token: soroban_sdk::Address::generate(env),
             created_at: 0,
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: MaybeBytes32::None,
         }
     }
 

@@ -88,6 +88,28 @@ describe('migrate()', () => {
     const calls = mockQuery.mock.calls.map((c: any[]) => c[0] as string);
     expect(calls).toContain('ROLLBACK');
   });
+
+  it('records failure in schema_migrations after rollback', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT filename FROM schema_migrations ORDER BY id')) {
+        return Promise.resolve({ rows: [] });
+      }
+      if (sql === 'CREATE TABLE test (id SERIAL);') {
+        return Promise.reject(new Error('syntax error'));
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    await expect(migrate(mockPool as any)).rejects.toThrow('syntax error');
+
+    // pool.query (not client.query) should have been called with INSERT ... failed = TRUE
+    const failInsert = mockPool.query.mock.calls.find(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('failed') && c[0].includes('INSERT INTO schema_migrations')
+    );
+    expect(failInsert).toBeDefined();
+    expect(failInsert[1]).toContain('001_init.sql');
+    expect(failInsert[1]).toContain('syntax error');
+  });
 });
 
 describe('rollback()', () => {

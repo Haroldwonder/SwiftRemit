@@ -35,7 +35,7 @@
     "@stellar/stellar-sdk": "^13.0.0",
     "@types/node": "^25.9.1",
     "tsup": "^8.0.0",
-    "typescript": "^5.4.0",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   }
 }

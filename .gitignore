@@ -19,3 +19,25 @@ backend/node_modules/
 # Test artifacts
 test_snapshots/
 proptest-regressions/
+
+# IDE and editor files
+.idea/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Coverage output
+backend/coverage/
+frontend/coverage/
+
+# Local env overrides (beyond .env)
+.env.local
+.env.*.local
+
+# Scratch / temp files
+*.tmp
+*.bak

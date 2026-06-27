@@ -194,6 +194,9 @@ export class WebhookHandler {
 
   /**
    * Handle contract-created event and fan out remittance.created webhook.
+   *
+   * Also persists the full fee breakdown to contract_events so analytics can
+   * query platform_fee, protocol_fee, and net_amount without re-deriving them.
    */
   private async handleRemittanceCreated(payload: any): Promise<void> {
     const requiredFields = ['remittance_id', 'sender', 'agent', 'amount', 'fee', 'expiry'];
@@ -210,7 +213,28 @@ export class WebhookHandler {
       amount: String(payload.amount),
       fee: String(payload.fee),
       expiry: String(payload.expiry),
+      platform_fee: payload.platform_fee != null ? String(payload.platform_fee) : undefined,
+      protocol_fee: payload.protocol_fee != null ? String(payload.protocol_fee) : undefined,
+      net_amount: payload.net_amount != null ? String(payload.net_amount) : undefined,
     };
+
+    // Persist fee breakdown to contract_events for downstream analytics.
+    await this.pool.query(
+      `INSERT INTO contract_events
+         (event_type, remittance_id, actor, amount, fee, platform_fee, protocol_fee, net_amount, raw_data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        'remittance_created',
+        payload.remittance_id,
+        payload.sender,
+        payload.amount,
+        payload.fee,
+        payload.platform_fee ?? null,
+        payload.protocol_fee ?? null,
+        payload.net_amount ?? null,
+        JSON.stringify(payload),
+      ]
+    );
 
     await this.dispatcher.dispatchRemittanceCreated(remittancePayload);
   }

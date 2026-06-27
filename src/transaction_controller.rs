@@ -237,13 +237,14 @@ impl TransactionController {
             token: usdc_token.clone(),
             created_at: env.ledger().timestamp(),
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: crate::MaybeBytes32::None,
         };
 
         crate::storage::set_remittance(env, remittance_id, &remittance);
         crate::storage::set_remittance_counter(env, remittance_id);
 
-        // Emit event
+        // Emit event with full fee breakdown for analytics/SDK consumers.
+        let net_amount = amount.saturating_sub(fee);
         crate::events::emit_remittance_created(
             env,
             remittance_id,
@@ -251,7 +252,10 @@ impl TransactionController {
             agent.clone(),
             amount,
             fee,
-            0, // integrator_fee (not used in transaction controller)
+            0,          // integrator_fee (not tracked in transaction controller)
+            fee,        // platform_fee
+            0,          // protocol_fee (not tracked in transaction controller)
+            net_amount,
         );
 
         Ok(remittance_id)
