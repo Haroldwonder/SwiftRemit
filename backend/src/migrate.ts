@@ -38,8 +38,16 @@ async function ensureMigrationsTable(pool: Pool): Promise<void> {
       id          SERIAL PRIMARY KEY,
       filename    VARCHAR(255) NOT NULL UNIQUE,
       applied_at  TIMESTAMP    NOT NULL DEFAULT NOW(),
-      checksum    VARCHAR(64)  NOT NULL
+      checksum    VARCHAR(64)  NOT NULL,
+      failed      BOOLEAN      NOT NULL DEFAULT FALSE,
+      error_msg   TEXT
     )
+  `);
+  // Add columns if table exists from an older schema (idempotent)
+  await pool.query(`
+    ALTER TABLE schema_migrations
+      ADD COLUMN IF NOT EXISTS failed    BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS error_msg TEXT
   `);
 }
 
@@ -99,6 +107,17 @@ export async function migrate(pool: Pool): Promise<void> {
       console.log(`✓ Applied: ${filename}`);
     } catch (err) {
       await client.query('ROLLBACK');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      // Record the failure so ops can query what went wrong
+      try {
+        await pool.query(
+          `INSERT INTO schema_migrations (filename, checksum, failed, error_msg)
+           VALUES ($1, $2, TRUE, $3)
+           ON CONFLICT (filename) DO UPDATE
+             SET failed = TRUE, error_msg = EXCLUDED.error_msg, applied_at = NOW()`,
+          [filename, hash, errMsg]
+        );
+      } catch (_) { /* best-effort — don't mask the original error */ }
       console.error(`✗ Failed:  ${filename}`, err);
       throw err;
     } finally {

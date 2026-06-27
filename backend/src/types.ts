@@ -54,7 +54,7 @@ export interface FxRateRecord {
   created_at: Date;
 }
 
-export type KycStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+export type KycStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 're_verification_pending';
 
 export type KycLevel = 'basic' | 'intermediate' | 'advanced';
 
@@ -114,6 +114,9 @@ export interface RemittanceCreatedWebhookPayload {
   fee: string;
   expiry: string;
   memo?: string;
+  platform_fee?: string;
+  protocol_fee?: string;
+  net_amount?: string;
 }
 
 export interface Sep24ExpiredRefundWebhookPayload {
@@ -152,6 +155,8 @@ export interface WebhookSubscriber {
   id: string;
   url: string;
   secret?: string | null;
+  previous_secret?: string | null;
+  secret_rotated_at?: Date | null;
   active: boolean;
   created_at: Date;
   updated_at: Date;

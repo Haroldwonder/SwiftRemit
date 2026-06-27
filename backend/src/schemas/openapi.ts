@@ -57,7 +57,7 @@ export const BatchVerificationResponseSchema = z.object({
 }).openapi('BatchVerificationResponse');
 
 // KYC schemas
-export const KycStatusSchema = z.enum(['pending', 'approved', 'rejected', 'expired']).openapi('KycStatus');
+export const KycStatusSchema = z.enum(['pending', 'approved', 'rejected', 'expired', 're_verification_pending']).openapi('KycStatus');
 export const KycLevelSchema = z.enum(['basic', 'intermediate', 'advanced']).openapi('KycLevel');
 
 export const AnchorKycRecordSchema = z.object({

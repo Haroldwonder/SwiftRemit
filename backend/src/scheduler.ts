@@ -9,11 +9,15 @@ import { SwiftRemitClient } from '@swiftremit/sdk';
 import { KycExpiryNotifier } from './kyc-expiry-notifier';
 import { createWebhookStore } from './webhooks/store';
 import { withAdvisoryLock } from './distributed-lock';
+import { AnchorHealthChecker } from './anchor-health-checker';
+import { getMetricsService } from './metrics';
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
 const pool = getPool();
 const sep24Service = new Sep24Service(pool);
+const metricsService = getMetricsService(pool);
+const anchorHealthChecker = new AnchorHealthChecker(pool, metricsService);
 
 export async function startBackgroundJobs() {
   // Initialize KYC service
@@ -65,6 +69,15 @@ export async function startBackgroundJobs() {
       await notifyKycExpiries();
     });
     if (!ran) console.log('notify-kyc-expiries: skipped (another instance holds the lock)');
+  });
+
+  // Run anchor health checks every 5 minutes
+  cron.schedule('*/5 * * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'check-anchor-health', async () => {
+      console.log('Starting anchor health checks...');
+      await checkAnchorHealth();
+    });
+    if (!ran) console.log('check-anchor-health: skipped (another instance holds the lock)');
   });
 
   console.log('Background jobs scheduled');
@@ -185,5 +198,17 @@ async function notifyKycExpiries() {
     await notifier.run();
   } catch (error) {
     console.error('Error in KYC expiry notification job:', error);
+  }
+}
+
+async function checkAnchorHealth() {
+  try {
+    const results = await anchorHealthChecker.checkAllAnchors();
+    console.log(`Anchor health check completed: ${results.length} anchors checked`);
+    for (const result of results) {
+      console.log(`  ${result.anchor_id}: ${result.status} (${result.response_time_ms}ms)`);
+    }
+  } catch (error) {
+    console.error('Error in anchor health check job:', error);
   }
 }

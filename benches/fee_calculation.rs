@@ -84,10 +84,69 @@ fn bench_fee_calculation_worst_case(c: &mut Criterion) {
     });
 }
 
+/// Benchmark O(1) corridor lookup via map key.
+///
+/// Verifies that looking up a fee corridor is constant-time regardless of how
+/// many corridors are configured, because each corridor is stored under a
+/// dedicated `DataKey::FeeCorridor(from, to)` key rather than iterated from a
+/// list.
+fn bench_corridor_lookup(c: &mut Criterion) {
+    use soroban_sdk::String as SorobanString;
+    use swiftremit::{FeeCorridor, FeeStrategy};
+
+    let country_codes: &[&str] = &[
+        "US", "MX", "GB", "NG", "IN", "KE", "PH", "BR", "DE", "FR",
+        "JP", "AU", "CA", "ZA", "EG", "GH", "SN", "ET", "TZ", "UG",
+        "RW", "CM", "CI", "SL", "GM", "LR", "TG", "BJ", "BF", "ML",
+        "NE", "MR", "GN", "GW", "CV", "ST", "KM", "DJ", "SO", "ER",
+        "SD", "SS", "CF", "TD", "CG", "CD", "GA", "GQ", "AO", "MZ",
+        "ZM", "ZW", "BW", "NA", "LS", "SZ", "MW", "MG", "MU", "SC",
+        "RE", "YT", "TN", "DZ", "LY", "MA", "EH", "GT", "BZ", "HN",
+        "SV", "NI", "CR", "PA", "CU", "JM", "HT", "DO", "TT", "BB",
+        "LC", "VC", "GD", "AG", "DM", "KN", "BS", "TC", "KY", "VG",
+        "VI", "PR", "AR", "CL", "PE", "EC", "BO", "PY", "UY", "VE",
+    ];
+
+    let mut group = c.benchmark_group("corridor_lookup");
+
+    // Vary the total number of configured corridors to show O(1) scaling.
+    for &n_corridors in &[1usize, 10, 50, 100] {
+        let env = Env::default();
+        let (client, admin, _) = setup_contract(&env);
+
+        env.mock_all_auths();
+        for i in 0..n_corridors.min(country_codes.len()) {
+            let corridor = FeeCorridor {
+                from_country: SorobanString::from_str(&env, country_codes[i]),
+                to_country: SorobanString::from_str(&env, country_codes[(i + 1) % country_codes.len()]),
+                strategy: FeeStrategy::Percentage(250),
+                protocol_fee_bps: None,
+            };
+            client.set_fee_corridor(&admin, &corridor);
+        }
+
+        // Always look up the last-inserted corridor.
+        let idx = (n_corridors - 1).min(country_codes.len() - 1);
+        let target_from = SorobanString::from_str(&env, country_codes[idx]);
+        let target_to   = SorobanString::from_str(&env, country_codes[(idx + 1) % country_codes.len()]);
+
+        group.bench_with_input(
+            BenchmarkId::new("n_corridors", n_corridors),
+            &n_corridors,
+            |b, _| {
+                b.iter(|| black_box(client.get_fee_corridor(&target_from, &target_to)))
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     fee_calculation_benches,
     bench_fee_calculation_range,
     bench_fee_calculation_by_bps,
-    bench_fee_calculation_worst_case
+    bench_fee_calculation_worst_case,
+    bench_corridor_lookup,
 );
 criterion_main!(fee_calculation_benches);

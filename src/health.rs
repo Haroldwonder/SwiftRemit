@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Env};
 
-use crate::storage::{get_accumulated_fees, get_remittance_counter, has_admin, is_paused};
+use crate::storage::{get_accumulated_fees, get_admin_count, get_remittance_counter, has_admin, is_paused};
 use crate::circuit_breaker_storage::{get_active_pause_seq, get_pause_record_by_seq};
 use crate::MaybePauseReason;
 

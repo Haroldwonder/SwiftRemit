@@ -100,6 +100,21 @@ pub fn check_rate_limit(env: &Env, address: &Address) -> Result<(), ContractErro
     }
 
     let current_time = env.ledger().timestamp();
+
+    // During the post-unpause cooldown window, halve per-sender rate limits to
+    // prevent immediate exploitation after an emergency unpause.
+    let effective_max = match crate::circuit_breaker_storage::get_last_unpause_at(env) {
+        Some(last_unpause) => {
+            let cooldown = crate::circuit_breaker_storage::get_cooldown_period(env);
+            if current_time.saturating_sub(last_unpause) < cooldown {
+                (config.max_requests / 2).max(1)
+            } else {
+                config.max_requests
+            }
+        }
+        None => config.max_requests,
+    };
+
     let key = RateLimitKey::Entry(address.clone());
 
     let mut entry: RateLimitEntry = env
@@ -116,7 +131,7 @@ pub fn check_rate_limit(env: &Env, address: &Address) -> Result<(), ContractErro
         entry.request_count = 1;
         entry.window_start = current_time;
     } else {
-        if entry.request_count >= config.max_requests {
+        if entry.request_count >= effective_max {
             return Err(ContractError::RateLimitExceeded);
         }
         entry.request_count = entry.request_count.saturating_add(1);

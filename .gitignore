@@ -25,7 +25,11 @@ proptest-regressions/
 .idea/
 *.swp
 *.swo
+*~
 *.DS_Store
+
+# OS metadata
+Thumbs.db
 
 # Generated / build artifacts
 node_modules/
@@ -33,6 +37,12 @@ dist/
 build/
 *.log
 *.lock
+*.tmp
+*.bak
+
+# Coverage output
+backend/coverage/
+frontend/coverage/
 
 # Local environment overrides
 .env.local

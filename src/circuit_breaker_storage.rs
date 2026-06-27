@@ -40,6 +40,10 @@ enum CbKey {
     UnpauseVoteCount(u64),
     PauseTimelockSeconds,
     UnpauseQuorum,
+    /// Ledger timestamp of the most recent emergency unpause.
+    LastUnpauseAt,
+    /// Cooldown window in seconds after an unpause during which rate limits are halved.
+    CooldownPeriod,
 }
 
 // ─── Pause Sequence Counter ───────────────────────────────────────────────────
@@ -180,4 +184,36 @@ pub fn record_vote(env: &Env, pause_seq: u64, voter: &Address) {
     env.storage()
         .persistent()
         .set(&CbKey::UnpauseVote(pause_seq, voter.clone()), &true);
+}
+
+// ─── Post-Unpause Cooldown ────────────────────────────────────────────────────
+
+/// Returns the ledger timestamp of the most recent emergency unpause, if any.
+pub fn get_last_unpause_at(env: &Env) -> Option<u64> {
+    env.storage().instance().get(&CbKey::LastUnpauseAt)
+}
+
+/// Persists the ledger timestamp of the most recent emergency unpause.
+pub fn set_last_unpause_at(env: &Env, timestamp: u64) {
+    env.storage()
+        .instance()
+        .set(&CbKey::LastUnpauseAt, &timestamp);
+}
+
+/// Returns the configured post-unpause cooldown period in seconds.
+///
+/// During this window after an unpause, per-sender rate limits are halved.
+/// Defaults to [`crate::config::DEFAULT_COOLDOWN_PERIOD_SECONDS`] (1 hour).
+pub fn get_cooldown_period(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&CbKey::CooldownPeriod)
+        .unwrap_or(crate::config::DEFAULT_COOLDOWN_PERIOD_SECONDS)
+}
+
+/// Persists the post-unpause cooldown period in seconds.
+pub fn set_cooldown_period(env: &Env, seconds: u64) {
+    env.storage()
+        .instance()
+        .set(&CbKey::CooldownPeriod, &seconds);
 }

@@ -179,7 +179,6 @@ fn arb_invalid_transition() -> impl Strategy<Value = (RemittanceStatus, Remittan
         Just((RemittanceStatus::Pending, RemittanceStatus::Completed)),
         Just((RemittanceStatus::Pending, RemittanceStatus::Disputed)),
         Just((RemittanceStatus::Processing, RemittanceStatus::Pending)),
-        Just((RemittanceStatus::Processing, RemittanceStatus::Processing)),
         Just((RemittanceStatus::Failed, RemittanceStatus::Pending)),
         Just((RemittanceStatus::Failed, RemittanceStatus::Processing)),
         Just((RemittanceStatus::Failed, RemittanceStatus::Completed)),

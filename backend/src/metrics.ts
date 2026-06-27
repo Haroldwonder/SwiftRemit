@@ -16,11 +16,16 @@ export class MetricsService {
     swiftremit_webhook_dead_letter_count: 0,
     swiftremit_kyc_poll_runs_total: 0,
     swiftremit_kyc_poll_failures_total: 0,
-    db_pool_available_connections: 0,
     kyc_poller_last_run_timestamp_seconds: 0,
     contract_event_indexer_lag_ledgers: 0,
     swiftremit_rate_limit_exceeded_total: {} as Record<string, number>,
+    db_pool_active_connections: 0,
+    db_pool_idle_connections: 0,
+    db_pool_waiting_connections: 0,
   };
+
+  // Anchor availability metrics
+  private anchorAvailability: Map<string, string> = new Map();
 
   // FX rate staleness metrics
   private fxRateAgeSeconds: Map<string, number> = new Map();
@@ -30,6 +35,11 @@ export class MetricsService {
   constructor(pool: Pool, fxRateCache?: FxRateCache) {
     this.pool = pool;
     this.fxRateCache = fxRateCache;
+  }
+
+  /** Record current availability status for an anchor. */
+  recordAnchorAvailability(anchorId: string, status: string): void {
+    this.anchorAvailability.set(anchorId, status);
   }
 
   /** Record a cache hit for a currency pair. */
@@ -125,9 +135,9 @@ export class MetricsService {
     }
   }
 
-  /**
-   * Update accumulated fees gauge
-   */
+/**
+    * Update accumulated fees gauge
+    */
   async updateAccumulatedFees(): Promise<void> {
     try {
       const result = await this.pool.query(
@@ -143,6 +153,25 @@ export class MetricsService {
       });
     } catch (error) {
       this.logger.error('Failed to update accumulated fees', error);
+    }
+  }
+
+  /**
+   * Update dead-letter queue count from the database
+   */
+  async updateDeadLetterCount(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT COUNT(*) as count FROM webhook_dead_letters WHERE replayed_at IS NULL`
+      );
+
+      this.metrics.swiftremit_webhook_dead_letter_count = parseInt(result.rows[0].count);
+
+      this.logger.debug('Dead-letter count updated', {
+        count: this.metrics.swiftremit_webhook_dead_letter_count,
+      });
+    } catch (error) {
+      this.logger.error('Failed to update dead-letter count', error);
     }
   }
 
@@ -183,18 +212,21 @@ export class MetricsService {
     this.metrics.contract_event_indexer_lag_ledgers = lagLedgers;
   }
 
-  /**
-   * Update all metrics
-   */
+/**
+    * Update all metrics
+    */
   async updateAllMetrics(): Promise<void> {
-    // Pool available connections (totalCount - idleCount gives busy; idleCount = available)
-    this.metrics.db_pool_available_connections = (this.pool as any).idleCount ?? 0;
+    const p = this.pool as any;
+    this.metrics.db_pool_idle_connections = p.idleCount ?? 0;
+    this.metrics.db_pool_waiting_connections = p.waitingCount ?? 0;
+    this.metrics.db_pool_active_connections = (p.totalCount ?? 0) - (p.idleCount ?? 0);
 
     await Promise.all([
       this.updateSettlementMetrics(),
       this.updateWebhookDeliveryMetrics(),
       this.updateActiveRemittances(),
       this.updateAccumulatedFees(),
+      this.updateDeadLetterCount(),
     ]);
   }
 
@@ -239,6 +271,13 @@ export class MetricsService {
     lines.push('# TYPE swiftremit_accumulated_fees gauge');
     lines.push(`swiftremit_accumulated_fees ${this.metrics.swiftremit_accumulated_fees}`);
 
+    // Anchor availability gauge
+    lines.push('# HELP swiftremit_anchor_availability Current availability status of each anchor');
+    lines.push('# TYPE swiftremit_anchor_availability gauge');
+    this.anchorAvailability.forEach((status, anchorId) => {
+      lines.push(`swiftremit_anchor_availability{anchor_id="${this.sanitizeLabelValue(anchorId)}",status="${this.sanitizeLabelValue(status)}"} 1`);
+    });
+
     // FX rate age gauge (per currency pair)
     lines.push('# HELP fx_rate_age_seconds Age of the cached FX rate in seconds');
     lines.push('# TYPE fx_rate_age_seconds gauge');
@@ -257,10 +296,18 @@ export class MetricsService {
     lines.push('# TYPE fx_rate_cache_misses_total counter');
     lines.push(`fx_rate_cache_misses_total ${this.fxCacheMissesTotal}`);
 
-    // DB pool available connections gauge
-    lines.push('# HELP db_pool_available_connections Number of idle (available) connections in the PostgreSQL pool');
-    lines.push('# TYPE db_pool_available_connections gauge');
-    lines.push(`db_pool_available_connections ${this.metrics.db_pool_available_connections}`);
+    // DB pool connection gauges
+    lines.push('# HELP db_pool_active_connections Number of active (checked-out) connections in the PostgreSQL pool');
+    lines.push('# TYPE db_pool_active_connections gauge');
+    lines.push(`db_pool_active_connections ${this.metrics.db_pool_active_connections}`);
+
+    lines.push('# HELP db_pool_idle_connections Number of idle connections in the PostgreSQL pool');
+    lines.push('# TYPE db_pool_idle_connections gauge');
+    lines.push(`db_pool_idle_connections ${this.metrics.db_pool_idle_connections}`);
+
+    lines.push('# HELP db_pool_waiting_connections Number of requests waiting for a connection from the PostgreSQL pool');
+    lines.push('# TYPE db_pool_waiting_connections gauge');
+    lines.push(`db_pool_waiting_connections ${this.metrics.db_pool_waiting_connections}`);
 
     // KYC poller last run timestamp
     lines.push('# HELP kyc_poller_last_run_timestamp_seconds Unix timestamp of the last successful KYC poller run');
@@ -279,6 +326,18 @@ export class MetricsService {
     lines.push('# HELP contract_event_indexer_lag_ledgers Number of ledgers the event indexer is behind the chain tip');
     lines.push('# TYPE contract_event_indexer_lag_ledgers gauge');
     lines.push(`contract_event_indexer_lag_ledgers ${this.metrics.contract_event_indexer_lag_ledgers}`);
+
+    // Dead-letter queue count
+    lines.push('# HELP swiftremit_webhook_dead_letter_count Total number of webhook deliveries in the dead-letter queue');
+    lines.push('# TYPE swiftremit_webhook_dead_letter_count gauge');
+    lines.push(`swiftremit_webhook_dead_letter_count ${this.metrics.swiftremit_webhook_dead_letter_count}`);
+
+    // Rate limit exceeded counter
+    lines.push('# HELP swiftremit_rate_limit_exceeded_total Total number of rate limit exceeded events by path');
+    lines.push('# TYPE swiftremit_rate_limit_exceeded_total counter');
+    Object.entries(this.metrics.swiftremit_rate_limit_exceeded_total).forEach(([path, count]) => {
+      lines.push(`swiftremit_rate_limit_exceeded_total{path="${this.sanitizeLabelValue(path)}"} ${count}`);
+    });
 
     return lines.join('\n') + '\n';
   }

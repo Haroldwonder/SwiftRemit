@@ -152,6 +152,9 @@ pub fn do_emergency_unpause(
     };
     cb_storage::save_unpause_record(env, &unpause_record);
 
+    // Record unpause timestamp so the rate-limiter can apply the cooldown window.
+    cb_storage::set_last_unpause_at(env, timestamp);
+
     // Emit the circuit-breaker unpaused event.
     emit_circuit_breaker_unpaused(env, caller.clone(), timestamp);
 
@@ -238,5 +241,7 @@ pub fn build_status(env: &Env) -> CircuitBreakerStatus {
             env,
             cb_storage::get_active_pause_seq(env).unwrap_or(0),
         ),
+        last_unpause_at: cb_storage::get_last_unpause_at(env),
+        cooldown_period_seconds: cb_storage::get_cooldown_period(env),
     }
 }

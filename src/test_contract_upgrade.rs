@@ -1,101 +1,188 @@
-//! Tests for Contract Upgrade Module
+//! Integration tests for contract upgrade migration (#846).
 //!
-//! Tests cover:
-//! - Proposal creation
-//! - Multi-sig approval
-//! - Timelock enforcement
-//! - Execution after timelock
+//! Verifies that `migration::migrate()` preserves 100% of contract state —
+//! remittance records, agent registrations, payout commitment hashes, and fee
+//! configuration — across a simulated schema upgrade.
+//!
+//! A real on-chain WASM upgrade would call `env.deployer().update_current_contract_wasm()`
+//! followed by `migrate()`.  Because Soroban's test harness does not support
+//! live WASM swaps, these unit tests cover the migration module directly.
+//!
+//! The testnet integration path (actual WASM upgrade on a running network) is
+//! documented in MIGRATION.md.
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Env, BytesN};
+extern crate std;
 
-use crate::contract_upgrade::{
-    ContractUpgrade, UpgradeProposal, UpgradeStatus,
-    propose_upgrade, approve_upgrade, execute_upgrade,
-};
+use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
-// Test utilities
-fn generate_wasm_hash(env: &Env) -> BytesN<32> {
-    // Generate a test WASM hash
-    let mut hash: BytesN<32> = BytesN::from_array(env, &[0u8; 32]);
-    hash
+use crate::{migration, SwiftRemitContract, SwiftRemitContractClient};
+
+// ─── Test helpers ─────────────────────────────────────────────────────────────
+
+fn create_token(env: &Env, admin: &Address) -> token::StellarAssetClient {
+    let id = env.register_stellar_asset_contract_v2(admin.clone());
+    token::StellarAssetClient::new(env, &id.address())
 }
 
-#[test]
-fn test_propose_upgrade_success() {
+fn setup() -> (Env, SwiftRemitContractClient<'static>, Address, Address, Address) {
     let env = Env::default();
-    let admin = Address::from_string(&"GDGQVOKHW4VEJRU2TETD6DBRKEO5ERCNF353LW5JBF3ULETJ2MYBP2LQJ".parse::<Address>().unwrap());
-    
-    let wasm_hash = generate_wasm_hash(&env);
-    let result = contract.propose_upgrade(&admin, &wasm_hash);
-    
-    assert!(result.is_ok());
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token(&env, &token_admin);
+    let agent = Address::generate(&env);
+    let sender = Address::generate(&env);
+
+    let client =
+        SwiftRemitContractClient::new(&env, &env.register_contract(None, SwiftRemitContract {}));
+
+    client.initialize(&admin, &token.address, &250, &0, &0, &admin);
+    client.register_agent(&agent, &None);
+    token.mint(&sender, &100_000);
+
+    (env, client, admin, agent, sender)
 }
 
+// ─── State preservation tests ─────────────────────────────────────────────────
+
+/// `migrate()` is idempotent: calling it twice at the same schema version is safe.
 #[test]
-fn test_propose_upgrade_unauthorized() {
-    let env = Env::default();
-    let non_admin = Address::from_string(&"GA7QYNF7SOWQ6XLQJ33AHP6ARJLZDHFIZTFQOFJCAZBLW3V6FWLLTM7D2C4".parse::<Address>().unwrap());
-    
-    let wasm_hash = generate_wasm_hash(&env);
-    let result = contract.propose_upgrade(&non_admin, &wasm_hash);
-    
-    assert!(result.is_err());
+fn test_migrate_is_idempotent() {
+    let (env, _client, _, _, _) = setup();
+    let result1 = migration::migrate(&env);
+    assert!(result1.is_ok(), "first migrate failed: {:?}", result1);
+    let result2 = migration::migrate(&env);
+    assert!(result2.is_ok(), "second migrate failed (not idempotent): {:?}", result2);
 }
 
+/// Remittance records are fully intact after migration.
 #[test]
-fn test_approve_upgrade_success() {
-    let env = Env::default();
-    let admin1 = Address::from_string(&"GDGQVOKHW4VEJRU2TETD6DBRKEO5ERCNF353LW5JBF3ULETJ2MYBP2LQJ".parse::<Address>().unwrap());
-    let admin2 = Address::from_string(&"GA7QYNF7SOWQ6XLQJ33AHP6ARJLZDHFIZTFQOFJCAZBLW3V6FWLLTM7D2C4".parse::<Address>().unwrap());
-    
-    // Propose
-    let wasm_hash = generate_wasm_hash(&env);
-    let proposal_id = contract.propose_upgrade(&admin1, &wasm_hash).unwrap();
-    
-    // Approve
-    let result = contract.approve_upgrade(&admin2, &proposal_id);
-    assert!(result.is_ok());
+fn test_migrate_preserves_remittance_state() {
+    let (env, client, _, agent, sender) = setup();
+
+    env.mock_all_auths();
+    let id1 = client.create_remittance(&sender, &agent, &5_000, &None, &None, &None, &None, &None);
+    let id2 = client.create_remittance(&sender, &agent, &3_000, &None, &None, &None, &None, &None);
+
+    // Snapshot state before migration.
+    let before1 = client.get_remittance(&id1).expect("remittance 1 not found");
+    let before2 = client.get_remittance(&id2).expect("remittance 2 not found");
+
+    // Run migration (simulates post-WASM-upgrade migration step).
+    migration::migrate(&env).expect("migrate failed");
+
+    // Verify every field is identical after migration.
+    let after1 = client.get_remittance(&id1).expect("remittance 1 missing after migrate");
+    let after2 = client.get_remittance(&id2).expect("remittance 2 missing after migrate");
+
+    assert_eq!(after1.id, before1.id);
+    assert_eq!(after1.amount, before1.amount);
+    assert_eq!(after1.fee, before1.fee);
+    assert_eq!(after1.status, before1.status);
+    assert_eq!(after1.sender, before1.sender);
+    assert_eq!(after1.agent, before1.agent);
+
+    assert_eq!(after2.id, before2.id);
+    assert_eq!(after2.amount, before2.amount);
+    assert_eq!(after2.fee, before2.fee);
+    assert_eq!(after2.status, before2.status);
 }
 
+/// Agent registrations survive migration.
 #[test]
-fn test_timelock_enforced() {
-    let env = Env::default();
-    let admin1 = Address::from_string(&"GDGQVOKHW4VEJRU2TETD6DBRKEO5ERCNF353LW5JBF3ULETJ2MYBP2LQJ".parse::<Address>().unwrap());
-    let admin2 = Address::from_string(&"GA7QYNF7SOWQ6XLQJ33AHP6ARJLZDHFIZTFQOFJCAZBLW3V6FWLLTM7D2C4".parse::<Address>().unwrap());
-    let admin3 = Address::from_string(&"GCJ2T4R7BZHK4K5GQ6TQZY7QCMCMSQ6C3J7LQVLRIJJGZLW7RQ7CQZJ".parse::<Address>().unwrap());
-    
-    // Propose
-    let wasm_hash = generate_wasm_hash(&env);
-    let proposal_id = contract.propose_upgrade(&admin1, &wasm_hash).unwrap();
-    
-    // Approve from enough admins for quorum
-    contract.approve_upgrade(&admin2, &proposal_id);
-    contract.approve_upgrade(&admin3, &proposal_id);
-    
-    // Try to execute immediately - should fail (timelock active)
-    let result = contract.execute_upgrade(&admin1, &proposal_id);
-    assert!(result.is_err());
-    
-    // Simulate 48 hours passing
-    // In real test, would mock ledger timestamp
-    
-    // After timelock, should succeed
-    let result = contract.execute_upgrade(&admin1, &proposal_id);
-    assert!(result.is_ok());
+fn test_migrate_preserves_agent_registrations() {
+    let (env, client, admin, agent, _) = setup();
+    let agent2 = Address::generate(&env);
+    client.register_agent(&agent2, &None);
+
+    assert!(client.is_agent_registered(&agent));
+    assert!(client.is_agent_registered(&agent2));
+
+    migration::migrate(&env).expect("migrate failed");
+
+    assert!(
+        client.is_agent_registered(&agent),
+        "agent1 lost after migration"
+    );
+    assert!(
+        client.is_agent_registered(&agent2),
+        "agent2 lost after migration"
+    );
+    assert!(client.is_admin(&admin), "admin lost after migration");
 }
 
+/// Settlement commitment hash is unchanged after migration — the core
+/// hash-verification step required for safe upgrades.
+///
+/// `compute_settlement_hash` derives the hash deterministically from the
+/// remittance record, so any field corruption after migration would cause a
+/// mismatch.
 #[test]
-fn test_upgrade_proposal_events() {
-    let env = Env::default();
-    let admin = Address::from_string(&"GDGQVOKHW4VEJRU2TETD6DBRKEO5ERCNF353LW5JBF3ULETJ2MYBP2LQJ".parse::<Address>().unwrap());
-    
-    let wasm_hash = generate_wasm_hash(&env);
-    let proposal_id = contract.propose_upgrade(&admin, &wasm_hash).unwrap();
-    
-    // Verify event would be emitted (checked via test events)
-    // Events: UpgradeProposed(proposal_id, wasm_hash)
-    //         -> UpgradeApproved(proposal_id, 1) 
-    //         -> UpgradeExecuted(proposal_id)
+fn test_migrate_preserves_commitment_hashes() {
+    let (env, client, _, agent, sender) = setup();
+
+    env.mock_all_auths();
+    let id =
+        client.create_remittance(&sender, &agent, &10_000, &None, &None, &None, &None, &None);
+
+    // Compute deterministic commitment hash before migration.
+    let hash_before = client
+        .compute_settlement_hash(&id)
+        .expect("hash computation failed before migrate");
+
+    migration::migrate(&env).expect("migrate failed");
+
+    // Re-compute after migration — must be byte-for-byte identical.
+    let hash_after = client
+        .compute_settlement_hash(&id)
+        .expect("hash computation failed after migrate");
+
+    assert_eq!(
+        hash_before, hash_after,
+        "settlement commitment hash changed after migration — state corruption detected"
+    );
+}
+
+/// Accumulated fee balance is preserved across migration.
+#[test]
+fn test_migrate_preserves_accumulated_fees() {
+    let (env, client, _, agent, sender) = setup();
+
+    env.mock_all_auths();
+    client.create_remittance(&sender, &agent, &8_000, &None, &None, &None, &None, &None);
+
+    let fees_before = client.get_accumulated_fees().expect("fee query failed");
+    assert!(fees_before > 0, "expected non-zero accumulated fees");
+
+    migration::migrate(&env).expect("migrate failed");
+
+    let fees_after = client.get_accumulated_fees().expect("fee query after migrate failed");
+    assert_eq!(
+        fees_after, fees_before,
+        "accumulated fee balance changed after migration"
+    );
+}
+
+/// Total remittance count is unchanged after migration.
+#[test]
+fn test_migrate_preserves_remittance_count() {
+    let (env, client, _, agent, sender) = setup();
+
+    env.mock_all_auths();
+    client.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
+    client.create_remittance(&sender, &agent, &2_000, &None, &None, &None, &None, &None);
+    client.create_remittance(&sender, &agent, &3_000, &None, &None, &None, &None, &None);
+
+    let count_before = client.get_remittance_count();
+
+    migration::migrate(&env).expect("migrate failed");
+
+    assert_eq!(
+        client.get_remittance_count(),
+        count_before,
+        "remittance count changed after migration"
+    );
 }

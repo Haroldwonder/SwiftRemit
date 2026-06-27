@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg';
+import crypto from 'crypto';
 import {
   AssetVerification,
   VerificationStatus,
@@ -449,7 +450,7 @@ export async function getUsersNeedingKycCheck(anchorId: string, minutesSinceLast
     SELECT * FROM user_kyc_status 
     WHERE anchor_id = $1 
       AND last_checked < NOW() - INTERVAL '${minutesSinceLastCheck} minutes'
-      AND status IN ('pending', 'approved')
+      AND status IN ('pending', 'approved', 're_verification_pending')
     ORDER BY last_checked ASC
     LIMIT 100
   `;
@@ -705,7 +706,7 @@ function mapWebhookDeliveryRow(row: Record<string, unknown>): WebhookDelivery {
 
 export async function getActiveWebhookSubscribers(): Promise<WebhookSubscriber[]> {
   const result = await getPool().query(
-    `SELECT id, url, secret, active, created_at, updated_at
+    `SELECT id, url, secret, previous_secret, secret_rotated_at, active, created_at, updated_at
      FROM webhook_subscribers
      WHERE active = true`
   );
@@ -713,10 +714,51 @@ export async function getActiveWebhookSubscribers(): Promise<WebhookSubscriber[]
     id: String(row.id),
     url: String(row.url),
     secret: row.secret as string | null,
+    previous_secret: row.previous_secret as string | null,
+    secret_rotated_at: row.secret_rotated_at as Date | null,
     active: Boolean(row.active),
     created_at: row.created_at as Date,
     updated_at: row.updated_at as Date,
   }));
+}
+
+export async function getWebhookSubscriberById(id: string): Promise<WebhookSubscriber | null> {
+  const result = await getPool().query(
+    `SELECT id, url, secret, previous_secret, secret_rotated_at, active, created_at, updated_at
+     FROM webhook_subscribers
+     WHERE id = $1`,
+    [id]
+  );
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return {
+    id: String(row.id),
+    url: String(row.url),
+    secret: row.secret as string | null,
+    previous_secret: row.previous_secret as string | null,
+    secret_rotated_at: row.secret_rotated_at as Date | null,
+    active: Boolean(row.active),
+    created_at: row.created_at as Date,
+    updated_at: row.updated_at as Date,
+  };
+}
+
+export async function rotateWebhookSecret(id: string): Promise<{ newSecret: string; rotatedAt: Date }> {
+  const newSecret = crypto.randomBytes(32).toString('hex');
+  const result = await getPool().query(
+    `UPDATE webhook_subscribers
+     SET previous_secret = secret,
+         secret = $2,
+         secret_rotated_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING secret_rotated_at`,
+    [id, newSecret]
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw new Error(`Webhook subscriber not found: ${id}`);
+  }
+  return { newSecret, rotatedAt: result.rows[0].secret_rotated_at as Date };
 }
 
 export async function enqueueWebhookDelivery(
@@ -795,9 +837,10 @@ export function getPool(): Pool {
     }
     pool = new Pool({
       connectionString,
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
+      max: parseInt(process.env.DB_POOL_MAX ?? '20', 10),
+      min: parseInt(process.env.DB_POOL_MIN ?? '2', 10),
+      idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS ?? '30000', 10),
+      connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT_MS ?? '2000', 10),
     });
   }
   return pool;
@@ -888,6 +931,122 @@ export async function purgeExpiredWebhookNonces(): Promise<void> {
   await getPool().query(
     `DELETE FROM webhook_processed_nonces WHERE expires_at < NOW()`
   );
+}
+
+// ── Anchor Health History ─────────────────────────────────────────────────────
+
+export interface AnchorHealthRecord {
+  id?: number;
+  anchor_id: string;
+  status: 'online' | 'degraded' | 'offline';
+  response_time_ms?: number;
+  error_message?: string;
+  checked_at?: Date;
+}
+
+export async function saveAnchorHealthCheck(record: AnchorHealthRecord): Promise<void> {
+  await getPool().query(
+    `INSERT INTO anchor_health_history (anchor_id, status, response_time_ms, error_message, checked_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      record.anchor_id,
+      record.status,
+      record.response_time_ms ?? null,
+      record.error_message ?? null,
+      record.checked_at ?? new Date(),
+    ]
+  );
+}
+
+export async function getAnchorHealthHistory(
+  anchorId: string,
+  limit: number = 50
+): Promise<AnchorHealthRecord[]> {
+  const result = await getPool().query(
+    `SELECT id, anchor_id, status, response_time_ms, error_message, checked_at
+     FROM anchor_health_history
+     WHERE anchor_id = $1
+     ORDER BY checked_at DESC
+     LIMIT $2`,
+    [anchorId, limit]
+  );
+
+  return result.rows.map(row => ({
+    id: row.id,
+    anchor_id: row.anchor_id,
+    status: row.status,
+    response_time_ms: row.response_time_ms,
+    error_message: row.error_message,
+    checked_at: row.checked_at,
+  }));
+}
+
+export async function getLatestAnchorHealth(
+  anchorId: string
+): Promise<AnchorHealthRecord | null> {
+  const result = await getPool().query(
+    `SELECT id, anchor_id, status, response_time_ms, error_message, checked_at
+     FROM anchor_health_history
+     WHERE anchor_id = $1
+     ORDER BY checked_at DESC
+     LIMIT 1`,
+    [anchorId]
+  );
+
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    anchor_id: row.anchor_id,
+    status: row.status,
+    response_time_ms: row.response_time_ms,
+    error_message: row.error_message,
+    checked_at: row.checked_at,
+  };
+}
+
+export async function getAnchorHealthUptime(
+  anchorId: string,
+  sinceHours: number = 24
+): Promise<number> {
+  const result = await getPool().query(
+    `SELECT
+       COUNT(*) as total,
+       SUM(CASE WHEN status = 'online' THEN 1 ELSE 0 END) as online
+     FROM anchor_health_history
+     WHERE anchor_id = $1 AND checked_at > NOW() - ($2 || ' hours')::INTERVAL`,
+    [anchorId, sinceHours]
+  );
+
+  const total = parseInt(result.rows[0].total, 10);
+  if (total === 0) return 100;
+  const online = parseInt(result.rows[0].online, 10);
+  return Math.round((online / total) * 100 * 100) / 100;
+}
+
+// ── Anchor Listing (shared with API schema) ───────────────────────────────────
+
+export interface AnchorRow {
+  id: string;
+  name: string;
+  domain: string;
+  home_domain: string | null;
+  enabled: boolean;
+}
+
+export async function getEnabledAnchors(): Promise<AnchorRow[]> {
+  const result = await getPool().query(
+    `SELECT id, name, domain, home_domain, enabled
+     FROM anchors
+     WHERE enabled = true`
+  );
+  return result.rows.map(row => ({
+    id: row.id,
+    name: row.name,
+    domain: row.domain,
+    home_domain: row.home_domain,
+    enabled: row.enabled,
+  }));
 }
 
 export async function queryContractEvents(

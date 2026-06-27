@@ -40,6 +40,7 @@ pub struct CooldownEntry {
     pub address: Address,
     pub action_type: ActionType,
     pub last_action_time: u64,
+    pub last_violation_at: Option<u64>,
 }
 
 #[contracttype]
@@ -98,14 +99,18 @@ pub fn check_cooldown(
     address: &Address,
     action_type: ActionType,
 ) -> Result<(), ContractError> {
-    let cooldown_period = get_cooldown_period(&action_type);
-    if cooldown_period == 0 {
+    let base_cooldown_period = get_cooldown_period(&action_type);
+    if base_cooldown_period == 0 {
         return Ok(());
     }
+
     let current_time = env.ledger().timestamp();
-    if let Some(entry) = get_cooldown_entry(env, address, &action_type) {
+    if let Some(mut entry) = get_cooldown_entry(env, address, &action_type) {
+        let effective_cooldown = calculate_effective_cooldown(env, &entry, current_time, &action_type);
         let time_since_last = current_time.saturating_sub(entry.last_action_time);
-        if time_since_last < cooldown_period {
+        if time_since_last < effective_cooldown {
+            entry.last_violation_at = Some(current_time);
+            save_cooldown_entry(env, &entry);
             log_suspicious_activity(env, address, SuspiciousActivityType::CooldownViolation, time_since_last as u32);
             emit_cooldown_violation(env, address, &action_type, time_since_last);
             return Err(ContractError::CooldownActive);
@@ -120,6 +125,7 @@ pub fn record_action(env: &Env, address: &Address, action_type: ActionType) {
         address: address.clone(),
         action_type: action_type.clone(),
         last_action_time: current_time,
+        last_violation_at: None,
     };
     save_cooldown_entry(env, &cooldown_entry);
     emit_action_recorded(env, address, &action_type, current_time);
@@ -164,6 +170,30 @@ fn get_cooldown_period(action_type: &ActionType) -> u64 {
 
 fn get_cooldown_entry(env: &Env, address: &Address, action_type: &ActionType) -> Option<CooldownEntry> {
     env.storage().temporary().get(&create_cooldown_key(address, action_type))
+}
+
+fn calculate_effective_cooldown(env: &Env, entry: &CooldownEntry, current_time: u64, action_type: &ActionType) -> u64 {
+    let base_cooldown = get_cooldown_period(action_type);
+    let Some(last_violation_at) = entry.last_violation_at else {
+        return base_cooldown;
+    };
+
+    let elapsed = current_time.saturating_sub(last_violation_at);
+    let decay_steps = (elapsed / 86_400).min(32) as usize;
+    let decay_rate_bps = crate::storage::get_abuse_cooldown_decay_rate_bps(env);
+    if decay_rate_bps == 0 || decay_steps == 0 {
+        return base_cooldown;
+    }
+
+    let mut effective = base_cooldown;
+    for _ in 0..decay_steps {
+        let decay = (effective as u128 * decay_rate_bps as u128) / 10_000u128;
+        effective = effective.saturating_sub(decay as u64);
+        if effective == 0 {
+            break;
+        }
+    }
+    effective
 }
 
 fn save_cooldown_entry(env: &Env, entry: &CooldownEntry) {

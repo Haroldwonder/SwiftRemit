@@ -1,13 +1,16 @@
+import crypto from 'crypto';
 import {
   enqueueWebhookDelivery,
   getActiveWebhookSubscribers,
+  getWebhookSubscriberById,
   getPendingWebhookDeliveries,
   markWebhookDeliveryFailure,
   markWebhookDeliverySuccess,
 } from './database';
-import { RemittanceCreatedWebhookPayload, Sep24ExpiredRefundWebhookPayload, WebhookDelivery } from './types';
+import { RemittanceCreatedWebhookPayload, Sep24ExpiredRefundWebhookPayload, WebhookDelivery, WebhookSubscriber } from './types';
 
 const MAX_RETRIES = 5;
+const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
 
 export class WebhookDispatcher {
   constructor(private readonly fetchImpl: typeof fetch = fetch) {}
@@ -20,8 +23,8 @@ export class WebhookDispatcher {
       )
     );
 
-    for (const delivery of deliveries) {
-      await this.attemptDelivery(delivery);
+    for (let i = 0; i < deliveries.length; i++) {
+      await this.attemptDelivery(deliveries[i], subscribers[i]);
     }
   }
 
@@ -33,15 +36,16 @@ export class WebhookDispatcher {
       )
     );
 
-    for (const delivery of deliveries) {
-      await this.attemptDelivery(delivery);
+    for (let i = 0; i < deliveries.length; i++) {
+      await this.attemptDelivery(deliveries[i], subscribers[i]);
     }
   }
 
   async retryPendingDeliveries(limit: number = 100): Promise<void> {
     const deliveries = await getPendingWebhookDeliveries(limit);
     for (const delivery of deliveries) {
-      await this.attemptDelivery(delivery);
+      const subscriber = await getWebhookSubscriberById(delivery.subscriber_id);
+      await this.attemptDelivery(delivery, subscriber ?? undefined);
     }
   }
 
@@ -51,20 +55,45 @@ export class WebhookDispatcher {
     }
   }
 
-  private async attemptDelivery(delivery: WebhookDelivery): Promise<void> {
+  private buildSignatureHeaders(body: string, subscriber: WebhookSubscriber | undefined): Record<string, string> {
+    if (!subscriber?.secret) return {};
+
+    const timestamp = Date.now().toString();
+    const msg = `${timestamp}.${body}`;
+    const headers: Record<string, string> = {
+      'x-webhook-timestamp': timestamp,
+      'x-webhook-signature': crypto.createHmac('sha256', subscriber.secret).update(msg).digest('hex'),
+    };
+
+    if (subscriber.previous_secret && subscriber.secret_rotated_at) {
+      const age = Date.now() - new Date(subscriber.secret_rotated_at).getTime();
+      if (age < ROTATION_GRACE_MS) {
+        headers['x-webhook-signature-prev'] = crypto
+          .createHmac('sha256', subscriber.previous_secret)
+          .update(msg)
+          .digest('hex');
+      }
+    }
+
+    return headers;
+  }
+
+  private async attemptDelivery(delivery: WebhookDelivery, subscriber?: WebhookSubscriber): Promise<void> {
     const nextAttempt = delivery.attempt_count + 1;
 
     try {
       this.validateUrl(delivery.target_url);
 
+      const body = JSON.stringify(delivery.payload);
       const response = await this.fetchImpl(delivery.target_url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           'x-event-type': delivery.event_type,
           'x-attempt': String(nextAttempt),
+          ...this.buildSignatureHeaders(body, subscriber),
         },
-        body: JSON.stringify(delivery.payload),
+        body,
       });
 
       if (response.ok) {

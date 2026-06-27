@@ -1,15 +1,19 @@
 /**
- * KYC Expiry Notifier (#480)
+ * KYC Expiry Notifier (#480 / #862)
  *
- * Queries user_kyc_status for records expiring within the next 7 days
- * and dispatches a `kyc.expiry_warning` webhook to all subscribers.
+ * Queries user_kyc_status for records expiring within the next 7 days,
+ * dispatches a `kyc.expiry_warning` webhook, initiates SEP-12 re-verification
+ * via the anchor, and marks the user as `re_verification_pending` in the DB
+ * so that new remittances are blocked until the anchor confirms re-KYC.
  */
 
+import axios from 'axios';
 import { Pool } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
 import { IWebhookStore } from './webhooks/store';
 import { WebhookDispatcher } from './webhooks/dispatcher';
 import type { KycExpiryWarningPayload } from './webhooks/types';
+import { getAnchorKycConfigs } from './database';
 
 const WARN_DAYS = 7;
 const RENEWAL_BASE_URL = process.env.KYC_RENEWAL_BASE_URL ?? 'https://app.swiftremit.io/kyc/renew';
@@ -87,9 +91,51 @@ export class KycExpiryNotifier {
       } catch (err) {
         console.error('KYC expiry notification failed', { user_id: row.user_id, anchor_id: row.anchor_id, err });
       }
+
+      // Initiate re-verification: call SEP-12 PUT /customer and mark as re_verification_pending
+      try {
+        await this.initiateReVerification(row.user_id, row.anchor_id);
+      } catch (err) {
+        console.error('KYC re-verification initiation failed', { user_id: row.user_id, anchor_id: row.anchor_id, err });
+      }
     }
 
     console.log(`KYC expiry notifier: ${dispatched} notification(s) dispatched`);
     return dispatched;
+  }
+
+  /**
+   * Call anchor SEP-12 PUT /customer to queue re-KYC, then set the user's
+   * status to `re_verification_pending` so new remittances are blocked.
+   */
+  async initiateReVerification(userId: string, anchorId: string): Promise<void> {
+    const configs = await getAnchorKycConfigs();
+    const config = configs.find(c => c.anchor_id === anchorId);
+    if (!config) {
+      console.warn(`KYC re-verification: no config for anchor ${anchorId}`);
+      return;
+    }
+
+    // SEP-12 PUT /customer — signals to the anchor that re-KYC is needed
+    await axios.put(
+      `${config.kyc_server_url}/customer`,
+      { account: userId },
+      {
+        headers: {
+          Authorization: `Bearer ${config.auth_token}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10_000,
+      }
+    );
+
+    // Mark in DB so remittances are blocked
+    await this.pool.query(
+      `UPDATE user_kyc_status
+          SET status = 're_verification_pending', last_checked = NOW(), updated_at = NOW()
+        WHERE user_id = $1 AND anchor_id = $2`,
+      [userId, anchorId]
+    );
+    console.log(`KYC re-verification initiated for user ${userId} on anchor ${anchorId}`);
   }
 }
