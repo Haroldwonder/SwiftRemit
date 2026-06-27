@@ -1,3 +1,5 @@
+// MUST be imported first so OTel patches are applied before other modules load
+import './tracing';
 import { createServer } from 'http';
 import dotenv from 'dotenv';
 import { createApp } from './app';

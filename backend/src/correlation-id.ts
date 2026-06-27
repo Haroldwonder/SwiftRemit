@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import { trace } from '@opentelemetry/api';
 
 // AsyncLocalStorage to maintain correlation ID across async operations
 const correlationStorage = new AsyncLocalStorage<string>();
@@ -73,11 +74,17 @@ export class StructuredLogger {
 
   private formatMessage(level: string, message: string, data?: any): string {
     const correlationId = getCorrelationId();
+    const activeSpan = trace.getActiveSpan();
+    const spanContext = activeSpan?.spanContext();
+    const traceId = spanContext?.traceId;
+    const spanId = spanContext?.spanId;
     const logEntry = {
       timestamp: new Date().toISOString(),
       level,
       context: this.context,
       correlationId,
+      ...(traceId && { traceId }),
+      ...(spanId && { spanId }),
       message,
       ...(data && { data: redact(data) }),
     };

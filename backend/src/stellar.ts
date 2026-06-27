@@ -10,6 +10,7 @@ import {
 import { AssetVerification, VerificationStatus } from './types';
 import { getStellarRuntimeConfig } from './stellar-network';
 import { correlationFetch } from './stellar-fetch';
+import { withSpan } from './tracing';
 
 const { rpcUrl, networkPassphrase } = getStellarRuntimeConfig();
 const server = new SorobanRpc.Server(rpcUrl, { allowHttp: true, fetch: correlationFetch });
@@ -24,80 +25,91 @@ export async function getBaseFee(): Promise<string> {
 export async function storeVerificationOnChain(
   verification: AssetVerification
 ): Promise<void> {
-  const contractId = process.env.CONTRACT_ID;
-  if (!contractId) {
-    throw new Error('CONTRACT_ID not configured');
-  }
+  return withSpan('stellar.storeVerificationOnChain', async (span) => {
+    span.setAttributes({
+      'stellar.asset_code': verification.asset_code,
+      'stellar.issuer': verification.issuer,
+      'stellar.status': verification.status,
+    });
 
-  const adminSecret = process.env.ADMIN_SECRET_KEY;
-  if (!adminSecret) {
-    throw new Error('ADMIN_SECRET_KEY not configured');
-  }
+    const contractId = process.env.CONTRACT_ID;
+    if (!contractId) {
+      throw new Error('CONTRACT_ID not configured');
+    }
 
-  const adminKeypair = Keypair.fromSecret(adminSecret);
-  const contract = new Contract(contractId);
+    const adminSecret = process.env.ADMIN_SECRET_KEY;
+    if (!adminSecret) {
+      throw new Error('ADMIN_SECRET_KEY not configured');
+    }
 
-  // Get admin account
-  const account = await server.getAccount(adminKeypair.publicKey());
+    const adminKeypair = Keypair.fromSecret(adminSecret);
+    const contract = new Contract(contractId);
+    span.setAttribute('stellar.contract_id', contractId);
 
-  // Map status to contract enum
-  let statusValue: xdr.ScVal;
-  switch (verification.status) {
-    case VerificationStatus.Verified:
-      statusValue = xdr.ScVal.scvSymbol('Verified');
-      break;
-    case VerificationStatus.Suspicious:
-      statusValue = xdr.ScVal.scvSymbol('Suspicious');
-      break;
-    default:
-      statusValue = xdr.ScVal.scvSymbol('Unverified');
-  }
+    // Get admin account
+    const account = await server.getAccount(adminKeypair.publicKey());
 
-  // Build transaction
-  const tx = new TransactionBuilder(account, {
-    fee: await getBaseFee(),
-    networkPassphrase,
-  })
-    .addOperation(
-      contract.call(
-        'set_asset_verification',
-        nativeToScVal(verification.asset_code, { type: 'string' }),
-        new Address(verification.issuer).toScVal(),
-        statusValue,
-        nativeToScVal(verification.reputation_score, { type: 'u32' }),
-        nativeToScVal(verification.trustline_count, { type: 'u64' }),
-        nativeToScVal(verification.has_toml, { type: 'bool' })
+    // Map status to contract enum
+    let statusValue: xdr.ScVal;
+    switch (verification.status) {
+      case VerificationStatus.Verified:
+        statusValue = xdr.ScVal.scvSymbol('Verified');
+        break;
+      case VerificationStatus.Suspicious:
+        statusValue = xdr.ScVal.scvSymbol('Suspicious');
+        break;
+      default:
+        statusValue = xdr.ScVal.scvSymbol('Unverified');
+    }
+
+    // Build transaction
+    const tx = new TransactionBuilder(account, {
+      fee: await getBaseFee(),
+      networkPassphrase,
+    })
+      .addOperation(
+        contract.call(
+          'set_asset_verification',
+          nativeToScVal(verification.asset_code, { type: 'string' }),
+          new Address(verification.issuer).toScVal(),
+          statusValue,
+          nativeToScVal(verification.reputation_score, { type: 'u32' }),
+          nativeToScVal(verification.trustline_count, { type: 'u64' }),
+          nativeToScVal(verification.has_toml, { type: 'bool' })
+        )
       )
-    )
-    .setTimeout(30)
-    .build();
+      .setTimeout(30)
+      .build();
 
-  // Simulate transaction
-  const simulated = await server.simulateTransaction(tx);
-  
-  if (SorobanRpc.Api.isSimulationError(simulated)) {
-    throw new Error(`Simulation failed: ${simulated.error}`);
-  }
+    // Simulate transaction
+    const simulated = await server.simulateTransaction(tx);
 
-  // Prepare and sign transaction
-  const prepared = SorobanRpc.assembleTransaction(tx, simulated).build();
-  prepared.sign(adminKeypair);
+    if (SorobanRpc.Api.isSimulationError(simulated)) {
+      throw new Error(`Simulation failed: ${simulated.error}`);
+    }
 
-  // Submit transaction
-  const result = await server.sendTransaction(prepared);
+    // Prepare and sign transaction
+    const prepared = SorobanRpc.assembleTransaction(tx, simulated).build();
+    prepared.sign(adminKeypair);
 
-  // Wait for confirmation
-  let status = await server.getTransaction(result.hash);
-  while (status.status === 'NOT_FOUND') {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    status = await server.getTransaction(result.hash);
-  }
+    // Submit transaction
+    const result = await server.sendTransaction(prepared);
+    span.setAttribute('stellar.tx_hash', result.hash);
 
-  if (status.status === 'FAILED') {
-    throw new Error(`Transaction failed: ${status.resultXdr}`);
-  }
+    // Wait for confirmation
+    let status = await server.getTransaction(result.hash);
+    while (status.status === 'NOT_FOUND') {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      status = await server.getTransaction(result.hash);
+    }
 
-  console.log(`Stored verification on-chain for ${verification.asset_code}-${verification.issuer}`);
+    if (status.status === 'FAILED') {
+      throw new Error(`Transaction failed: ${status.resultXdr}`);
+    }
+
+    span.setAttribute('stellar.tx_status', status.status);
+    console.log(`Stored verification on-chain for ${verification.asset_code}-${verification.issuer}`);
+  });
 }
 
 export interface SettlementSimulationResult {
@@ -110,60 +122,74 @@ export interface SettlementSimulationResult {
 export async function simulateSettlement(
   amount: number
 ): Promise<SettlementSimulationResult> {
-  const contractId = process.env.CONTRACT_ID;
-  if (!contractId) throw new Error('CONTRACT_ID not configured');
+  return withSpan('stellar.simulateSettlement', async (span) => {
+    span.setAttribute('stellar.amount', amount);
 
-  const contract = new Contract(contractId);
-  const keypair = Keypair.random();
+    const contractId = process.env.CONTRACT_ID;
+    if (!contractId) throw new Error('CONTRACT_ID not configured');
+    span.setAttribute('stellar.contract_id', contractId);
 
-  // Build a minimal source account for simulation (no signing needed)
-  const sourceAccount = {
-    accountId: () => keypair.publicKey(),
-    sequenceNumber: () => '0',
-    incrementSequenceNumber: () => {},
-  } as any;
+    const contract = new Contract(contractId);
+    const keypair = Keypair.random();
 
-  const tx = new TransactionBuilder(sourceAccount, {
-    fee: '100',
-    networkPassphrase,
-  })
-    .addOperation(
-      contract.call(
-        'calculate_fee_breakdown',
-        nativeToScVal(amount, { type: 'i128' })
+    // Build a minimal source account for simulation (no signing needed)
+    const sourceAccount = {
+      accountId: () => keypair.publicKey(),
+      sequenceNumber: () => '0',
+      incrementSequenceNumber: () => {},
+    } as any;
+
+    const tx = new TransactionBuilder(sourceAccount, {
+      fee: '100',
+      networkPassphrase,
+    })
+      .addOperation(
+        contract.call(
+          'calculate_fee_breakdown',
+          nativeToScVal(amount, { type: 'i128' })
+        )
       )
-    )
-    .setTimeout(30)
-    .build();
+      .setTimeout(30)
+      .build();
 
-  const simulated = await server.simulateTransaction(tx);
+    const simulated = await server.simulateTransaction(tx);
 
-  if (SorobanRpc.Api.isSimulationError(simulated)) {
-    return { would_succeed: false, payout_amount: '0', fee: '0', error_message: null };
-  }
+    if (SorobanRpc.Api.isSimulationError(simulated)) {
+      span.setAttribute('stellar.simulation_success', false);
+      return { would_succeed: false, payout_amount: '0', fee: '0', error_message: null };
+    }
 
-  const retval = (simulated as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
-  if (!retval) {
-    return { would_succeed: false, payout_amount: '0', fee: '0', error_message: null };
-  }
+    const retval = (simulated as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) {
+      span.setAttribute('stellar.simulation_success', false);
+      return { would_succeed: false, payout_amount: '0', fee: '0', error_message: null };
+    }
 
-  try {
-    const entries = retval.map()!;
-    const getI128 = (key: string): bigint => {
-      const entry = entries.find(e => e.key().sym() === key);
-      if (!entry) return BigInt(0);
-      const v = entry.val().i128();
-      return (BigInt(v.hi().toString()) << BigInt(64)) | BigInt(v.lo().toString());
-    };
-    return {
-      would_succeed: true,
-      payout_amount: getI128('net_amount').toString(),
-      fee: getI128('platform_fee').toString(),
-      error_message: null,
-    };
-  } catch {
-    return { would_succeed: false, payout_amount: '0', fee: '0', error_message: null };
-  }
+    try {
+      const entries = retval.map()!;
+      const getI128 = (key: string): bigint => {
+        const entry = entries.find(e => e.key().sym() === key);
+        if (!entry) return BigInt(0);
+        const v = entry.val().i128();
+        return (BigInt(v.hi().toString()) << BigInt(64)) | BigInt(v.lo().toString());
+      };
+      const result = {
+        would_succeed: true,
+        payout_amount: getI128('net_amount').toString(),
+        fee: getI128('platform_fee').toString(),
+        error_message: null,
+      };
+      span.setAttributes({
+        'stellar.simulation_success': true,
+        'stellar.payout_amount': result.payout_amount,
+        'stellar.fee': result.fee,
+      });
+      return result;
+    } catch {
+      span.setAttribute('stellar.simulation_success', false);
+      return { would_succeed: false, payout_amount: '0', fee: '0', error_message: null };
+    }
+  });
 }
 
 /**
@@ -171,50 +197,57 @@ export async function simulateSettlement(
  * Uses the admin keypair as the authorized caller.
  */
 export async function cancelRemittanceOnChain(remittanceId: number): Promise<void> {
-  const contractId = process.env.CONTRACT_ID;
-  if (!contractId) throw new Error('CONTRACT_ID not configured');
+  return withSpan('stellar.cancelRemittanceOnChain', async (span) => {
+    span.setAttribute('stellar.remittance_id', remittanceId);
 
-  const adminSecret = process.env.ADMIN_SECRET_KEY;
-  if (!adminSecret) throw new Error('ADMIN_SECRET_KEY not configured');
+    const contractId = process.env.CONTRACT_ID;
+    if (!contractId) throw new Error('CONTRACT_ID not configured');
+    span.setAttribute('stellar.contract_id', contractId);
 
-  const adminKeypair = Keypair.fromSecret(adminSecret);
-  const contract = new Contract(contractId);
-  const account = await server.getAccount(adminKeypair.publicKey());
+    const adminSecret = process.env.ADMIN_SECRET_KEY;
+    if (!adminSecret) throw new Error('ADMIN_SECRET_KEY not configured');
 
-  const tx = new TransactionBuilder(account, {
-    fee: await getBaseFee(),
-    networkPassphrase,
-  })
-    .addOperation(
-      contract.call(
-        'cancel_remittance',
-        nativeToScVal(remittanceId, { type: 'u64' })
+    const adminKeypair = Keypair.fromSecret(adminSecret);
+    const contract = new Contract(contractId);
+    const account = await server.getAccount(adminKeypair.publicKey());
+
+    const tx = new TransactionBuilder(account, {
+      fee: await getBaseFee(),
+      networkPassphrase,
+    })
+      .addOperation(
+        contract.call(
+          'cancel_remittance',
+          nativeToScVal(remittanceId, { type: 'u64' })
+        )
       )
-    )
-    .setTimeout(30)
-    .build();
+      .setTimeout(30)
+      .build();
 
-  const simulated = await server.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simulated)) {
-    throw new Error(`Simulation failed: ${simulated.error}`);
-  }
+    const simulated = await server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simulated)) {
+      throw new Error(`Simulation failed: ${simulated.error}`);
+    }
 
-  const prepared = SorobanRpc.assembleTransaction(tx, simulated).build();
-  prepared.sign(adminKeypair);
+    const prepared = SorobanRpc.assembleTransaction(tx, simulated).build();
+    prepared.sign(adminKeypair);
 
-  const result = await server.sendTransaction(prepared);
+    const result = await server.sendTransaction(prepared);
+    span.setAttribute('stellar.tx_hash', result.hash);
 
-  let status = await server.getTransaction(result.hash);
-  while (status.status === 'NOT_FOUND') {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    status = await server.getTransaction(result.hash);
-  }
+    let status = await server.getTransaction(result.hash);
+    while (status.status === 'NOT_FOUND') {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      status = await server.getTransaction(result.hash);
+    }
 
-  if (status.status === 'FAILED') {
-    throw new Error(`cancel_remittance failed: ${status.resultXdr}`);
-  }
+    if (status.status === 'FAILED') {
+      throw new Error(`cancel_remittance failed: ${status.resultXdr}`);
+    }
 
-  console.log(`cancel_remittance called on-chain for remittance ${remittanceId}`);
+    span.setAttribute('stellar.tx_status', status.status);
+    console.log(`cancel_remittance called on-chain for remittance ${remittanceId}`);
+  });
 }
 
 export async function updateKycStatusOnChain(

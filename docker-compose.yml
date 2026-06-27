@@ -18,6 +18,16 @@ services:
       timeout: 5s
       retries: 10
 
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    restart: unless-stopped
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
   backend:
     build:
       context: ./backend
@@ -29,6 +39,8 @@ services:
       NODE_ENV: development
       PORT: 3001
       DATABASE_URL: postgres://${POSTGRES_USER:-swiftremit}:${POSTGRES_PASSWORD:-swiftremit}@postgres:5432/${POSTGRES_DB:-swiftremit}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_SERVICE_NAME: swiftremit-backend
     env_file:
       - ./backend/.env.example
     volumes:
@@ -37,6 +49,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      jaeger:
+        condition: service_started
 
   api:
     build:
@@ -49,6 +63,8 @@ services:
       NODE_ENV: development
       PORT: 3000
       DATABASE_URL: postgres://${POSTGRES_USER:-swiftremit}:${POSTGRES_PASSWORD:-swiftremit}@postgres:5432/${POSTGRES_DB:-swiftremit}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_SERVICE_NAME: swiftremit-api
     env_file:
       - ./api/.env.example
     volumes:
@@ -56,6 +72,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      jaeger:
+        condition: service_started
 
   frontend:
     build:
