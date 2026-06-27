@@ -54,7 +54,7 @@ export interface FxRateRecord {
   created_at: Date;
 }
 
-export type KycStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+export type KycStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 're_verification_pending';
 
 export type KycLevel = 'basic' | 'intermediate' | 'advanced';
 

@@ -30,6 +30,7 @@ import { Sep24Service, Sep24InitiateRequest, Sep24ConfigError, Sep24AnchorError 
 import { AdminAuditLogService } from './admin-audit-log';
 import { saveContractEvent, queryContractEvents } from './database';
 import { remittanceEventEmitter } from './remittance/events';
+import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
 
 const app = express();
 const fxRateCache = getFxRateCache();
@@ -87,6 +88,7 @@ const adminLimiter = makeRateLimiter(20);
 
 app.use('/api/webhook', webhookLimiter);
 app.use('/api/kyc/config', adminLimiter);
+app.use('/api/', apiKeyRateLimiter);
 app.use('/api/', publicLimiter);
 
 // Metrics endpoint (excluded from rate limiting)

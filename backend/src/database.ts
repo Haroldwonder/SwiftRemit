@@ -449,7 +449,7 @@ export async function getUsersNeedingKycCheck(anchorId: string, minutesSinceLast
     SELECT * FROM user_kyc_status 
     WHERE anchor_id = $1 
       AND last_checked < NOW() - INTERVAL '${minutesSinceLastCheck} minutes'
-      AND status IN ('pending', 'approved')
+      AND status IN ('pending', 'approved', 're_verification_pending')
     ORDER BY last_checked ASC
     LIMIT 100
   `;
