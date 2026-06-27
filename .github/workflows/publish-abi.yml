@@ -79,7 +79,7 @@ jobs:
 
       # ── Upload ABI as workflow artifact ─────────────────────────────────────
       - name: Upload ABI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: swiftremit-abi
           path: abi/
