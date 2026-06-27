@@ -1,0 +1,200 @@
+.address-book {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 16px 0;
+}
+
+.address-book-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.address-book-header h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #1f2937;
+}
+
+.btn-small {
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.error-message {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.address-book-form {
+  background: #f9fafb;
+  padding: 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  border: 1px solid #e5e7eb;
+}
+
+.form-group {
+  margin-bottom: 12px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 4px;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.form-group small {
+  display: block;
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.btn-action {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-action.select {
+  background: #2563eb;
+  color: white;
+}
+
+.btn-action.select:hover {
+  background: #1d4ed8;
+}
+
+.btn-action.edit {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+.btn-action.edit:hover {
+  background: #e5e7eb;
+}
+
+.btn-action.delete {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.btn-action.delete:hover {
+  background: #fecaca;
+}
+
+.recipients-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recipient-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  transition: all 0.2s;
+}
+
+.recipient-card:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.recipient-info {
+  flex: 1;
+}
+
+.recipient-name {
+  font-weight: 600;
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.recipient-country {
+  font-size: 13px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.recipient-address {
+  font-size: 12px;
+  color: #9ca3af;
+  font-family: monospace;
+  margin-top: 4px;
+}
+
+.recipient-memo {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 4px;
+  font-style: italic;
+}
+
+.recipient-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: 12px;
+}
+
+.empty-state {
+  text-align: center;
+  color: #6b7280;
+  font-size: 14px;
+  padding: 20px;
+}
+
+@media (max-width: 640px) {
+  .recipient-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .recipient-actions {
+    width: 100%;
+    margin-left: 0;
+    margin-top: 8px;
+  }
+
+  .btn-action {
+    flex: 1;
+  }
+}
