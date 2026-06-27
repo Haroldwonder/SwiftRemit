@@ -1,7 +1,6 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
-import rateLimit from 'express-rate-limit';
 import { Pool } from 'pg';
 import http from 'http';
 import https from 'https';
@@ -18,6 +17,7 @@ import { ErrorResponse } from './types';
 import { AnchorStore } from './db/anchorStore';
 import { Server as SocketIOServer } from 'socket.io';
 import { createWsHealthRouter } from './websocket/health';
+import { createRateLimitMiddleware, addRateLimitHeaders } from './middleware/rateLimitHeaders';
 
 type AppOptions = {
   anchorStore?: AnchorStore;
@@ -115,23 +115,10 @@ export function createApp(options: AppOptions = {}): Application {
   app.use(cors());
   app.use(express.json());
 
-  // Rate limiting
-  const limiter = rateLimit({
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
-    max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
-    message: {
-      success: false,
-      error: {
-        message: 'Too many requests from this IP, please try again later.',
-        code: 'RATE_LIMIT_EXCEEDED',
-      },
-      timestamp: new Date().toISOString(),
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-
+  // Rate limiting with RFC 6585 headers
+  const limiter = createRateLimitMiddleware();
   app.use('/api/', limiter);
+  app.use(addRateLimitHeaders);
 
   // Health check endpoint
   app.get('/health', async (req: Request, res: Response) => {
