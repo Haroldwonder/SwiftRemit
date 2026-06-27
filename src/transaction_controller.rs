@@ -237,7 +237,7 @@ impl TransactionController {
             token: usdc_token.clone(),
             created_at: env.ledger().timestamp(),
             failed_at: None,
-            dispute_evidence: None,
+            dispute_evidence: crate::MaybeBytes32::None,
         };
 
         crate::storage::set_remittance(env, remittance_id, &remittance);

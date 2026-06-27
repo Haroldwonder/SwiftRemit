@@ -523,8 +523,9 @@ impl SwiftRemitContract {
         // Increment analytics counter
         storage::increment_remittance_count(&env)?;
 
-        // Index this remittance under the sender for paginated queries
+        // Index this remittance under the sender and agent for paginated queries
         storage::append_sender_remittance(&env, &sender, remittance_id);
+        storage::append_agent_remittance(&env, &agent, remittance_id);
         // Set initial transfer state
         set_transfer_state(&env, remittance_id, RemittanceStatus::Pending)?;
 
@@ -735,8 +736,9 @@ impl SwiftRemitContract {
             // Persist the sender's volume history for future discount calculations.
             storage::record_sender_volume(&env, &sender, entry.amount, env.ledger().timestamp())?;
 
-            // Index this remittance under the sender for paginated queries
+            // Index this remittance under the sender and agent for paginated queries
             storage::append_sender_remittance(&env, &sender, remittance_id);
+            storage::append_agent_remittance(&env, &entry.agent, remittance_id);
 
             remittance_ids.push_back(remittance_id);
         }
@@ -1011,7 +1013,7 @@ impl SwiftRemitContract {
         }
 
         remittance.status = RemittanceStatus::Disputed;
-        remittance.dispute_evidence = Some(evidence_hash.clone());
+        remittance.dispute_evidence = MaybeBytes32::Some(evidence_hash.clone());
         set_remittance(&env, remittance_id, &remittance);
 
         let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
@@ -1460,6 +1462,31 @@ impl SwiftRemitContract {
         let limit = limit.min(MAX_PAGE_SIZE);
 
         let all_ids = storage::get_sender_remittances(&env, &sender);
+        let total = all_ids.len() as u64;
+
+        if offset >= total || limit == 0 {
+            return Vec::new(&env);
+        }
+
+        let end = (offset + limit).min(total);
+        let mut page = Vec::new(&env);
+        for i in offset..end {
+            page.push_back(all_ids.get_unchecked(i as u32));
+        }
+        page
+    }
+
+    /// Returns a paginated list of remittance IDs for a given agent.
+    pub fn get_remittances_by_agent(
+        env: Env,
+        agent: Address,
+        offset: u64,
+        limit: u64,
+    ) -> Vec<u64> {
+        const MAX_PAGE_SIZE: u64 = 100;
+        let limit = limit.min(MAX_PAGE_SIZE);
+
+        let all_ids = storage::get_agent_remittances(&env, &agent);
         let total = all_ids.len() as u64;
 
         if offset >= total || limit == 0 {

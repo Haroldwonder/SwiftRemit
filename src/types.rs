@@ -124,16 +124,6 @@ pub struct SettlementConfig {
 }
 
 /// Contracttype-compatible wrapper for Option<SettlementConfig>.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MaybeSettlementConfig {
-    None,
-    Some(SettlementConfig),
-}
-impl From<Option<SettlementConfig>> for MaybeSettlementConfig {
-    fn from(o: Option<SettlementConfig>) -> Self { match o { None => Self::None, Some(v) => Self::Some(v) } }
-}
-
 /// Escrow status for locked funds
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
