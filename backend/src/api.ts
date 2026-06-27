@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import { Pool } from 'pg';
 import { AssetVerifier } from './verifier';
+import crypto from 'crypto';
 import {
   getAssetVerification,
   saveAssetVerification,
@@ -16,6 +17,8 @@ import {
   saveUserKycStatus,
   getPool,
   saveAssetReport,
+  getWebhookSubscriberById,
+  rotateWebhookSecret,
 } from './database';
 import { storeVerificationOnChain, simulateSettlement } from './stellar';
 import { VerificationStatus, AnchorKycConfig } from './types';
@@ -168,6 +171,64 @@ app.get('/health/db', async (req: Request, res: Response) => {
       error: 'Database unreachable',
       timestamp: new Date().toISOString(),
     });
+  }
+});
+
+// Rotate webhook subscriber secret
+app.post('/api/webhooks/:id/rotate-secret', adminLimiter, async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return res.status(400).json({ error: 'Invalid subscriber ID' });
+  }
+
+  try {
+    const { newSecret, rotatedAt } = await rotateWebhookSecret(id);
+    const subscriber = await getWebhookSubscriberById(id);
+
+    // Notify subscriber of new secret via a signed delivery (best-effort)
+    if (subscriber?.url) {
+      try {
+        const timestamp = Date.now().toString();
+        const notificationBody = JSON.stringify({
+          event: 'webhook.secret_rotated',
+          subscriber_id: id,
+          new_secret: newSecret,
+          rotated_at: rotatedAt.toISOString(),
+          grace_period_hours: 24,
+        });
+        const signature = crypto
+          .createHmac('sha256', newSecret)
+          .update(`${timestamp}.${notificationBody}`)
+          .digest('hex');
+
+        await fetch(subscriber.url, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-event-type': 'webhook.secret_rotated',
+            'x-webhook-timestamp': timestamp,
+            'x-webhook-signature': signature,
+          },
+          body: notificationBody,
+        });
+      } catch (notifyErr) {
+        logger.warn('Failed to notify subscriber of secret rotation', { id, error: notifyErr });
+      }
+    }
+
+    return res.status(200).json({
+      subscriber_id: id,
+      secret_rotated_at: rotatedAt.toISOString(),
+      grace_period_hours: 24,
+      message: 'Secret rotated. Previous secret accepted for 24 hours.',
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Webhook subscriber not found')) {
+      return res.status(404).json({ error: 'Webhook subscriber not found' });
+    }
+    logger.error('Failed to rotate webhook secret', error);
+    return res.status(500).json({ error: 'Failed to rotate webhook secret' });
   }
 });
 

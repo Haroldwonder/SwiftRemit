@@ -155,6 +155,8 @@ export interface WebhookSubscriber {
   id: string;
   url: string;
   secret?: string | null;
+  previous_secret?: string | null;
+  secret_rotated_at?: Date | null;
   active: boolean;
   created_at: Date;
   updated_at: Date;
