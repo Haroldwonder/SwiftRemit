@@ -270,6 +270,35 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for complete deployment instructions.
 
 For production readiness assessment, see [PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md).
 
+## Staging Environment
+
+Every merge to `main` automatically triggers a deployment to the staging environment (Stellar **testnet**) via `.github/workflows/deploy-staging.yml`.
+
+| Service  | Staging URL |
+|----------|-------------|
+| API      | `https://api.staging.swiftremit.io` |
+| Backend  | `https://backend.staging.swiftremit.io` |
+| Frontend | `https://staging.swiftremit.io` |
+
+> **Note:** The staging URLs above are placeholders. Configure the actual URLs as GitHub Actions variables `STAGING_API_URL` and `STAGING_BACKEND_URL` in the repository's *Settings → Environments → staging*.
+
+### How it works
+
+1. Docker images for `backend`, `api`, and `frontend` are built and pushed to **GHCR** (`ghcr.io/<owner>/SwiftRemit/<service>:staging`).
+2. The workflow SSH-es into the staging VM and runs `docker compose up -d` with the new image tags.
+3. **Smoke tests** (`scripts/smoke-test-staging.sh`) run immediately after deploy to verify health and key API endpoints. The workflow fails if any check returns an unexpected status code.
+
+### Required repository secrets / variables
+
+| Name | Kind | Description |
+|------|------|-------------|
+| `STAGING_HOST` | Secret | IP or hostname of the staging VM |
+| `STAGING_USER` | Secret | SSH username |
+| `STAGING_SSH_KEY` | Secret | Private key for SSH access |
+| `STAGING_SSH_PORT` | Secret | SSH port (default: 22) |
+| `STAGING_API_URL` | Variable | Base URL for the API service |
+| `STAGING_BACKEND_URL` | Variable | Base URL for the backend service |
+
 ## Environment Validation
 
 A script checks that every env variable consumed in source code is present in the corresponding `.env.example` file. CI fails automatically if any are missing.
