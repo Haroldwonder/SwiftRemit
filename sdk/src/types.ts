@@ -153,6 +153,50 @@ export interface CreateRemittanceParams {
   recipientHash?: Buffer;
 }
 
+/** Retry policy for a specific operation or operation category. */
+export interface RetryPolicy {
+  /** Number of retry attempts (0 = call once and fail on error). */
+  retries: number;
+  /** Initial delay in ms before the first retry. Falls back to the client's retryDelayMs. */
+  delayMs?: number;
+  /** Backoff multiplier applied after each retry. Falls back to the client's retryBackoffFactor. */
+  backoffFactor?: number;
+}
+
+/** Pre-built named retry policies for common scenarios. */
+export const RetryPolicies = {
+  /** No retries — suitable for non-idempotent operations where a duplicate would be harmful. */
+  NONE: { retries: 0 } as RetryPolicy,
+  /** Aggressive retries — suitable for idempotent reads where availability matters. */
+  AGGRESSIVE: { retries: 5, delayMs: 500, backoffFactor: 1.5 } as RetryPolicy,
+} as const;
+
+/** A remittance corridor identified by destination currency and country. */
+export interface Corridor {
+  /** ISO 4217 currency code (e.g. "USDC", "USD"). */
+  currency: string;
+  /** ISO 3166-1 alpha-2 destination country code (e.g. "NG", "GH"). */
+  country: string;
+}
+
+/** Fee estimate returned by {@link SwiftRemitClient.estimateFee}. All amounts in stroops. */
+export interface FeeEstimate {
+  /** Requested send amount in stroops. */
+  amount: bigint;
+  /** Platform fee charged by SwiftRemit in stroops. */
+  platformFee: bigint;
+  /** Protocol fee charged by the Stellar network in stroops. */
+  protocolFee: bigint;
+  /** Net amount the recipient receives (amount − totalFee) in stroops. */
+  netAmount: bigint;
+  /** Sum of platformFee and protocolFee in stroops. */
+  totalFee: bigint;
+  /** Timestamp when this estimate was generated. */
+  estimatedAt: Date;
+  /** True when the estimate was served from the 30-second local cache. */
+  fromCache: boolean;
+}
+
 export interface SwiftRemitClientOptions {
   /** Deployed contract address */
   contractId: string;
@@ -168,6 +212,14 @@ export interface SwiftRemitClientOptions {
   retryDelayMs?: number;
   /** Multiplier applied to delay after each retry (default: 2) */
   retryBackoffFactor?: number;
+  /**
+   * Default retry policy for state-changing (write) operations submitted via
+   * {@link SwiftRemitClient.submitTransaction}. Defaults to no retries because
+   * most write operations are non-idempotent and retrying the same signed
+   * transaction could produce unexpected results for callers who don't explicitly
+   * opt in. Override per-call via the `options.retryPolicy` argument.
+   */
+  writeRetryPolicy?: RetryPolicy;
 }
 
 export type ProposalState = "Pending" | "Approved" | "Executed" | "Expired";

@@ -25,14 +25,18 @@ import type {
   RemittanceEventType,
   SubscribeOptions,
   Unsubscribe,
+  RetryPolicy,
+  Corridor,
+  FeeEstimate,
 } from "./types.js";
 import { parseContractError, SwiftRemitError, ErrorCode } from "./errors.js";
-import { withRetry } from "./retry.js";
+import { withRetry, withRetryPolicy } from "./retry.js";
 import {
   parseRemittance,
   parseAgentStats,
   parseCircuitBreakerStatus,
   parseHealthStatus,
+  parseFeeBreakdown,
   addressToScVal,
   u64ToScVal,
   i128ToScVal,
@@ -70,6 +74,9 @@ export class SwiftRemitClient {
   private readonly retries: number;
   private readonly retryDelayMs: number;
   private readonly retryBackoffFactor: number;
+  private readonly writeRetryPolicy: RetryPolicy;
+  private readonly feeCache = new Map<string, { cachedAt: number; estimate: FeeEstimate }>();
+  private static readonly FEE_CACHE_TTL_MS = 30_000;
 
   constructor(options: SwiftRemitClientOptions) {
     this.contract = new Contract(options.contractId);
@@ -85,6 +92,23 @@ export class SwiftRemitClient {
     this.retries = options.retries ?? 3;
     this.retryDelayMs = options.retryDelayMs ?? 1000;
     this.retryBackoffFactor = options.retryBackoffFactor ?? 2;
+    this.writeRetryPolicy = options.writeRetryPolicy ?? { retries: 0 };
+  }
+
+  private withTimeout<T>(promise: Promise<T>, timeoutMs = 30_000): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`RPC call timed out after ${timeoutMs}ms`)),
+          timeoutMs
+        )
+      ),
+    ]);
+  }
+
+  private resolveWriteRetryPolicy(perCallPolicy?: RetryPolicy): RetryPolicy {
+    return perCallPolicy ?? this.writeRetryPolicy;
   }
 
   // ─── Transaction helpers ────────────────────────────────────────────────────
@@ -116,35 +140,48 @@ export class SwiftRemitClient {
     return SorobanRpc.assembleTransaction(tx, simResult).build();
   }
 
-  /** Sign and submit a prepared transaction; wait for confirmation. */
+  /**
+   * Sign and submit a prepared transaction; wait for confirmation.
+   *
+   * @param tx - Transaction prepared by any write method (e.g. `createRemittance`)
+   * @param keypair - Keypair used to sign the transaction
+   * @param options.retryPolicy - Per-call retry policy that overrides the client's
+   *   `writeRetryPolicy`. Idempotent operations (those using an idempotency key or
+   *   inherently safe to re-submit) may opt in to retries by passing
+   *   `RetryPolicies.AGGRESSIVE` here. Non-idempotent operations should leave this
+   *   unset to rely on the default (no retries).
+   */
   async submitTransaction(
     tx: Transaction,
-    keypair: Keypair
+    keypair: Keypair,
+    options?: { retryPolicy?: RetryPolicy }
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
+    const writePolicy = this.resolveWriteRetryPolicy(options?.retryPolicy);
+    const defaults = { delayMs: this.retryDelayMs, backoffFactor: this.retryBackoffFactor };
+
     tx.sign(keypair);
-    const sendResult = await withRetry(
+    const sendResult = await withRetryPolicy(
       () => this.server.sendTransaction(tx),
-      this.retries,
-      this.retryDelayMs,
-      this.retryBackoffFactor
+      writePolicy,
+      defaults
     );
     if (sendResult.status === "ERROR") {
       throw new Error(`Submit failed: ${JSON.stringify(sendResult.errorResult)}`);
     }
 
-    let getResult = await withRetry(
+    // Polling for confirmation is always idempotent — use the global read retry config.
+    const readPolicy: RetryPolicy = { retries: this.retries };
+    let getResult = await withRetryPolicy(
       () => this.server.getTransaction(sendResult.hash),
-      this.retries,
-      this.retryDelayMs,
-      this.retryBackoffFactor
+      readPolicy,
+      defaults
     );
     while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
       await new Promise((r) => setTimeout(r, 1000));
-      getResult = await withRetry(
+      getResult = await withRetryPolicy(
         () => this.server.getTransaction(sendResult.hash),
-        this.retries,
-        this.retryDelayMs,
-        this.retryBackoffFactor
+        readPolicy,
+        defaults
       );
     }
 
@@ -162,7 +199,8 @@ export class SwiftRemitClient {
   private async simulateCall(
     sourceAddress: string,
     method: string,
-    args: xdr.ScVal[]
+    args: xdr.ScVal[],
+    retryPolicy?: RetryPolicy
   ): Promise<xdr.ScVal> {
     const account = await this.withTimeout(this.server.getAccount(sourceAddress));
     const tx = new TransactionBuilder(account, {
@@ -173,11 +211,12 @@ export class SwiftRemitClient {
       .setTimeout(30)
       .build();
 
-    const sim = await withRetry(
+    const policy = retryPolicy ?? { retries: this.retries };
+    const defaults = { delayMs: this.retryDelayMs, backoffFactor: this.retryBackoffFactor };
+    const sim = await withRetryPolicy(
       () => this.server.simulateTransaction(tx),
-      this.retries,
-      this.retryDelayMs,
-      this.retryBackoffFactor
+      policy,
+      defaults
     );
     if (SorobanRpc.Api.isSimulationError(sim)) {
       const typed = parseContractError(sim.error);
@@ -764,6 +803,55 @@ export class SwiftRemitClient {
       }
     }
     return proposals;
+  }
+
+  // ─── Fee estimation ──────────────────────────────────────────────────────────
+
+  /**
+   * Estimate the fee breakdown for a remittance before committing a transaction.
+   *
+   * Results are cached for 30 seconds per unique (senderAddress, amount, corridor)
+   * combination. Pass `retryPolicy` to override the client's default read retry
+   * behaviour for this call.
+   *
+   * @param amount - Send amount in stroops (use {@link toStroops} to convert from USDC)
+   * @param corridor - Destination currency and country
+   * @param senderAddress - Address used to simulate the contract call
+   * @param retryPolicy - Optional per-call retry override (defaults to global read retries)
+   */
+  async estimateFee(
+    amount: bigint,
+    corridor: Corridor,
+    senderAddress: string,
+    retryPolicy?: RetryPolicy
+  ): Promise<FeeEstimate> {
+    const cacheKey = `${senderAddress}:${amount}:${corridor.currency}:${corridor.country}`;
+    const cached = this.feeCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < SwiftRemitClient.FEE_CACHE_TTL_MS) {
+      return { ...cached.estimate, fromCache: true };
+    }
+
+    const val = await this.simulateCall(
+      senderAddress,
+      "get_fee_breakdown",
+      [i128ToScVal(amount), stringToScVal(corridor.currency), stringToScVal(corridor.country)],
+      retryPolicy
+    );
+
+    const breakdown = parseFeeBreakdown(val);
+    const totalFee = breakdown.platformFee + breakdown.protocolFee;
+    const estimate: FeeEstimate = {
+      amount,
+      platformFee: breakdown.platformFee,
+      protocolFee: breakdown.protocolFee,
+      netAmount: breakdown.netAmount,
+      totalFee,
+      estimatedAt: new Date(),
+      fromCache: false,
+    };
+
+    this.feeCache.set(cacheKey, { cachedAt: Date.now(), estimate });
+    return estimate;
   }
 
   /** Cast an approval vote on a pending proposal (admin only). */
