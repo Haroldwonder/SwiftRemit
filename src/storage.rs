@@ -181,6 +181,19 @@ enum DataKey {
 
     /// Cumulative volume of completed remittances in USDC stroops (instance storage).
     TotalCompletedVolume,
+
+    // === Multi-Sig Admin Operations ===
+    /// Number of admin approvals required to execute a high-impact operation (instance storage).
+    MultiSigThreshold,
+
+    /// Seconds a pending operation stays valid before it expires (instance storage).
+    MultiSigTtlSeconds,
+
+    /// Monotonically-increasing counter for pending operation IDs (instance storage).
+    OperationCounter,
+
+    /// Pending multi-sig operation record indexed by operation ID (persistent storage).
+    PendingOp(u64),
 }
 
 /// Checks if the contract has an admin configured.
@@ -1296,4 +1309,65 @@ pub fn add_completed_volume(env: &Env, amount: i128) -> Result<(), ContractError
         .instance()
         .set(&DataKey::TotalCompletedVolume, &next);
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Multi-Sig Storage Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub fn get_multisig_threshold(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MultiSigThreshold)
+        .unwrap_or(1)
+}
+
+pub fn set_multisig_threshold(env: &Env, threshold: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MultiSigThreshold, &threshold);
+}
+
+pub fn get_multisig_ttl_seconds(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MultiSigTtlSeconds)
+        .unwrap_or(86400)
+}
+
+pub fn set_multisig_ttl_seconds(env: &Env, ttl: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MultiSigTtlSeconds, &ttl);
+}
+
+pub fn next_operation_id(env: &Env) -> u64 {
+    let current: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::OperationCounter)
+        .unwrap_or(0);
+    let next = current + 1;
+    env.storage()
+        .instance()
+        .set(&DataKey::OperationCounter, &next);
+    next
+}
+
+pub fn get_pending_operation(env: &Env, op_id: u64) -> Option<crate::PendingOperation> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PendingOp(op_id))
+}
+
+pub fn set_pending_operation(env: &Env, op: &crate::PendingOperation) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::PendingOp(op.id), op);
+}
+
+pub fn remove_pending_operation(env: &Env, op_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::PendingOp(op_id));
 }

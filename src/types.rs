@@ -240,6 +240,48 @@ pub struct TransferRecord {
     pub country: String,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Multi-Signature Admin Operation Types
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Identifies which high-impact admin operation is being proposed.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AdminOperationType {
+    /// Update the platform fee (fee_bps field carries the new value).
+    UpdateFee,
+    /// Withdraw accumulated fees to an address (withdraw_to field carries the recipient).
+    WithdrawFees,
+    /// Pause the contract (emergency stop).
+    Pause,
+    /// Unpause the contract.
+    Unpause,
+}
+
+/// A pending multi-sig admin operation awaiting sufficient approvals.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PendingOperation {
+    /// Unique auto-incremented ID for this operation.
+    pub id: u64,
+    /// Which admin operation is being proposed.
+    pub operation_type: AdminOperationType,
+    /// Admin who proposed the operation (counted as first approval).
+    pub proposer: Address,
+    /// Addresses that have approved so far (includes proposer).
+    pub approvers: Vec<Address>,
+    /// Number of approvals required to auto-execute.
+    pub threshold: u32,
+    /// Ledger timestamp when the operation was proposed.
+    pub proposed_at: u64,
+    /// Seconds after proposed_at before this operation expires.
+    pub ttl_seconds: u64,
+    /// New fee in basis points — only used for UpdateFee operations.
+    pub fee_bps: u32,
+    /// Fee withdrawal recipient — only used for WithdrawFees operations.
+    pub withdraw_to: Option<Address>,
+}
+
 /// Idempotency record for duplicate remittance prevention.
 ///
 /// Stores the result of a remittance creation request to enable safe retries.

@@ -262,6 +262,22 @@ pub enum ContractError {
 
     /// This operation requires the remittance to be in a Disputed state.
     NotDisputed = 55,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Multi-Sig Errors (56-59)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Pending admin operation not found.
+    OperationNotFound = 56,
+
+    /// Caller has already approved this pending operation.
+    AlreadyApproved = 57,
+
+    /// Pending operation has exceeded its time-to-live and cannot be approved or executed.
+    OperationExpired = 58,
+
+    /// Multi-sig threshold must be at least 1 and no greater than the admin count.
+    InvalidMultiSigThreshold = 59,
 }
 
 #[cfg(test)]

@@ -16,6 +16,7 @@ mod fee_strategy;
 mod hashing;
 mod health;
 mod migration;
+mod multisig;
 mod netting;
 mod rate_limit;
 mod storage;
@@ -2307,5 +2308,75 @@ impl SwiftRemitContract {
         }
 
         Ok(())
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Multi-Signature Admin Operations  (#253)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Configure the M-of-N threshold and TTL for pending admin operations.
+    ///
+    /// `threshold` must be ≥ 1.  `ttl_seconds` is the lifetime of a pending operation
+    /// before it expires.  Defaults before first call: threshold=1, ttl=86400 s.
+    ///
+    /// Authorization: admin only.
+    pub fn set_multisig_config(
+        env: Env,
+        caller: Address,
+        threshold: u32,
+        ttl_seconds: u64,
+    ) -> Result<(), ContractError> {
+        multisig::set_multisig_config(&env, caller, threshold, ttl_seconds)
+    }
+
+    /// Propose a high-impact admin operation.
+    ///
+    /// The proposer is automatically counted as the first approval.  If threshold == 1
+    /// the operation executes immediately.
+    ///
+    /// * `operation_type` — which operation to perform
+    /// * `fee_bps`        — new fee in bps (only used for `UpdateFee`)
+    /// * `withdraw_to`    — recipient address (only used for `WithdrawFees`)
+    ///
+    /// Returns the `operation_id` of the newly created pending operation.
+    ///
+    /// Authorization: admin only; proposer must `require_auth`.
+    pub fn propose_operation(
+        env: Env,
+        proposer: Address,
+        operation_type: AdminOperationType,
+        fee_bps: u32,
+        withdraw_to: Option<Address>,
+    ) -> Result<u64, ContractError> {
+        multisig::propose_operation(&env, proposer, operation_type, fee_bps, withdraw_to)
+    }
+
+    /// Approve a pending admin operation.
+    ///
+    /// When total approvals reach the configured threshold the operation executes
+    /// automatically and is removed from storage.
+    ///
+    /// Authorization: admin only; approver must `require_auth`.
+    pub fn approve_operation(
+        env: Env,
+        approver: Address,
+        operation_id: u64,
+    ) -> Result<(), ContractError> {
+        multisig::approve_operation(&env, approver, operation_id)
+    }
+
+    /// Expire a pending operation whose TTL has elapsed.
+    ///
+    /// Cleans up storage and emits an `msig/expired` event.  Anyone may call this.
+    pub fn expire_operation(env: Env, operation_id: u64) -> Result<(), ContractError> {
+        multisig::expire_operation(&env, operation_id)
+    }
+
+    /// Retrieve a pending operation by ID.
+    pub fn get_pending_operation(
+        env: Env,
+        operation_id: u64,
+    ) -> Result<PendingOperation, ContractError> {
+        multisig::get_operation(&env, operation_id)
     }
 }

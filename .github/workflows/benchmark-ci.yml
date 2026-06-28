@@ -1,0 +1,164 @@
+name: Performance Benchmark CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'benches/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/benchmark-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'benches/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/benchmark-ci.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+  REGRESSION_THRESHOLD: 20
+
+jobs:
+  benchmark:
+    name: Run Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-bench-
+
+      - name: Run benchmarks
+        run: cargo bench --features benchmarks -- --output-format bencher 2>&1 | tee bench_output.txt
+
+      - name: Save criterion JSON results
+        run: |
+          mkdir -p bench-results
+          find target/criterion -name "estimates.json" | while read f; do
+            bench_name=$(echo "$f" | sed 's|target/criterion/||' | sed 's|/estimates.json||' | tr '/' '__')
+            cp "$f" "bench-results/${bench_name}.json"
+          done
+          ls -la bench-results/
+
+      - name: Upload benchmark results as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: bench-results/
+          retention-days: 30
+
+      - name: Upload bench output
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-output-${{ github.sha }}
+          path: bench_output.txt
+          retention-days: 30
+
+      - name: Download baseline benchmark from main
+        if: github.event_name == 'pull_request'
+        id: download-baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-results-${{ github.event.pull_request.base.sha }}
+          path: bench-baseline/
+        continue-on-error: true
+
+      - name: Compare benchmarks and detect regressions
+        if: github.event_name == 'pull_request' && steps.download-baseline.outcome == 'success'
+        id: compare
+        run: |
+          python3 << 'EOF'
+          import json
+          import os
+          import sys
+
+          REGRESSION_THRESHOLD = float(os.environ.get("REGRESSION_THRESHOLD", "20")) / 100.0
+
+          baseline_dir = "bench-baseline"
+          current_dir = "bench-results"
+
+          regressions = []
+          improvements = []
+          new_benchmarks = []
+
+          if not os.path.isdir(baseline_dir):
+              print("No baseline found, skipping comparison.")
+              sys.exit(0)
+
+          current_files = {f for f in os.listdir(current_dir) if f.endswith(".json")}
+          baseline_files = {f for f in os.listdir(baseline_dir) if f.endswith(".json")}
+
+          for fname in sorted(current_files):
+              bench_name = fname.replace(".json", "").replace("__", "/")
+
+              with open(os.path.join(current_dir, fname)) as f:
+                  current = json.load(f)
+
+              current_mean = current["mean"]["point_estimate"]
+              current_std  = current["mean"]["standard_error"]
+
+              if fname not in baseline_files:
+                  new_benchmarks.append(bench_name)
+                  print(f"NEW    {bench_name}: {current_mean:.2f} ns")
+                  continue
+
+              with open(os.path.join(baseline_dir, fname)) as f:
+                  baseline = json.load(f)
+
+              baseline_mean = baseline["mean"]["point_estimate"]
+              change = (current_mean - baseline_mean) / baseline_mean
+
+              if change > REGRESSION_THRESHOLD:
+                  regressions.append((bench_name, baseline_mean, current_mean, change))
+                  print(f"REGRESS {bench_name}: {baseline_mean:.2f} -> {current_mean:.2f} ns ({change*100:.1f}%)")
+              elif change < -0.05:
+                  improvements.append((bench_name, baseline_mean, current_mean, change))
+                  print(f"IMPROVE {bench_name}: {baseline_mean:.2f} -> {current_mean:.2f} ns ({change*100:.1f}%)")
+              else:
+                  print(f"OK     {bench_name}: {baseline_mean:.2f} -> {current_mean:.2f} ns ({change*100:.1f}%)")
+
+          summary_lines = ["## Benchmark Comparison\n"]
+          if regressions:
+              summary_lines.append("### Regressions (> 20%)\n")
+              for name, old, new, pct in regressions:
+                  summary_lines.append(f"- **{name}**: `{old:.0f}` → `{new:.0f}` ns (+{pct*100:.1f}%)\n")
+          if improvements:
+              summary_lines.append("### Improvements\n")
+              for name, old, new, pct in improvements:
+                  summary_lines.append(f"- {name}: `{old:.0f}` → `{new:.0f}` ns ({pct*100:.1f}%)\n")
+          if new_benchmarks:
+              summary_lines.append("### New Benchmarks\n")
+              for name in new_benchmarks:
+                  summary_lines.append(f"- {name}\n")
+
+          with open(os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout"), "a") as f:
+              f.writelines(summary_lines)
+
+          if regressions:
+              print(f"\n❌ {len(regressions)} benchmark(s) regressed by more than {REGRESSION_THRESHOLD*100:.0f}%")
+              sys.exit(1)
+          else:
+              print("\n✅ No regressions detected")
+          EOF
+
+      - name: Post baseline notice (no baseline available)
+        if: github.event_name == 'pull_request' && steps.download-baseline.outcome != 'success'
+        run: |
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "No baseline found for \`${{ github.event.pull_request.base.sha }}\`. Results saved; future PRs targeting this base will compare against it." >> $GITHUB_STEP_SUMMARY
+          cat bench_output.txt >> $GITHUB_STEP_SUMMARY
