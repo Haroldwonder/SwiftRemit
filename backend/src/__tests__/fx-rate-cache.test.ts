@@ -101,6 +101,54 @@ describe('FxRateCache', () => {
       await expect(cache.getCurrentRate('USD', 'XYZ')).rejects.toThrow('Rate not found for USD/XYZ');
     });
 
+    it('falls back to the secondary provider before using the last known rate', async () => {
+      vi.mocked(axios.get)
+        .mockRejectedValueOnce(new Error('primary down'))
+        .mockResolvedValueOnce({
+          data: {
+            rates: {
+              PHP: 60.5,
+            },
+          },
+        });
+
+      cache = new FxRateCache({
+        ttlSeconds: 60,
+        secondaryApiUrl: 'https://secondary.example/rates',
+      });
+
+      const result = await cache.getCurrentRate('USD', 'PHP');
+
+      expect(result.rate).toBe(60.5);
+      expect(result.fx_rate_source).toBe('secondary');
+      expect(result.stale).toBe(false);
+      expect(axios.get).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses the last known rate when both providers fail and marks it stale', async () => {
+      vi.mocked(axios.get)
+        .mockResolvedValueOnce({
+          data: {
+            rates: {
+              EUR: 0.85,
+            },
+          },
+        })
+        .mockRejectedValue(new Error('network unavailable'));
+
+      cache = new FxRateCache({ ttlSeconds: 1 });
+
+      await cache.getCurrentRate('USD', 'EUR');
+      await new Promise(resolve => setTimeout(resolve, 1100));
+
+      const result = await cache.getCurrentRate('USD', 'EUR');
+
+      expect(result.rate).toBe(0.85);
+      expect(result.fx_rate_source).toBe('last_known');
+      expect(result.stale).toBe(true);
+      expect(result.stalenessSeconds).toBeGreaterThan(0);
+    });
+
     it('throws error when external API fails', async () => {
       vi.mocked(axios.get).mockRejectedValueOnce(new Error('Network error'));
 

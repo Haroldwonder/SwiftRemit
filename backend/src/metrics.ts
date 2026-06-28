@@ -11,6 +11,7 @@ export class MetricsService {
     swiftremit_webhook_deliveries_total: {} as Record<string, number>,
     swiftremit_active_remittances: 0,
     swiftremit_accumulated_fees: 0,
+    swiftremit_fx_rate_staleness_seconds: {} as Record<string, number>,
   };
 
   constructor(pool: Pool) {
@@ -108,6 +109,11 @@ export class MetricsService {
     }
   }
 
+  setFxRateStalenessMetric(from: string, to: string, stalenessSeconds: number): void {
+    const pairKey = `${from.toUpperCase()}/${to.toUpperCase()}`;
+    this.metrics.swiftremit_fx_rate_staleness_seconds[pairKey] = stalenessSeconds;
+  }
+
   /**
    * Update all metrics
    */
@@ -149,6 +155,14 @@ export class MetricsService {
     lines.push('# HELP swiftremit_accumulated_fees Total accumulated fees from completed transactions');
     lines.push('# TYPE swiftremit_accumulated_fees gauge');
     lines.push(`swiftremit_accumulated_fees ${this.metrics.swiftremit_accumulated_fees}`);
+
+    // FX rate staleness gauge by currency pair
+    lines.push('# HELP swiftremit_fx_rate_staleness_seconds FX rate staleness in seconds by currency pair');
+    lines.push('# TYPE swiftremit_fx_rate_staleness_seconds gauge');
+    Object.entries(this.metrics.swiftremit_fx_rate_staleness_seconds).forEach(([pair, stalenessSeconds]) => {
+      const [fromCurrency, toCurrency] = pair.split('/');
+      lines.push(`swiftremit_fx_rate_staleness_seconds{from_currency="${fromCurrency}",to_currency="${toCurrency}"} ${stalenessSeconds}`);
+    });
 
     return lines.join('\n') + '\n';
   }

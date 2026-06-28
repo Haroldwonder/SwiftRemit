@@ -33,6 +33,9 @@ const verifier = new AssetVerifier();
 const logger = createLogger('api');
 const pool = getPool();
 const metricsService = getMetricsService(pool);
+fxRateCache.setMetricsObserver((from, to, stalenessSeconds) => {
+  metricsService.setFxRateStalenessMetric(from, to, stalenessSeconds);
+});
 
 // Security middleware
 app.use(helmet());
@@ -353,7 +356,10 @@ app.get('/api/fx-rate/:transactionId', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'FX rate not found for this transaction' });
     }
 
-    res.json(fxRate);
+    res.json({
+      ...fxRate,
+      fx_rate_source: fxRate.provider,
+    });
   } catch (error) {
     console.error('Error fetching FX rate:', error);
     res.status(500).json({ error: 'Failed to fetch FX rate' });
@@ -580,6 +586,12 @@ app.get('/api/kyc/approved/:userId', async (req: Request, res: Response) => {
 app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { sender, agent, amount, fee, expiry, memo } = req.body;
+    const fromCurrency = typeof req.body.fromCurrency === 'string' ? req.body.fromCurrency : req.body.from_currency;
+    const toCurrency = typeof req.body.toCurrency === 'string' ? req.body.toCurrency : req.body.to_currency;
+    const maxStalenessSeconds = Number.parseInt(
+      String(req.body.fxRateMaxStalenessSeconds ?? req.body.fx_rate_max_staleness_seconds ?? process.env.FX_RATE_MAX_STALENESS_SECONDS ?? '3600'),
+      10
+    );
 
     if (!sender || typeof sender !== 'string') {
       return res.status(400).json({ error: 'Invalid or missing sender' });
@@ -601,6 +613,22 @@ app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, re
         return res.status(400).json({ error: 'memo must not exceed 100 characters' });
       }
       sanitizedMemo = sanitizeInput(memo);
+    }
+
+    if (typeof fromCurrency === 'string' && fromCurrency && typeof toCurrency === 'string' && toCurrency) {
+      try {
+        const fxRate = await fxRateCache.getCurrentRate(fromCurrency.toUpperCase(), toCurrency.toUpperCase());
+        if (fxRate.stale && typeof fxRate.stalenessSeconds === 'number' && fxRate.stalenessSeconds > (Number.isFinite(maxStalenessSeconds) ? maxStalenessSeconds : 3600)) {
+          return res.status(409).json({
+            error: `FX rate is stale beyond the allowed maximum (${Number.isFinite(maxStalenessSeconds) ? maxStalenessSeconds : 3600}s)`,
+            fx_rate_source: fxRate.fx_rate_source || fxRate.provider,
+            fx_rate_staleness_seconds: fxRate.stalenessSeconds,
+          });
+        }
+      } catch (error) {
+        logger.error('Failed to resolve FX rate for remittance', error);
+        return res.status(503).json({ error: 'Unable to obtain a valid FX rate' });
+      }
     }
 
     const remittanceId = `rem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
