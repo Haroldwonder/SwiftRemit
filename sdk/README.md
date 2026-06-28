@@ -321,6 +321,10 @@ console.log("Batch submitted:", result.hash);
 
 MIT
 
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for version history and migration guides.
+
 ## React Native
 
 A React Native wrapper is available in `sdk/react-native/`. It wraps the core TypeScript SDK with:
