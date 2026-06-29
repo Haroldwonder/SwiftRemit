@@ -1,0 +1,124 @@
+# values.production.yaml — production cluster overrides
+# Usage: helm install swiftremit ./charts/swiftremit -f charts/swiftremit/values.production.yaml
+#
+# All secret values MUST be injected at deploy time via --set or a secrets manager.
+# Never commit real credentials to this file.
+#
+#   helm upgrade --install swiftremit ./charts/swiftremit \
+#     -f charts/swiftremit/values.production.yaml \
+#     --set api.secret.DATABASE_URL="$DATABASE_URL" \
+#     --set api.secret.ANCHORS_ADMIN_API_KEY="$ANCHORS_ADMIN_API_KEY" \
+#     --set backend.secret.DATABASE_URL="$DATABASE_URL" \
+#     --set backend.secret.CONTRACT_ID="$CONTRACT_ID" \
+#     --set backend.secret.ADMIN_SECRET_KEY="$ADMIN_SECRET_KEY"
+
+global:
+  imageRegistry: "ghcr.io/your-org"
+  nodeEnv: production
+
+api:
+  replicaCount: 3
+  image:
+    tag: latest       # pin to a digest in real deployments, e.g. sha256:abc123
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 65
+  config:
+    NODE_ENV: production
+    RATE_LIMIT_WINDOW_MS: "900000"
+    RATE_LIMIT_MAX_REQUESTS: "100"
+  secret:
+    DATABASE_URL: ""
+    CONTRACT_RPC_URL: "https://soroban-rpc.stellar.org"
+    ANCHORS_ADMIN_API_KEY: ""
+
+backend:
+  replicaCount: 3
+  image:
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 65
+  config:
+    NODE_ENV: production
+    STELLAR_NETWORK: mainnet
+    HORIZON_URL: "https://horizon.stellar.org"
+    SOROBAN_RPC_URL: "https://soroban-rpc.stellar.org"
+    NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015"
+    ANCHOR_TIMEOUT_HOURS: "24"
+    VERIFICATION_INTERVAL_HOURS: "24"
+    API_KEY_RATE_LIMIT_WINDOW_MS: "60000"
+    API_KEY_RATE_LIMIT_MAX: "200"
+  secret:
+    DATABASE_URL: ""
+    CONTRACT_ID: ""
+    ADMIN_SECRET_KEY: ""
+
+frontend:
+  replicaCount: 2
+  image:
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  config:
+    VITE_NETWORK: mainnet
+    VITE_HORIZON_URL: "https://horizon.stellar.org"
+    VITE_SOROBAN_RPC_URL: "https://soroban-rpc.stellar.org"
+    VITE_CONTRACT_ID: ""
+    VITE_USDC_ISSUER: ""
+    VITE_EURC_ISSUER: ""
+    VITE_USDC_TOKEN_ID: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: swiftremit.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: api
+        - path: /backend
+          pathType: Prefix
+          service: backend
+        - path: /
+          pathType: Prefix
+          service: frontend
+  tls:
+    - secretName: swiftremit-prod-tls
+      hosts:
+        - swiftremit.example.com

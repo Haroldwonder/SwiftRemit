@@ -230,6 +230,30 @@ jobs:
           name: frontend-coverage-report
           path: frontend/coverage/
           retention-days: 14
+  # ── Helm chart lint ────────────────────────────────────────────────────────
+  helm-lint:
+    name: Helm chart lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.17.0"
+
+      - name: Lint chart (default values)
+        run: helm lint charts/swiftremit
+
+      - name: Lint chart (dev values)
+        run: helm lint charts/swiftremit -f charts/swiftremit/values.dev.yaml
+
+      - name: Lint chart (staging values)
+        run: helm lint charts/swiftremit -f charts/swiftremit/values.staging.yaml
+
+      - name: Lint chart (production values)
+        run: helm lint charts/swiftremit -f charts/swiftremit/values.production.yaml
+
   # ── Summary gate ───────────────────────────────────────────────────────────
   ci:
     name: CI
@@ -247,6 +271,7 @@ jobs:
       - frontend-typecheck
       - frontend-lint
       - frontend-coverage
+      - helm-lint
     if: always()
     steps:
       - name: Check all jobs
