@@ -261,86 +261,25 @@ pub enum ContractError {
     /// Contract is not currently paused.
     NotPaused = 55,
 
-    /// A fee update proposal is already pending.
-    ProposalAlreadyPending = 56,
+    /// This operation requires the remittance to be in a Disputed state.
+    NotDisputed = 55,
 
-    /// Agent is already registered.
-    AgentAlreadyRegistered = 57,
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Multi-Sig Errors (56-59)
+    // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Address is already an admin.
-    AlreadyAdmin = 58,
+    /// Pending admin operation not found.
+    OperationNotFound = 56,
 
-    /// Not enough admins to perform this operation.
-    InsufficientAdmins = 59,
+    /// Caller has already approved this pending operation.
+    AlreadyApproved = 57,
 
-    /// Governance module is already initialized.
-    GovernanceAlreadyInitialized = 60,
+    /// Pending operation has exceeded its time-to-live and cannot be approved or executed.
+    OperationExpired = 58,
 
-    /// Quorum value is invalid.
-    InvalidQuorum = 61,
-
-    /// Admin has already voted on this proposal.
-    AlreadyVoted = 62,
-
-    /// Proposal state is invalid for this operation.
-    InvalidProposalState = 63,
-
-    /// Timelock duration is invalid.
-    InvalidTimelockDuration = 64,
-
-    /// Timelock is still active.
-    TimelockActive = 65,
-
-    /// Timelock has not elapsed yet.
-    TimelockNotElapsed = 66,
-
-    /// Dispute window has expired.
-    DisputeWindowExpired = 67,
-
-    /// Remittance is not in disputed state.
-    NotDisputed = 68,
-
-    /// Migration validation failed.
-    MigrationValidationFailed = 69,
-
-    /// Record not found.
-    NotFound = 70,
-
-    /// Caller is not authorized (alias for Unauthorized in upgrade context).
-    NotAuthorized = 71,
-
-    /// Invalid input provided.
-    InvalidInput = 72,
-
-    /// Pause record not found.
-    PauseRecordNotFound = 73,
-
-    /// Recipient hash is invalid.
-    InvalidRecipientHash = 74,
-
-    /// Recipient hash is missing but required.
-    MissingRecipientHash = 75,
-
-    /// Recipient hash schema version mismatch.
-    RecipientHashSchemaMismatch = 76,
-
-    /// Recipient hash does not match stored hash.
-    RecipientHashMismatch = 77,
-
-    /// Proposal not found.
-    ProposalNotFound = 78,
-
-    /// Agent reputation is below the minimum threshold.
-    BelowMinReputation = 79,
-
-    /// Corridor daily volume cap has been reached.
-    CorridorVolumeLimitExceeded = 80,
-
-    /// Admin nomination has expired (48-hour window elapsed).
-    NominationExpired = 81,
-
-    /// No active admin nomination exists.
-    NominationNotFound = 82,
+    /// Multi-sig threshold must be at least 1 and no greater than the admin count.
+    InvalidMultiSigThreshold = 59,
+}
 
     /// Evidence hash for a dispute is not a valid 32-byte SHA-256 commitment.
     MalformedEvidenceHash = 83,

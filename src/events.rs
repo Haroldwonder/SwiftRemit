@@ -608,3 +608,67 @@ pub fn emit_admin_transfer_accepted(env: &Env, old_admin: Address, new_admin: Ad
         ),
     );
 }
+
+pub fn emit_dispute_resolved(env: &Env, id: u64, in_favour_of_sender: bool) {
+    env.events().publish((Symbol::new(env, "dispute_resolved"), id), in_favour_of_sender);
+}
+
+pub fn emit_remittance_failed(env: &Env, id: u64, agent: Address) {
+    env.events().publish((Symbol::new(env, "remittance_failed"), id), agent);
+}
+
+// ── Multi-Sig Events ──────────────────────────────────────────────
+
+pub fn emit_operation_proposed(env: &Env, op_id: u64, proposer: Address, op_type_tag: u32) {
+    env.events().publish(
+        (symbol_short!("msig"), symbol_short!("proposed")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            op_id,
+            proposer,
+            op_type_tag,
+        ),
+    );
+}
+
+pub fn emit_operation_approved(env: &Env, op_id: u64, approver: Address, approval_count: u32) {
+    env.events().publish(
+        (symbol_short!("msig"), symbol_short!("approved")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            op_id,
+            approver,
+            approval_count,
+        ),
+    );
+}
+
+pub fn emit_operation_executed(env: &Env, op_id: u64, op_type_tag: u32) {
+    env.events().publish(
+        (symbol_short!("msig"), symbol_short!("executed")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            op_id,
+            op_type_tag,
+        ),
+    );
+}
+
+pub fn emit_operation_expired(env: &Env, op_id: u64, op_type_tag: u32) {
+    env.events().publish(
+        (symbol_short!("msig"), symbol_short!("expired")),
+        (
+            SCHEMA_VERSION,
+            env.ledger().sequence(),
+            env.ledger().timestamp(),
+            op_id,
+            op_type_tag,
+        ),
+    );
+}

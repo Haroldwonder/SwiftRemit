@@ -1,71 +1,87 @@
 version: 2
 updates:
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - security
+    groups:
+      non-critical:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - security
+    groups:
+      non-critical:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /api
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - security
+    groups:
+      non-critical:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /examples
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+
   - package-ecosystem: cargo
-    directory: "/"
+    directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 10
     labels:
       - dependencies
+      - security
+    groups:
+      non-critical:
+        update-types:
+          - minor
+          - patch
 
-  - package-ecosystem: npm
-    directory: "/backend"
-    schedule:
-      interval: weekly
-    labels:
-      - dependencies
-
-  - package-ecosystem: npm
-    directory: "/api"
-    schedule:
-      interval: weekly
-    labels:
-      - dependencies
-
-  - package-ecosystem: npm
-    directory: "/frontend"
-    schedule:
-      interval: weekly
-    labels:
-      - dependencies
-
-  - package-ecosystem: npm
-    directory: "/sdk"
-    schedule:
-      interval: weekly
-    labels:
-      - dependencies
-
-  # Keep GitHub Actions versions up to date (also keeps Trivy action current
-  # so vulnerability database stays fresh)
   - package-ecosystem: github-actions
-    directory: "/"
+    directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 10
     labels:
       - dependencies
-      - github-actions
-
-  # Docker base image updates
-  - package-ecosystem: docker
-    directory: "/backend"
-    schedule:
-      interval: weekly
-    labels:
-      - dependencies
-      - docker
-
-  - package-ecosystem: docker
-    directory: "/api"
-    schedule:
-      interval: weekly
-    labels:
-      - dependencies
-      - docker
-
-  - package-ecosystem: docker
-    directory: "/frontend"
-    schedule:
-      interval: weekly
-    labels:
-      - dependencies
-      - docker
+      - ci

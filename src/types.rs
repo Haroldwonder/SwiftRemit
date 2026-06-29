@@ -308,76 +308,45 @@ pub struct TransferRecord {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Circuit Breaker Types
+// Multi-Signature Admin Operation Types
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Structured reason for an emergency pause.
+/// Identifies which high-impact admin operation is being proposed.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PauseReason {
-    SecurityIncident,
-    SuspiciousActivity,
-    MaintenanceWindow,
-    ExternalThreat,
+pub enum AdminOperationType {
+    /// Update the platform fee (fee_bps field carries the new value).
+    UpdateFee,
+    /// Withdraw accumulated fees to an address (withdraw_to field carries the recipient).
+    WithdrawFees,
+    /// Pause the contract (emergency stop).
+    Pause,
+    /// Unpause the contract.
+    Unpause,
 }
 
-/// Contracttype-compatible wrapper for Option<PauseReason>.
+/// A pending multi-sig admin operation awaiting sufficient approvals.
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MaybePauseReason {
-    None,
-    Some(PauseReason),
-}
-impl From<Option<PauseReason>> for MaybePauseReason {
-    fn from(o: Option<PauseReason>) -> Self { match o { None => Self::None, Some(v) => Self::Some(v) } }
-}
-
-/// Persistent record of a pause event.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PauseRecord {
-    /// Monotonically increasing sequence number for this pause event.
-    pub seq: u64,
-    /// Address that triggered the pause.
-    pub caller: Address,
-    /// Ledger timestamp when the pause was initiated.
-    pub timestamp: u64,
-    /// Structured reason for the pause.
-    pub reason: PauseReason,
-}
-
-/// Persistent record of an unpause event.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnpauseRecord {
-    /// Address that triggered the unpause.
-    pub caller: Address,
-    /// Ledger timestamp when the unpause occurred.
-    pub timestamp: u64,
-    /// Sequence number of the pause event this unpause corresponds to.
-    pub pause_seq: u64,
-}
-
-/// Snapshot of the full circuit-breaker state returned by `get_circuit_breaker_status`.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CircuitBreakerStatus {
-    /// Whether the contract is currently paused.
-    pub is_paused: bool,
-    /// Active pause reason, or `None` when not paused.
-    pub pause_reason: MaybePauseReason,
-    /// Ledger timestamp of the active pause, or `None` when not paused.
-    pub pause_timestamp: Option<u64>,
-    /// Configured timelock duration in seconds (0 = no timelock).
-    pub timelock_seconds: u64,
-    /// Minimum number of admin votes required to unpause.
-    pub unpause_quorum: u32,
-    /// Number of votes cast for the current pause instance.
-    pub current_vote_count: u32,
-    /// Ledger timestamp of the most recent unpause, or `None` if never unpaused.
-    pub last_unpause_at: Option<u64>,
-    /// Post-unpause cooldown period in seconds; rate limits are halved during this window.
-    pub cooldown_period_seconds: u64,
+#[derive(Clone, Debug)]
+pub struct PendingOperation {
+    /// Unique auto-incremented ID for this operation.
+    pub id: u64,
+    /// Which admin operation is being proposed.
+    pub operation_type: AdminOperationType,
+    /// Admin who proposed the operation (counted as first approval).
+    pub proposer: Address,
+    /// Addresses that have approved so far (includes proposer).
+    pub approvers: Vec<Address>,
+    /// Number of approvals required to auto-execute.
+    pub threshold: u32,
+    /// Ledger timestamp when the operation was proposed.
+    pub proposed_at: u64,
+    /// Seconds after proposed_at before this operation expires.
+    pub ttl_seconds: u64,
+    /// New fee in basis points — only used for UpdateFee operations.
+    pub fee_bps: u32,
+    /// Fee withdrawal recipient — only used for WithdrawFees operations.
+    pub withdraw_to: Option<Address>,
 }
 
 /// Idempotency record for duplicate remittance prevention.

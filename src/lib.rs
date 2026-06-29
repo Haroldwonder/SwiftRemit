@@ -22,6 +22,7 @@ mod health;
 #[cfg(test)]
 mod health_test;
 mod migration;
+mod multisig;
 mod netting;
 mod rate_limit;
 mod storage;
@@ -3238,520 +3239,73 @@ impl SwiftRemitContract {
         Ok(())
     }
 
-    // ── Recipient Address Verification View Functions ──────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Multi-Signature Admin Operations  (#253)
+    // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Returns the stored recipient hash record for a remittance, or `None` if
-    /// the remittance is verification-exempt (no hash was registered).
+    /// Configure the M-of-N threshold and TTL for pending admin operations.
     ///
-    /// Returns `ContractError::RemittanceNotFound` if the remittance_id does not exist.
-    /// No authorization required — the hash itself does not reveal recipient details.
-    pub fn get_recipient_hash(
-        env: Env,
-        remittance_id: u64,
-    ) -> Result<Option<RecipientHashRecord>, ContractError> {
-        recipient_verification::get_recipient_hash(&env, remittance_id)
-    }
-
-    /// Computes the canonical SHA-256 hash of `RecipientDetails`.
+    /// `threshold` must be ≥ 1.  `ttl_seconds` is the lifetime of a pending operation
+    /// before it expires.  Defaults before first call: threshold=1, ttl=86400 s.
     ///
-    /// This view function enables off-chain systems to verify their hash computation
-    /// without submitting a transaction.
-    pub fn compute_recipient_hash(env: Env, details: RecipientDetails) -> BytesN<32> {
-        recipient_verification::compute_recipient_hash(&env, details)
-    }
-
-    /// Returns the current `RECIPIENT_HASH_SCHEMA_VERSION`.
-    pub fn rcpt_hash_schema_version() -> u32 {
-        recipient_verification::get_recipient_hash_schema_version()
-    }
-
-    /// Admin function: recompute recipient hashes for a batch of remittances
-    /// under the current schema version (Issue #422).
-    ///
-    /// Use this after bumping `RECIPIENT_HASH_SCHEMA_VERSION` to restore
-    /// verifiability for remittances created under the previous schema.
-    ///
-    /// # Authorization
-    /// Requires admin authentication.
-    pub fn migrate_recipient_hashes(
+    /// Authorization: admin only.
+    pub fn set_multisig_config(
         env: Env,
         caller: Address,
-        batch: Vec<recipient_verification::RecipientHashMigrationEntry>,
-    ) -> Result<u32, ContractError> {
-        require_admin(&env, &caller)?;
-        recipient_verification::migrate_recipient_hashes(&env, batch)
+        threshold: u32,
+        ttl_seconds: u64,
+    ) -> Result<(), ContractError> {
+        multisig::set_multisig_config(&env, caller, threshold, ttl_seconds)
     }
 
-    // ── Governance Entry Points ────────────────────────────────────────────
-
-    /// Creates a new governance proposal.
+    /// Propose a high-impact admin operation.
     ///
-    /// The proposer must hold `Role::Admin`. Returns the new `proposal_id`.
-    pub fn propose(
+    /// The proposer is automatically counted as the first approval.  If threshold == 1
+    /// the operation executes immediately.
+    ///
+    /// * `operation_type` — which operation to perform
+    /// * `fee_bps`        — new fee in bps (only used for `UpdateFee`)
+    /// * `withdraw_to`    — recipient address (only used for `WithdrawFees`)
+    ///
+    /// Returns the `operation_id` of the newly created pending operation.
+    ///
+    /// Authorization: admin only; proposer must `require_auth`.
+    pub fn propose_operation(
         env: Env,
         proposer: Address,
-        action: ProposalAction,
+        operation_type: AdminOperationType,
+        fee_bps: u32,
+        withdraw_to: Option<Address>,
     ) -> Result<u64, ContractError> {
-        proposer.require_auth();
-        governance::do_propose(&env, &proposer, action)
+        multisig::propose_operation(&env, proposer, operation_type, fee_bps, withdraw_to)
     }
 
-    /// Casts an approval vote on a pending proposal.
-    pub fn vote(
+    /// Approve a pending admin operation.
+    ///
+    /// When total approvals reach the configured threshold the operation executes
+    /// automatically and is removed from storage.
+    ///
+    /// Authorization: admin only; approver must `require_auth`.
+    pub fn approve_operation(
         env: Env,
-        voter: Address,
-        proposal_id: u64,
+        approver: Address,
+        operation_id: u64,
     ) -> Result<(), ContractError> {
-        voter.require_auth();
-        governance::do_vote(&env, &voter, proposal_id)
+        multisig::approve_operation(&env, approver, operation_id)
     }
 
-    /// Executes an approved proposal after the timelock has elapsed.
-    pub fn execute(
+    /// Expire a pending operation whose TTL has elapsed.
+    ///
+    /// Cleans up storage and emits an `msig/expired` event.  Anyone may call this.
+    pub fn expire_operation(env: Env, operation_id: u64) -> Result<(), ContractError> {
+        multisig::expire_operation(&env, operation_id)
+    }
+
+    /// Retrieve a pending operation by ID.
+    pub fn get_pending_operation(
         env: Env,
-        executor: Address,
-        proposal_id: u64,
-    ) -> Result<(), ContractError> {
-        executor.require_auth();
-        governance::do_execute(&env, &executor, proposal_id)
-    }
-
-    /// Transitions an expired proposal to the Expired state.
-    ///
-    /// Can be called by any address once the proposal TTL has elapsed.
-    pub fn expire_proposal(env: Env, proposal_id: u64) -> Result<(), ContractError> {
-        governance::do_expire(&env, proposal_id)
-    }
-
-    /// One-time migration from single-admin to multi-sig governance.
-    ///
-    /// Must be called by the legacy admin address. Sets the initial quorum,
-    /// timelock, and proposal TTL without requiring a proposal.
-    pub fn migrate_to_governance(
-        env: Env,
-        caller: Address,
-        quorum: u32,
-        timelock_seconds: u64,
-        proposal_ttl_seconds: u64,
-    ) -> Result<(), ContractError> {
-        caller.require_auth();
-        governance::do_migrate(&env, &caller, quorum, timelock_seconds, proposal_ttl_seconds)
-    }
-
-    // ── Governance Read-Only Queries ───────────────────────────────────────
-
-    /// Returns the full proposal record for the given `proposal_id`.
-    pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, ContractError> {
-        storage::get_proposal(&env, proposal_id)
-    }
-
-    /// Returns whether the given `voter` has already cast a vote on `proposal_id`.
-    pub fn get_vote_status(env: Env, proposal_id: u64, voter: Address) -> bool {
-        storage::has_governance_voted(&env, proposal_id, &voter)
-    }
-
-    /// Returns the current list of admin addresses.
-    pub fn get_admins(env: Env) -> soroban_sdk::Vec<Address> {
-        storage::get_admin_list(&env)
-    }
-
-    /// Returns the current governance quorum threshold.
-    pub fn get_quorum(env: Env) -> u32 {
-        storage::get_governance_quorum(&env)
-    }
-
-    /// Returns the current governance execution timelock in seconds.
-    pub fn get_timelock_seconds(env: Env) -> u64 {
-        storage::get_governance_timelock(&env)
-    }
-
-    /// Returns quorum, timelock, and proposal TTL in a single call.
-    ///
-    /// Allows integrators and frontends to display current governance parameters
-    /// without reading raw storage or making three separate queries.
-    pub fn query_governance_config(env: Env) -> GovernanceConfig {
-        GovernanceConfig {
-            quorum: storage::get_governance_quorum(&env),
-            timelock_seconds: storage::get_governance_timelock(&env),
-            proposal_ttl_seconds: storage::get_proposal_ttl(&env),
-        }
-    }
-
-    /// Deletes expired or executed proposals from persistent storage.
-    ///
-    /// Admin-only. Proposals in `Pending` or `Approved` state are skipped.
-    /// Emits a `proposal_cleaned_up` event for each deleted proposal.
-    pub fn cleanup_expired_proposals(
-        env: Env,
-        caller: Address,
-        proposal_ids: soroban_sdk::Vec<u64>,
-    ) -> Result<(), ContractError> {
-        caller.require_auth();
-        governance::cleanup_expired_proposals(&env, &caller, proposal_ids)
-    }
-
-    // ── #839: Corridor Volume Cap ──────────────────────────────────────────────
-
-    /// Sets the maximum daily USDC volume for a corridor (admin only).
-    ///
-    /// Once the corridor's rolling 24-hour volume reaches `cap`, new remittances
-    /// that would exceed the limit are rejected with `CorridorVolumeLimitExceeded`.
-    /// Set `cap` to 0 to disable the cap for that corridor.
-    pub fn set_corridor_cap(
-        env: Env,
-        caller: Address,
-        from_country: String,
-        to_country: String,
-        cap: i128,
-    ) -> Result<(), ContractError> {
-        storage::require_admin(&env, &caller)?;
-        storage::set_corridor_cap(&env, &from_country, &to_country, cap);
-        Ok(())
-    }
-
-    /// Returns the daily volume cap for a corridor (0 = no cap).
-    pub fn get_corridor_cap(
-        env: Env,
-        from_country: String,
-        to_country: String,
-    ) -> i128 {
-        storage::get_corridor_cap(&env, &from_country, &to_country)
-    }
-
-    // ── #841: Idempotency Key Cleanup ─────────────────────────────────────────
-
-    /// Removes expired idempotency records to free persistent storage (admin only).
-    ///
-    /// A record is expired when `current_time >= record.expires_at`.
-    /// Callers supply the list of keys to inspect; the function only removes
-    /// those that have actually expired, leaving live records untouched.
-    pub fn cleanup_expired_idempotency_keys(
-        env: Env,
-        caller: Address,
-        keys: soroban_sdk::Vec<String>,
-    ) -> Result<u32, ContractError> {
-        storage::require_admin(&env, &caller)?;
-        let now = env.ledger().timestamp();
-        let mut removed: u32 = 0;
-        for i in 0..keys.len() {
-            let key = keys.get_unchecked(i);
-            if let Some(rec) = storage::get_idempotency_record_raw(&env, &key) {
-                if now >= rec.expires_at {
-                    storage::remove_idempotency_record(&env, &key);
-                    removed = removed.checked_add(1).ok_or(ContractError::Overflow)?;
-                }
-            }
-        }
-        Ok(removed)
-    }
-
-    // ── #842: Admin Key Rotation ───────────────────────────────────────────────
-
-    /// Proposes a new admin address (two-phase rotation, phase 1).
-    ///
-    /// The calling address must be a current admin. The nomination expires after
-    /// 48 hours. Only one nomination may be active at a time; calling again
-    /// overwrites the previous nomination.
-    pub fn nominate_admin(
-        env: Env,
-        caller: Address,
-        nominee: Address,
-    ) -> Result<(), ContractError> {
-        storage::require_admin(&env, &caller)?;
-        let expires_at = env
-            .ledger()
-            .timestamp()
-            .checked_add(storage::ADMIN_NOMINATION_EXPIRY_SECONDS)
-            .ok_or(ContractError::Overflow)?;
-        let nomination = storage::AdminNomination {
-            nominee: nominee.clone(),
-            expires_at,
-            nominator: caller.clone(),
-        };
-        storage::set_admin_nomination(&env, &nomination);
-        events::emit_admin_nominated(&env, caller, nominee);
-        Ok(())
-    }
-
-    /// Accepts an active nomination, completing the admin key rotation (phase 2).
-    ///
-    /// The caller must be the nominated address. The old (nominator) admin is
-    /// automatically removed. Emits `admin_rotated`.
-    pub fn confirm_admin_nomination(env: Env, caller: Address) -> Result<(), ContractError> {
-        caller.require_auth();
-        let nomination = storage::get_admin_nomination(&env)
-            .ok_or(ContractError::NominationNotFound)?;
-
-        if caller != nomination.nominee {
-            return Err(ContractError::Unauthorized);
-        }
-
-        let now = env.ledger().timestamp();
-        if now > nomination.expires_at {
-            storage::clear_admin_nomination(&env);
-            return Err(ContractError::NominationExpired);
-        }
-
-        let old_admin = nomination.nominator.clone();
-
-        // Add the new admin
-        storage::set_admin_role(&env, &caller, true);
-        storage::add_admin_to_list(&env, &caller);
-        let count = storage::get_admin_count(&env)
-            .checked_add(1)
-            .ok_or(ContractError::Overflow)?;
-        storage::set_admin_count(&env, count);
-
-        // Remove the old admin (rotated out)
-        storage::set_admin_role(&env, &old_admin, false);
-        storage::remove_admin_from_list(&env, &old_admin);
-        let count = storage::get_admin_count(&env).saturating_sub(1).max(1);
-        storage::set_admin_count(&env, count);
-
-        storage::clear_admin_nomination(&env);
-        events::emit_admin_rotated(&env, old_admin, caller);
-        Ok(())
-    }
-
-    /// Aborts an in-progress cross-contract migration and resets the state machine to Idle.
-    ///
-    /// Clears the `MigrationInProgress` flag and the batch ordering counter, then emits
-    /// a `migration_aborted` event. Admin only.
-    ///
-    /// # Errors
-    /// - `NotFound` — no migration is currently in progress.
-    /// - `Unauthorized` — caller is not an admin.
-    pub fn abort_migration(env: Env, caller: Address) -> Result<(), ContractError> {
-        get_admin(&env)?;
-        require_admin(&env, &caller)?;
-        migration::abort_migration(&env, &caller)
-    }
-
-    /// Executes net settlement for a batch of remittances in a single contract call (#834).
-    ///
-    /// Computes the minimal set of net token transfers between agents by offsetting
-    /// opposing flows (e.g. A→B 100 and B→A 90 produce a single net transfer of 10
-    /// from A to B). Only the net difference moves on-chain, reducing transfer volume.
-    ///
-    /// # Authorization
-    /// Caller must be a registered admin (settlement operator).
-    ///
-    /// # Parameters
-    /// - `operator`: Admin/operator address — must authenticate and hold Admin role.
-    /// - `remittance_ids`: IDs of Pending remittances to net and settle (max 50).
-    ///
-    /// # Returns
-    /// `BatchSettlementResult` with the list of settled remittance IDs.
-    ///
-    /// # Errors
-    /// - `Unauthorized` / `NotInitialized` — operator is not an admin
-    /// - `ContractPaused` — contract is paused
-    /// - `InvalidBatchSize` — empty or over-limit batch
-    /// - `RemittanceNotFound` — unknown remittance ID
-    /// - `InvalidStatus` — remittance is not Pending
-    /// - `DuplicateSettlement` — already settled
-    /// - `SettlementExpired` — remittance has expired
-    /// - `NetSettlementValidationFailed` — netting math error
-    pub fn execute_net_settlement(
-        env: Env,
-        operator: Address,
-        remittance_ids: Vec<u64>,
-    ) -> Result<BatchSettlementResult, ContractError> {
-        // Operator must authenticate and hold Admin role
-        operator.require_auth();
-        require_role_admin(&env, &operator)?;
-
-        if is_paused(&env) {
-            return Err(ContractError::ContractPaused);
-        }
-
-        let batch_size = remittance_ids.len();
-        if batch_size == 0 || batch_size > MAX_NETTING_BATCH_SIZE {
-            return Err(ContractError::InvalidBatchSize);
-        }
-
-        // Load and validate all remittances upfront
-        let mut remittances = Vec::new(&env);
-        for i in 0..batch_size {
-            let id = remittance_ids.get_unchecked(i);
-            let remittance = get_remittance(&env, id)?;
-
-            if remittance.status != RemittanceStatus::Pending {
-                return Err(ContractError::InvalidStatus);
-            }
-            if has_settlement_hash(&env, id) {
-                return Err(ContractError::DuplicateSettlement);
-            }
-            if let Some(expiry) = remittance.expiry {
-                if env.ledger().timestamp() > expiry {
-                    return Err(ContractError::SettlementExpired);
-                }
-            }
-            remittances.push_back(remittance);
-        }
-
-        // Compute and validate net transfers
-        let netting_result = compute_net_settlements(&env, &remittances)?;
-        validate_net_settlement(&remittances, &netting_result.net_transfers)?;
-
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
-
-        // Execute each net transfer
-        for i in 0..netting_result.net_transfers.len() {
-            let transfer = netting_result.net_transfers.get_unchecked(i);
-            if transfer.net_amount == 0 {
-                continue;
-            }
-            let (from, to, amount) = if transfer.net_amount > 0 {
-                (transfer.party_a.clone(), transfer.party_b.clone(), transfer.net_amount)
-            } else {
-                (transfer.party_b.clone(), transfer.party_a.clone(), -transfer.net_amount)
-            };
-            let payout = amount.checked_sub(transfer.total_fees).ok_or(ContractError::Overflow)?;
-            token_client.transfer(&env.current_contract_address(), &to, &payout);
-            safe_add_accumulated_fee(&env, transfer.total_fees)?;
-            emit_settlement_completed(&env, 0, from, to, usdc_token.clone(), payout);
-        }
-
-        // Mark all remittances completed
-        let mut settled_ids = Vec::new(&env);
-        for i in 0..remittances.len() {
-            let mut remittance = remittances.get_unchecked(i);
-            remittance.status = RemittanceStatus::Completed;
-            set_remittance(&env, remittance.id, &remittance);
-            set_settlement_hash(&env, remittance.id);
-            emit_remittance_completed(&env, remittance.id, remittance.sender, remittance.agent);
-            settled_ids.push_back(remittance.id);
-        }
-
-        Ok(BatchSettlementResult { settled_ids })
-    }
-
-    // ── #835: Partial Payout History ──────────────────────────────────────────
-
-    /// Returns the full disbursement history for a remittance's partial payouts.
-    ///
-    /// SDK consumers can use this to reconstruct cumulative payout state without
-    /// additional on-chain queries. Each entry includes the amount disbursed, the
-    /// cumulative total, and the remaining amount at the time of that disbursement.
-    pub fn get_partial_payout_history(
-        env: Env,
-        remittance_id: u64,
-    ) -> Result<soroban_sdk::Vec<PartialPayoutRecord>, ContractError> {
-        get_remittance(&env, remittance_id)?;
-        Ok(storage::get_partial_payout_history(&env, remittance_id))
-    }
-
-    // ── #836: Time-based remittance expiry ───────────────────────────────────
-
-    /// Expires a pending remittance after its `expires_at` timestamp has passed.
-    ///
-    /// Callable by anyone — no authorization required. The escrowed amount is
-    /// refunded to the original sender and the remittance is marked Cancelled.
-    ///
-    /// # Errors
-    /// - `RemittanceNotFound` — remittance does not exist
-    /// - `InvalidStatus` — remittance is not Pending, or `expires_at` is not set, or not yet expired
-    pub fn expire_remittance(env: Env, remittance_id: u64) -> Result<(), ContractError> {
-        let mut remittance = get_remittance(&env, remittance_id)?;
-
-        if remittance.status != RemittanceStatus::Pending {
-            return Err(ContractError::InvalidStatus);
-        }
-
-        let expires_at = remittance.expires_at.ok_or(ContractError::InvalidStatus)?;
-        let now = env.ledger().timestamp();
-
-        if now < expires_at {
-            return Err(ContractError::InvalidStatus);
-        }
-
-        let token_client = token::Client::new(&env, &remittance.token);
-        token_client.transfer(
-            &env.current_contract_address(),
-            &remittance.sender,
-            &remittance.amount,
-        );
-
-        let refund_amount = remittance.amount;
-        let token = remittance.token.clone();
-        remittance.status = RemittanceStatus::Cancelled;
-        remittance.amount = 0;
-        set_remittance(&env, remittance_id, &remittance);
-
-        if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
-            storage::remove_idempotency_record(&env, &idem_key);
-        }
-
-        emit_remittance_expired(&env, remittance_id, remittance.sender, token, refund_amount, expires_at);
-
-        Ok(())
-    }
-
-    /// Sets the global auto-expiry window for newly created remittances (admin only).
-    ///
-    /// When set to a non-zero value, `create_remittance` will populate `expires_at`
-    /// so that anyone can call `expire_remittance` after the window elapses.
-    /// Set to 0 to disable auto-expiry for new remittances.
-    pub fn set_remittance_expiry_window(env: Env, seconds: u64) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
-        require_admin(&env, &caller)?;
-        storage::set_remittance_expiry_window(&env, seconds);
-        Ok(())
-    }
-
-    /// Returns the configured auto-expiry window in seconds (0 = disabled).
-    pub fn get_remittance_expiry_window(env: Env) -> u64 {
-        storage::get_remittance_expiry_window(&env)
-    }
-
-    // ── #838: Dispute evidence validation ────────────────────────────────────
-
-    /// Opens a dispute on a failed remittance with on-chain evidence hash validation.
-    ///
-    /// Unlike `raise_dispute` (which accepts `BytesN<32>` enforced by the SDK),
-    /// this function accepts raw `Bytes` and explicitly validates that the evidence
-    /// hash is exactly 32 bytes, returning `MalformedEvidenceHash` if not.
-    ///
-    /// # Errors
-    /// - `RemittanceNotFound` — remittance does not exist
-    /// - `InvalidStatus` — remittance is not in Failed state
-    /// - `DisputeWindowExpired` — the dispute window has elapsed since failure
-    /// - `MalformedEvidenceHash` — evidence hash is not exactly 32 bytes
-    pub fn open_dispute(
-        env: Env,
-        remittance_id: u64,
-        evidence_hash: soroban_sdk::Bytes,
-    ) -> Result<(), ContractError> {
-        validate_evidence_hash(&evidence_hash)?;
-
-        let hash_bytes: soroban_sdk::BytesN<32> = evidence_hash
-            .try_into()
-            .map_err(|_| ContractError::MalformedEvidenceHash)?;
-
-        let mut remittance = get_remittance(&env, remittance_id)?;
-        remittance.sender.require_auth();
-
-        if remittance.status != RemittanceStatus::Failed {
-            return Err(ContractError::InvalidStatus);
-        }
-
-        let failed_at = remittance.failed_at.ok_or(ContractError::InvalidStatus)?;
-        let window = get_dispute_window(&env);
-        if env.ledger().timestamp() > failed_at + window {
-            return Err(ContractError::DisputeWindowExpired);
-        }
-
-        remittance.status = RemittanceStatus::Disputed;
-        remittance.dispute_evidence = Some(hash_bytes.clone());
-        set_remittance(&env, remittance_id, &remittance);
-
-        let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
-        stats.dispute_count += 1;
-        crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
-
-        emit_dispute_raised(&env, remittance_id, remittance.sender, hash_bytes);
-        Ok(())
+        operation_id: u64,
+    ) -> Result<PendingOperation, ContractError> {
+        multisig::get_operation(&env, operation_id)
     }
 }
