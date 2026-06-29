@@ -35,6 +35,7 @@ import { saveContractEvent, queryContractEvents } from './database';
 import { remittanceEventEmitter } from './remittance/events';
 import { handleKycWebhook } from './kyc-webhook-handler';
 import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
+import { createComplianceRouter } from './routes/compliance';
 
 const app = express();
 const fxRateCache = getFxRateCache();
@@ -112,6 +113,7 @@ app.get('/metrics', async (req: Request, res: Response) => {
 
 // API documentation
 app.use('/api/docs', docsRouter);
+app.use('/api/compliance', createComplianceRouter(pool));
 
 // Input validation middleware
 function validateAssetParams(req: Request, res: Response, next: Function) {
@@ -764,6 +766,12 @@ app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, re
        VALUES ($1, $2, 'withdrawal', 'pending_user_transfer_start', $3, $4, NOW(), NOW())`,
       [remittanceId, agent, amount, sanitizedMemo ?? null]
     );
+
+    // Auto-flag for compliance if amount exceeds any configured threshold
+    try {
+      const { autoFlagIfAboveThreshold } = await import('./routes/compliance');
+      await autoFlagIfAboveThreshold(pool, remittanceId, parseFloat(amount), 'USD');
+    } catch { /* compliance tables may not exist in all environments */ }
 
     return res.status(201).json({
       success: true,
