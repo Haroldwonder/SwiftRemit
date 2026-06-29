@@ -18,7 +18,9 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "docs": "typedoc src/index.ts --out docs --plugin typedoc-plugin-markdown",
+    "docs:serve": "http-server docs -p 8080 -o"
   },
   "keywords": [
     "stellar",
@@ -36,6 +38,8 @@
     "@types/node": "^25.9.1",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3",
+    "typedoc": "^0.25.1",
+    "typedoc-plugin-markdown": "^4.0.0",
     "vitest": "^4.1.8"
   }
 }

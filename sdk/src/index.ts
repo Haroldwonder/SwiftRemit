@@ -6,6 +6,7 @@ export type {
   RemittanceStatus,
   RemittanceEvent,
   RemittanceEventType,
+  EventHandler,
   SubscribeOptions,
   Unsubscribe,
   AgentStats,
