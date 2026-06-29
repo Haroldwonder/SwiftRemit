@@ -18,22 +18,48 @@ export type RemittanceEventType =
   | "failed"
   | "disputed"
   | "partial_payout"
-  | "expired";
+  | "expired"
+  | "agent_registered"
+  | "agent_removed"
+  | "fee_updated"
+  | "paused"
+  | "unpaused"
+  | "admin_added"
+  | "admin_removed"
+  | "circuit_breaker_paused"
+  | "circuit_breaker_unpaused"
+  | "user_blacklisted"
+  | "user_removed_from_blacklist"
+  | "token_whitelisted"
+  | "token_removed_from_whitelist"
+  | "daily_limit_updated"
+  | "dispute_raised"
+  | "dispute_resolved"
+  | "proposal_created"
+  | "proposal_voted"
+  | "proposal_approved"
+  | "proposal_executed"
+  | "settlement_completed";
 
 /** A decoded contract event from the Stellar ledger. */
 export interface RemittanceEvent {
   type: RemittanceEventType;
-  remittanceId: bigint;
-  /** Ledger sequence number in which the event was emitted. */
+  remittanceId?: bigint;
   ledger: number;
-  /** ISO-8601 timestamp of the ledger close. */
   ledgerClosedAt: string;
-  /** Raw topic/value data from the contract event. */
   raw: {
     topics: string[];
     value: string;
   };
 }
+
+/** Handler function for contract events. */
+export type EventHandler<T extends RemittanceEventType = RemittanceEventType> = (event: {
+  type: T;
+  data: any;
+  ledger: number;
+  ledgerClosedAt: string;
+}) => Promise<void> | void;
 
 /** Options for filtering the event stream. */
 export interface SubscribeOptions {
@@ -195,7 +221,10 @@ export type ProposalAction =
   | { AddAdmin: string }
   | { RemoveAdmin: string }
   | { UpdateQuorum: number }
-  | { UpdateTimelock: bigint };
+  | { UpdateTimelock: bigint }
+  | { UpdateCooldownPeriod: bigint }
+  | { WhitelistAsset: string }
+  | { AdjustReputationThreshold: number };
 
 export interface Proposal {
   id: bigint;

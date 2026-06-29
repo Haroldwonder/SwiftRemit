@@ -3,6 +3,7 @@ import './tracing';
 import dotenv from 'dotenv';
 import http from 'http';
 import app from './api';
+import { FxRateWebSocketServer } from './fx-rate-websocket';
 import { initDatabase, getPool, closePool } from './database';
 import { migrate } from './migrate';
 import { startBackgroundJobs } from './scheduler';
@@ -61,9 +62,14 @@ async function start() {
 
     // Start API server via http.Server so we can call server.close()
     const server = http.createServer(app);
+
+    // Attach WebSocket server for real-time FX rate pushes
+    const fxRateWss = new FxRateWebSocketServer(server);
+
     server.listen(PORT, () => {
       console.log(`SwiftRemit Verification Service running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`FX rate WebSocket available at ws://...:${PORT}/ws/fx-rates`);
     });
 
     // ── Graceful shutdown ────────────────────────────────────────────────────
@@ -84,7 +90,10 @@ async function start() {
         }
       }
 
-      // 3. Close the PostgreSQL pool
+      // 3. Close WebSocket server
+      fxRateWss.close();
+
+      // 4. Close the PostgreSQL pool
       try {
         await closePool();
         console.log('PostgreSQL pool closed');

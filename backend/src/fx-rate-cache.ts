@@ -1,5 +1,12 @@
 import NodeCache from 'node-cache';
 import axios from 'axios';
+import { EventEmitter } from 'events';
+
+// Lazily resolved to avoid circular import — set by fx-rate-websocket.ts initialisation
+let _fxRateEvents: EventEmitter | null = null;
+export function setFxRateEventBus(emitter: EventEmitter): void {
+  _fxRateEvents = emitter;
+}
 
 export interface FxRateResponse {
   from: string;
@@ -19,6 +26,7 @@ export interface FxRateCacheOptions {
   checkPeriodSeconds?: number;
   refreshBeforeExpirySeconds?: number;
   externalApiUrl?: string;
+  secondaryApiUrl?: string;
   externalApiKey?: string;
   staleAgeWarningThresholdSeconds?: number;
 }
@@ -30,6 +38,7 @@ export class FxRateCache {
   private ttlSeconds: number;
   private refreshBeforeExpirySeconds: number;
   private externalApiUrl: string;
+  private secondaryApiUrl?: string;
   private externalApiKey: string;
   private staleAgeWarningThresholdSeconds: number;
   private refreshTimers: Map<string, NodeJS.Timeout>;
@@ -39,6 +48,7 @@ export class FxRateCache {
     this.ttlSeconds = options.ttlSeconds || 60;
     this.refreshBeforeExpirySeconds = options.refreshBeforeExpirySeconds || 10;
     this.externalApiUrl = options.externalApiUrl || process.env.FX_API_URL || 'https://api.exchangerate-api.com/v4/latest';
+    this.secondaryApiUrl = options.secondaryApiUrl || process.env.FX_SECONDARY_API_URL;
     this.externalApiKey = options.externalApiKey || process.env.FX_API_KEY || '';
     this.refreshTimers = new Map();
     this.staleCache = new Map();
@@ -58,21 +68,30 @@ export class FxRateCache {
     });
   }
 
+  setMetricsObserver(observer: (from: string, to: string, stalenessSeconds: number) => void): void {
+    this.metricsObserver = observer;
+  }
+
   /**
    * Get current FX rate with caching.
    * On provider 429, returns the last known stale rate with `stale: true`.
    */
   async getCurrentRate(from: string, to: string): Promise<FxRateResponse> {
-    // Normalize to uppercase
     const fromUpper = from.toUpperCase();
     const toUpper = to.toUpperCase();
-    
     const cacheKey = this.getCacheKey(fromUpper, toUpper);
 
-    // Try to get from cache first
     const cached = this.cache.get<FxRateResponse>(cacheKey);
     if (cached) {
-      return { ...cached, cached: true };
+      const response = {
+        ...cached,
+        cached: true,
+        stale: false,
+        stalenessSeconds: 0,
+        fx_rate_source: cached.fx_rate_source || cached.provider || 'primary',
+      };
+      this.reportStaleness(fromUpper, toUpper, 0);
+      return response;
     }
 
     // Cache miss - deduplicate concurrent requests for the same pair
@@ -81,6 +100,7 @@ export class FxRateCache {
         this.cache.set(cacheKey, rate);
         this.staleCache.set(cacheKey, rate);
         this.scheduleBackgroundRefresh(cacheKey, fromUpper, toUpper);
+        _fxRateEvents?.emit('rate_updated', rate);
         return rate;
       }).finally(() => {
         this.inflight.delete(cacheKey);
@@ -113,29 +133,35 @@ export class FxRateCache {
   }
 
   /**
-   * Fetch rate from external FX provider
+   * Try the configured providers in order: primary, secondary, then fail.
    */
-  private async fetchFromExternalApi(from: string, to: string): Promise<FxRateResponse> {
-    try {
-      // Mock implementation - replace with actual API call
-      const url = `${this.externalApiUrl}/${from}`;
-      const headers: Record<string, string> = {};
-      
-      if (this.externalApiKey) {
-        headers['Authorization'] = `Bearer ${this.externalApiKey}`;
+  private async fetchFromProviders(from: string, to: string): Promise<FxRateResponse> {
+    const providers = [{ name: 'primary', url: this.externalApiUrl }];
+    if (this.secondaryApiUrl) {
+      providers.push({ name: 'secondary', url: this.secondaryApiUrl });
+    }
+
+    let lastError: Error | undefined;
+    for (const provider of providers) {
+      try {
+        return await this.fetchFromProvider(from, to, provider.url, provider.name);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Unknown error');
       }
+    }
 
-      const response = await axios.get(url, { 
-        headers,
-        timeout: 5000,
-      });
+    throw lastError || new Error('Failed to fetch FX rate');
+  }
 
-      const rates = response.data.rates || {};
-      const rate = rates[to];
+  /**
+   * Fetch rate from a specific FX provider.
+   */
+  private async fetchFromProvider(from: string, to: string, url: string, providerName: string): Promise<FxRateResponse> {
+    const headers: Record<string, string> = {};
 
-      if (!rate) {
-        throw new Error(`Rate not found for ${from}/${to}`);
-      }
+    if (this.externalApiKey) {
+      headers['Authorization'] = `Bearer ${this.externalApiKey}`;
+    }
 
       return {
         from,
@@ -153,34 +179,43 @@ export class FxRateCache {
       console.error(`Failed to fetch FX rate for ${from}/${to}:`, error);
       throw new Error(`Failed to fetch FX rate: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+
+    return {
+      from,
+      to,
+      rate: parseFloat(rate),
+      timestamp: new Date(),
+      provider: providerName === 'primary' ? 'ExchangeRateAPI' : 'secondary',
+      cached: false,
+      fx_rate_source: providerName,
+      stale: false,
+      stalenessSeconds: 0,
+    };
   }
 
   /**
-   * Schedule background refresh before cache expires
+   * Schedule background refresh before cache expires.
    */
   private getStaleAgeSeconds(stale: FxRateResponse): number {
     return Math.max(0, Math.floor((Date.now() - new Date(stale.timestamp).getTime()) / 1000));
   }
 
   private scheduleBackgroundRefresh(cacheKey: string, from: string, to: string): void {
-    // Clear any existing timer
     this.clearRefreshTimer(cacheKey);
 
-    // Calculate when to refresh (TTL - refresh buffer)
     const refreshInMs = (this.ttlSeconds - this.refreshBeforeExpirySeconds) * 1000;
 
     if (refreshInMs > 0) {
       const timer = setTimeout(async () => {
         try {
-          const rate = await this.fetchFromExternalApi(from, to);
+          const rate = await this.fetchFromProviders(from, to);
           this.cache.set(cacheKey, rate);
           this.staleCache.set(cacheKey, rate);
-          
+          _fxRateEvents?.emit('rate_updated', rate);
           // Schedule next refresh
           this.scheduleBackgroundRefresh(cacheKey, from, to);
         } catch (error) {
           console.error(`Background refresh failed for ${cacheKey}:`, error);
-          // Don't reschedule on error - let it expire naturally
         }
       }, refreshInMs);
 
@@ -220,24 +255,29 @@ export class FxRateCache {
     }
   }
 
+  private reportStaleness(from: string, to: string, stalenessSeconds: number): void {
+    this.metricsObserver?.(from, to, stalenessSeconds);
+  }
+
   /**
-   * Generate cache key from currency pair
+   * Generate cache key from currency pair.
    */
   private getCacheKey(from: string, to: string): string {
     return `fx:${from.toUpperCase()}:${to.toUpperCase()}`;
   }
 
   /**
-   * Manually invalidate cache for a currency pair
+   * Manually invalidate cache for a currency pair.
    */
   invalidate(from: string, to: string): void {
     const cacheKey = this.getCacheKey(from, to);
     this.cache.del(cacheKey);
+    this.lastKnownRates.delete(cacheKey);
     this.clearRefreshTimer(cacheKey);
   }
 
   /**
-   * Clear all cached rates
+   * Clear all cached rates.
    */
   clearAll(): void {
     this.cache.flushAll();
@@ -248,14 +288,14 @@ export class FxRateCache {
   }
 
   /**
-   * Get cache statistics
+   * Get cache statistics.
    */
   getStats() {
     return this.cache.getStats();
   }
 
   /**
-   * Close the cache and cleanup
+   * Close the cache and cleanup.
    */
   close(): void {
     this.clearAll();

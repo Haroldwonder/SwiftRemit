@@ -162,6 +162,10 @@ export function parseProposal(val: xdr.ScVal): Proposal {
     action = { UpdateQuorum: Number(actionVal) };
   } else if (actionKey === "UpdateTimelock") {
     action = { UpdateTimelock: BigInt(actionVal as number) };
+  } else if (actionKey === "UpdateCooldownPeriod") {
+    action = { UpdateCooldownPeriod: BigInt(actionVal as number) };
+  } else if (actionKey === "AdjustReputationThreshold") {
+    action = { AdjustReputationThreshold: Number(actionVal) };
   } else {
     action = { [actionKey]: String(actionVal) } as ProposalAction;
   }

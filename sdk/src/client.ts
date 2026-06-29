@@ -22,11 +22,13 @@ import type {
   GovernanceConfig,
   DailyLimitStatus,
   Proposal,
+  ProposalAction,
   PartialPayoutRecord,
   RemittanceEvent,
   RemittanceEventType,
   SubscribeOptions,
   Unsubscribe,
+  EventHandler,
 } from "./types.js";
 import { parseContractError, SwiftRemitError, ErrorCode } from "./errors.js";
 import { withRetry } from "./retry.js";
@@ -64,6 +66,125 @@ function shouldAllowHttp(rpcUrl: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
+// ─── Proposal action helpers ──────────────────────────────────────────────────
+
+function proposalActionToScVal(action: ProposalAction): xdr.ScVal {
+  let entry: xdr.ScMapEntry;
+  if ("UpdateFee" in action) {
+    entry = new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("UpdateFee"),
+      val: xdr.ScVal.scvU32(action.UpdateFee),
+    });
+  } else if ("RegisterAgent" in action) {
+    entry = new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("RegisterAgent"),
+      val: addressToScVal(action.RegisterAgent),
+    });
+  } else if ("RemoveAgent" in action) {
+    entry = new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("RemoveAgent"),
+      val: addressToScVal(action.RemoveAgent),
+    });
+  } else if ("AddAdmin" in action) {
+    entry = new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("AddAdmin"),
+      val: addressToScVal(action.AddAdmin),
+    });
+  } else if ("RemoveAdmin" in action) {
+    entry = new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("RemoveAdmin"),
+      val: addressToScVal(action.RemoveAdmin),
+    });
+  } else if ("UpdateQuorum" in action) {
+    entry = new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("UpdateQuorum"),
+      val: xdr.ScVal.scvU32(action.UpdateQuorum),
+    });
+  } else if ("UpdateTimelock" in action) {
+    entry = new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("UpdateTimelock"),
+      val: u64ToScVal(action.UpdateTimelock),
+    });
+  } else if ("UpdateCooldownPeriod" in action) {
+    entry = new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("UpdateCooldownPeriod"),
+      val: u64ToScVal(action.UpdateCooldownPeriod),
+    });
+  } else if ("WhitelistAsset" in action) {
+    entry = new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("WhitelistAsset"),
+      val: addressToScVal(action.WhitelistAsset),
+    });
+  } else if ("AdjustReputationThreshold" in action) {
+    entry = new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("AdjustReputationThreshold"),
+      val: xdr.ScVal.scvU32(action.AdjustReputationThreshold),
+    });
+  } else {
+    throw new SwiftRemitError(
+      ErrorCode.DataCorruption,
+      "Unknown proposal action type"
+    );
+  }
+  return xdr.ScVal.scvMap([entry]);
+}
+
+/** Build a typed UpdateFee proposal action. */
+export function buildUpdateFeeProposal(feeBps: number): ProposalAction {
+  return { UpdateFee: feeBps };
+}
+
+/** Build a typed RegisterAgent proposal action. */
+export function buildRegisterAgentProposal(agent: string): ProposalAction {
+  return { RegisterAgent: agent };
+}
+
+/** Build a typed RemoveAgent proposal action. */
+export function buildRemoveAgentProposal(agent: string): ProposalAction {
+  return { RemoveAgent: agent };
+}
+
+/** Build a typed AddAdmin proposal action. */
+export function buildAddAdminProposal(admin: string): ProposalAction {
+  return { AddAdmin: admin };
+}
+
+/** Build a typed RemoveAdmin proposal action. */
+export function buildRemoveAdminProposal(admin: string): ProposalAction {
+  return { RemoveAdmin: admin };
+}
+
+/** Build a typed UpdateQuorum proposal action. */
+export function buildUpdateQuorumProposal(quorum: number): ProposalAction {
+  return { UpdateQuorum: quorum };
+}
+
+/** Build a typed UpdateTimelock proposal action. */
+export function buildUpdateTimelockProposal(
+  timelockSeconds: bigint
+): ProposalAction {
+  return { UpdateTimelock: timelockSeconds };
+}
+
+/** Build a typed UpdateCooldownPeriod proposal action. */
+export function buildUpdateCooldownPeriodProposal(
+  cooldownSeconds: bigint
+): ProposalAction {
+  return { UpdateCooldownPeriod: cooldownSeconds };
+}
+
+/** Build a typed WhitelistAsset proposal action. */
+export function buildWhitelistAssetProposal(assetAddress: string): ProposalAction {
+  return { WhitelistAsset: assetAddress };
+}
+
+/** Build a typed AdjustReputationThreshold proposal action. */
+export function buildAdjustReputationThresholdProposal(
+  threshold: number
+): ProposalAction {
+  return { AdjustReputationThreshold: threshold };
+}
+
 export class SwiftRemitClient {
   private readonly contract: Contract;
   private readonly server: SorobanRpc.Server;
@@ -73,6 +194,27 @@ export class SwiftRemitClient {
   private readonly retryDelayMs: number;
   private readonly retryBackoffFactor: number;
 
+  /**
+   * Initialize a SwiftRemit SDK client.
+   * 
+   * @param options - Client configuration
+   * @param options.contractId - The deployed SwiftRemit contract address
+   * @param options.networkPassphrase - Stellar network passphrase (e.g., Networks.TESTNET)
+   * @param options.rpcUrl - Soroban RPC endpoint URL
+   * @param options.fee - Optional: Transaction fee in stroops (default: 100)
+   * @param options.retries - Optional: Retry attempts for transient errors (default: 3)
+   * @param options.retryDelayMs - Optional: Initial retry delay in ms (default: 1000)
+   * @param options.retryBackoffFactor - Optional: Backoff multiplier for retries (default: 2)
+   * 
+   * @example
+   * import { SwiftRemitClient, Networks, RpcUrls } from '@swiftremit/sdk';
+   * 
+   * const client = new SwiftRemitClient({
+   *   contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4',
+   *   networkPassphrase: Networks.TESTNET,
+   *   rpcUrl: RpcUrls.TESTNET,
+   * });
+   */
   constructor(options: SwiftRemitClientOptions) {
     this.contract = new Contract(options.contractId);
     const allowHttp = shouldAllowHttp(options.rpcUrl);
@@ -195,6 +337,17 @@ export class SwiftRemitClient {
   // ─── Query functions ─────────────────────────────────────────────────────────
 
   /** Retrieve a remittance record by ID. */
+  /**
+   * Retrieve a single remittance by ID.
+   * 
+   * @param sourceAddress - Query account address
+   * @param remittanceId - The remittance ID to retrieve
+   * @returns The remittance details including sender, agent, amount, status, etc.
+   * 
+   * @example
+   * const remittance = await client.getRemittance(senderAddress, 1n);
+   * console.log(`Status: ${remittance.status}`);
+   */
   async getRemittance(
     sourceAddress: string,
     remittanceId: bigint
@@ -205,7 +358,15 @@ export class SwiftRemitClient {
     return parseRemittance(val);
   }
 
-  /** Get paginated remittance IDs for a sender. */
+  /**
+   * Get paginated remittance IDs for a sender.
+   * 
+   * @param sourceAddress - Query account address
+   * @param sender - Sender address to filter remittances
+   * @param offset - Pagination offset
+   * @param limit - Maximum results to return
+   * @returns Array of remittance IDs for the sender
+   */
   async getRemittancesBySender(
     sourceAddress: string,
     sender: string,
@@ -455,7 +616,32 @@ export class SwiftRemitClient {
     ]);
   }
 
-  /** Create a new remittance. */
+  /**
+   * Create a new remittance transaction.
+   * 
+   * The sender approves USDC to the contract, and this method creates a remittance
+   * escrow. The contract holds USDC until an agent confirms payout or the remittance expires.
+   * 
+   * @param params - Remittance creation parameters
+   * @param params.sender - Sender's Stellar address (must authorize transaction)
+   * @param params.agent - Agent's Stellar address to receive payout notification
+   * @param params.amount - Amount in stroops (1 USDC = 10_000_000 stroops)
+   * @param params.expiry - Optional: Ledger sequence after which remittance auto-expires
+   * @param params.token - Optional: Token contract ID (defaults to USDC)
+   * @param params.idempotencyKey - Optional: Prevent duplicate remittances on retry
+   * @param params.recipientHash - Optional: Hash for recipient verification
+   * @returns Prepared transaction ready for signing
+   * 
+   * @example
+   * const tx = await client.createRemittance({
+   *   sender: senderAddress,
+   *   agent: agentAddress,
+   *   amount: toStroops(100), // 100 USDC
+   *   expiry: ledgerSeq + 1000, // ~5 minutes
+   *   idempotencyKey: 'order-12345',
+   * });
+   * // Sign and submit tx
+   */
   async createRemittance(params: CreateRemittanceParams): Promise<Transaction> {
     return this.prepareTransaction(params.sender, "create_remittance", [
       addressToScVal(params.sender),
@@ -524,7 +710,21 @@ export class SwiftRemitClient {
     };
   }
 
-  /** Create multiple remittances in one batch. */
+  /**
+   * Create multiple remittances in a single batch transaction.
+   *
+   * More efficient than individual create_remittance calls when creating many remittances.
+   *
+   * @param sender - Batch creator's address
+   * @param entries - Array of remittance entries (max 50 per batch)
+   * @returns Prepared batch transaction
+   *
+   * @example
+   * const tx = await client.batchCreateRemittances(senderAddress, [
+   *   { agent: agent1, amount: toStroops(100) },
+   *   { agent: agent2, amount: toStroops(250) },
+   * ]);
+   */
   async batchCreateRemittances(
     sender: string,
     entries: BatchCreateEntry[]
@@ -793,13 +993,19 @@ export class SwiftRemitClient {
   }
 
   /**
-   * Fetch all proposals with state Pending or Approved.
-   * Iterates proposal IDs starting from 0 until the contract returns NotFound.
+   * Fetch proposals with state Pending or Approved, starting from `offset`.
+   *
+   * @param offset - Proposal ID to start iterating from
+   * @param limit - Maximum number of active proposals to return
    */
-  async getActiveProposals(sourceAddress: string): Promise<Proposal[]> {
+  async getActiveProposals(
+    sourceAddress: string,
+    offset: bigint = 0n,
+    limit: bigint = 50n
+  ): Promise<Proposal[]> {
     const proposals: Proposal[] = [];
-    let id = 0n;
-    while (true) {
+    let id = offset;
+    while (BigInt(proposals.length) < limit) {
       try {
         const val = await this.simulateCall(sourceAddress, "get_proposal", [
           u64ToScVal(id),
@@ -810,10 +1016,34 @@ export class SwiftRemitClient {
         }
         id++;
       } catch {
-        break; // ProposalNotFound — no more proposals
+        break;
       }
     }
     return proposals;
+  }
+
+  /** Check whether `voterAddress` has already voted on `proposalId`. */
+  async getVoteStatus(
+    sourceAddress: string,
+    proposalId: bigint,
+    voterAddress: string
+  ): Promise<boolean> {
+    const val = await this.simulateCall(sourceAddress, "get_vote_status", [
+      u64ToScVal(proposalId),
+      addressToScVal(voterAddress),
+    ]);
+    return Boolean(scValToNative(val));
+  }
+
+  /** Create a new governance proposal (admin only). */
+  async propose(
+    sourceAddress: string,
+    action: ProposalAction
+  ): Promise<Transaction> {
+    return this.prepareTransaction(sourceAddress, "propose", [
+      addressToScVal(sourceAddress),
+      proposalActionToScVal(action),
+    ]);
   }
 
   /** Cast an approval vote on a pending proposal (admin only). */
@@ -910,4 +1140,105 @@ export class SwiftRemitClient {
       active = false;
     };
   }
+
+  /**
+   * Subscribe to typed contract events with full TypeScript type safety.
+   * 
+   * @param eventType - The specific event type to listen for
+   * @param handler - Callback function called when an event of this type is emitted
+   * @param options - Optional subscription options (filter by remittanceId, sender, agent, etc)
+   * @returns Unsubscribe function to stop listening
+   * 
+   * @example
+   * const unsubscribe = client.on('created', (event) => {
+   *   console.log(`Remittance ${event.data.remittanceId} created`);
+   * });
+   * // Later:
+   * unsubscribe();
+   */
+  on<T extends RemittanceEventType>(
+    eventType: T,
+    handler: EventHandler<T>,
+    options?: SubscribeOptions
+  ): Unsubscribe {
+    return this.subscribe(
+      (event) => {
+        if (event.type === eventType) {
+          handler({
+            type: eventType,
+            data: event.raw,
+            ledger: event.ledger,
+            ledgerClosedAt: event.ledgerClosedAt,
+          });
+        }
+      },
+      options
+    );
+  }
+
+  /**
+   * Subscribe to multiple event types with a single handler.
+   * 
+   * @param eventTypes - Array of event types to listen for
+   * @param handler - Callback called when any of the specified events are emitted
+   * @param options - Optional subscription options
+   * @returns Unsubscribe function
+   * 
+   * @example
+   * const unsubscribe = client.onAny(['created', 'completed', 'failed'], (event) => {
+   *   console.log(`Event: ${event.type}`);
+   * });
+   */
+  onAny(
+    eventTypes: RemittanceEventType[],
+    handler: (event: { type: RemittanceEventType; ledger: number; ledgerClosedAt: string }) => Promise<void> | void,
+    options?: SubscribeOptions
+  ): Unsubscribe {
+    return this.subscribe(
+      (event) => {
+        if (eventTypes.includes(event.type)) {
+          handler({
+            type: event.type,
+            ledger: event.ledger,
+            ledgerClosedAt: event.ledgerClosedAt,
+          });
+        }
+      },
+      options
+    );
+  }
+
+  /**
+   * Get all available contract event types.
+   */
+  static readonly ALL_EVENTS: RemittanceEventType[] = [
+    "created",
+    "completed",
+    "cancelled",
+    "failed",
+    "disputed",
+    "partial_payout",
+    "expired",
+    "agent_registered",
+    "agent_removed",
+    "fee_updated",
+    "paused",
+    "unpaused",
+    "admin_added",
+    "admin_removed",
+    "circuit_breaker_paused",
+    "circuit_breaker_unpaused",
+    "user_blacklisted",
+    "user_removed_from_blacklist",
+    "token_whitelisted",
+    "token_removed_from_whitelist",
+    "daily_limit_updated",
+    "dispute_raised",
+    "dispute_resolved",
+    "proposal_created",
+    "proposal_voted",
+    "proposal_approved",
+    "proposal_executed",
+    "settlement_completed",
+  ];
 }

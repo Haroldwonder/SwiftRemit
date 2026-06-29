@@ -24,6 +24,7 @@ import { storeVerificationOnChain, simulateSettlement } from './stellar';
 import { VerificationStatus, AnchorKycConfig } from './types';
 import { KycUpsertService } from './kyc-upsert-service';
 import { createTransferGuard, AuthenticatedRequest } from './transfer-guard';
+import { AgentKycService } from './agent-kyc-service';
 import { getFxRateCache } from './fx-rate-cache';
 import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
@@ -35,6 +36,7 @@ import { saveContractEvent, queryContractEvents } from './database';
 import { remittanceEventEmitter } from './remittance/events';
 import { handleKycWebhook } from './kyc-webhook-handler';
 import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
+import { createComplianceRouter } from './routes/compliance';
 
 const app = express();
 const fxRateCache = getFxRateCache();
@@ -42,6 +44,9 @@ const verifier = new AssetVerifier();
 const logger = createLogger('api');
 const pool = getPool();
 const metricsService = getMetricsService(pool);
+fxRateCache.setMetricsObserver((from, to, stalenessSeconds) => {
+  metricsService.setFxRateStalenessMetric(from, to, stalenessSeconds);
+});
 
 // Security middleware
 app.use(helmet());
@@ -109,6 +114,7 @@ app.get('/metrics', async (req: Request, res: Response) => {
 
 // API documentation
 app.use('/api/docs', docsRouter);
+app.use('/api/compliance', createComplianceRouter(pool));
 
 // Input validation middleware
 function validateAssetParams(req: Request, res: Response, next: Function) {
@@ -488,7 +494,10 @@ app.get('/api/fx-rate/:transactionId', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'FX rate not found for this transaction' });
     }
 
-    res.json(fxRate);
+    res.json({
+      ...fxRate,
+      fx_rate_source: fxRate.provider,
+    });
   } catch (error) {
     console.error('Error fetching FX rate:', error);
     res.status(500).json({ error: 'Failed to fetch FX rate' });
@@ -735,6 +744,12 @@ app.get('/api/kyc/approved/:userId', async (req: Request, res: Response) => {
 app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { sender, agent, amount, fee, expiry, memo } = req.body;
+    const fromCurrency = typeof req.body.fromCurrency === 'string' ? req.body.fromCurrency : req.body.from_currency;
+    const toCurrency = typeof req.body.toCurrency === 'string' ? req.body.toCurrency : req.body.to_currency;
+    const maxStalenessSeconds = Number.parseInt(
+      String(req.body.fxRateMaxStalenessSeconds ?? req.body.fx_rate_max_staleness_seconds ?? process.env.FX_RATE_MAX_STALENESS_SECONDS ?? '3600'),
+      10
+    );
 
     if (!sender || typeof sender !== 'string') {
       return res.status(400).json({ error: 'Invalid or missing sender' });
@@ -758,6 +773,22 @@ app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, re
       sanitizedMemo = sanitizeInput(memo);
     }
 
+    if (typeof fromCurrency === 'string' && fromCurrency && typeof toCurrency === 'string' && toCurrency) {
+      try {
+        const fxRate = await fxRateCache.getCurrentRate(fromCurrency.toUpperCase(), toCurrency.toUpperCase());
+        if (fxRate.stale && typeof fxRate.stalenessSeconds === 'number' && fxRate.stalenessSeconds > (Number.isFinite(maxStalenessSeconds) ? maxStalenessSeconds : 3600)) {
+          return res.status(409).json({
+            error: `FX rate is stale beyond the allowed maximum (${Number.isFinite(maxStalenessSeconds) ? maxStalenessSeconds : 3600}s)`,
+            fx_rate_source: fxRate.fx_rate_source || fxRate.provider,
+            fx_rate_staleness_seconds: fxRate.stalenessSeconds,
+          });
+        }
+      } catch (error) {
+        logger.error('Failed to resolve FX rate for remittance', error);
+        return res.status(503).json({ error: 'Unable to obtain a valid FX rate' });
+      }
+    }
+
     const remittanceId = `rem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     await pool.query(
@@ -766,6 +797,12 @@ app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, re
        VALUES ($1, $2, 'withdrawal', 'pending_user_transfer_start', $3, $4, NOW(), NOW())`,
       [remittanceId, agent, amount, sanitizedMemo ?? null]
     );
+
+    // Auto-flag for compliance if amount exceeds any configured threshold
+    try {
+      const { autoFlagIfAboveThreshold } = await import('./routes/compliance');
+      await autoFlagIfAboveThreshold(pool, remittanceId, parseFloat(amount), 'USD');
+    } catch { /* compliance tables may not exist in all environments */ }
 
     return res.status(201).json({
       success: true,

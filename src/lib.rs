@@ -3345,6 +3345,11 @@ impl SwiftRemitContract {
         storage::get_proposal(&env, proposal_id)
     }
 
+    /// Returns whether the given `voter` has already cast a vote on `proposal_id`.
+    pub fn get_vote_status(env: Env, proposal_id: u64, voter: Address) -> bool {
+        storage::has_governance_voted(&env, proposal_id, &voter)
+    }
+
     /// Returns the current list of admin addresses.
     pub fn get_admins(env: Env) -> soroban_sdk::Vec<Address> {
         storage::get_admin_list(&env)

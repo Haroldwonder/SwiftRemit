@@ -1,6 +1,13 @@
 import React from 'react';
 import './ErrorBoundary.css';
 
+// Declare window augmentation for OTel tracer
+declare global {
+  interface Window {
+    __OTEL_TRACER__?: any;
+  }
+}
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -76,6 +83,44 @@ class ErrorBoundary extends React.Component {
     window.location.reload();
   };
 
+  handleReportError = () => {
+    const errorDetails = {
+      id: this.state.errorId,
+      message: this.state.error?.toString(),
+      stack: this.state.error?.stack,
+      componentStack: this.state.errorInfo?.componentStack,
+      timestamp: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      url: window.location.href,
+    };
+
+    const text = JSON.stringify(errorDetails, null, 2);
+    
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        alert('Error details copied to clipboard! Please share with support.');
+      }).catch(() => {
+        prompt('Copy error details:', text);
+      });
+    } else {
+      prompt('Copy error details:', text);
+    }
+
+    // Capture error in OTel trace if available
+    if (window.__OTEL_TRACER__) {
+      try {
+        const span = window.__OTEL_TRACER__.startSpan('error_report');
+        span.addEvent('error_reported', {
+          'error.id': this.state.errorId,
+          'error.message': this.state.error?.toString(),
+        });
+        span.end();
+      } catch (e) {
+        console.warn('Failed to capture OTel trace');
+      }
+    }
+  };
+
   render() {
     if (this.state.hasError) {
       const isDevelopment = process.env.NODE_ENV === 'development';
@@ -114,6 +159,13 @@ class ErrorBoundary extends React.Component {
                 aria-label="Reload the page"
               >
                 🔃 Reload Page
+              </button>
+              <button
+                className="error-boundary-btn error-boundary-btn-tertiary"
+                onClick={this.handleReportError}
+                aria-label="Copy error details to clipboard for reporting"
+              >
+                📋 Report Error
               </button>
             </div>
 

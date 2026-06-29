@@ -156,6 +156,11 @@ export class MetricsService {
     }
   }
 
+  setFxRateStalenessMetric(from: string, to: string, stalenessSeconds: number): void {
+    const pairKey = `${from.toUpperCase()}/${to.toUpperCase()}`;
+    this.metrics.swiftremit_fx_rate_staleness_seconds[pairKey] = stalenessSeconds;
+  }
+
   /**
    * Update dead-letter queue count from the database
    */
