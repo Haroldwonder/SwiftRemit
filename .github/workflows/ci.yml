@@ -230,6 +230,38 @@ jobs:
           name: frontend-coverage-report
           path: frontend/coverage/
           retention-days: 14
+  # ── SDK browser bundle size check ─────────────────────────────────────────
+  sdk-bundle-size:
+    name: SDK browser bundle size (warn > 100 KB gzip)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+          cache-dependency-path: sdk/package-lock.json
+      - run: npm ci
+        working-directory: sdk
+      - run: npm run build
+        working-directory: sdk
+      - name: Check gzipped browser bundle size
+        working-directory: sdk
+        run: |
+          FILE="dist/browser/index.mjs"
+          if [ ! -f "$FILE" ]; then
+            echo "::warning::Browser bundle not found at $FILE"
+            exit 0
+          fi
+          SIZE=$(gzip -c "$FILE" | wc -c)
+          SIZE_KB=$(echo "scale=1; $SIZE / 1024" | bc)
+          echo "Browser bundle gzipped size: ${SIZE_KB} KB"
+          if [ "$SIZE" -gt 102400 ]; then
+            echo "::warning file=$FILE::Browser bundle is ${SIZE_KB} KB gzipped — exceeds 100 KB budget"
+          else
+            echo "✅ Bundle size ${SIZE_KB} KB gzipped is within 100 KB budget"
+          fi
+
   # ── Helm chart lint ────────────────────────────────────────────────────────
   helm-lint:
     name: Helm chart lint
@@ -271,6 +303,7 @@ jobs:
       - frontend-typecheck
       - frontend-lint
       - frontend-coverage
+      - sdk-bundle-size
       - helm-lint
     if: always()
     steps:

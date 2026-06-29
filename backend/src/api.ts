@@ -195,6 +195,16 @@ app.post('/api/webhooks/:id/rotate-secret', adminLimiter, async (req: Request, r
     const { newSecret, rotatedAt } = await rotateWebhookSecret(id);
     const subscriber = await getWebhookSubscriberById(id);
 
+    const auditService = new AdminAuditLogService(pool);
+    await auditService.log({
+      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+      action: 'rotate_webhook_secret',
+      target: id,
+      params_json: null,
+      tx_hash: null,
+      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
+    });
+
     // Notify subscriber of new secret via a signed delivery (best-effort)
     if (subscriber?.url) {
       try {
@@ -537,6 +547,16 @@ app.post('/api/kyc/config', async (req: Request, res: Response) => {
 
     await saveAnchorKycConfig(config);
 
+    const auditService = new AdminAuditLogService(pool);
+    await auditService.log({
+      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+      action: 'configure_kyc',
+      target: anchorId,
+      params_json: { kycServerUrl, pollingIntervalMinutes, enabled },
+      tx_hash: null,
+      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
+    });
+
     res.json({ success: true, message: 'Anchor KYC config saved successfully' });
   } catch (error) {
     console.error('Error saving anchor KYC config:', error);
@@ -578,6 +598,16 @@ app.post('/api/kyc/register', async (req: Request, res: Response) => {
     const kycService = (await import('./kyc-service')).KycService;
     const service = new kycService();
     await service.registerUserForKyc(userId, anchorId);
+
+    const auditService = new AdminAuditLogService(pool);
+    await auditService.log({
+      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+      action: 'register_kyc_user',
+      target: userId,
+      params_json: { anchorId },
+      tx_hash: null,
+      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
+    });
 
     res.json({ success: true, message: 'User registered for KYC successfully' });
   } catch (error) {
@@ -865,6 +895,40 @@ app.get('/api/admin/audit-log', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error fetching audit log', error);
     res.status(500).json({ error: 'Failed to fetch audit log' });
+  }
+});
+
+// Compliance export — streams all audit log entries as newline-delimited JSON
+app.get('/api/admin/audit-log/export', adminLimiter, async (req: Request, res: Response) => {
+  try {
+    const auditService = new AdminAuditLogService(pool);
+    const filter = {
+      admin_address: req.query.admin_address as string | undefined,
+      action:        req.query.action        as string | undefined,
+      from:  req.query.from ? new Date(req.query.from as string) : undefined,
+      to:    req.query.to   ? new Date(req.query.to   as string) : undefined,
+      limit: 200,
+      offset: 0,
+    };
+
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Content-Disposition', 'attachment; filename="audit-log.ndjson"');
+
+    let offset = 0;
+    while (true) {
+      filter.offset = offset;
+      const { entries } = await auditService.query(filter);
+      if (entries.length === 0) break;
+      for (const entry of entries) {
+        res.write(JSON.stringify(entry) + '\n');
+      }
+      if (entries.length < filter.limit) break;
+      offset += filter.limit;
+    }
+    res.end();
+  } catch (error) {
+    logger.error('Error exporting audit log', error);
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to export audit log' });
   }
 });
 

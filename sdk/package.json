@@ -5,8 +5,10 @@
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
+  "browser": "dist/browser/index.mjs",
   "exports": {
     ".": {
+      "browser": "./dist/browser/index.mjs",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
@@ -16,7 +18,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "build": "tsup",
     "test": "vitest run",
     "lint": "tsc --noEmit",
     "docs": "typedoc src/index.ts --out docs --plugin typedoc-plugin-markdown",

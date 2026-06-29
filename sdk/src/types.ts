@@ -151,7 +151,23 @@ export interface FeeBreakdown {
   netAmount: bigint;
 }
 
-export interface BatchCreateEntry {
+/** Per-item result from createRemittanceBatch. */
+export interface BatchCreateResult {
+  index: number;
+  entry: BatchCreateEntry;
+  success: boolean;
+  tx?: import("@stellar/stellar-sdk").Transaction;
+  error?: Error;
+}
+
+/** Response from createRemittanceBatch. */
+export interface BatchCreateResponse {
+  results: BatchCreateResult[];
+  successCount: number;
+  failureCount: number;
+}
+
+
   agent: string;
   /** Amount in stroops */
   amount: bigint;

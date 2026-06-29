@@ -17,6 +17,8 @@ import type {
   HealthStatus,
   CreateRemittanceParams,
   BatchCreateEntry,
+  BatchCreateResult,
+  BatchCreateResponse,
   GovernanceConfig,
   DailyLimitStatus,
   Proposal,
@@ -661,14 +663,62 @@ export class SwiftRemitClient {
   }
 
   /**
+   * Create multiple remittances with per-item success/failure handling.
+   * Each entry is prepared independently; failures don't abort the batch.
+   * Returns a BatchCreateResponse with per-item results.
+   */
+  async createRemittanceBatch(
+    sender: string,
+    entries: BatchCreateEntry[]
+  ): Promise<BatchCreateResponse> {
+    if (entries.length === 0) {
+      throw new SwiftRemitError(ErrorCode.InvalidBatchSize, "Batch must contain at least one entry");
+    }
+    if (entries.length > MAX_BATCH_SIZE) {
+      throw new SwiftRemitError(
+        ErrorCode.InvalidBatchSize,
+        `Batch size ${entries.length} exceeds MAX_BATCH_SIZE (${MAX_BATCH_SIZE})`
+      );
+    }
+
+    const results: BatchCreateResult[] = await Promise.all(
+      entries.map(async (entry, index): Promise<BatchCreateResult> => {
+        try {
+          const tx = await withRetry(
+            () =>
+              this.createRemittance({
+                sender,
+                agent: entry.agent,
+                amount: entry.amount,
+                expiry: entry.expiry,
+              }),
+            this.retries,
+            this.retryDelayMs,
+            this.retryBackoffFactor
+          );
+          return { index, entry, success: true, tx };
+        } catch (err) {
+          return { index, entry, success: false, error: err instanceof Error ? err : new Error(String(err)) };
+        }
+      })
+    );
+
+    return {
+      results,
+      successCount: results.filter((r) => r.success).length,
+      failureCount: results.filter((r) => !r.success).length,
+    };
+  }
+
+  /**
    * Create multiple remittances in a single batch transaction.
-   * 
+   *
    * More efficient than individual create_remittance calls when creating many remittances.
-   * 
+   *
    * @param sender - Batch creator's address
    * @param entries - Array of remittance entries (max 50 per batch)
    * @returns Prepared batch transaction
-   * 
+   *
    * @example
    * const tx = await client.batchCreateRemittances(senderAddress, [
    *   { agent: agent1, amount: toStroops(100) },
