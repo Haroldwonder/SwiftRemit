@@ -48,7 +48,7 @@ jobs:
     if: ${{ github.event.inputs.target != 'production' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve target URLs
         id: urls
