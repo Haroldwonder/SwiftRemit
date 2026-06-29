@@ -1,0 +1,84 @@
+name: SEP-24 Integration Tests (Nightly)
+
+on:
+  schedule:
+    # Run nightly at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      anchor_version:
+        description: "Anchor Platform Docker image tag"
+        required: false
+        default: "3.0.0"
+
+defaults:
+  run:
+    working-directory: api
+
+env:
+  ANCHOR_PLATFORM_URL: http://localhost:8080
+  TEST_ASSET_CODE: USDC
+  TEST_ASSET_ISSUER: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+  TEST_STELLAR_ACCOUNT: GABC1234DEF5678HIJK9012LMNO3456PQRS7890TUVW1234XYZ5678ABCD
+
+jobs:
+  sep24-integration:
+    name: SEP-24 deposit flow — happy path + expiry + refund
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start Anchor Platform via Docker Compose
+        working-directory: tests/docker
+        run: |
+          docker compose -f sep24-docker-compose.yml up -d
+          echo "Waiting for Anchor Platform to be healthy..."
+          timeout 90 bash -c 'until curl -sf http://localhost:8080/health; do sleep 3; done'
+          echo "Anchor Platform is ready."
+
+      - name: Obtain SEP-10 JWT for test account
+        id: sep10
+        run: |
+          # Fetch the challenge transaction from the anchor
+          CHALLENGE=$(curl -sf "http://localhost:8080/auth?account=${TEST_STELLAR_ACCOUNT}" | jq -r .transaction)
+          # In a real setup you would sign with the test account's private key.
+          # For CI we use the Anchor Platform's test-mode which accepts unsigned challenges.
+          TOKEN=$(curl -sf -X POST http://localhost:8080/auth \
+            -H "Content-Type: application/json" \
+            -d "{\"transaction\": \"${CHALLENGE}\"}" | jq -r .token)
+          echo "SEP10_JWT=${TOKEN}" >> $GITHUB_ENV
+
+      - name: Run SEP-24 integration tests
+        env:
+          SEP10_JWT: ${{ env.SEP10_JWT }}
+        run: npm run test:integration
+
+      - name: Collect Docker logs on failure
+        if: failure()
+        working-directory: tests/docker
+        run: docker compose -f sep24-docker-compose.yml logs --no-color
+
+      - name: Tear down Anchor Platform
+        if: always()
+        working-directory: tests/docker
+        run: docker compose -f sep24-docker-compose.yml down -v
+
+      - name: Publish test results summary
+        if: always()
+        run: |
+          echo "## SEP-24 Integration Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Anchor Platform: ${{ github.event.inputs.anchor_version || '3.0.0' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Network: TESTNET" >> $GITHUB_STEP_SUMMARY
+          echo "- Run at: $(date -u)" >> $GITHUB_STEP_SUMMARY
