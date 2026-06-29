@@ -35,7 +35,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
-    "js-yaml": "^4.2.0",
+    "js-yaml": "^5.2.0",
     "node-cache": "^5.1.2",
     "node-cron": "^4.2.1",
     "pg": "^8.21.0",
