@@ -267,9 +267,15 @@ cargo test -- --nocapture
 # Run specific test
 cargo test test_name
 
-# Run property-based tests
+# Run the FULL test suite including legacy tests (required before submitting a PR)
 cargo test --features legacy-tests
 ```
+
+> **Important:** `cargo test` alone does **not** run the complete test suite.
+> The `--features legacy-tests` flag enables additional test modules that cover
+> historical behaviour, deprecated code paths, and regression tests for previously
+> fixed bugs. Always run `cargo test --features legacy-tests` before opening a PR
+> to ensure no legacy behaviour has been broken.
 
 #### Backend Tests
 ```bash
@@ -329,10 +335,10 @@ fn test_create_remittance_success() {
 
 ### Test Coverage Requirements
 
-- New features should have >80% test coverage
-- Bug fixes must include regression tests
-- All public APIs must have tests
-- Critical paths (payments, fees) require comprehensive testing
+- New features must have ≥ 80 % test coverage
+- Bug fixes **must** include a regression test that fails before the fix and passes after
+- All public contract functions must have at least one positive and one negative test
+- Critical paths (payments, fees, settlement) require comprehensive edge-case coverage
 
 ## Commit Message Guidelines
 
@@ -407,9 +413,9 @@ troubleshooting section.
 
 2. **Run all tests** and ensure they pass:
    ```bash
-   cargo test                    # Rust tests
-   cd backend && npm test        # Backend tests
-   cd api && npm test            # API tests
+   cargo test --features legacy-tests   # Full Rust test suite (including legacy tests)
+   cd backend && npm test               # Backend tests
+   cd api && npm test                   # API tests
    ```
 
 3. **Run linters**:
@@ -500,11 +506,12 @@ Closes #123
 ### Required CI Checks
 
 All PRs must pass:
-- ✅ Rust Smart Contract CI (tests + WASM build)
-- ✅ Webhook System CI (backend tests)
-- ✅ Currency API CI (API tests)
+- ✅ Rust fmt (`cargo fmt --check`)
+- ✅ Rust clippy (`cargo clippy -- -D warnings`)
+- ✅ Rust Smart Contract tests (`cargo test`)
+- ✅ Backend lint + tests
+- ✅ API lint + tests
 - ✅ Environment Variable Validation
-- ✅ Property-based Tests (if applicable)
 
 ## Issue Guidelines
 

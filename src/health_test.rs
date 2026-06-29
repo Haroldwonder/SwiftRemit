@@ -2,7 +2,7 @@
 
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
-use crate::{health::health, SwiftRemitContract};
+use crate::{health::health, SwiftRemitContract, SwiftRemitContractClient};
 
 fn setup_env() -> (Env, soroban_sdk::Address) {
     let env = Env::default();
@@ -31,16 +31,8 @@ fn test_health_after_initialize() {
     let usdc = env.register_contract(None, SwiftRemitContract {});
     let treasury = Address::generate(&env);
 
-    SwiftRemitContract::initialize(
-        env.clone(),
-        admin.clone(),
-        usdc,
-        250,
-        0,
-        0,
-        treasury,
-    )
-    .unwrap();
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &usdc, &250, &0, &0, &treasury);
 
     env.as_contract(&contract_id, || {
         let status = health(&env);
@@ -59,18 +51,9 @@ fn test_health_reflects_paused_state() {
     let usdc = env.register_contract(None, SwiftRemitContract {});
     let treasury = Address::generate(&env);
 
-    SwiftRemitContract::initialize(
-        env.clone(),
-        admin.clone(),
-        usdc,
-        250,
-        0,
-        0,
-        treasury,
-    )
-    .unwrap();
-
-    SwiftRemitContract::pause(env.clone()).unwrap();
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &usdc, &250, &0, &0, &treasury);
+    client.pause();
 
     env.as_contract(&contract_id, || {
         let status = health(&env);

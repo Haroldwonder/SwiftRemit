@@ -1,22 +1,20 @@
-name: Rust Smart Contract CI
+name: Soroban Contract CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
+      - 'src/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - 'src/**'
       - 'rust-toolchain.toml'
       - '.github/workflows/contract-ci.yml'
   pull_request:
-    branches:
-      - main
+    branches: [main]
     paths:
+      - 'src/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - 'src/**'
       - 'rust-toolchain.toml'
       - '.github/workflows/contract-ci.yml'
 
@@ -25,107 +23,120 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
-    name: Test Suite
+  fmt:
+    name: cargo fmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-      
-      - name: Cache cargo registry
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo index
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-clippy-
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-      
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-test-
+
       - name: Run tests
         run: cargo test --verbose
-        continue-on-error: false
+
+      - name: Run legacy-tests suite
+        run: cargo test --features legacy-tests --verbose
 
   build-wasm:
-    name: Build WASM Binary
+    name: cargo build (wasm32)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           targets: wasm32-unknown-unknown
-      
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-wasm-build-target-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Build WASM (Release)
-        run: cargo build --target wasm32-unknown-unknown --release --verbose
-      
-      - name: Get WASM binary size
-        id: wasm-size
-        run: |
-          WASM_SIZE=$(stat -f%z "target/wasm32-unknown-unknown/release/swiftremit.wasm" 2>/dev/null || stat -c%s "target/wasm32-unknown-unknown/release/swiftremit.wasm" 2>/dev/null || echo "0")
-          WASM_SIZE_KB=$(echo "scale=2; $WASM_SIZE / 1024" | bc)
-          echo "size_bytes=$WASM_SIZE" >> $GITHUB_OUTPUT
-          echo "size_kb=$WASM_SIZE_KB" >> $GITHUB_OUTPUT
-      
-      - name: Print WASM binary size
-        run: |
-          echo "WASM Binary Size: ${{ steps.wasm-size.outputs.size_kb }} KB (${{ steps.wasm-size.outputs.size_bytes }} bytes)"
-      
-      - name: Upload WASM summary
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const wasmSize = ${{ steps.wasm-size.outputs.size_bytes }};
-            const wasmSizeKb = ${{ steps.wasm-size.outputs.size_kb }};
-            
-            const summary = `## WASM Build Report\n\n| Metric | Value |\n|--------|-------|\n| Binary Size | ${wasmSizeKb} KB |\n| Binary Size (bytes) | ${wasmSize} bytes |`;
-            
-            core.summary.addRaw(summary);
-            await core.summary.write();
 
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-wasm-
+
+      - name: Build WASM release
+        run: cargo build --target wasm32-unknown-unknown --release
+
+      - name: Report WASM size
+        run: |
+          WASM=target/wasm32-unknown-unknown/release/swiftremit.wasm
+          SIZE=$(stat -c%s "$WASM")
+          echo "WASM binary: $((SIZE / 1024)) KB ($SIZE bytes)"
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftremit-wasm
+          path: target/wasm32-unknown-unknown/release/swiftremit.wasm
+          retention-days: 7
+
+  # Gate job — required status check. Passes only when all jobs above pass.
   contract-ci:
-    name: Contract CI Status
+    name: Contract CI
     runs-on: ubuntu-latest
-    needs: [test, build-wasm]
+    needs: [fmt, clippy, test, build-wasm]
     if: always()
     steps:
-      - name: Check CI Status
+      - name: Assert all jobs passed
         run: |
-          if [[ "${{ needs.test.result }}" == "failure" || "${{ needs.build-wasm.result }}" == "failure" ]]; then
-            echo "❌ Contract CI failed"
-            exit 1
-          fi
-          echo "✅ Contract CI passed"
+          results=("${{ needs.fmt.result }}" "${{ needs.clippy.result }}" "${{ needs.test.result }}" "${{ needs.build-wasm.result }}")
+          for r in "${results[@]}"; do
+            if [[ "$r" != "success" ]]; then
+              echo "❌ One or more contract CI jobs failed."
+              exit 1
+            fi
+          done
+          echo "✅ All contract CI jobs passed."

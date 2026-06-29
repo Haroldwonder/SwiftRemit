@@ -3,7 +3,6 @@
 //! This module defines the core data structures used throughout the contract,
 //! including remittance records and status enums.
 
-
 use soroban_sdk::{contracttype, Address, String, Vec};
 
 /// Role types for authorization
@@ -21,7 +20,7 @@ pub enum Role {
 ///
 /// # State Machine
 ///
-/// ```
+/// ```text
 /// Pending → Processing → Completed
 ///         ↘            ↘
 ///           Cancelled    Cancelled
@@ -57,8 +56,16 @@ pub enum RemittanceStatus {
 
 impl RemittanceStatus {
     /// Returns `true` if this is a terminal state (no further transitions allowed).
+    ///
+    /// `Failed` and `Disputed` are intentionally excluded — they are transient states
+    /// from which further transitions are permitted (`Failed → Disputed`,
+    /// `Disputed → Completed | Cancelled` via `resolve_dispute`).
+    /// Only `Completed` and `Cancelled` are truly terminal.
     pub fn is_terminal(&self) -> bool {
-        matches!(self, RemittanceStatus::Completed | RemittanceStatus::Cancelled)
+        matches!(
+            self,
+            RemittanceStatus::Completed | RemittanceStatus::Cancelled
+        )
     }
 
     /// Returns `true` if transitioning to `to` is a valid state machine step.
@@ -116,6 +123,7 @@ pub struct SettlementConfig {
     pub oracle_address: Option<Address>,
 }
 
+/// Contracttype-compatible wrapper for Option<SettlementConfig>.
 /// Escrow status for locked funds
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -133,7 +141,51 @@ pub struct Escrow {
     pub sender: Address,
     pub recipient: Address,
     pub amount: i128,
+    pub expiry: Option<u64>,
     pub status: EscrowStatus,
+}
+
+/// Contracttype-compatible Option wrapper for SettlementConfig.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybeSettlementConfig {
+    None,
+    Some(SettlementConfig),
+}
+
+impl From<Option<SettlementConfig>> for MaybeSettlementConfig {
+    fn from(opt: Option<SettlementConfig>) -> Self {
+        match opt {
+            None => MaybeSettlementConfig::None,
+            Some(v) => MaybeSettlementConfig::Some(v),
+        }
+    }
+}
+
+impl From<MaybeSettlementConfig> for Option<SettlementConfig> {
+    fn from(m: MaybeSettlementConfig) -> Self {
+        match m {
+            MaybeSettlementConfig::None => None,
+            MaybeSettlementConfig::Some(v) => Some(v),
+        }
+    }
+}
+
+/// Contracttype-compatible Option wrapper for BytesN<32>.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybeBytes32 {
+    None,
+    Some(soroban_sdk::BytesN<32>),
+}
+
+impl From<Option<soroban_sdk::BytesN<32>>> for MaybeBytes32 {
+    fn from(opt: Option<soroban_sdk::BytesN<32>>) -> Self {
+        match opt {
+            None => MaybeBytes32::None,
+            Some(v) => MaybeBytes32::Some(v),
+        }
+    }
 }
 
 /// A remittance transaction record.
@@ -158,7 +210,7 @@ pub struct Remittance {
     /// Optional expiry timestamp (seconds since epoch) for settlement
     pub expiry: Option<u64>,
     /// Optional settlement configuration for proof validation
-    pub settlement_config: Option<SettlementConfig>,
+    pub settlement_config: MaybeSettlementConfig,
     /// The specific token address used for this remittance
     pub token: Address,
     /// Ledger timestamp when the remittance was created
@@ -166,7 +218,9 @@ pub struct Remittance {
     /// Ledger timestamp when the agent marked it as failed, if applicable
     pub failed_at: Option<u64>,
     /// Hash of evidence provided by the sender during a dispute
-    pub dispute_evidence: Option<soroban_sdk::BytesN<32>>,
+    pub dispute_evidence: MaybeBytes32,
+    /// Ledger timestamp after which anyone can call expire_remittance to refund the sender
+    pub expires_at: Option<u64>,
 }
 
 #[contracttype]
@@ -175,6 +229,11 @@ pub struct AgentStats {
     pub total_settlements: u32,
     pub failed_settlements: u32,
     pub total_settlement_time: u64,
+    pub dispute_count: u32,
+    /// Successful payouts / total * 10000 (basis points). Updated on each payout.
+    pub success_rate_bps: u32,
+    /// Ledger timestamp of the most recent confirm_payout or mark_failed call.
+    pub last_active_timestamp: u64,
 }
 
 /// Entry for batch settlement processing.
@@ -184,6 +243,14 @@ pub struct AgentStats {
 pub struct BatchSettlementEntry {
     /// The unique ID of the remittance to settle
     pub remittance_id: u64,
+}
+
+/// Volume history bucket for rolling sender discount calculations.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SenderVolumeEntry {
+    pub bucket_start: u64,
+    pub amount: i128,
 }
 
 /// Entry for batch remittance creation.
@@ -296,6 +363,108 @@ pub struct IdempotencyRecord {
     pub request_hash: soroban_sdk::BytesN<32>,
     /// The remittance ID returned from the original request
     pub remittance_id: u64,
+    /// Ledger timestamp when this record was created
+    pub created_at: u64,
     /// Timestamp when this record expires (ledger timestamp)
     pub expires_at: u64,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Governance Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The action a governance proposal will execute if approved.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProposalAction {
+    /// Update the platform fee to the given basis points value.
+    UpdateFee(u32),
+    /// Register the given address as a payout agent.
+    RegisterAgent(Address),
+    /// Remove the given address from the payout agent set.
+    RemoveAgent(Address),
+    /// Grant Admin role to the given address.
+    AddAdmin(Address),
+    /// Revoke Admin role from the given address.
+    RemoveAdmin(Address),
+    /// Update the governance quorum threshold.
+    UpdateQuorum(u32),
+    /// Update the governance execution timelock in seconds.
+    UpdateTimelock(u64),
+    /// Update the post-unpause cooldown period in seconds (0 = disabled).
+    UpdateCooldownPeriod(u64),
+    /// Add the given token address to the asset allowlist (#832).
+    /// Enables remittances denominated in that Stellar-native asset.
+    WhitelistAsset(Address),
+    /// Adjust the minimum agent reputation threshold (#833).
+    /// Agents with a score below this value cannot accept new remittances.
+    AdjustReputationThreshold(u32),
+}
+
+/// Lifecycle state of a governance proposal.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProposalState {
+    Pending,
+    Approved,
+    Executed,
+    Expired,
+}
+
+/// Governance configuration returned by `query_governance_config`.
+///
+/// Bundles quorum, timelock, and proposal TTL into a single queryable struct
+/// so integrators and frontends can inspect all governance parameters in one call.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernanceConfig {
+    /// Minimum number of admin approvals required to pass a proposal.
+    pub quorum: u32,
+    /// Seconds that must elapse between approval and execution.
+    pub timelock_seconds: u64,
+    /// Seconds after creation before a proposal expires.
+    pub proposal_ttl_seconds: u64,
+}
+
+/// A governance proposal record stored on-chain.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Proposal {
+    /// Unique monotonically increasing proposal identifier.
+    pub id: u64,
+    /// Address that created this proposal.
+    pub proposer: Address,
+    /// The action to execute when approved.
+    pub action: ProposalAction,
+    /// Current lifecycle state.
+    pub state: ProposalState,
+    /// Ledger timestamp when the proposal was created.
+    pub created_at: u64,
+    /// Ledger timestamp after which the proposal expires if not executed.
+    pub expiry: u64,
+    /// Number of distinct admin approvals received.
+    pub approval_count: u32,
+    /// Ledger timestamp when quorum was reached (set on Approved transition).
+    pub approval_timestamp: Option<u64>,
+    /// Ledger timestamp before which the proposal cannot be executed (timelock enforced).
+    pub execute_after: Option<u64>,
+}
+
+/// Record of a single partial payout disbursement for a remittance.
+///
+/// Stored per remittance to enable cumulative payout state reconstruction
+/// without additional on-chain queries.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PartialPayoutRecord {
+    /// Amount disbursed in this payout
+    pub amount: i128,
+    /// Cumulative total disbursed (including this payout)
+    pub total_disbursed: i128,
+    /// Remaining amount left to disburse (net_payout - total_disbursed)
+    pub remaining_amount: i128,
+    /// Ledger timestamp when this disbursement occurred
+    pub timestamp: u64,
+    /// Ledger sequence when this disbursement occurred
+    pub ledger_sequence: u32,
 }

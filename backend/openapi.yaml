@@ -95,6 +95,57 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/ServerError'
+  /api/verification/report:
+    post:
+      tags:
+        - Asset Verification
+      summary: Report an asset for community review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - assetCode
+                - issuer
+              properties:
+                assetCode:
+                  type: string
+                  maxLength: 12
+                issuer:
+                  type: string
+                  minLength: 56
+                  maxLength: 56
+      responses:
+        '200':
+          description: Report submitted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/verification/verified:
+    get:
+      tags:
+        - Asset Verification
+      summary: List verified assets
+      responses:
+        '200':
+          description: Verified assets
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/verification/batch:
+    post:
+      tags:
+        - Asset Verification
+      summary: Batch verification status lookup
+      responses:
+        '200':
+          description: Batch results
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
   /api/kyc/status:
     get:
       tags:
@@ -161,6 +212,28 @@ paths:
           description: FX rate stored
         '400':
           $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/fx-rate/{transactionId}:
+    get:
+      tags:
+        - FX Rates
+      summary: Get stored FX rate for a transaction
+      parameters:
+        - name: transactionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: FX rate record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FxRateRecord'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
   /api/webhook:
@@ -253,3 +326,19 @@ components:
           type: array
           items:
             type: object
+    FxRateRecord:
+      type: object
+      properties:
+        transaction_id:
+          type: string
+        rate:
+          type: number
+        provider:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        from_currency:
+          type: string
+        to_currency:
+          type: string

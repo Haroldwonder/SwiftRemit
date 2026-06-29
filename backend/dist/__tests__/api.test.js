@@ -38,17 +38,77 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const vitest_1 = require("vitest");
 const supertest_1 = __importDefault(require("supertest"));
+const db = vitest_1.vi.hoisted(() => ({
+    verifications: new Map(),
+    verifiedAssets: [
+        {
+            asset_code: 'USDC',
+            issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+            status: 'verified',
+            reputation_score: 90,
+            last_verified: new Date(),
+            trustline_count: 10000,
+            has_toml: true,
+        },
+    ],
+}));
+const fxRateCacheMock = vitest_1.vi.hoisted(() => ({
+    getCurrentRate: vitest_1.vi.fn(),
+    setMetricsObserver: vitest_1.vi.fn(),
+}));
+vitest_1.vi.mock('../database', () => ({
+    initDatabase: vitest_1.vi.fn().mockResolvedValue(undefined),
+    getPool: vitest_1.vi.fn(() => ({ query: vitest_1.vi.fn(), connect: vitest_1.vi.fn() })),
+    getAssetVerification: vitest_1.vi.fn(async (assetCode, issuer) => {
+        return db.verifications.get(`${assetCode}:${issuer}`) ?? null;
+    }),
+    saveAssetVerification: vitest_1.vi.fn(async (verification) => {
+        db.verifications.set(`${verification.asset_code}:${verification.issuer}`, verification);
+    }),
+    reportSuspiciousAsset: vitest_1.vi.fn().mockResolvedValue(undefined),
+    getVerifiedAssets: vitest_1.vi.fn(async (limit = 100) => db.verifiedAssets.slice(0, limit)),
+    saveFxRate: vitest_1.vi.fn().mockResolvedValue(undefined),
+    getFxRate: vitest_1.vi.fn().mockResolvedValue(null),
+    saveAnchorKycConfig: vitest_1.vi.fn().mockResolvedValue(undefined),
+    getUserKycStatus: vitest_1.vi.fn().mockResolvedValue(null),
+    saveUserKycStatus: vitest_1.vi.fn().mockResolvedValue(undefined),
+}));
+vitest_1.vi.mock('../verifier', () => ({
+    AssetVerifier: vitest_1.vi.fn().mockImplementation(() => ({
+        verifyAsset: vitest_1.vi.fn(async (assetCode, issuer) => ({
+            asset_code: assetCode,
+            issuer,
+            status: 'verified',
+            reputation_score: 85,
+            sources: [
+                { name: 'Stellar Expert', verified: true, score: 80 },
+                { name: 'Stellar TOML', verified: true, score: 90 },
+                { name: 'Trustline Analysis', verified: true, score: 80, details: { count: 100 } },
+                { name: 'Transaction History', verified: true, score: 90 },
+            ],
+            trustline_count: 100,
+            has_toml: true,
+        })),
+    })),
+}));
+vitest_1.vi.mock('../stellar', () => ({
+    storeVerificationOnChain: vitest_1.vi.fn().mockResolvedValue(undefined),
+    simulateSettlement: vitest_1.vi.fn().mockResolvedValue({
+        would_succeed: true,
+        payout_amount: '9750',
+        fee: '250',
+        error_message: null,
+    }),
+}));
+vitest_1.vi.mock('../fx-rate-cache', () => ({
+    getFxRateCache: vitest_1.vi.fn(() => fxRateCacheMock),
+}));
 const api_1 = __importDefault(require("../api"));
-const database_1 = require("../database");
 const stellar = __importStar(require("../stellar"));
 (0, vitest_1.describe)('API Endpoints', () => {
-    (0, vitest_1.beforeAll)(async () => {
-        try {
-            await (0, database_1.initDatabase)();
-        }
-        catch {
-            // DB not available in CI/local without Postgres — tests that don't need DB still run
-        }
+    (0, vitest_1.beforeEach)(() => {
+        db.verifications.clear();
+        fxRateCacheMock.getCurrentRate.mockReset();
     });
     (0, vitest_1.describe)('GET /health', () => {
         (0, vitest_1.it)('should return health status', async () => {
@@ -73,9 +133,7 @@ const stellar = __importStar(require("../stellar"));
     });
     (0, vitest_1.describe)('POST /api/verification/verify', () => {
         (0, vitest_1.it)('should verify an asset', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/verification/verify')
-                .send({
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/verification/verify').send({
                 assetCode: 'USDC',
                 issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
             });
@@ -84,9 +142,7 @@ const stellar = __importStar(require("../stellar"));
             (0, vitest_1.expect)(response.body.verification).toBeDefined();
         });
         (0, vitest_1.it)('should reject invalid input', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/verification/verify')
-                .send({
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/verification/verify').send({
                 assetCode: 'TOOLONGASSETCODE',
                 issuer: 'INVALID',
             });
@@ -95,18 +151,14 @@ const stellar = __importStar(require("../stellar"));
     });
     (0, vitest_1.describe)('POST /api/verification/report', () => {
         (0, vitest_1.it)('should require reason', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/verification/report')
-                .send({
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/verification/report').send({
                 assetCode: 'USDC',
                 issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
             });
             (0, vitest_1.expect)(response.status).toBe(400);
         });
         (0, vitest_1.it)('should reject too long reason', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/verification/report')
-                .send({
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/verification/report').send({
                 assetCode: 'USDC',
                 issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
                 reason: 'x'.repeat(501),
@@ -122,16 +174,14 @@ const stellar = __importStar(require("../stellar"));
             (0, vitest_1.expect)(Array.isArray(response.body.assets)).toBe(true);
         });
         (0, vitest_1.it)('should respect limit parameter', async () => {
-            const response = await (0, supertest_1.default)(api_1.default).get('/api/verification/verified?limit=10');
+            const response = await (0, supertest_1.default)(api_1.default).get('/api/verification/verified?limit=1');
             (0, vitest_1.expect)(response.status).toBe(200);
-            (0, vitest_1.expect)(response.body.assets.length).toBeLessThanOrEqual(10);
+            (0, vitest_1.expect)(response.body.assets.length).toBeLessThanOrEqual(1);
         });
     });
     (0, vitest_1.describe)('POST /api/verification/batch', () => {
         (0, vitest_1.it)('should handle batch requests', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/verification/batch')
-                .send({
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/verification/batch').send({
                 assets: [
                     {
                         assetCode: 'USDC',
@@ -148,54 +198,68 @@ const stellar = __importStar(require("../stellar"));
                 assetCode: 'USDC',
                 issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
             });
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/verification/batch')
-                .send({ assets });
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/verification/batch').send({ assets });
             (0, vitest_1.expect)(response.status).toBe(400);
+        });
+    });
+    (0, vitest_1.describe)('POST /api/remittance', () => {
+        (0, vitest_1.it)('rejects remittance creation when the FX rate is stale beyond the hard maximum', async () => {
+            fxRateCacheMock.getCurrentRate.mockResolvedValueOnce({
+                from: 'USD',
+                to: 'PHP',
+                rate: 56.5,
+                timestamp: new Date(Date.now() - 7200 * 1000),
+                provider: 'last_known',
+                cached: true,
+                fx_rate_source: 'last_known',
+                stale: true,
+                stalenessSeconds: 7200,
+            });
+            const response = await (0, supertest_1.default)(api_1.default)
+                .post('/api/remittance')
+                .set('x-user-id', 'user-1')
+                .send({
+                sender: 'alice',
+                agent: 'agent-1',
+                amount: '100',
+                fromCurrency: 'USD',
+                toCurrency: 'PHP',
+                fxRateMaxStalenessSeconds: 3600,
+            });
+            (0, vitest_1.expect)(response.status).toBe(409);
+            (0, vitest_1.expect)(response.body.error).toMatch(/stale/i);
         });
     });
     (0, vitest_1.describe)('POST /api/simulate-settlement', () => {
         (0, vitest_1.it)('should return 400 when remittanceId is missing', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/simulate-settlement')
-                .send({});
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/simulate-settlement').send({});
             (0, vitest_1.expect)(response.status).toBe(400);
             (0, vitest_1.expect)(response.body.error).toMatch(/remittanceId/);
         });
         (0, vitest_1.it)('should return 400 when remittanceId is zero', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/simulate-settlement')
-                .send({ remittanceId: 0 });
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/simulate-settlement').send({ remittanceId: 0 });
             (0, vitest_1.expect)(response.status).toBe(400);
         });
         (0, vitest_1.it)('should return 400 when remittanceId is negative', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/simulate-settlement')
-                .send({ remittanceId: -5 });
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/simulate-settlement').send({ remittanceId: -5 });
             (0, vitest_1.expect)(response.status).toBe(400);
         });
         (0, vitest_1.it)('should return 400 when remittanceId is not an integer', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/simulate-settlement')
-                .send({ remittanceId: 1.5 });
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/simulate-settlement').send({ remittanceId: 1.5 });
             (0, vitest_1.expect)(response.status).toBe(400);
         });
         (0, vitest_1.it)('should return 400 when remittanceId is a string', async () => {
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/simulate-settlement')
-                .send({ remittanceId: 'abc' });
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/simulate-settlement').send({ remittanceId: 'abc' });
             (0, vitest_1.expect)(response.status).toBe(400);
         });
         (0, vitest_1.it)('should return 200 with simulation result for valid remittanceId', async () => {
-            vitest_1.vi.spyOn(stellar, 'simulateSettlement').mockResolvedValueOnce({
+            vitest_1.vi.mocked(stellar.simulateSettlement).mockResolvedValueOnce({
                 would_succeed: true,
                 payout_amount: '9750',
                 fee: '250',
                 error_message: null,
             });
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/simulate-settlement')
-                .send({ remittanceId: 1 });
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/simulate-settlement').send({ remittanceId: 1 });
             (0, vitest_1.expect)(response.status).toBe(200);
             (0, vitest_1.expect)(response.body.would_succeed).toBe(true);
             (0, vitest_1.expect)(response.body.payout_amount).toBe('9750');
@@ -203,15 +267,13 @@ const stellar = __importStar(require("../stellar"));
             (0, vitest_1.expect)(response.body.error_message).toBeNull();
         });
         (0, vitest_1.it)('should return 200 with would_succeed false when simulation fails', async () => {
-            vitest_1.vi.spyOn(stellar, 'simulateSettlement').mockResolvedValueOnce({
+            vitest_1.vi.mocked(stellar.simulateSettlement).mockResolvedValueOnce({
                 would_succeed: false,
                 payout_amount: '0',
                 fee: '0',
                 error_message: null,
             });
-            const response = await (0, supertest_1.default)(api_1.default)
-                .post('/api/simulate-settlement')
-                .send({ remittanceId: 999 });
+            const response = await (0, supertest_1.default)(api_1.default).post('/api/simulate-settlement').send({ remittanceId: 999 });
             (0, vitest_1.expect)(response.status).toBe(200);
             (0, vitest_1.expect)(response.body.would_succeed).toBe(false);
         });

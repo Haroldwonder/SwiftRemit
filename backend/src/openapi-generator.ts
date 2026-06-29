@@ -92,4 +92,6 @@ registry.registerPath({
   responses: {
     200: { description: 'Batch results', content: { 'application/json': { schema: schemas.BatchVerificationResponseSchema } } },
     400: { description: 'Invalid input', content: { 'application/json': { schema: schemas.ErrorResponseSchema } } },
-    500: { description: 'S
+    500: { description: 'Server error', content: { 'application/json': { schema: schemas.ErrorResponseSchema } } },
+  },
+});

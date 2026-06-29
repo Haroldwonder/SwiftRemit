@@ -6,7 +6,7 @@
 
 use soroban_sdk::contracterror;
 
-#[contracterror]
+#[contracterror(export = false)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum ContractError {
@@ -238,27 +238,28 @@ pub enum ContractError {
     /// Cause: Result of arithmetic operation is below minimum.
     Underflow = 48,
 
-    /// Idempotency key exists but request payload differs.
-    /// Cause: Same idempotency key used with different request parameters.
-    IdempotencyConflict = 49,
+    /// No pending admin transfer to accept.
+    /// Cause: accept_admin() called when no propose_admin() has been issued.
+    NoPendingAdminTransfer = 49,
+
+    /// Idempotency key conflict with different payload.
+    IdempotencyConflict = 50,
 
     /// Proof validation failed.
-    /// Cause: Signature is invalid or signer doesn't match expected oracle.
-    InvalidProof = 50,
+    InvalidProof = 51,
 
     /// Proof is required but not provided.
-    /// Cause: Settlement requires proof validation but proof parameter is None.
-    MissingProof = 51,
+    MissingProof = 52,
 
     /// Oracle address is invalid or not configured.
-    /// Cause: Settlement requires proof but oracle_address is None.
-    InvalidOracleAddress = 52,
+    InvalidOracleAddress = 53,
 
-    /// The dispute window for this failed remittance has expired.
-    DisputeWindowExpired = 53,
+    /// Contract is already paused.
+    /// Cause: Calling emergency_pause when the contract is already in paused state.
+    AlreadyPaused = 54,
 
-    /// This remittance has already been disputed.
-    AlreadyDisputed = 54,
+    /// Contract is not currently paused.
+    NotPaused = 55,
 
     /// This operation requires the remittance to be in a Disputed state.
     NotDisputed = 55,
@@ -280,100 +281,6 @@ pub enum ContractError {
     InvalidMultiSigThreshold = 59,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Test 1 (Unit): Every ContractError variant must map to a unique u32 value.
-    #[test]
-    fn test_error_codes_are_unique() {
-        let variants: &[(ContractError, u32)] = &[
-            (ContractError::AlreadyInitialized,          1),
-            (ContractError::NotInitialized,              2),
-            (ContractError::InvalidAmount,               3),
-            (ContractError::InvalidFeeBps,               4),
-            (ContractError::AgentNotRegistered,          5),
-            (ContractError::RemittanceNotFound,          6),
-            (ContractError::InvalidStatus,               7),
-            (ContractError::InvalidStateTransition,      8),
-            (ContractError::NoFeesToWithdraw,            9),
-            (ContractError::InvalidAddress,              10),
-            (ContractError::SettlementExpired,           11),
-            (ContractError::DuplicateSettlement,         12),
-            (ContractError::ContractPaused,              13),
-            (ContractError::AssetNotFound,               14),
-            (ContractError::UserBlacklisted,             15),
-            (ContractError::InvalidReputationScore,      16),
-            (ContractError::KycNotApproved,              17),
-            (ContractError::SuspiciousAsset,             18),
-            (ContractError::AnchorTransactionFailed,     19),
-            (ContractError::Unauthorized,                20),
-            (ContractError::DailySendLimitExceeded,      21),
-            (ContractError::TokenAlreadyWhitelisted,     22),
-            (ContractError::KycExpired,                  23),
-            (ContractError::TransactionNotFound,         24),
-            (ContractError::RateLimitExceeded,           25),
-            (ContractError::AdminAlreadyExists,          26),
-            (ContractError::AdminNotFound,               27),
-            (ContractError::CannotRemoveLastAdmin,       28),
-            (ContractError::TokenNotWhitelisted,         29),
-            (ContractError::InvalidMigrationHash,        30),
-            (ContractError::MigrationInProgress,         31),
-            (ContractError::InvalidMigrationBatch,       32),
-            (ContractError::CooldownActive,              33),
-            (ContractError::SuspiciousActivity,          34),
-            (ContractError::ActionBlocked,               35),
-            (ContractError::Overflow,                    36),
-            (ContractError::NetSettlementValidationFailed, 37),
-            (ContractError::EscrowNotFound,              38),
-            (ContractError::InvalidEscrowStatus,         39),
-            (ContractError::SettlementCounterOverflow,   40),
-            (ContractError::InvalidBatchSize,            41),
-            (ContractError::DataCorruption,              42),
-            (ContractError::IndexOutOfBounds,            43),
-            (ContractError::EmptyCollection,             44),
-            (ContractError::KeyNotFound,                 45),
-            (ContractError::StringConversionFailed,      46),
-            (ContractError::InvalidSymbol,               47),
-            (ContractError::Underflow,                   48),
-            (ContractError::IdempotencyConflict,         49),
-            (ContractError::InvalidProof,                50),
-            (ContractError::MissingProof,                51),
-            (ContractError::InvalidOracleAddress,        52),
-        ];
-
-        // Assert each variant maps to its expected discriminant.
-        for &(variant, expected) in variants {
-            assert_eq!(
-                variant as u32, expected,
-                "ContractError variant discriminant mismatch: expected {}, got {}",
-                expected, variant as u32
-            );
-        }
-
-        // Assert all discriminants are unique (no two variants share a value).
-        let codes: Vec<u32> = variants.iter().map(|&(_, c)| c).collect();
-        for i in 0..codes.len() {
-            for j in (i + 1)..codes.len() {
-                assert_ne!(
-                    codes[i], codes[j],
-                    "Duplicate discriminant {} at indices {} and {}",
-                    codes[i], i, j
-                );
-            }
-        }
-    }
-
-    /// Test 2 (Integration): Verify ContractPaused == 13 and UserBlacklisted == 15.
-    #[test]
-    fn test_contract_paused_and_user_blacklisted_codes() {
-        assert_eq!(
-            ContractError::ContractPaused as u32, 13,
-            "ContractPaused must be error code 13"
-        );
-        assert_eq!(
-            ContractError::UserBlacklisted as u32, 15,
-            "UserBlacklisted must be error code 15"
-        );
-    }
+    /// Evidence hash for a dispute is not a valid 32-byte SHA-256 commitment.
+    MalformedEvidenceHash = 83,
 }

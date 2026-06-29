@@ -233,12 +233,19 @@ impl TransactionController {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: usdc_token.clone(),
+            created_at: env.ledger().timestamp(),
+            failed_at: None,
+            dispute_evidence: crate::MaybeBytes32::None,
+            expires_at: None,
         };
 
         crate::storage::set_remittance(env, remittance_id, &remittance);
         crate::storage::set_remittance_counter(env, remittance_id);
 
-        // Emit event
+        // Emit event with full fee breakdown for analytics/SDK consumers.
+        let net_amount = amount.saturating_sub(fee);
         crate::events::emit_remittance_created(
             env,
             remittance_id,
@@ -246,7 +253,10 @@ impl TransactionController {
             agent.clone(),
             amount,
             fee,
-            0, // integrator_fee (not used in transaction controller)
+            0,          // integrator_fee (not tracked in transaction controller)
+            fee,        // platform_fee
+            0,          // protocol_fee (not tracked in transaction controller)
+            net_amount,
         );
 
         Ok(remittance_id)
@@ -369,6 +379,36 @@ impl TransactionController {
         remittance_id
             .wrapping_mul(1000000)
             .wrapping_add(timestamp)
+    }
+
+    /// Pre-confirm lifecycle hook: validates user eligibility and KYC before payout confirmation.
+    ///
+    /// Called at the start of `confirm_payout` to ensure the remittance sender still
+    /// meets all eligibility requirements before any state mutation occurs.
+    pub fn pre_confirm_validation(env: &Env, remittance: &Remittance) -> Result<(), ContractError> {
+        Self::validate_eligibility(env, &remittance.sender)?;
+        Self::confirm_kyc(env, &remittance.sender)?;
+        Ok(())
+    }
+
+    /// Post-cancel cleanup hook: removes any controller-layer bookkeeping when a
+    /// remittance is cancelled so stale records do not persist.
+    ///
+    /// Called at the end of `cancel_remittance` after the refund transfer succeeds.
+    pub fn post_cancel_cleanup(env: &Env, remittance_id: u64) -> Result<(), ContractError> {
+        // Remove the transaction record if one was stored by the controller
+        if let Ok(mut record) = crate::storage::get_transaction_record(env, remittance_id) {
+            record.state = TransactionState::RolledBack;
+            // Persist the updated state so audit trails remain accurate
+            let _ = crate::storage::set_transaction_record(env, remittance_id, &record);
+        }
+        // Cancel any pending anchor operation
+        if let Ok(remittance_id_mapped) =
+            crate::storage::get_anchor_transaction(env, remittance_id)
+        {
+            let _ = Self::cancel_anchor_operation(env, remittance_id_mapped);
+        }
+        Ok(())
     }
 
     /// Get transaction status

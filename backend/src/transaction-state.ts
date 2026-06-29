@@ -45,9 +45,27 @@ export class TransactionStateManager {
     kind: TransactionKind
   ): Promise<void> {
     const client = await this.pool.connect();
-    
+
     try {
       await client.query('BEGIN');
+
+      // Fetch the current status and lock the row to prevent concurrent updates
+      const current = await client.query<{ status: TransactionStatus }>(
+        'SELECT status FROM transactions WHERE transaction_id = $1 AND kind = $2 FOR UPDATE',
+        [update.transaction_id, kind]
+      );
+
+      if (current.rows.length === 0) {
+        throw new Error(`Transaction ${update.transaction_id} not found`);
+      }
+
+      const currentStatus = current.rows[0].status;
+      if (!this.validateTransition(currentStatus, update.status, kind)) {
+        throw new Error(
+          `Invalid state transition: '${currentStatus}' → '${update.status}' ` +
+          `for ${kind} transaction ${update.transaction_id}`
+        );
+      }
 
       // Update transaction record
       await client.query(

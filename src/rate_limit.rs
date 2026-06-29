@@ -100,6 +100,21 @@ pub fn check_rate_limit(env: &Env, address: &Address) -> Result<(), ContractErro
     }
 
     let current_time = env.ledger().timestamp();
+
+    // During the post-unpause cooldown window, halve per-sender rate limits to
+    // prevent immediate exploitation after an emergency unpause.
+    let effective_max = match crate::circuit_breaker_storage::get_last_unpause_at(env) {
+        Some(last_unpause) => {
+            let cooldown = crate::circuit_breaker_storage::get_cooldown_period(env);
+            if current_time.saturating_sub(last_unpause) < cooldown {
+                (config.max_requests / 2).max(1)
+            } else {
+                config.max_requests
+            }
+        }
+        None => config.max_requests,
+    };
+
     let key = RateLimitKey::Entry(address.clone());
 
     let mut entry: RateLimitEntry = env
@@ -116,7 +131,7 @@ pub fn check_rate_limit(env: &Env, address: &Address) -> Result<(), ContractErro
         entry.request_count = 1;
         entry.window_start = current_time;
     } else {
-        if entry.request_count >= config.max_requests {
+        if entry.request_count >= effective_max {
             return Err(ContractError::RateLimitExceeded);
         }
         entry.request_count = entry.request_count.saturating_add(1);
@@ -188,6 +203,25 @@ pub fn save_sliding_window_entry(env: &Env, entry: &SlidingWindowEntry, window_s
     env.storage().temporary().extend_ttl(&key, ttl, ttl);
 }
 
+/// Clean up stale sliding window entries for an address.
+/// Removes entries where all timestamps are older than the current window.
+pub fn cleanup_stale_entries(env: &Env, address: &Address, window_seconds: u64) {
+    let current_time = env.ledger().timestamp();
+    let window_start = current_time.saturating_sub(window_seconds);
+    
+    // Iterate through known action tags and clean up stale ones
+    // In practice, this would be called periodically by admin or during high-activity periods
+    for action_tag in 0..100u32 {
+        let key = RateLimitKey::Sliding(address.clone(), action_tag);
+        if let Some(entry) = env.storage().temporary().get::<_, SlidingWindowEntry>(&key) {
+            let active_count = count_timestamps_in_window(&entry.timestamps, window_start);
+            if active_count == 0 {
+                env.storage().temporary().remove(&key);
+            }
+        }
+    }
+}
+
 /// Return a new `Vec` containing only timestamps `>= window_start`.
 pub fn filter_timestamps_in_window(env: &Env, timestamps: &Vec<u64>, window_start: u64) -> Vec<u64> {
     let mut filtered = Vec::new(env);
@@ -209,4 +243,23 @@ pub fn count_timestamps_in_window(timestamps: &Vec<u64>, window_start: u64) -> u
         }
     }
     count
+}
+
+/// Prune stale timestamps from a sliding window entry.
+/// Returns a new entry with only active timestamps.
+pub fn prune_stale_timestamps(
+    env: &Env,
+    entry: &SlidingWindowEntry,
+    window_start: u64,
+) -> SlidingWindowEntry {
+    let active_timestamps = filter_timestamps_in_window(env, &entry.timestamps, window_start);
+    let active_count = active_timestamps.len() as u32;
+    
+    SlidingWindowEntry {
+        address: entry.address.clone(),
+        action_tag: entry.action_tag,
+        timestamps: active_timestamps,
+        window_start,
+        request_count: active_count,
+    }
 }

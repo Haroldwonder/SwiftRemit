@@ -1,0 +1,24 @@
+.lang-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+}
+
+.lang-selector-icon {
+  font-size: 1rem;
+}
+
+.lang-selector select {
+  border: 1px solid var(--color-border-secondary, #ccc);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.85rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.lang-selector select:focus {
+  outline: 2px solid var(--color-border-focus, #0070f3);
+}

@@ -11,6 +11,14 @@ import {
 
 const registry = new OpenAPIRegistry();
 
+// Register security schemes
+registry.registerComponent('securitySchemes', 'ApiKeyAuth', {
+  type: 'apiKey',
+  in: 'header',
+  name: 'x-api-key',
+  description: 'Admin API key for protected endpoints',
+});
+
 // Register schemas
 registry.register('Currency', CurrencySchema);
 registry.register('CurrencyResponse', CurrencyResponseSchema);
@@ -255,16 +263,6 @@ export function generateOpenAPISpec() {
         description: 'Production server',
       },
     ],
-    components: {
-      securitySchemes: {
-        ApiKeyAuth: {
-          type: 'apiKey',
-          in: 'header',
-          name: 'x-api-key',
-          description: 'Admin API key for protected endpoints',
-        },
-      },
-    },
     tags: [
       {
         name: 'Health',

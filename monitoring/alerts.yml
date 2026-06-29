@@ -1,0 +1,51 @@
+groups:
+  - name: swiftremit-backend-alerts
+    rules:
+      - alert: SwiftRemitWebhookDeliveryFailureRateHigh
+        expr: |
+          sum(rate(swiftremit_webhook_deliveries_total{result=~"failed|error"}[10m]))
+          /
+          sum(rate(swiftremit_webhook_deliveries_total[10m])) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "SwiftRemit webhook delivery failure rate is above 10%"
+          description: "More than 10% of webhook deliveries failed for at least 10 minutes. Check webhook receivers, delivery queues, and retry behavior."
+
+      - alert: SwiftRemitKycPollFailureRateHigh
+        expr: |
+          rate(swiftremit_kyc_poll_failures_total[5m])
+          /
+          max(rate(swiftremit_kyc_poll_runs_total[5m]), 1) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "SwiftRemit KYC poll failure rate is above 20%"
+          description: "KYC poll failures are exceeding 20% of poll cycles. Investigate anchor availability, network connectivity, or KYC API throttling."
+
+      - alert: SwiftRemitFxCacheMissRateHigh
+        expr: |
+          rate(fx_rate_cache_misses_total[5m])
+          /
+          max(rate(fx_rate_cache_hits_total[5m]) + rate(fx_rate_cache_misses_total[5m]), 1) > 0.15
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "SwiftRemit FX cache miss rate is above 15%"
+          description: "The FX rate cache miss percentage has exceeded 15% over the last 5 minutes. This may indicate stale cache configuration or downstream rate provider latency."
+
+      - alert: SwiftRemitAccumulatedFeesThresholdExceeded
+        expr: swiftremit_accumulated_fees > 1000000
+        for: 15m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "SwiftRemit accumulated fees exceed threshold"
+          description: "Accumulated completed transaction fees have exceeded the configured safe threshold. Review fee calculations, completed transaction volume, and potential accounting issues."

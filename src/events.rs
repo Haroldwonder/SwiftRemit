@@ -3,6 +3,24 @@
 //! This module provides functions to emit structured events for all significant
 //! contract operations. Events include schema versioning and ledger metadata
 //! for comprehensive audit trails.
+//!
+//! ## Reducing boilerplate (issue #475)
+//!
+//! Every event follows the same pattern:
+//! ```text
+//! env.events().publish(
+//!     (topic_a, topic_b),
+//!     (SCHEMA_VERSION, sequence, timestamp, ...payload),
+//! );
+//! ```
+//!
+//! The `emit_event!` macro captures this pattern so new events only need to
+//! specify the two topic symbols and the domain-specific payload fields.
+//!
+//! ### Usage
+//! ```rust,ignore
+//! emit_event!(env, "domain", "action", field1, field2);
+//! ```
 
 use soroban_sdk::{symbol_short, Address, Env, String, Symbol};
 
@@ -22,96 +40,86 @@ use soroban_sdk::{symbol_short, Address, Env, String, Symbol};
 
 use crate::config::SCHEMA_VERSION;
 
+// ============================================================================
+// Core emit_event! macro (issue #475)
+// ============================================================================
+//
+// Reduces the per-event boilerplate to a single line.  The macro prepends the
+// standard envelope (schema version, ledger sequence, ledger timestamp) before
+// the caller-supplied payload, keeping all events structurally consistent.
+//
+// Syntax:
+//   emit_event!(env, "topic_a", "topic_b", payload_field, ...)
+//
+// Expands to:
+//   env.events().publish(
+//       (symbol_short!("topic_a"), symbol_short!("topic_b")),
+//       (SCHEMA_VERSION, env.ledger().sequence(), env.ledger().timestamp(), payload_field, ...),
+//   )
+// ============================================================================
+
+/// Emit a contract event with the standard SwiftRemit envelope.
+///
+/// Prepends `(SCHEMA_VERSION, ledger_sequence, ledger_timestamp)` to every
+/// event payload so consumers always have versioning and timing metadata.
+///
+/// # Example
+/// ```rust,ignore
+/// emit_event!(env, "admin", "paused", admin_address);
+/// ```
+macro_rules! emit_event {
+    ($env:expr, $topic_a:literal, $topic_b:literal $(, $payload:expr)*) => {
+        $env.events().publish(
+            (symbol_short!($topic_a), symbol_short!($topic_b)),
+            (
+                SCHEMA_VERSION,
+                $env.ledger().sequence(),
+                $env.ledger().timestamp(),
+                $($payload,)*
+            ),
+        )
+    };
+}
+
 // ── Admin Events ───────────────────────────────────────────────────
 
 /// Emits an event when the contract is paused by an admin.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `admin` - Address of the admin who paused the contract
 pub fn emit_paused(env: &Env, admin: Address) {
-    env.events().publish(
-        (symbol_short!("admin"), symbol_short!("paused")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            admin,
-        ),
-    );
+    emit_event!(env, "admin", "paused", admin);
 }
 
 /// Emits an event when the contract is unpaused by an admin.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `admin` - Address of the admin who unpaused the contract
 pub fn emit_unpaused(env: &Env, admin: Address) {
-    env.events().publish(
-        (symbol_short!("admin"), symbol_short!("unpaused")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            admin,
-        ),
-    );
+    emit_event!(env, "admin", "unpaused", admin);
 }
 
 /// Emits an event when a new admin is added.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `caller` - Address of the admin who added the new admin
-/// * `new_admin` - Address of the newly added admin
 pub fn emit_admin_added(env: &Env, caller: Address, new_admin: Address) {
-    env.events().publish(
-        (symbol_short!("admin"), symbol_short!("added")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            caller,
-            new_admin,
-        ),
-    );
+    emit_event!(env, "admin", "added", caller, new_admin);
 }
 
 /// Emits an event when an admin is removed.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `caller` - Address of the admin who removed the admin
-/// * `removed_admin` - Address of the removed admin
 pub fn emit_admin_removed(env: &Env, caller: Address, removed_admin: Address) {
-    env.events().publish(
-        (symbol_short!("admin"), symbol_short!("removed")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            caller,
-            removed_admin,
-        ),
-    );
+    emit_event!(env, "admin", "removed", caller, removed_admin);
+}
+
+/// Emits an event when an admin nominates a new admin (#842).
+pub fn emit_admin_nominated(env: &Env, nominator: Address, nominee: Address) {
+    emit_event!(env, "admin", "nominated", nominator, nominee);
+}
+
+/// Emits an event when admin key rotation completes: old admin removed, new admin confirmed (#842).
+pub fn emit_admin_rotated(env: &Env, old_admin: Address, new_admin: Address) {
+    emit_event!(env, "admin", "rotated", old_admin, new_admin);
 }
 
 // ── Remittance Events ──────────────────────────────────────────────
 
 /// Emits an event when a new remittance is created.
 ///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `remittance_id` - Unique ID of the created remittance
-/// * `sender` - Address of the sender
-/// * `agent` - Address of the assigned agent
-/// * `amount` - Total remittance amount
-/// * `fee` - Platform fee deducted
+/// Includes the full fee breakdown so downstream analytics and the SDK can
+/// distinguish platform fee, protocol fee, and net payout amount without
+/// re-deriving them from on-chain config.
 pub fn emit_remittance_created(
     env: &Env,
     remittance_id: u64,
@@ -120,60 +128,29 @@ pub fn emit_remittance_created(
     amount: i128,
     fee: i128,
     integrator_fee: i128,
+    platform_fee: i128,
+    protocol_fee: i128,
+    net_amount: i128,
 ) {
-    env.events().publish(
-        (symbol_short!("remit"), symbol_short!("created")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            remittance_id,
-            sender,
-            agent,
-            amount,
-            fee,
-            integrator_fee,
-        ),
+    emit_event!(
+        env, "remit", "created",
+        remittance_id, sender, agent,
+        amount, fee, integrator_fee,
+        platform_fee, protocol_fee, net_amount
     );
 }
 
 /// Emits an event when a remittance payout is completed.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `remittance_id` - ID of the completed remittance
-/// * `sender` - Address of the sender
-/// * `agent` - Address of the agent who received the payout
 pub fn emit_remittance_completed(
     env: &Env,
     remittance_id: u64,
     sender: Address,
     agent: Address,
 ) {
-    env.events().publish(
-        (symbol_short!("remit"), symbol_short!("complete")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            remittance_id,
-            sender,
-            agent,
-        ),
-    );
+    emit_event!(env, "remit", "complete", remittance_id, sender, agent);
 }
 
 /// Emits an event when a remittance is cancelled.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `remittance_id` - ID of the cancelled remittance
-/// * `sender` - Address of the sender who received the refund
-/// * `agent` - Address of the agent
-/// * `token` - Token address
-/// * `amount` - Refunded amount
 pub fn emit_remittance_cancelled(
     env: &Env,
     remittance_id: u64,
@@ -182,19 +159,7 @@ pub fn emit_remittance_cancelled(
     token: Address,
     amount: i128,
 ) {
-    env.events().publish(
-        (symbol_short!("remit"), symbol_short!("cancel")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            remittance_id,
-            sender,
-            agent,
-            token,
-            amount,
-        ),
-    );
+    emit_event!(env, "remit", "cancel", remittance_id, sender, agent, token, amount);
 }
 
 /// Emits an event when a remittance is cancelled with a structured reason.
@@ -207,186 +172,439 @@ pub fn emit_remittance_cancelled_with_reason(
     amount: i128,
     reason: String,
 ) {
-    env.events().publish(
-        (symbol_short!("remit"), symbol_short!("cancel_r")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            remittance_id,
-            sender,
-            agent,
-            token,
-            amount,
-            reason,
-        ),
-    );
+    emit_event!(env, "remit", "cancel_r", remittance_id, sender, agent, token, amount, reason);
 }
 
 // ── Agent Events ───────────────────────────────────────────────────
 
 /// Emits an event when a new agent is registered.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `agent` - Address of the registered agent
-/// * `caller` - Address of the admin who registered the agent
-pub fn emit_agent_registered(env: &Env, agent: Address, caller: Address) {
-    env.events().publish(
-        (symbol_short!("agent"), symbol_short!("register")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            agent,
-            caller,
-        ),
-    );
+pub fn emit_agent_registered(env: &Env, agent: Address, caller: Address, kyc_hash: Option<soroban_sdk::BytesN<32>>) {
+    emit_event!(env, "agent", "register", agent, caller, kyc_hash);
 }
 
 /// Emits an event when an agent is removed.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `agent` - Address of the removed agent
-/// * `caller` - Address of the admin who removed the agent
 pub fn emit_agent_removed(env: &Env, agent: Address, caller: Address) {
-    env.events().publish(
-        (symbol_short!("agent"), symbol_short!("removed")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            agent,
-            caller,
-        ),
-    );
+    emit_event!(env, "agent", "removed", agent, caller);
 }
 
 /// Emits an event when a user is added to the blacklist.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `user` - Address of the blacklisted user
-/// * `caller` - Address of the admin who updated the blacklist
 pub fn emit_user_blacklisted(env: &Env, user: Address, caller: Address) {
-    env.events().publish(
-        (symbol_short!("blacklist"), symbol_short!("added")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            user,
-            caller,
-        ),
-    );
+    emit_event!(env, "blacklist", "added", user, caller);
 }
 
 /// Emits an event when a user is removed from the blacklist.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `user` - Address of the user removed from the blacklist
-/// * `caller` - Address of the admin who updated the blacklist
 pub fn emit_user_removed_from_blacklist(env: &Env, user: Address, caller: Address) {
-    env.events().publish(
-        (symbol_short!("blacklist"), symbol_short!("removed")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            user,
-            caller,
-        ),
-    );
+    emit_event!(env, "blacklist", "removed", user, caller);
 }
 
 // ── Token Whitelist Events ─────────────────────────────────────────
 
 /// Emits an event when a token is added to the whitelist.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `token` - Address of the token added to whitelist
-/// * `caller` - Address of the admin who added the token
 pub fn emit_token_whitelisted(env: &Env, token: Address, caller: Address) {
-    env.events().publish(
-        (symbol_short!("token"), symbol_short!("whitelist")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            token,
-            caller,
-        ),
-    );
+    emit_event!(env, "token", "whitelist", token, caller);
 }
 
 /// Emits an event when a token is removed from the whitelist.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `token` - Address of the token removed from whitelist
-/// * `caller` - Address of the admin who removed the token
 pub fn emit_token_removed_from_whitelist(env: &Env, token: Address, caller: Address) {
-    env.events().publish(
-        (symbol_short!("token"), symbol_short!("rm_white")),
-        (
-            SCHEMA_VERSION,
-            env.ledger().sequence(),
-            env.ledger().timestamp(),
-            token,
-            caller,
-        ),
-    );
+    emit_event!(env, "token", "rm_white", token, caller);
+}
+
+/// Emits an event when a token-specific fee configuration is updated.
+pub fn emit_token_fee_updated(env: &Env, caller: Address, token: Address, fee_bps: u32) {
+    emit_event!(env, "token", "fee_upd", caller, token, fee_bps);
 }
 
 // ── Fee Events ─────────────────────────────────────────────────────
 
+/// Emits an event when a daily send limit is updated by an admin.
+pub fn emit_daily_limit_updated(
+    env: &Env,
+    currency: String,
+    country: String,
+    old_limit: Option<i128>,
+    new_limit: i128,
+    admin: Address,
+) {
+    emit_event!(env, "limit", "updated", currency, country, old_limit, new_limit, admin);
+}
+
 /// Emits an event when the platform fee is updated.
+pub fn emit_fee_updated(env: &Env, fee_bps: u32) {
+    emit_event!(env, "fee", "updated", fee_bps);
+}
+
+/// Emits an event when accumulated fees are withdrawn.
+pub fn emit_fees_withdrawn(env: &Env, caller: Address, to: Address, token: Address, amount: i128) {
+    emit_event!(env, "fee", "withdraw", caller, to, token, amount);
+}
+
+/// Emits an event when accumulated fees are automatically flushed to treasury.
+pub fn emit_fees_flushed(env: &Env, treasury: Address, token: Address, amount: i128) {
+    emit_event!(env, "fee", "flushed", treasury, token, amount);
+}
+
+/// Emits an event when the protocol fee is updated.
+pub fn emit_protocol_fee_updated(env: &Env, caller: Address, fee_bps: u32) {
+    emit_event!(env, "fee", "proto_upd", caller, fee_bps);
+}
+
+/// Emits an event when a sender raises a dispute on a failed remittance.
+///
+/// Topics: `("dispute", "raised")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, remittance_id, sender, evidence_hash)`
+pub fn emit_dispute_raised(env: &Env, remittance_id: u64, sender: Address, evidence_hash: soroban_sdk::BytesN<32>) {
+    emit_event!(env, "dispute", "raised", remittance_id, sender, evidence_hash);
+}
+
+/// Emits an event when an admin resolves a dispute.
+///
+/// Topics: `("dispute", "resolved")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, remittance_id, admin, in_favour_of_sender, resulting_status)`
+///
+/// `resulting_status` is `"Cancelled"` when resolved in favour of sender, `"Completed"` otherwise.
+pub fn emit_dispute_resolved(env: &Env, remittance_id: u64, admin: Address, in_favour_of_sender: bool) {
+    let resulting_status = if in_favour_of_sender {
+        symbol_short!("Cancelled")
+    } else {
+        symbol_short!("Completed")
+    };
+    emit_event!(env, "dispute", "resolved", remittance_id, admin, in_favour_of_sender, resulting_status);
+}
+
+pub fn emit_remittance_failed(env: &Env, id: u64, agent: Address) {
+    env.events().publish((Symbol::new(env, "remittance_failed"), id), agent);
+}
+
+pub fn emit_partial_payout(env: &Env, remittance_id: u64, agent: Address, amount: i128, disbursed_total: i128, remaining_amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "partial_payout"), remittance_id),
+        (agent, amount, disbursed_total, remaining_amount),
+    );
+}
+
+/// Emits an event when a pending remittance is expired by any caller after its expiry window.
+///
+/// Topics: `("remit", "expired")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, remittance_id, sender, token, refund_amount, expires_at)`
+pub fn emit_remittance_expired(
+    env: &Env,
+    remittance_id: u64,
+    sender: Address,
+    token: Address,
+    refund_amount: i128,
+    expires_at: u64,
+) {
+    emit_event!(env, "remit", "expired", remittance_id, sender, token, refund_amount, expires_at);
+}
+
+pub fn emit_agent_cap_set(env: &Env, agent: Address, cap: i128, caller: Address) {
+    env.events().publish(
+        (Symbol::new(env, "agent_cap_set"),),
+        (agent, cap, caller),
+    );
+}
+
+// ── Circuit Breaker Events ─────────────────────────────────────────
+
+/// Emits an event when the contract is emergency-paused.
+pub fn emit_circuit_breaker_paused(
+    env: &Env,
+    caller: Address,
+    timestamp: u64,
+    reason: crate::PauseReason,
+) {
+    env.events().publish(
+        (symbol_short!("cb"), symbol_short!("paused")),
+        (SCHEMA_VERSION, env.ledger().sequence(), timestamp, caller, reason),
+    );
+}
+
+/// Emits an event when the contract is emergency-unpaused.
+pub fn emit_circuit_breaker_unpaused(env: &Env, caller: Address, timestamp: u64) {
+    env.events().publish(
+        (symbol_short!("cb"), symbol_short!("unpaused")),
+        (SCHEMA_VERSION, env.ledger().sequence(), timestamp, caller),
+    );
+}
+
+// ── Recipient Address Verification Events ─────────────────────────
+
+/// Emits an event when a recipient hash is registered for a remittance.
+///
+/// Emitted before returning (emit-before-return convention).
 ///
 /// # Arguments
 ///
 /// * `env` - The contract execution environment
-/// * `fee_bps` - New fee rate in basis points
-pub fn emit_fee_updated(env: &Env, fee_bps: u32) {
+/// * `remittance_id` - ID of the remittance
+/// * `recipient_hash` - The 32-byte hash that was registered
+/// * `hash_schema_version` - The schema version used to produce the hash
+pub fn emit_recipient_hash_registered(
+    env: &Env,
+    remittance_id: u64,
+    recipient_hash: soroban_sdk::BytesN<32>,
+    hash_schema_version: u32,
+) {
     env.events().publish(
-        (symbol_short!("fee"), symbol_short!("updated")),
+        (Symbol::new(env, "rcpt_hash_reg"), remittance_id),
+        (recipient_hash, hash_schema_version),
+    );
+}
+
+/// Emits an event when a recipient hash verification succeeds at payout time.
+///
+/// Emitted before returning (emit-before-return convention).
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `remittance_id` - ID of the remittance
+/// * `agent` - Address of the agent who confirmed the payout
+pub fn emit_recipient_verified(env: &Env, remittance_id: u64, agent: Address) {
+    env.events().publish(
+        (Symbol::new(env, "rcpt_verified"), remittance_id),
+        agent,
+    );
+}
+
+/// Emits an event when a recipient hash verification fails at payout time.
+///
+/// Emitted before returning (emit-before-return convention).
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `remittance_id` - ID of the remittance
+/// * `agent` - Address of the agent who attempted the payout
+pub fn emit_recipient_verification_failed(env: &Env, remittance_id: u64, agent: Address) {
+    env.events().publish(
+        (Symbol::new(env, "rcpt_vfy_fail"), remittance_id),
+        agent,
+    );
+}
+
+// ── Settlement / Escrow / Treasury Events (stubs for backward compatibility) ──
+
+/// Emits an event when a settlement is completed (alias for emit_remittance_completed with extra fields).
+pub fn emit_settlement_completed(
+    env: &Env,
+    remittance_id: u64,
+    sender: Address,
+    agent: Address,
+    token: Address,
+    payout_amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "settlement_done"), remittance_id),
+        (sender, agent, token, payout_amount),
+    );
+}
+
+/// Emits an event when integrator fees are withdrawn.
+pub fn emit_integrator_fees_withdrawn(
+    env: &Env,
+    integrator: Address,
+    to: Address,
+    token: Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "intg_fee_wdrw"),),
+        (integrator, to, token, amount),
+    );
+}
+
+/// Emits an event when an escrow transfer is created.
+pub fn emit_escrow_created(
+    env: &Env,
+    transfer_id: u64,
+    sender: Address,
+    recipient: Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_created"), transfer_id),
+        (sender, recipient, amount),
+    );
+}
+
+/// Emits an event when an escrow transfer is released to the recipient.
+pub fn emit_escrow_released(
+    env: &Env,
+    transfer_id: u64,
+    recipient: Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_released"), transfer_id),
+        (recipient, amount),
+    );
+}
+
+/// Emits an event when an escrow transfer is refunded to the sender.
+pub fn emit_escrow_refunded(
+    env: &Env,
+    transfer_id: u64,
+    sender: Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (Symbol::new(env, "escrow_refunded"), transfer_id),
+        (sender, amount),
+    );
+}
+
+/// Emits an event when the treasury address is updated.
+pub fn emit_treasury_updated(
+    env: &Env,
+    caller: Address,
+    old_treasury: Option<Address>,
+    new_treasury: Address,
+) {
+    env.events().publish(
+        (Symbol::new(env, "treasury_upd"),),
+        (caller, old_treasury, new_treasury),
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Governance Events
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Emits when any governance proposal is created.
+pub fn emit_proposal_created(env: &Env, proposal_id: u64, proposer: Address, action_type: Symbol, expiry: u64) {
+    env.events().publish(
+        (Symbol::new(env, "gov"), Symbol::new(env, "proposed")),
+        (SCHEMA_VERSION, proposal_id, proposer, action_type, expiry),
+    );
+}
+
+/// Emits when an admin casts a vote on a proposal.
+pub fn emit_proposal_voted(env: &Env, proposal_id: u64, voter: Address, approval_count: u32) {
+    env.events().publish(
+        (Symbol::new(env, "gov"), Symbol::new(env, "voted")),
+        (SCHEMA_VERSION, proposal_id, voter, approval_count),
+    );
+}
+
+/// Emits when a proposal reaches quorum and transitions to Approved.
+pub fn emit_proposal_approved(env: &Env, proposal_id: u64, approval_timestamp: u64) {
+    env.events().publish(
+        (Symbol::new(env, "gov"), Symbol::new(env, "approved")),
+        (SCHEMA_VERSION, proposal_id, approval_timestamp),
+    );
+}
+
+/// Emits when a proposal is successfully executed.
+pub fn emit_proposal_executed(env: &Env, proposal_id: u64, executor: Address) {
+    env.events().publish(
+        (Symbol::new(env, "gov"), Symbol::new(env, "executed")),
+        (SCHEMA_VERSION, proposal_id, executor),
+    );
+}
+
+/// Emits when a proposal is transitioned to Expired state.
+pub fn emit_proposal_expired(env: &Env, proposal_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, "gov"), Symbol::new(env, "expired")),
+        (SCHEMA_VERSION, proposal_id),
+    );
+}
+
+/// Emits when a new admin is added via governance execution.
+pub fn emit_governance_admin_added(env: &Env, admin: Address, proposal_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, "gov"), Symbol::new(env, "adm_added")),
+        (SCHEMA_VERSION, admin, proposal_id),
+    );
+}
+
+/// Emits when an admin is removed via governance execution.
+pub fn emit_governance_admin_removed(env: &Env, admin: Address, proposal_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, "gov"), Symbol::new(env, "adm_rmvd")),
+        (SCHEMA_VERSION, admin, proposal_id),
+    );
+}
+
+/// Emits when a fee-update proposal is created.
+pub fn emit_fee_update_proposed(env: &Env, proposal_id: u64, fee_bps: u32) {
+    env.events().publish(
+        (Symbol::new(env, "gov"), Symbol::new(env, "fee_prop")),
+        (SCHEMA_VERSION, proposal_id, fee_bps),
+    );
+}
+
+/// Emits when an agent-management proposal is created.
+pub fn emit_agent_management_proposed(env: &Env, proposal_id: u64, agent: Address, action: Symbol) {
+    env.events().publish(
+        (Symbol::new(env, "gov"), Symbol::new(env, "agt_prop")),
+        (SCHEMA_VERSION, proposal_id, agent, action),
+    );
+}
+
+/// Emits when an expired or executed proposal is cleaned up from storage.
+pub fn emit_proposal_cleaned_up(env: &Env, proposal_id: u64) {
+    env.events().publish(
+        (Symbol::new(env, "gov"), Symbol::new(env, "cleaned_up")),
+        (SCHEMA_VERSION, proposal_id),
+    );
+}
+
+/// Emits when an agent's reputation score falls below the minimum threshold (#833).
+/// Fired during the reputation gate check in `create_remittance`.
+pub fn emit_agent_suspended(env: &Env, agent: Address, reputation: u32, min_threshold: u32) {
+    emit_event!(env, "agent", "suspnded", agent, reputation, min_threshold);
+}
+
+/// Emits when an agent's reputation score drops below the minimum threshold (#833).
+///
+/// Fired at the point of the failed eligibility check inside `create_remittance`
+/// so off-chain systems can detect and flag low-reputation agents automatically.
+///
+/// # Topics
+/// `("agent", "suspended")`
+///
+/// # Payload
+/// `(schema_version, ledger_sequence, ledger_timestamp, agent, reputation_score, min_threshold)`
+pub fn emit_agent_suspended(env: &Env, agent: Address, reputation: u32, min_threshold: u32) {
+    emit_event!(env, "agent", "suspnded", agent, reputation, min_threshold);
+}
+
+/// Emits when a cross-contract migration is aborted and state is reset to Idle.
+pub fn emit_migration_aborted(env: &Env, caller: Address) {
+    env.events().publish(
+        (Symbol::new(env, "mig"), Symbol::new(env, "aborted")),
+        (SCHEMA_VERSION, env.ledger().sequence(), caller),
+    );
+}
+
+// ── Admin Transfer Events (#365) ───────────────────────────────────
+
+/// Emits an event when an admin proposes a new admin (step 1 of 2-step transfer).
+pub fn emit_admin_transfer_proposed(env: &Env, current_admin: Address, proposed_admin: Address) {
+    env.events().publish(
+        (symbol_short!("admin"), symbol_short!("proposed")),
         (
             SCHEMA_VERSION,
             env.ledger().sequence(),
             env.ledger().timestamp(),
-            fee_bps,
+            current_admin,
+            proposed_admin,
         ),
     );
 }
 
-/// Emits an event when accumulated fees are withdrawn.
-///
-/// # Arguments
-///
-/// * `env` - The contract execution environment
-/// * `caller` - Address of the admin who withdrew fees
-/// * `to` - Address that received the withdrawn fees
-/// * `token` - Token address
-/// * `amount` - Amount of fees withdrawn
-pub fn emit_fees_withdrawn(env: &Env, caller: Address, to: Address, token: Address, amount: i128) {
+/// Emits an event when the proposed admin accepts and becomes the new admin (step 2).
+pub fn emit_admin_transfer_accepted(env: &Env, old_admin: Address, new_admin: Address) {
     env.events().publish(
-        (symbol_short!("fee"), symbol_short!("withdraw")),
+        (symbol_short!("admin"), symbol_short!("accepted")),
         (
             SCHEMA_VERSION,
             env.ledger().sequence(),
             env.ledger().timestamp(),
-            caller,
-            to,
-            token,
-            amount,
+            old_admin,
+            new_admin,
         ),
     );
 }

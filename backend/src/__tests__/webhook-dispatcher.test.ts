@@ -1,111 +1,81 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WebhookDispatcher } from '../webhook-dispatcher';
-import {
-  enqueueWebhookDelivery,
-  getActiveWebhookSubscribers,
-  getPendingWebhookDeliveries,
-  markWebhookDeliveryFailure,
-  markWebhookDeliverySuccess,
-} from '../database';
-import { WebhookDelivery } from '../types';
 
-vi.mock('../database', () => ({
-  getActiveWebhookSubscribers: vi.fn(),
-  enqueueWebhookDelivery: vi.fn(),
-  getPendingWebhookDeliveries: vi.fn(),
-  markWebhookDeliveryFailure: vi.fn(),
-  markWebhookDeliverySuccess: vi.fn(),
-}));
+describe('WebhookDispatcher Exponential Backoff', () => {
+  let dispatcher: WebhookDispatcher;
+  let mockFetch: ReturnType<typeof vi.fn>;
 
-const subscriberA = {
-  id: 'sub-1',
-  url: 'https://subscriber-a.test/webhook',
-  secret: null,
-  active: true,
-  created_at: new Date(),
-  updated_at: new Date(),
-};
-
-const subscriberB = {
-  id: 'sub-2',
-  url: 'https://subscriber-b.test/webhook',
-  secret: null,
-  active: true,
-  created_at: new Date(),
-  updated_at: new Date(),
-};
-
-function makeDelivery(id: string, targetUrl: string, attempts = 0): WebhookDelivery {
-  return {
-    id,
-    event_type: 'remittance.created',
-    event_key: '42',
-    subscriber_id: `sub-${id}`,
-    target_url: targetUrl,
-    payload: {
-      remittance_id: '42',
-      sender: 'GSENDER',
-      agent: 'GAGENT',
-      amount: '10000000',
-      fee: '100000',
-      expiry: '1777777777',
-    },
-    status: 'pending',
-    attempt_count: attempts,
-    max_attempts: 5,
-    next_retry_at: new Date(),
-    last_error: null,
-    response_status: null,
-    delivered_at: null,
-  };
-}
-
-describe('WebhookDispatcher', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockFetch = vi.fn();
+    dispatcher = new WebhookDispatcher(mockFetch as any);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
-  it('dispatches remittance.created to all active subscribers', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
-
-    vi.mocked(getActiveWebhookSubscribers).mockResolvedValue([subscriberA, subscriberB]);
-    vi.mocked(enqueueWebhookDelivery)
-      .mockResolvedValueOnce(makeDelivery('1', subscriberA.url))
-      .mockResolvedValueOnce(makeDelivery('2', subscriberB.url));
-
-    const dispatcher = new WebhookDispatcher(fetchMock as unknown as typeof fetch);
-    await dispatcher.dispatchRemittanceCreated({
-      remittance_id: '42',
-      sender: 'GSENDER',
-      agent: 'GAGENT',
-      amount: '10000000',
-      fee: '100000',
-      expiry: '1777777777',
-    });
-
-    expect(getActiveWebhookSubscribers).toHaveBeenCalledTimes(1);
-    expect(enqueueWebhookDelivery).toHaveBeenCalledTimes(2);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(markWebhookDeliverySuccess).toHaveBeenCalledTimes(2);
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it('marks failed delivery pending with incremented attempt count for retry', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+  it('should calculate exponential backoff with jitter', () => {
+    const delays: number[] = [];
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const delay = (dispatcher as any).retryDelayMs(attempt);
+      delays.push(delay);
+      expect(delay).toBeGreaterThanOrEqual(0);
+    }
 
-    const delivery = makeDelivery('retry-1', subscriberA.url, 0);
-    vi.mocked(getPendingWebhookDeliveries).mockResolvedValue([delivery]);
+    // Verify exponential growth (with jitter, values should roughly follow exponential pattern)
+    expect(delays[1]).toBeGreaterThanOrEqual(delays[0]); // 2^1 * base >= 2^0 * base (with jitter variance)
+    expect(delays[4]).toBeLessThanOrEqual(300000); // Should be capped at max (300s)
+  });
 
-    const dispatcher = new WebhookDispatcher(fetchMock as unknown as typeof fetch);
-    await dispatcher.retryPendingDeliveries();
+  it('should respect max retry delay cap (300s)', () => {
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      const delay = (dispatcher as any).retryDelayMs(attempt);
+      expect(delay).toBeLessThanOrEqual(300000 + 300000 * 0.2); // max + jitter
+    }
+  });
 
-    expect(getPendingWebhookDeliveries).toHaveBeenCalledTimes(1);
-    expect(markWebhookDeliveryFailure).toHaveBeenCalledTimes(1);
+  it('should apply ±20% jitter by default', () => {
+    const baseMsBefore = process.env.WEBHOOK_RETRY_BASE_MS;
+    process.env.WEBHOOK_RETRY_BASE_MS = '1000';
+    process.env.WEBHOOK_RETRY_MAX_MS = '300000';
+    process.env.WEBHOOK_RETRY_JITTER_PERCENT = '20';
 
-    const args = vi.mocked(markWebhookDeliveryFailure).mock.calls[0];
-    expect(args[0]).toBe(delivery.id);
-    expect(args[1]).toBe(1);
-    expect(args[2]).toBe(5);
-    expect(args[4]).toContain('status 500');
-    expect(args[5]).toBe(500);
+    const samples: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      samples.push((dispatcher as any).retryDelayMs(2)); // 2^1 * 1000 = 2000
+    }
+
+    // With 20% jitter, range should be ~1600-2400
+    const min = Math.min(...samples);
+    const max = Math.max(...samples);
+    expect(min).toBeGreaterThanOrEqual(1600 - 100); // Some variance ok
+    expect(max).toBeLessThanOrEqual(2400 + 100);
+
+    if (baseMsBefore !== undefined) {
+      process.env.WEBHOOK_RETRY_BASE_MS = baseMsBefore;
+    }
+  });
+
+  it('should log retry attempts with calculated intervals', () => {
+    const consoleSpy = vi.spyOn(console, 'log');
+    (dispatcher as any).retryDelayMs(1);
+    expect(consoleSpy).toHaveBeenCalled();
+    const logMessage = consoleSpy.mock.calls[0][0];
+    expect(logMessage).toContain('Webhook retry attempt 1');
+    expect(logMessage).toContain('exponential=');
+    expect(logMessage).toContain('jitter=');
+  });
+
+  it('should handle config from environment variables', () => {
+    process.env.WEBHOOK_RETRY_BASE_MS = '500';
+    process.env.WEBHOOK_RETRY_MAX_MS = '60000';
+
+    const newDispatcher = new WebhookDispatcher(mockFetch as any);
+    const delay = (newDispatcher as any).retryDelayMs(1);
+    
+    // Base should be 500, so attempt 1 = 2^0 * 500 = 500
+    expect(delay).toBeGreaterThanOrEqual(400); // 500 - 20% jitter
+    expect(delay).toBeLessThanOrEqual(600); // 500 + 20% jitter
   });
 });

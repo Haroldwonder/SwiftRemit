@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import { ProofOfPayout } from '../ProofOfPayout';
 import * as horizonServiceModule from '../../services/horizonService';
+
+expect.extend(toHaveNoViolations);
 
 // Mock the horizon service
 vi.mock('../../services/horizonService', () => ({
@@ -49,8 +52,8 @@ describe('ProofOfPayout', () => {
     });
 
     expect(screen.getByText('42')).toBeInTheDocument();
-    expect(screen.getByText(/SENDER_A/)).toBeInTheDocument();
-    expect(screen.getByText(/AGENT_A/)).toBeInTheDocument();
+    expect(screen.getByText('SENDER...123456')).toBeInTheDocument();
+    expect(screen.getByText('AGENT_...789012')).toBeInTheDocument();
     expect(screen.getByText('1.0000000 USDC')).toBeInTheDocument();
     expect(screen.getByText('0.0050000 USDC')).toBeInTheDocument();
   });
@@ -83,7 +86,7 @@ describe('ProofOfPayout', () => {
     render(<ProofOfPayout remittanceId={42} />);
 
     await waitFor(() => {
-      const link = screen.getByText('View on Stellar Expert →');
+      const link = screen.getByText('Verify on Stellar Expert →');
       expect(link).toBeInTheDocument();
       expect(link.closest('a')).toHaveAttribute(
         'href',
@@ -98,9 +101,7 @@ describe('ProofOfPayout', () => {
     render(<ProofOfPayout remittanceId={42} />);
 
     await waitFor(() => {
-      // Check that addresses are truncated (first 6 + ... + last 6)
-      const senderElement = screen.getByText(/SENDER_A\.\.\./);
-      expect(senderElement).toBeInTheDocument();
+      expect(screen.getByText('SENDER...123456')).toBeInTheDocument();
     });
   });
 
@@ -125,9 +126,9 @@ describe('ProofOfPayout', () => {
     render(<ProofOfPayout remittanceId={42} />);
 
     await waitFor(() => {
-      // Check that timestamp is formatted (exact format depends on locale)
-      const timestampElement = screen.getByText(/2024/);
-      expect(timestampElement).toBeInTheDocument();
+      const label = screen.getByText('Timestamp:');
+      const value = label.nextElementSibling?.textContent ?? '';
+      expect(value).toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
     });
   });
 
@@ -162,6 +163,33 @@ describe('ProofOfPayout', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Capture an image as proof/)).toBeInTheDocument();
+    });
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations in loading state', async () => {
+      vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockReturnValue(new Promise(() => {}));
+      const { container } = render(<ProofOfPayout remittanceId={42} />);
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations when proof data is displayed', async () => {
+      vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
+        remittanceId: '42',
+        transactionHash: 'abc123',
+        amount: '100',
+        fee: '1',
+        asset: 'USDC',
+        sender: 'GSENDER',
+        agent: 'GAGENT',
+        ledgerSequence: 1000,
+        timestamp: '2026-01-01T00:00:00Z',
+      });
+      const { container } = render(<ProofOfPayout remittanceId={42} />);
+      await waitFor(() => expect(screen.queryByText(/loading/i)).not.toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
   });
 });

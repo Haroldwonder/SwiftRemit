@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import { trace } from '@opentelemetry/api';
 
 // AsyncLocalStorage to maintain correlation ID across async operations
 const correlationStorage = new AsyncLocalStorage<string>();
@@ -10,6 +11,13 @@ const correlationStorage = new AsyncLocalStorage<string>();
  */
 export function getCorrelationId(): string | undefined {
   return correlationStorage.getStore();
+}
+
+/**
+ * Get correlation ID from Express request object
+ */
+export function getCorrelationIdFromRequest(req: Request): string | undefined {
+  return (req as any).correlationId;
 }
 
 /**
@@ -42,6 +50,21 @@ export function correlationIdMiddleware(req: Request, res: Response, next: NextF
 /**
  * Enhanced logger with correlation ID support
  */
+const SENSITIVE_FIELDS = new Set([
+  'secret_key', 'private_key', 'password', 'kyc_fields',
+  'token', 'authorization', 'secret', 'api_key',
+]);
+
+function redact(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(redact);
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([k, v]) =>
+      [k, SENSITIVE_FIELDS.has(k) ? '[REDACTED]' : redact(v)]
+    )
+  );
+}
+
 export class StructuredLogger {
   private context: string;
 
@@ -51,13 +74,19 @@ export class StructuredLogger {
 
   private formatMessage(level: string, message: string, data?: any): string {
     const correlationId = getCorrelationId();
+    const activeSpan = trace.getActiveSpan();
+    const spanContext = activeSpan?.spanContext();
+    const traceId = spanContext?.traceId;
+    const spanId = spanContext?.spanId;
     const logEntry = {
       timestamp: new Date().toISOString(),
       level,
       context: this.context,
       correlationId,
+      ...(traceId && { traceId }),
+      ...(spanId && { spanId }),
       message,
-      ...(data && { data }),
+      ...(data && { data: redact(data) }),
     };
     return JSON.stringify(logEntry);
   }

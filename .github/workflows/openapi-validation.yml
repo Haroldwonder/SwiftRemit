@@ -33,6 +33,10 @@ jobs:
         working-directory: ./api
         run: npm ci
       
+      - name: Generate API OpenAPI spec
+        working-directory: ./api
+        run: npm run generate:openapi
+      
       - name: Validate API OpenAPI spec
         working-directory: ./api
         run: npm run validate:openapi
@@ -60,6 +64,10 @@ jobs:
       - name: Install dependencies
         working-directory: ./backend
         run: npm ci
+      
+      - name: Generate Backend OpenAPI spec
+        working-directory: ./backend
+        run: npm run generate:openapi
       
       - name: Validate Backend OpenAPI spec
         working-directory: ./backend

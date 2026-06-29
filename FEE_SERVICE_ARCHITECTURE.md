@@ -434,3 +434,59 @@ The refactored architecture provides:
 - ✅ Comprehensive fee transparency
 - ✅ Flexible corridor support
 - ✅ Production-ready implementation
+
+---
+
+## Net Settlement Execution (#834)
+
+### Overview
+
+`execute_net_settlement` is the on-chain execution path for netting.rs. It moves only
+the **net difference** between opposing agent flows instead of executing every individual
+remittance transfer, dramatically reducing on-chain token transfer count.
+
+### Authorization
+
+Only addresses holding the **Admin role** (settlement operators) may call this function.
+The caller must `require_auth()` and pass `require_role_admin()` before any state changes.
+
+### Flow
+
+```
+operator calls execute_net_settlement(operator, [id1, id2, ...])
+    │
+    ├─ 1. Auth: operator.require_auth() + require_role_admin()
+    ├─ 2. Guard: contract not paused, batch size 1–50
+    ├─ 3. Load: fetch all Pending remittances, reject expired/settled
+    │
+    ├─ 4. Compute: netting::compute_net_settlements()
+    │       Groups flows by (party_a, party_b) pair (address-sorted for determinism)
+    │       Offsets opposing flows — e.g. A→B 100 and B→A 90 → net 10 A→B
+    │
+    ├─ 5. Validate: netting::validate_net_settlement() — fees must be conserved
+    │
+    ├─ 6. Execute net token transfers (contract → recipient, payout = net - fees)
+    │       Accumulate fees into platform fee pool
+    │       Emit settlement_completed event per net transfer
+    │
+    └─ 7. Finalize: mark each remittance Completed, set settlement hash,
+              emit remittance_completed per remittance
+              return BatchSettlementResult { settled_ids }
+```
+
+### Example
+
+| Remittance | Direction | Amount | Fee |
+|-----------|-----------|--------|-----|
+| #1        | A → B     | 100    | 2   |
+| #2        | B → A     | 90     | 1   |
+
+**Result:** Single net transfer of **9** (= 10 net − 1 fee) from A to B.
+Total fees collected: **3** (2 + 1).
+
+### Key Properties
+
+- **Single call**: all net transfers execute atomically in one contract invocation.
+- **Deterministic**: address-pair ordering is canonical; same input always produces same output.
+- **Fee-preserving**: total fees in = total fees out (validated before execution).
+- **DoS-safe**: batch capped at `MAX_NETTING_BATCH_SIZE` (50).

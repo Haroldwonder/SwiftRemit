@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
-import { VerificationBadge, VerificationStatus, AssetVerification } from '../VerificationBadge';
+import { axe, toHaveNoViolations } from 'jest-axe';
+import { VerificationBadge, VerificationStatus } from '../VerificationBadge';
+import type { AssetVerification } from '../VerificationBadge';
+
+expect.extend(toHaveNoViolations);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -420,6 +424,40 @@ describe('VerificationBadge', () => {
       expect(global.fetch).toHaveBeenCalledWith(
         `http://localhost:4000/api/verification/USDC/${ISSUER}`
       );
+    });
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations in verified state', async () => {
+      mockFetchOnce({ ok: true, status: 200, json: async () => makeVerification() });
+      const { container } = render(<VerificationBadge assetCode="USDC" issuer={ISSUER} />);
+      await waitFor(() => expect(screen.getByText('Verified')).toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations in unverified state', async () => {
+      mockFetchOnce({ ok: false, status: 404 });
+      const { container } = render(<VerificationBadge assetCode="UNKNOWN" issuer={ISSUER} />);
+      await waitFor(() => expect(screen.getByText('Unverified')).toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations in loading state', () => {
+      (global.fetch as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise(() => {}));
+      const { container } = render(<VerificationBadge assetCode="USDC" issuer={ISSUER} />);
+      return axe(container).then((results) => expect(results).toHaveNoViolations());
+    });
+
+    it('has no a11y violations when details modal is open', async () => {
+      mockFetchOnce({ ok: true, status: 200, json: async () => makeVerification() });
+      const { container } = render(<VerificationBadge assetCode="USDC" issuer={ISSUER} />);
+      await waitFor(() => expect(screen.getByText('Verified')).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button', { name: /asset verification status/i }));
+      await waitFor(() => expect(screen.getByText('Asset Verification Details')).toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
     });
   });
 });

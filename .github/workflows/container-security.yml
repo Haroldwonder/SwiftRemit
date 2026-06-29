@@ -1,0 +1,114 @@
+name: Container Security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/container-security.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/container-security.yml"
+  schedule:
+    # Weekly scan every Monday at 07:00 UTC to catch newly disclosed CVEs
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write  # required to upload SARIF to GitHub Security tab
+
+concurrency:
+  group: container-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy-scan:
+    name: Trivy scan (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            context: ./backend
+            dockerfile: ./backend/Dockerfile
+            image: swiftremit-backend
+          - service: api
+            context: ./api
+            dockerfile: ./api/Dockerfile
+            image: swiftremit-api
+          - service: frontend
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
+            image: swiftremit-frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.service }} image
+        run: |
+          docker build \
+            -f ${{ matrix.dockerfile }} \
+            -t ${{ matrix.image }}:scan \
+            ${{ matrix.context }}
+
+      # ── Vulnerability scan – fail on CRITICAL or HIGH CVEs ────────────────
+      - name: Scan ${{ matrix.service }} for CVEs
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: "${{ matrix.image }}:scan"
+          format: "sarif"
+          output: "trivy-${{ matrix.service }}.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          ignore-unfixed: true
+
+      # Upload SARIF even on failure so developers can inspect results
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "trivy-${{ matrix.service }}.sarif"
+          category: "trivy-${{ matrix.service }}"
+
+      # ── SBOM generation ───────────────────────────────────────────────────
+      - name: Generate SBOM for ${{ matrix.service }}
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: "${{ matrix.image }}:scan"
+          format: "cyclonedx"
+          output: "sbom-${{ matrix.service }}.cdx.json"
+          # SBOM generation should not fail the build
+          exit-code: "0"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}.cdx.json
+          retention-days: 90
+
+  sbom-summary:
+    name: SBOM summary
+    runs-on: ubuntu-latest
+    needs: trivy-scan
+    if: always()
+    steps:
+      - name: Download all SBOMs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sbom-*
+          merge-multiple: true
+
+      - name: List generated SBOMs
+        run: |
+          echo "### SBOM artifacts" >> $GITHUB_STEP_SUMMARY
+          for f in *.cdx.json; do
+            size=$(du -sh "$f" | cut -f1)
+            echo "- \`$f\` ($size)" >> $GITHUB_STEP_SUMMARY
+          done

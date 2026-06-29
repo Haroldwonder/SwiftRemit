@@ -1,8 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { TransactionHistory, TransactionHistoryItem } from '../TransactionHistory';
+import { axe, toHaveNoViolations } from 'jest-axe';
+import { TransactionHistory } from '../TransactionHistory';
+import type { TransactionHistoryItem } from '../TransactionHistory';
 import '@testing-library/jest-dom';
+
+expect.extend(toHaveNoViolations);
 
 const mockTransactions: TransactionHistoryItem[] = Array.from({ length: 25 }, (_, i) => ({
   id: `tx-${i}`,
@@ -14,6 +18,14 @@ const mockTransactions: TransactionHistoryItem[] = Array.from({ length: 25 }, (_
 }));
 
 describe('TransactionHistory Pagination', () => {
+  it('initializes uncontrolled pagination from the URL', () => {
+    window.history.replaceState(null, '', '/?page=2');
+    render(<TransactionHistory transactions={mockTransactions} pageSize={10} />);
+
+    expect(screen.getByText(/Page 2 of 3/)).toBeInTheDocument();
+    expect(screen.getByText(/Showing 11–20 of 25 transactions/)).toBeInTheDocument();
+  });
+
   it('renders pagination controls with default page size', () => {
     render(<TransactionHistory transactions={mockTransactions} pageSize={10} />);
 
@@ -177,5 +189,38 @@ describe('TransactionHistory Pagination', () => {
     );
 
     expect(screen.getByText(/Showing 11–20 of 25 transactions/)).toBeInTheDocument();
+  });
+
+  it('restores page state from the URL on popstate navigation', () => {
+    window.history.replaceState(null, '', '/?page=1');
+    render(<TransactionHistory transactions={mockTransactions} pageSize={10} />);
+
+    fireEvent.click(screen.getByLabelText('Next page'));
+    expect(screen.getByText(/Page 2 of 3/)).toBeInTheDocument();
+
+    window.history.replaceState(null, '', '/?page=1');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+
+    expect(screen.getByText(/Page 1 of 3/)).toBeInTheDocument();
+    expect(screen.getByText(/Showing 1–10 of 25 transactions/)).toBeInTheDocument();
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations on first page', async () => {
+      const { container } = render(
+        <TransactionHistory transactions={mockTransactions} pageSize={10} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations on second page', async () => {
+      const { container } = render(
+        <TransactionHistory transactions={mockTransactions} pageSize={10} />
+      );
+      fireEvent.click(screen.getByLabelText('Next page'));
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
   });
 });

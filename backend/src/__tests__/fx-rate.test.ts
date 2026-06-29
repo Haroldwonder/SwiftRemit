@@ -14,7 +14,7 @@ describe('FX Rate Storage', () => {
   });
 
   afterAll(async () => {
-    await pool.end();
+    await pool?.end();
   });
 
   it('should store FX rate at transaction time', async () => {

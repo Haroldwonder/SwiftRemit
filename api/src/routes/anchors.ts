@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { timingSafeEqual } from 'crypto';
 import { AnchorProvider, AnchorListResponse, AnchorDetailResponse } from '../types/anchor';
 import { ErrorResponse } from '../types';
 import {
@@ -6,6 +7,7 @@ import {
   getDefaultAnchorStore,
   isAnchorStatus,
 } from '../db/anchorStore';
+import { encodeCursor, decodeCursor } from '../services/cursor-pagination';
 
 type RouterOptions = {
   store?: AnchorStore;
@@ -88,7 +90,22 @@ function requireAdminApiKey(adminApiKey?: string) {
     }
 
     const requestApiKey = req.header('x-api-key');
-    if (!requestApiKey || requestApiKey !== adminApiKey) {
+    if (!requestApiKey) {
+      return sendError(res, 401, 'Unauthorized', 'UNAUTHORIZED');
+    }
+
+    // Use timing-safe comparison to prevent timing attacks
+    try {
+      const keysMatch = timingSafeEqual(
+        Buffer.from(requestApiKey),
+        Buffer.from(adminApiKey),
+      );
+      if (!keysMatch) {
+        return sendError(res, 401, 'Unauthorized', 'UNAUTHORIZED');
+      }
+    } catch {
+      // timingSafeEqual throws if buffers are different lengths
+      // This is expected for invalid keys, treat as unauthorized
       return sendError(res, 401, 'Unauthorized', 'UNAUTHORIZED');
     }
 
@@ -105,22 +122,53 @@ export function createAnchorsRouter(options: RouterOptions = {}): Router {
 
 /**
  * GET /api/anchors
- * Returns all available anchor providers
+ * Returns all available anchor providers with cursor-based pagination
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { status, currency } = req.query;
+    const { status, currency, cursor, limit: limitStr } = req.query;
+    const limit = Math.min(parseInt(limitStr as string) || 20, 100);
 
-    const filteredAnchors = await getStore().list({
+    // Accept currencies[] (multi) or currency (single, backward-compat)
+    const rawCurrencies = req.query['currencies[]'];
+    const currencies: string[] | undefined = rawCurrencies
+      ? (Array.isArray(rawCurrencies) ? rawCurrencies : [rawCurrencies]).filter(
+          (c): c is string => typeof c === 'string',
+        )
+      : undefined;
+
+    let filteredAnchors = await getStore().list({
       status: typeof status === 'string' ? status : undefined,
       currency: typeof currency === 'string' ? currency : undefined,
+      currencies,
     });
 
-    const response: AnchorListResponse = {
+    // Apply cursor-based pagination
+    let startIdx = 0;
+    if (cursor) {
+      try {
+        const decodedId = decodeCursor(cursor as string);
+        startIdx = filteredAnchors.findIndex(a => String(a.id) === decodedId);
+        if (startIdx >= 0) startIdx++;
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: { message: 'Invalid cursor', code: 'INVALID_CURSOR' },
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    const items = filteredAnchors.slice(startIdx, startIdx + limit);
+    const hasMore = startIdx + limit < filteredAnchors.length;
+    const nextCursor = hasMore && items.length > 0 ? encodeCursor(items[items.length - 1].id) : null;
+
+    const response = {
       success: true,
-      data: filteredAnchors,
-      count: filteredAnchors.length,
-      timestamp: timestamp(),
+      data: items,
+      next_cursor: nextCursor,
+      has_more: hasMore,
+      timestamp: new Date().toISOString(),
     };
 
     res.json(response);

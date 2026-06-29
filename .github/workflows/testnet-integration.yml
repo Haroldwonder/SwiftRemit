@@ -1,0 +1,132 @@
+name: Testnet Integration Tests
+
+# Runs on a daily schedule and on PRs targeting main.
+# Requires GitHub Secrets:
+#   TESTNET_ADMIN_SECRET, TESTNET_ADMIN_PUBLIC
+#   TESTNET_AGENT_SECRET, TESTNET_AGENT_PUBLIC
+#   TESTNET_SENDER_SECRET, TESTNET_SENDER_PUBLIC
+#   TESTNET_RECIPIENT_SECRET, TESTNET_RECIPIENT_PUBLIC
+#   SWIFTREMIT_CONTRACT_ID, USDC_TOKEN_ID
+#   TESTNET_CREATE_REMITTANCE_XDR, TESTNET_CONFIRM_PAYOUT_XDR
+#   TESTNET_FAUCET_PUBLIC (optional), TESTNET_DRAIN_XDR (optional)
+
+on:
+  schedule:
+    # 02:00 UTC daily
+    - cron: "0 2 * * *"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/testnet-integration.yml"
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  testnet-integration:
+    name: Testnet Integration
+    runs-on: ubuntu-latest
+
+    # Only run on PRs from the same repo (not forks) to protect secrets.
+    if: >
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-testnet-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-testnet-
+
+      # Write secrets to .env.testnet.local so the test suite can load them.
+      # No secret value is ever echoed to the log.
+      - name: Write testnet env file
+        env:
+          NETWORK: testnet
+          HORIZON_URL: https://horizon-testnet.stellar.org
+          RPC_URL: https://soroban-testnet.stellar.org:443
+          FRIENDBOT_URL: https://friendbot.stellar.org
+          SWIFTREMIT_CONTRACT_ID: ${{ secrets.SWIFTREMIT_CONTRACT_ID }}
+          USDC_TOKEN_ID: ${{ secrets.USDC_TOKEN_ID }}
+          TESTNET_ADMIN_SECRET: ${{ secrets.TESTNET_ADMIN_SECRET }}
+          TESTNET_ADMIN_PUBLIC: ${{ secrets.TESTNET_ADMIN_PUBLIC }}
+          TESTNET_AGENT_SECRET: ${{ secrets.TESTNET_AGENT_SECRET }}
+          TESTNET_AGENT_PUBLIC: ${{ secrets.TESTNET_AGENT_PUBLIC }}
+          TESTNET_SENDER_SECRET: ${{ secrets.TESTNET_SENDER_SECRET }}
+          TESTNET_SENDER_PUBLIC: ${{ secrets.TESTNET_SENDER_PUBLIC }}
+          TESTNET_RECIPIENT_SECRET: ${{ secrets.TESTNET_RECIPIENT_SECRET }}
+          TESTNET_RECIPIENT_PUBLIC: ${{ secrets.TESTNET_RECIPIENT_PUBLIC }}
+          TESTNET_CREATE_REMITTANCE_XDR: ${{ secrets.TESTNET_CREATE_REMITTANCE_XDR }}
+          TESTNET_CONFIRM_PAYOUT_XDR: ${{ secrets.TESTNET_CONFIRM_PAYOUT_XDR }}
+          TESTNET_FAUCET_PUBLIC: ${{ secrets.TESTNET_FAUCET_PUBLIC }}
+          TESTNET_DRAIN_XDR: ${{ secrets.TESTNET_DRAIN_XDR }}
+          TRANSACTION_TIMEOUT: "30"
+          POLL_INTERVAL_MS: "2000"
+          MAX_POLL_RETRIES: "15"
+          DEFAULT_FEE_BPS: "250"
+          TRANSACTION_FEE: "100000"
+          TEST_REMITTANCE_AMOUNT: "1000000000"
+        run: |
+          cat > .env.testnet.local <<EOF
+          NETWORK=${NETWORK}
+          HORIZON_URL=${HORIZON_URL}
+          RPC_URL=${RPC_URL}
+          FRIENDBOT_URL=${FRIENDBOT_URL}
+          SWIFTREMIT_CONTRACT_ID=${SWIFTREMIT_CONTRACT_ID}
+          USDC_TOKEN_ID=${USDC_TOKEN_ID}
+          TESTNET_ADMIN_SECRET=${TESTNET_ADMIN_SECRET}
+          TESTNET_ADMIN_PUBLIC=${TESTNET_ADMIN_PUBLIC}
+          TESTNET_AGENT_SECRET=${TESTNET_AGENT_SECRET}
+          TESTNET_AGENT_PUBLIC=${TESTNET_AGENT_PUBLIC}
+          TESTNET_SENDER_SECRET=${TESTNET_SENDER_SECRET}
+          TESTNET_SENDER_PUBLIC=${TESTNET_SENDER_PUBLIC}
+          TESTNET_RECIPIENT_SECRET=${TESTNET_RECIPIENT_SECRET}
+          TESTNET_RECIPIENT_PUBLIC=${TESTNET_RECIPIENT_PUBLIC}
+          TESTNET_CREATE_REMITTANCE_XDR=${TESTNET_CREATE_REMITTANCE_XDR}
+          TESTNET_CONFIRM_PAYOUT_XDR=${TESTNET_CONFIRM_PAYOUT_XDR}
+          TESTNET_FAUCET_PUBLIC=${TESTNET_FAUCET_PUBLIC}
+          TESTNET_DRAIN_XDR=${TESTNET_DRAIN_XDR}
+          TRANSACTION_TIMEOUT=${TRANSACTION_TIMEOUT}
+          POLL_INTERVAL_MS=${POLL_INTERVAL_MS}
+          MAX_POLL_RETRIES=${MAX_POLL_RETRIES}
+          DEFAULT_FEE_BPS=${DEFAULT_FEE_BPS}
+          TRANSACTION_FEE=${TRANSACTION_FEE}
+          TEST_REMITTANCE_AMOUNT=${TEST_REMITTANCE_AMOUNT}
+          EOF
+
+      # Run only the testnet-integration tests, sequentially (--test-threads=1)
+      # to avoid race conditions on shared on-chain state.
+      - name: Run testnet integration tests
+        run: |
+          cargo test \
+            --features testnet-integration \
+            -- \
+            testnet \
+            --test-threads=1 \
+            --nocapture
+
+      # Always clean up the env file so secrets are not left on the runner.
+      - name: Remove testnet env file
+        if: always()
+        run: rm -f .env.testnet.local

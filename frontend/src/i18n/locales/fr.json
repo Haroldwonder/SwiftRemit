@@ -1,0 +1,148 @@
+{
+  "app": {
+    "title": "SwiftRemit",
+    "subtitle": "Transferts USDC Sécurisés à l'International",
+    "footer": "Construit sur Stellar Soroban • Testnet"
+  },
+  "wallet": {
+    "title": "Portefeuille",
+    "notConnected": "Non connecté",
+    "connectPrompt": "Connectez un portefeuille pour continuer",
+    "connectedKey": "Clé publique connectée",
+    "connect": "Connecter",
+    "connecting": "Connexion...",
+    "disconnect": "Déconnecter",
+    "disconnecting": "Déconnexion...",
+    "signMessage": "Signer le message",
+    "signing": "En attente de signature...",
+    "installLink": "Installer Freighter Wallet",
+    "errors": {
+      "notInstalled": "Freighter Wallet n'est pas installé.",
+      "notConnected": "Veuillez déverrouiller votre Freighter Wallet et réessayer.",
+      "connectFailed": "Échec de la connexion au portefeuille. Veuillez réessayer.",
+      "disconnectFailed": "Échec de la déconnexion du portefeuille.",
+      "signatureRejected": "La demande de signature a été rejetée.",
+      "signatureFailed": "Impossible de compléter la demande de signature."
+    },
+    "warnings": {
+      "networkMismatch": "Avertissement : Le portefeuille est connecté à {{walletNetwork}}, mais {{expectedNetwork}} est attendu."
+    }
+  },
+  "sendMoney": {
+    "title": "Envoyer de l'argent",
+    "stepLabel": "Étape {{step}} sur 5 : {{name}}",
+    "steps": {
+      "1": "Saisir le montant",
+      "2": "Sélectionner l'actif",
+      "3": "Saisir le destinataire",
+      "4": "Vérifier le résumé",
+      "5": "Confirmer la transaction"
+    },
+    "amount": "Montant",
+    "asset": "Actif",
+    "chooseAsset": "Choisir un actif",
+    "recipient": "Destinataire",
+    "memo": "Mémo",
+    "memoOptional": "(facultatif)",
+    "memoPlaceholder": "ex. Facture #1234",
+    "back": "Retour",
+    "continue": "Continuer",
+    "confirm": "Confirmer la transaction",
+    "confirming": "Confirmation...",
+    "success": "Transaction confirmée avec succès.",
+    "txHash": "Hash de transaction :",
+    "viewOnExpert": "Voir sur Stellar Expert ↗",
+    "review": {
+      "amount": "Montant",
+      "asset": "Actif",
+      "recipient": "Destinataire",
+      "memo": "Mémo"
+    },
+    "errors": {
+      "amountRequired": "Le montant est requis.",
+      "amountInvalid": "Le montant doit être supérieur à zéro.",
+      "assetRequired": "Veuillez sélectionner un actif.",
+      "recipientInvalid": "Le destinataire doit être une clé publique Stellar valide.",
+      "incomplete": "Les détails de la transaction sont incomplets.",
+      "failed": "La transaction a échoué. Veuillez réessayer.",
+      "rejected": "La transaction a été rejetée par le portefeuille.",
+      "freighterNotInstalled": "Freighter Wallet n'est pas installé. Veuillez l'installer pour continuer.",
+      "assetIssuerNotConfigured": "L'actif {{asset}} n'est pas disponible dans cet environnement."
+    },
+    "limits": {
+      "min": "Min : {{value}} {{asset}}",
+      "max": "Max : {{value}} {{asset}}",
+      "dailyRemaining": "Limite quotidienne : {{value}} {{asset}} restant",
+      "approachingLimit": "Avertissement : Vous approchez de votre limite quotidienne.",
+      "loading": "Chargement des limites...",
+      "error": "Impossible de charger les limites."
+    }
+  },
+  "language": {
+    "selector": "Langue",
+    "en": "English",
+    "es": "Español",
+    "fr": "Français",
+    "pt": "Português"
+  },
+  "kyc": {
+    "loading": "Chargement du KYC...",
+    "statusDetails": "Détails du statut KYC",
+    "overallStatus": "Statut général :",
+    "transferAllowed": "Transfert autorisé :",
+    "transferAllowedYes": "Oui",
+    "transferAllowedNo": "Non",
+    "lastChecked": "Dernière vérification :",
+    "reason": "Raison :",
+    "anchorBreakdown": "Détail par Anchor",
+    "noAnchors": "Aucun enregistrement KYC anchor trouvé.",
+    "anchor": "Anchor :",
+    "status": "Statut :",
+    "kycLevel": "Niveau KYC :",
+    "verifiedAt": "Vérifié le :",
+    "expiresAt": "Expire le :",
+    "noExpiry": "Sans expiration",
+    "checking": "Vérification...",
+    "close": "Fermer",
+    "badgeExpired": "KYC EXPIRÉ — Renouveler maintenant",
+    "errors": {
+      "loadFailed": "Échec du chargement du statut KYC",
+      "unknown": "Erreur KYC inconnue"
+    }
+  },
+  "dispute": {
+    "title": "Résolution des litiges",
+    "openDisputes": "Litiges ouverts",
+    "auditTrail": "Journal d'audit",
+    "loading": "Chargement…",
+    "noDisputes": "Aucun envoi contesté.",
+    "noResolved": "Aucun litige résolu pour l'instant.",
+    "resolving": "Résolution…",
+    "resolved": "Litige résolu on-chain.",
+    "tx": "Tx :",
+    "confirmTitle": "Confirmer la résolution",
+    "confirmMessage": "Résoudre le litige #{{id}} en faveur de {{party}} ?",
+    "senderFunds": "Les fonds seront retournés à l'expéditeur.",
+    "agentFunds": "Les fonds seront libérés à l'agent moins les frais.",
+    "cancel": "Annuler",
+    "confirm": "Confirmer",
+    "favourSender": "Faveur expéditeur",
+    "favourAgent": "Faveur agent",
+    "sender": "Expéditeur",
+    "agent": "Agent",
+    "remittance": "Envoi #{{id}}",
+    "amount": "Montant :",
+    "created": "Créé le :",
+    "evidenceHash": "Hash de preuve :",
+    "resolvedAt": "Résolu le",
+    "inFavourOf": "En faveur de",
+    "resolvedBy": "Résolu par",
+    "prevPage": "← Précédent",
+    "nextPage": "Suivant →",
+    "page": "Page {{page}}",
+    "errors": {
+      "loadFailed": "Échec du chargement des litiges",
+      "resolveFailed": "Échec de la résolution du litige"
+    }
+  }
+}

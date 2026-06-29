@@ -231,6 +231,125 @@
   }
 }
 
+.skeleton {
+  background: linear-gradient(90deg, var(--color-bg-secondary) 25%, var(--color-bg-primary) 50%, var(--color-bg-secondary) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite ease-in-out;
+  border-radius: 4px;
+  display: block;
+  /* Create space without content to prevent layout shift */
+  pointer-events: none;
+}
+
+.skeleton-text {
+  height: 1rem;
+  width: 100%;
+  max-width: 120px;
+  border-radius: 4px;
+}
+
+/* Specific widths for different skeleton text types */
+.skeleton-amount {
+  max-width: 100px;
+}
+
+.skeleton-asset {
+  max-width: 50px;
+}
+
+.skeleton-recipient {
+  max-width: 180px;
+}
+
+.skeleton-timestamp {
+  max-width: 140px;
+}
+
+/* Card-specific skeleton sizes */
+.skeleton-card-amount {
+  max-width: 150px;
+  height: 1.2rem;
+}
+
+.skeleton-card-status {
+  height: 1.5rem;
+  width: 90px;
+  flex-shrink: 0;
+}
+
+.skeleton-card-button {
+  height: 2.5rem;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+.skeleton-status {
+  height: 1.5rem;
+  width: 80px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.skeleton-button {
+  height: 2rem;
+  width: 60px;
+  border-radius: 8px;
+}
+
+.skeleton-label {
+  height: 0.8rem;
+  width: 40px;
+  margin-bottom: 0.2rem;
+  border-radius: 4px;
+}
+
+.skeleton-card {
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: var(--color-bg-primary);
+}
+
+.skeleton-card .history-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.skeleton-card .history-card-grid {
+  display: grid;
+  gap: 0.55rem;
+  margin-bottom: 0.75rem;
+}
+
+.skeleton-card .history-card-grid > div {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Improved shimmer animation for better visual effect */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  50% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Add reduced motion support for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+    background: var(--color-bg-secondary);
+  }
+}
+
 .history-pagination-info {
   margin: 0.75rem 0 0;
   font-size: 0.9rem;
@@ -295,4 +414,25 @@
     font-size: 0.8rem;
     min-width: auto;
   }
+}
+
+.receipt-buttons {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.receipt-btn {
+  padding: 2px 8px;
+  font-size: 0.75em;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  background: transparent;
+  color: #3b82f6;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.receipt-btn:hover {
+  background: #3b82f6;
+  color: #fff;
 }
