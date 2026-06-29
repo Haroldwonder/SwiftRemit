@@ -2,7 +2,7 @@
 //!
 //! This module enforces the canonical `RemittanceStatus` state machine:
 //!
-//! ```
+//! ```text
 //! Pending → Processing → Completed
 //!         ↘            ↘
 //!           Cancelled    Cancelled
@@ -15,7 +15,7 @@
 //! 4. State updates are atomic — no partial writes
 //! 5. Same-state transitions are idempotent (safe for retries)
 
-use crate::types::RemittanceStatus;
+use crate::types::{MaybeBytes32, RemittanceStatus};
 use crate::errors::ContractError;
 use soroban_sdk::Env;
 
@@ -122,6 +122,8 @@ pub fn get_valid_next_states(status: &RemittanceStatus) -> soroban_sdk::Vec<Remi
             result.push_back(RemittanceStatus::Cancelled);
         }
         RemittanceStatus::Completed | RemittanceStatus::Cancelled => {}
+        RemittanceStatus::Failed => { result.push_back(RemittanceStatus::Disputed); }
+        RemittanceStatus::Disputed => {}
     }
 
     result
@@ -299,6 +301,7 @@ mod tests {
         let env = Env::default();
         let sender = soroban_sdk::Address::generate(&env);
         let agent = soroban_sdk::Address::generate(&env);
+        let token = soroban_sdk::Address::generate(&env);
 
         let mut remittance = crate::Remittance {
             id: 1,
@@ -308,6 +311,12 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token,
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         };
 
         let result = transition_status(&env, &mut remittance, RemittanceStatus::Processing);
@@ -320,6 +329,7 @@ mod tests {
         let env = Env::default();
         let sender = soroban_sdk::Address::generate(&env);
         let agent = soroban_sdk::Address::generate(&env);
+        let token = soroban_sdk::Address::generate(&env);
 
         let mut remittance = crate::Remittance {
             id: 1,
@@ -329,6 +339,12 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Completed,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token,
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         };
 
         let result = transition_status(&env, &mut remittance, RemittanceStatus::Pending);
@@ -342,6 +358,7 @@ mod tests {
         let env = Env::default();
         let sender = soroban_sdk::Address::generate(&env);
         let agent = soroban_sdk::Address::generate(&env);
+        let token = soroban_sdk::Address::generate(&env);
 
         let mut remittance = crate::Remittance {
             id: 1,
@@ -351,6 +368,12 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token,
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         };
 
         let result = transition_status(&env, &mut remittance, RemittanceStatus::Pending);

@@ -13,6 +13,9 @@ export interface CurrencyResponse {
   success: boolean;
   data: Currency[];
   count: number;
+  total?: number;
+  limit?: number;
+  offset?: number;
   timestamp: string;
 }
 

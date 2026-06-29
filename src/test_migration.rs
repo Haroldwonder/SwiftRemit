@@ -71,13 +71,13 @@ fn test_export_sets_migration_in_progress() {
     let agent = Address::generate(&env);
 
     token.mint(&sender, &10_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
     // Export locks the contract
     contract.export_migration_snapshot(&admin);
 
     // create_remittance must now fail with MigrationInProgress (error code 30)
-    let result = contract.try_create_remittance(&sender, &agent, &1000, &None, &None, &None);
+    let result = contract.try_create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
     assert_eq!(
         result.unwrap_err().unwrap(),
         ContractError::MigrationInProgress
@@ -193,11 +193,11 @@ fn test_full_export_import_cycle_with_remittances() {
     let agent = Address::generate(&env);
 
     token.mint(&sender, &100_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
     // Create a few remittances
-    let id1 = contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None);
-    let id2 = contract.create_remittance(&sender, &agent, &20_000, &None, &None, &None);
+    let id1 = contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None, &None, &None);
+    let id2 = contract.create_remittance(&sender, &agent, &20_000, &None, &None, &None, &None, &None);
 
     // Export — locks the contract
     let snapshot = contract.export_migration_snapshot(&admin);
@@ -218,7 +218,7 @@ fn test_full_export_import_cycle_with_remittances() {
     contract.import_migration_batch(&admin, &batch);
 
     // Lock cleared — normal ops resume
-    let id3 = contract.create_remittance(&sender, &agent, &5_000, &None, &None, &None);
+    let id3 = contract.create_remittance(&sender, &agent, &5_000, &None, &None, &None, &None, &None);
     assert_eq!(id3, 3);
 }
 
@@ -232,15 +232,15 @@ fn test_migration_blocks_confirm_payout() {
     let agent = Address::generate(&env);
 
     token.mint(&sender, &50_000);
-    contract.register_agent(&agent);
+    contract.register_agent(&agent, &None);
 
-    let remittance_id = contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None);
+    let remittance_id = contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None, &None, &None);
 
     // Lock via export
     contract.export_migration_snapshot(&admin);
 
     // confirm_payout must be blocked
-    let result = contract.try_confirm_payout(&remittance_id, &None);
+    let result = contract.try_confirm_payout(&remittance_id, &None, &None);
     assert_eq!(
         result.unwrap_err().unwrap(),
         ContractError::MigrationInProgress
@@ -270,6 +270,7 @@ fn build_single_batch(env: &Env, snapshot: &MigrationSnapshot) -> MigrationBatch
                 RemittanceStatus::Pending => 0,
                 RemittanceStatus::Completed => 1,
                 RemittanceStatus::Cancelled => 2,
+                _ => 3,
             };
             data.append(&Bytes::from_array(env, &[status_byte]));
             if let Some(expiry) = r.expiry {
@@ -287,4 +288,240 @@ fn build_single_batch(env: &Env, snapshot: &MigrationSnapshot) -> MigrationBatch
         remittances,
         batch_hash,
     }
+}
+
+// ─── Issue #418 — strict monotonic batch ordering ────────────────────────────
+
+#[test]
+fn test_import_batch_rejects_out_of_order_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin, token) = setup(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    token.mint(&sender, &100_000);
+    contract.register_agent(&agent, &None);
+
+    // Create 2 remittances so we have 2 batches
+    contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None, &None, &None);
+    contract.create_remittance(&sender, &agent, &20_000, &None, &None, &None, &None, &None);
+
+    let snapshot = contract.export_migration_snapshot(&admin);
+
+    // Build batch 1 (out of order — should be rejected before batch 0)
+    let remittances = snapshot.persistent_data.remittances.clone();
+    let batch_1 = {
+        let mut data = soroban_sdk::Bytes::new(&env);
+        let batch_number: u32 = 1;
+        data.append(&soroban_sdk::Bytes::from_array(&env, &batch_number.to_be_bytes()));
+        for i in 0..remittances.len() {
+            let r = remittances.get_unchecked(i);
+            data.append(&soroban_sdk::Bytes::from_array(&env, &r.id.to_be_bytes()));
+            data.append(&r.sender.clone().to_xdr(&env));
+            data.append(&r.agent.clone().to_xdr(&env));
+            data.append(&soroban_sdk::Bytes::from_array(&env, &r.amount.to_be_bytes()));
+            data.append(&soroban_sdk::Bytes::from_array(&env, &r.fee.to_be_bytes()));
+            let status_byte: u8 = match r.status {
+                crate::RemittanceStatus::Pending => 0,
+                crate::RemittanceStatus::Completed => 1,
+                crate::RemittanceStatus::Cancelled => 2,
+                _ => 0,
+            };
+            data.append(&soroban_sdk::Bytes::from_array(&env, &[status_byte]));
+            if let Some(expiry) = r.expiry {
+                data.append(&soroban_sdk::Bytes::from_array(&env, &expiry.to_be_bytes()));
+            }
+        }
+        let hash_bytes = env.crypto().sha256(&data);
+        MigrationBatch {
+            batch_number: 1,
+            total_batches: 2,
+            remittances: remittances.clone(),
+            batch_hash: BytesN::from_array(&env, &hash_bytes.to_array()),
+        }
+    };
+
+    // Submitting batch 1 before batch 0 must fail
+    let result = contract.try_import_migration_batch(&admin, &batch_1);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        ContractError::InvalidMigrationBatch
+    );
+}
+
+#[test]
+fn test_import_batch_rejects_duplicate_batch_index() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin, _token) = setup(&env);
+    let snapshot = contract.export_migration_snapshot(&admin);
+
+    // Import batch 0 successfully
+    let batch0 = build_single_batch(&env, &snapshot);
+    contract.import_migration_batch(&admin, &batch0);
+
+    // Submitting batch 0 again must fail (duplicate)
+    // We need to rebuild it since the first import consumed it
+    // Re-export is blocked (MigrationInProgress cleared after final batch)
+    // Instead test with a fresh contract
+    let env2 = Env::default();
+    env2.mock_all_auths();
+    let (contract2, admin2, _token2) = setup(&env2);
+    let snapshot2 = contract2.export_migration_snapshot(&admin2);
+
+    // Build two-batch scenario by manually constructing batch 0 twice
+    let remittances = snapshot2.persistent_data.remittances.clone();
+    let batch_0a = build_single_batch(&env2, &snapshot2);
+
+    // Simulate a two-batch total so the lock isn't cleared after first import
+    let batch_0b = MigrationBatch {
+        batch_number: 0,
+        total_batches: 2, // pretend there are 2 batches
+        remittances: remittances.clone(),
+        batch_hash: {
+            let mut data = soroban_sdk::Bytes::new(&env2);
+            let bn: u32 = 0;
+            data.append(&soroban_sdk::Bytes::from_array(&env2, &bn.to_be_bytes()));
+            for i in 0..remittances.len() {
+                let r = remittances.get_unchecked(i);
+                data.append(&soroban_sdk::Bytes::from_array(&env2, &r.id.to_be_bytes()));
+                data.append(&r.sender.clone().to_xdr(&env2));
+                data.append(&r.agent.clone().to_xdr(&env2));
+                data.append(&soroban_sdk::Bytes::from_array(&env2, &r.amount.to_be_bytes()));
+                data.append(&soroban_sdk::Bytes::from_array(&env2, &r.fee.to_be_bytes()));
+                let status_byte: u8 = match r.status {
+                    crate::RemittanceStatus::Pending => 0,
+                    crate::RemittanceStatus::Completed => 1,
+                    crate::RemittanceStatus::Cancelled => 2,
+                    _ => 0,
+                };
+                data.append(&soroban_sdk::Bytes::from_array(&env2, &[status_byte]));
+                if let Some(expiry) = r.expiry {
+                    data.append(&soroban_sdk::Bytes::from_array(&env2, &expiry.to_be_bytes()));
+                }
+            }
+            let h = env2.crypto().sha256(&data);
+            BytesN::from_array(&env2, &h.to_array())
+        },
+    };
+
+    // Import batch 0 (total_batches=2, so lock stays)
+    contract2.import_migration_batch(&admin2, &batch_0b);
+
+    // Submitting batch 0 again must fail
+    let dup = MigrationBatch {
+        batch_number: 0,
+        total_batches: 2,
+        remittances: remittances.clone(),
+        batch_hash: batch_0b.batch_hash.clone(),
+    };
+    let result = contract2.try_import_migration_batch(&admin2, &dup);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        ContractError::InvalidMigrationBatch
+    );
+}
+
+// ─── Issue #419 — abort_migration ────────────────────────────────────────────
+
+#[test]
+fn test_abort_migration_resets_state_to_idle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin, _token) = setup(&env);
+
+    // Lock via export
+    contract.export_migration_snapshot(&admin);
+
+    // Abort
+    contract.abort_migration(&admin);
+
+    // Normal ops should be unblocked
+    assert!(!contract.is_paused());
+
+    // A second export should now succeed (state is Idle again)
+    contract.export_migration_snapshot(&admin);
+}
+
+#[test]
+fn test_abort_migration_when_not_in_progress_returns_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin, _token) = setup(&env);
+
+    let result = contract.try_abort_migration(&admin);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        ContractError::NotFound
+    );
+}
+
+#[test]
+fn test_abort_migration_non_admin_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin, _token) = setup(&env);
+    let other = Address::generate(&env);
+
+    contract.export_migration_snapshot(&admin);
+
+    let result = contract.try_abort_migration(&other);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_abort_migration_resets_batch_counter() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin, _token) = setup(&env);
+    let snapshot = contract.export_migration_snapshot(&admin);
+
+    // Build a two-batch scenario and import batch 0
+    let remittances = snapshot.persistent_data.remittances.clone();
+    let batch_0 = MigrationBatch {
+        batch_number: 0,
+        total_batches: 2,
+        remittances: remittances.clone(),
+        batch_hash: {
+            let mut data = soroban_sdk::Bytes::new(&env);
+            let bn: u32 = 0u32;
+            data.append(&soroban_sdk::Bytes::from_array(&env, &bn.to_be_bytes()));
+            for i in 0..remittances.len() {
+                let r = remittances.get_unchecked(i);
+                data.append(&soroban_sdk::Bytes::from_array(&env, &r.id.to_be_bytes()));
+                data.append(&r.sender.clone().to_xdr(&env));
+                data.append(&r.agent.clone().to_xdr(&env));
+                data.append(&soroban_sdk::Bytes::from_array(&env, &r.amount.to_be_bytes()));
+                data.append(&soroban_sdk::Bytes::from_array(&env, &r.fee.to_be_bytes()));
+                let status_byte: u8 = match r.status {
+                    crate::RemittanceStatus::Pending => 0,
+                    crate::RemittanceStatus::Completed => 1,
+                    crate::RemittanceStatus::Cancelled => 2,
+                    _ => 0,
+                };
+                data.append(&soroban_sdk::Bytes::from_array(&env, &[status_byte]));
+                if let Some(expiry) = r.expiry {
+                    data.append(&soroban_sdk::Bytes::from_array(&env, &expiry.to_be_bytes()));
+                }
+            }
+            let h = env.crypto().sha256(&data);
+            BytesN::from_array(&env, &h.to_array())
+        },
+    };
+    contract.import_migration_batch(&admin, &batch_0);
+
+    // Abort — resets batch counter
+    contract.abort_migration(&admin);
+
+    // Re-export and import from batch 0 again — should succeed
+    let snapshot2 = contract.export_migration_snapshot(&admin);
+    let batch_fresh = build_single_batch(&env, &snapshot2);
+    contract.import_migration_batch(&admin, &batch_fresh);
 }

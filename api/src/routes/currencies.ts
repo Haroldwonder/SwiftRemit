@@ -24,17 +24,62 @@ router.use((req: Request, res: Response, next: Function) => {
 
 /**
  * GET /api/currencies
- * Returns all supported currencies with their formatting rules
+ * Returns supported currencies with their formatting rules
+ * Query parameters:
+ *   - limit: Number of currencies to return (default: 50, max: 500)
+ *   - offset: Number of currencies to skip (default: 0)
  */
 router.get('/', (req: Request, res: Response) => {
   try {
     const configLoader = getCurrencyConfigLoader();
-    const currencies = configLoader.getCurrencies();
+    const allCurrencies = configLoader.getCurrencies();
+
+    // Parse and validate pagination parameters
+    let limit = 50;
+    let offset = 0;
+
+    if (req.query.limit) {
+      const parsedLimit = parseInt(req.query.limit as string, 10);
+      if (isNaN(parsedLimit) || parsedLimit < 1) {
+        const errorResponse: ErrorResponse = {
+          success: false,
+          error: {
+            message: 'Invalid limit parameter: must be a positive integer',
+            code: 'INVALID_PAGINATION_PARAM',
+          },
+          timestamp: new Date().toISOString(),
+        };
+        return res.status(400).json(errorResponse);
+      }
+      limit = Math.min(parsedLimit, 500); // Cap at 500
+    }
+
+    if (req.query.offset) {
+      const parsedOffset = parseInt(req.query.offset as string, 10);
+      if (isNaN(parsedOffset) || parsedOffset < 0) {
+        const errorResponse: ErrorResponse = {
+          success: false,
+          error: {
+            message: 'Invalid offset parameter: must be a non-negative integer',
+            code: 'INVALID_PAGINATION_PARAM',
+          },
+          timestamp: new Date().toISOString(),
+        };
+        return res.status(400).json(errorResponse);
+      }
+      offset = parsedOffset;
+    }
+
+    // Apply pagination
+    const paginatedCurrencies = allCurrencies.slice(offset, offset + limit);
 
     const response: CurrencyResponse = {
       success: true,
-      data: currencies,
-      count: currencies.length,
+      data: paginatedCurrencies,
+      count: paginatedCurrencies.length,
+      total: allCurrencies.length,
+      limit,
+      offset,
       timestamp: new Date().toISOString(),
     };
 

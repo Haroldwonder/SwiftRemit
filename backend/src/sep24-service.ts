@@ -9,6 +9,9 @@ import {
   getSep24TransactionById,
 } from './database';
 import { AnchorKycConfig } from './types';
+import { cancelRemittanceOnChain } from './stellar';
+import { WebhookDispatcher } from './webhook-dispatcher';
+import { validateAnchorToml } from './anchor-toml-validator';
 
 /**
  * SEP-24 transaction types
@@ -87,6 +90,8 @@ export interface AnchorSep24Config {
   webhook_url?: string;
   polling_interval_minutes: number;
   timeout_minutes: number;
+  home_domain?: string;
+  signing_key?: string;
 }
 
 /**
@@ -157,12 +162,25 @@ export class Sep24Service {
   private pool: Pool;
   private anchorConfigs: Map<string, AnchorSep24Config> = new Map();
   private httpClient: AxiosInstance;
+  private dispatcher: WebhookDispatcher;
+  anchorTimeoutHours: number;
+  timeoutWebhookUrl: string | undefined;
+  private stalledTransactionsTotal = 0;
 
   constructor(pool: Pool) {
     this.pool = pool;
+    this.anchorTimeoutHours = parseFloat(process.env.ANCHOR_TIMEOUT_HOURS ?? '24');
+    this.timeoutWebhookUrl = process.env.ANCHOR_TIMEOUT_WEBHOOK_URL;
+    const httpTimeoutMs = parseInt(process.env.SEP24_HTTP_TIMEOUT_MS ?? '30000', 10);
     this.httpClient = axios.create({
-      timeout: 30000, // 30 second timeout for SEP-24 requests
+      timeout: httpTimeoutMs,
     });
+    this.dispatcher = new WebhookDispatcher();
+  }
+
+  /** Return the current stalled_transactions_total counter value (for Prometheus scraping). */
+  getStalledTransactionsTotal(): number {
+    return this.stalledTransactionsTotal;
   }
 
   /**
@@ -170,6 +188,12 @@ export class Sep24Service {
    */
   async initialize(): Promise<void> {
     const kycConfigs = await getAnchorKycConfigs();
+
+    // Fetch anchor home_domain and public_key from DB for TOML validation
+    const anchorRows = await this.pool.query<{ id: string; home_domain: string | null; public_key: string | null }>(
+      'SELECT id, home_domain, public_key FROM anchors'
+    );
+    const anchorMeta = new Map(anchorRows.rows.map(r => [r.id, r]));
     
     // Load SEP-24 configurations from environment
     for (const config of kycConfigs) {
@@ -177,6 +201,7 @@ export class Sep24Service {
       const sepServerUrl = process.env[`SEP24_SERVER_${config.anchor_id.toUpperCase()}`] || config.kyc_server_url;
       
       if (sep24Enabled && sepServerUrl) {
+        const meta = anchorMeta.get(config.anchor_id);
         const anchorConfig: AnchorSep24Config = {
           anchor_id: config.anchor_id,
           sep_server_url: sepServerUrl,
@@ -185,6 +210,8 @@ export class Sep24Service {
           webhook_url: process.env[`SEP24_WEBHOOK_${config.anchor_id.toUpperCase()}`],
           polling_interval_minutes: parseInt(process.env[`SEP24_POLL_INTERVAL_${config.anchor_id.toUpperCase()}`] || '5'),
           timeout_minutes: parseInt(process.env[`SEP24_TIMEOUT_${config.anchor_id.toUpperCase()}`] || '30'),
+          home_domain: meta?.home_domain ?? undefined,
+          signing_key: meta?.public_key ?? undefined,
         };
         
         this.anchorConfigs.set(config.anchor_id, anchorConfig);
@@ -208,6 +235,18 @@ export class Sep24Service {
 
     if (!anchorConfig.sep24_enabled) {
       throw new Sep24ConfigError(`SEP-24 is not enabled for anchor ${anchor_id}`);
+    }
+
+    // Validate anchor TOML before initiating any flow (security check)
+    if (anchorConfig.home_domain && anchorConfig.signing_key) {
+      const tomlValid = await validateAnchorToml(anchorConfig.home_domain, anchorConfig.signing_key);
+      if (!tomlValid) {
+        throw new Sep24ConfigError(
+          `Anchor ${anchor_id} failed stellar.toml SIGNING_KEY validation — flow aborted`
+        );
+      }
+    } else {
+      console.warn(`Anchor ${anchor_id} has no home_domain/signing_key; skipping TOML validation`);
     }
 
     // Generate transaction ID
@@ -334,14 +373,24 @@ export class Sep24Service {
 
     for (const transaction of pendingTransactions) {
       try {
-        // Check for timeout
         const createdAt = transaction.created_at || new Date();
-        const timeSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60);
-        
-        if (timeSinceCreation > config.timeout_minutes) {
-          // Mark as expired
-          await updateSep24TransactionStatus(transaction.transaction_id, 'expired');
-          console.log(`Transaction ${transaction.transaction_id} marked as expired`);
+        const timeSinceCreationMinutes = (Date.now() - createdAt.getTime()) / (1000 * 60);
+        const timeSinceCreationHours = timeSinceCreationMinutes / 60;
+
+        // Stall detection: pending_anchor transactions older than anchorTimeoutHours → error
+        if (
+          transaction.status === 'pending_anchor' &&
+          timeSinceCreationHours >= this.anchorTimeoutHours
+        ) {
+          await updateSep24TransactionStatus(transaction.transaction_id, 'error');
+          this.stalledTransactionsTotal++;
+          continue;
+        }
+
+        // Check for anchor timeout (expired refund flow)
+        if (timeSinceCreationMinutes > config.timeout_minutes) {
+          // Trigger refund flow (idempotent)
+          await this.processExpiredRefund(transaction);
           continue;
         }
 
@@ -383,32 +432,120 @@ export class Sep24Service {
   }
 
   /**
-   * Query transaction status from anchor
+   * Process an expired SEP-24 transaction:
+   * 1. Idempotency check — skip if already refunded.
+   * 2. Call cancel_remittance on the Soroban contract.
+   * 3. Mark the transaction as 'refunded' in the DB.
+   * 4. Emit a sep24.expired_refund webhook event.
+   */
+  private async processExpiredRefund(transaction: any): Promise<void> {
+    const { transaction_id, status } = transaction;
+
+    // Idempotency: skip if already refunded or expired-and-processed
+    if (status === 'refunded') {
+      console.log(`Transaction ${transaction_id} already refunded, skipping`);
+      return;
+    }
+
+    // Derive the on-chain remittance ID from external_transaction_id (set at creation time)
+    const remittanceId = transaction.external_transaction_id
+      ? parseInt(transaction.external_transaction_id, 10)
+      : null;
+
+    if (remittanceId !== null && !isNaN(remittanceId)) {
+      try {
+        await cancelRemittanceOnChain(remittanceId);
+      } catch (err) {
+        console.error(
+          `cancel_remittance failed for transaction ${transaction_id} (remittance ${remittanceId}):`,
+          err
+        );
+        // Still mark expired so we don't retry indefinitely; operator can investigate
+      }
+    } else {
+      console.warn(
+        `Transaction ${transaction_id} has no valid external_transaction_id; skipping on-chain cancel`
+      );
+    }
+
+    // Mark as refunded (idempotent status update)
+    await updateSep24TransactionStatus(transaction_id, 'refunded');
+    console.log(`Transaction ${transaction_id} marked as refunded`);
+
+    // Emit webhook event
+    try {
+      await this.dispatcher.dispatchSep24ExpiredRefund({
+        transaction_id,
+        anchor_id: transaction.anchor_id,
+        user_id: transaction.user_id,
+        asset_code: transaction.asset_code,
+        amount: transaction.amount ?? transaction.amount_in,
+        refunded_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(`Failed to dispatch sep24.expired_refund webhook for ${transaction_id}:`, err);
+    }
+  }
+
+  /**
+   * Exponential backoff with ±10% jitter, capped at 16 s.
+   */
+  private calcBackoff(attempt: number): number {
+    const BASE_MS = 1000;
+    const MAX_MS = 16000;
+    const exponential = BASE_MS * Math.pow(2, attempt - 1);
+    const capped = Math.min(exponential, MAX_MS);
+    const jitter = capped * 0.1 * (Math.random() * 2 - 1);
+    return Math.round(capped + jitter);
+  }
+
+  /**
+   * Query transaction status from anchor with exponential backoff retry for
+   * transient errors (network failures and 5xx responses). 404 is treated as
+   * "not found" and returned immediately without retrying. 4xx client errors
+   * (other than 429) are also not retried.
    */
   private async queryTransactionStatus(
     sepServerUrl: string,
-    transactionId: string
+    transactionId: string,
+    maxRetries = 3
   ): Promise<Sep24TransactionStatusResponse | null> {
-    try {
-      const url = `${sepServerUrl}/transaction?id=${transactionId}`;
-      
-      const response: AxiosResponse<Sep24TransactionStatusResponse> = await this.httpClient.get(url, {
-        headers: {
-          'Accept': 'application/json',
-        },
-        timeout: 10000,
-      });
+    const url = `${sepServerUrl}/transaction?id=${transactionId}`;
 
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        if (error.response?.status === 404) {
-          return null;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response: AxiosResponse<Sep24TransactionStatusResponse> = await this.httpClient.get(url, {
+          headers: { 'Accept': 'application/json' },
+        });
+        return response.data;
+      } catch (error) {
+        if (axios.isAxiosError(error)) {
+          const status = error.response?.status;
+
+          if (status === 404) {
+            return null;
+          }
+
+          // Non-transient 4xx errors (except 429 Too Many Requests) — do not retry
+          if (status && status >= 400 && status < 500 && status !== 429) {
+            console.error(`HTTP ${status} querying transaction ${transactionId}; not retrying`);
+            return null;
+          }
         }
-        console.error(`HTTP error querying transaction status: ${error.response?.status}`);
+
+        if (attempt < maxRetries) {
+          const delay = this.calcBackoff(attempt);
+          console.warn(
+            `Transient error polling transaction ${transactionId} (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms`
+          );
+          await new Promise(resolve => setTimeout(resolve, delay));
+        } else {
+          console.error(`Failed to query transaction ${transactionId} after ${maxRetries} attempts:`, error);
+        }
       }
-      return null;
     }
+
+    return null;
   }
 
   /**

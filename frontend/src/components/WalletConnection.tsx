@@ -1,9 +1,19 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import './WalletConnection.css';
 import { FreighterService } from '../utils/freighter';
 import type { NetworkType } from '../utils/freighter';
 
 export type { NetworkType };
+
+const STORAGE_KEY = 'swiftremit_wallet_address';
+const DEFAULT_STORAGE_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface StoredWalletSession {
+  publicKey: string;
+  storedAt: number;
+  expiresAt: number;
+}
 
 interface WalletConnectionResult {
   publicKey: string;
@@ -12,9 +22,37 @@ interface WalletConnectionResult {
 
 interface WalletConnectionProps {
   defaultNetwork?: NetworkType;
+  storageTtlMs?: number;
   onConnect?: () => Promise<WalletConnectionResult>;
   onDisconnect?: () => Promise<void> | void;
   onRequestSignature?: () => Promise<void>;
+}
+
+function parseStoredWalletSession(raw: string | null, storageTtlMs: number): StoredWalletSession | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredWalletSession>;
+    if (typeof parsed.publicKey !== 'string' || typeof parsed.storedAt !== 'number') {
+      return null;
+    }
+
+    // Use absolute expiresAt if present; fall back to computing it for legacy sessions
+    const expiresAt = typeof parsed.expiresAt === 'number' ? parsed.expiresAt : parsed.storedAt + storageTtlMs;
+    if (Date.now() > expiresAt) {
+      return null;
+    }
+
+    return {
+      publicKey: parsed.publicKey,
+      storedAt: parsed.storedAt,
+      expiresAt,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function truncatePublicKey(publicKey: string): string {
@@ -40,10 +78,12 @@ function isRejectedSignature(error: unknown): boolean {
 
 export const WalletConnection: React.FC<WalletConnectionProps> = ({
   defaultNetwork = 'Testnet',
+  storageTtlMs = DEFAULT_STORAGE_TTL_MS,
   onConnect,
   onDisconnect,
   onRequestSignature,
 }) => {
+  const { t } = useTranslation();
   const [connected, setConnected] = useState(false);
   const [publicKey, setPublicKey] = useState('');
   const [network, setNetwork] = useState<NetworkType>(defaultNetwork);
@@ -56,6 +96,38 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
   const isFreighterInstalled = FreighterService.isInstalled();
 
   const publicKeyText = useMemo(() => truncatePublicKey(publicKey), [publicKey]);
+
+  // Restore session from localStorage on mount
+  useEffect(() => {
+    const stored = parseStoredWalletSession(localStorage.getItem(STORAGE_KEY), storageTtlMs);
+    if (!stored) {
+      localStorage.removeItem(STORAGE_KEY);
+      return;
+    }
+
+    FreighterService.connect()
+      .then((result) => {
+        if (result.publicKey === stored.publicKey) {
+          setPublicKey(result.publicKey);
+          setNetwork(result.network ?? defaultNetwork);
+          setConnected(true);
+          if (FreighterService.isNetworkMismatch(result.network ?? defaultNetwork, defaultNetwork)) {
+            setNetworkWarning(
+              t('wallet.warnings.networkMismatch', {
+                walletNetwork: result.network ?? defaultNetwork,
+                expectedNetwork: defaultNetwork,
+              })
+            );
+          }
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem(STORAGE_KEY);
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultNetwork, storageTtlMs, t]);
 
   const handleConnect = async () => {
     setError(null);
@@ -72,22 +144,33 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
       setNetwork(connectedNetwork);
       setConnected(true);
 
-      // Check for network mismatch
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          publicKey: result.publicKey,
+          storedAt: Date.now(),
+          expiresAt: Date.now() + storageTtlMs,
+        } satisfies StoredWalletSession)
+      );
+
       if (FreighterService.isNetworkMismatch(connectedNetwork, defaultNetwork)) {
+        localStorage.removeItem('walletSession');
+        setConnected(false);
+        setPublicKey('');
         setNetworkWarning(
-          `Warning: Wallet is connected to ${connectedNetwork}, but ${defaultNetwork} is expected.`
+          `Network mismatch: wallet is on ${connectedNetwork} but ${defaultNetwork} is expected. Please switch networks in Freighter and reconnect.`
         );
       }
     } catch (connectError) {
       setConnected(false);
       const errorMessage = connectError instanceof Error ? connectError.message : 'Unknown error';
-      
+
       if (errorMessage.includes('not installed')) {
-        setError('Freighter wallet is not installed.');
+        setError(t('wallet.errors.notInstalled'));
       } else if (errorMessage.includes('not connected')) {
-        setError('Please unlock your Freighter wallet and try again.');
+        setError(t('wallet.errors.notConnected'));
       } else {
-        setError('Failed to connect wallet. Please try again.');
+        setError(t('wallet.errors.connectFailed'));
       }
       console.error(connectError);
     } finally {
@@ -105,10 +188,11 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
         await onDisconnect();
       }
 
+      localStorage.removeItem(STORAGE_KEY);
       setConnected(false);
       setPublicKey('');
     } catch (disconnectError) {
-      setError('Failed to disconnect wallet.');
+      setError(t('wallet.errors.disconnectFailed'));
       console.error(disconnectError);
     } finally {
       setIsDisconnecting(false);
@@ -125,9 +209,9 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
       }
     } catch (signatureError) {
       if (isRejectedSignature(signatureError)) {
-        setError('Signature request was rejected.');
+        setError(t('wallet.errors.signatureRejected'));
       } else {
-        setError('Unable to complete signature request.');
+        setError(t('wallet.errors.signatureFailed'));
       }
       console.error(signatureError);
     } finally {
@@ -136,9 +220,9 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
   };
 
   return (
-    <section className="wallet-card" aria-label="Wallet connection">
+    <section className="wallet-card" aria-label={t('wallet.title')}>
       <div className="wallet-row">
-        <h2 className="wallet-title">Wallet</h2>
+        <h2 className="wallet-title">{t('wallet.title')}</h2>
         <span
           className={`network-pill ${network === 'Mainnet' ? 'mainnet' : 'testnet'}`}
           aria-label={`Network: ${network}`}
@@ -151,12 +235,12 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
         {connected ? (
           <>
             <p className="wallet-key">{publicKeyText}</p>
-            <p className="wallet-meta">Connected public key</p>
+            <p className="wallet-meta">{t('wallet.connectedKey')}</p>
           </>
         ) : (
           <>
-            <p className="wallet-key">Not connected</p>
-            <p className="wallet-meta">Connect a wallet to continue</p>
+            <p className="wallet-key">{t('wallet.notConnected')}</p>
+            <p className="wallet-meta">{t('wallet.connectPrompt')}</p>
           </>
         )}
       </div>
@@ -170,7 +254,7 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
               onClick={handleConnect}
               disabled={isConnecting || !isFreighterInstalled}
             >
-              {isConnecting ? 'Connecting...' : 'Connect'}
+              {isConnecting ? t('wallet.connecting') : t('wallet.connect')}
             </button>
             {!isFreighterInstalled && (
               <a
@@ -179,7 +263,7 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
                 rel="noopener noreferrer"
                 className="wallet-install-link"
               >
-                Install Freighter Wallet
+                {t('wallet.installLink')}
               </a>
             )}
           </>
@@ -191,7 +275,7 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
               onClick={handleSignature}
               disabled={isSigning}
             >
-              {isSigning ? 'Waiting for signature...' : 'Sign Message'}
+              {isSigning ? t('wallet.signing') : t('wallet.signMessage')}
             </button>
             <button
               type="button"
@@ -199,7 +283,7 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
               onClick={handleDisconnect}
               disabled={isDisconnecting}
             >
-              {isDisconnecting ? 'Disconnecting...' : 'Disconnect'}
+              {isDisconnecting ? t('wallet.disconnecting') : t('wallet.disconnect')}
             </button>
           </>
         )}

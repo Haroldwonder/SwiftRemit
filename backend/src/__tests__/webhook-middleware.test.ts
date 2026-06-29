@@ -25,6 +25,11 @@ function createTestApp(
   
   // Parse JSON body
   app.use(express.json());
+
+  // Health check must be registered before /webhooks middleware so it is not intercepted
+  app.get('/webhooks/health', (req: Request, res: Response) => {
+    res.json({ status: 'ok' });
+  });
   
   // Apply webhook verification middleware
   app.use('/webhooks', verificationMiddleware);
@@ -32,11 +37,6 @@ function createTestApp(
   // Test endpoint
   app.post('/webhooks/test', (req: Request, res: Response) => {
     res.json({ success: true, received: req.body });
-  });
-  
-  // Health check (should bypass verification)
-  app.get('/webhooks/health', (req: Request, res: Response) => {
-    res.json({ status: 'ok' });
   });
   
   return app;
@@ -294,14 +294,18 @@ describe('Webhook Verification Middleware', () => {
       app = createTestApp(TEST_SECRET, middleware);
       
       const payload = JSON.stringify({ event: 'test' });
+      const signature = createHmacSignature(payload, 'any-secret');
       
       const response = await request(app)
         .post('/webhooks/test')
         .set('Content-Type', 'application/json')
         .set('x-anchor-id', 'unknown-anchor')
+        .set('x-signature', signature)
+        .set('x-timestamp', new Date().toISOString())
+        .set('x-nonce', crypto.randomUUID())
         .send(payload);
       
-      expect(response.status).toBe(500); // Or 401, depending on implementation
+      expect(response.status).toBe(500);
       expect(response.body.code).toBe('ANCHOR_NOT_CONFIGURED');
     });
   });

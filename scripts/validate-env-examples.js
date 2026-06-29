@@ -101,6 +101,47 @@ function extractFromSources(sources, pattern) {
   return vars;
 }
 
+function looksLikeSecretValue(value) {
+  const normalized = value.trim();
+  if (!normalized) return false;
+  if (/\b(your[-_ ]?secret|change-me|replace[-_ ]?me|example|sample|dummy|fake|none)\b/i.test(normalized)) {
+    return false;
+  }
+
+  if (/^0x[0-9A-Fa-f]{32,}$/.test(normalized)) return true;
+  if (/^[0-9A-Fa-f]{32,}$/.test(normalized)) return true;
+  if (/^[A-HJ-NP-Za-km-z1-9]{32,}$/.test(normalized)) return true;
+  if (/^[A-Za-z0-9/+=_-]{40,}$/.test(normalized) && /[A-Za-z]/.test(normalized) && /[0-9]/.test(normalized)) return true;
+  return false;
+}
+
+function scanExampleForSecrets(envExamplePath) {
+  const fullPath = path.join(ROOT, envExamplePath);
+  if (!fs.existsSync(fullPath)) return [];
+
+  const warnings = [];
+  const lines = fs.readFileSync(fullPath, 'utf8').split('\n');
+
+  for (let lineNumber = 0; lineNumber < lines.length; lineNumber += 1) {
+    const rawLine = lines[lineNumber].trim();
+    if (!rawLine || rawLine.startsWith('#') || !rawLine.includes('=')) continue;
+
+    const [name, ...rest] = rawLine.split('=');
+    const value = rest.join('=').trim();
+    if (!value) continue;
+
+    if (looksLikeSecretValue(value)) {
+      warnings.push({
+        name: name.trim(),
+        value,
+        line: lineNumber + 1,
+      });
+    }
+  }
+
+  return warnings;
+}
+
 let failed = false;
 
 for (const check of CHECKS) {
@@ -115,6 +156,15 @@ for (const check of CHECKS) {
     failed = true;
   } else {
     console.log(`✅ [${check.name}] ${check.envExample} is in sync`);
+  }
+
+  const secretWarnings = scanExampleForSecrets(check.envExample);
+  if (secretWarnings.length > 0) {
+    console.error(`\n❌ [${check.name}] Suspicious secret-like values found in ${check.envExample}:`);
+    secretWarnings.forEach(({ name, value, line }) => {
+      console.error(`   - ${check.envExample}:${line} ${name}=${value}`);
+    });
+    failed = true;
   }
 }
 

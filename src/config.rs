@@ -4,6 +4,14 @@
 //! and prevent duplicate definitions. All magic numbers should be defined
 //! here with clear documentation.
 
+/// Number of ledgers to extend a remittance's persistent storage TTL when it
+/// transitions from Pending to Processing (#624).
+///
+/// At a 5-second ledger time this equals approximately 7 days, giving agents
+/// a reasonable window to complete the off-chain fiat payout before the
+/// escrow record would otherwise expire.
+pub const PROCESSING_WINDOW_LEDGERS: u32 = 120_960; // ~7 days at 5s/ledger
+
 // ============================================================================
 // Batch Processing Limits
 // ============================================================================
@@ -27,6 +35,31 @@ pub const MAX_EXPIRED_BATCH_SIZE: u32 = 50;
 /// operations. Used by migration export/import functions to validate batch size.
 pub const MAX_MIGRATION_BATCH_SIZE: u32 = 100;
 
+/// Maximum number of remittances that can be netted in a single compute_net_settlements call.
+///
+/// This limit prevents DoS attacks via large remittance batches that could cause
+/// excessive gas consumption or ledger timeouts.
+pub const MAX_NETTING_BATCH_SIZE: u32 = 50;
+
+/// Maximum size of timestamp vector in rate limiting sliding window.
+///
+/// Caps the Vec size to prevent unbounded growth and O(n²) pruning behavior
+/// during high-activity periods. Timestamps older than the window are pruned
+/// in a single pass using retain-style filtering.
+///
+/// **Constraint**: must always be strictly greater than the largest per-window
+/// request limit (`MAX_QUERIES_PER_WINDOW`). If this invariant is violated the
+/// sliding-window cap would prune entries that are still inside the rate-limit
+/// window, silently lowering the effective limit below its configured value.
+/// The compile-time assertion below enforces this.
+pub const MAX_VEC_SIZE: usize = 1000;
+
+// Ensure the cap never silently reduces the effective rate limit.
+const _: () = assert!(
+    MAX_VEC_SIZE > MAX_QUERIES_PER_WINDOW as usize,
+    "MAX_VEC_SIZE must be strictly greater than MAX_QUERIES_PER_WINDOW to avoid silent data loss in the sliding-window rate limiter",
+);
+
 // ============================================================================
 // Fee Calculation Constants
 // ============================================================================
@@ -39,6 +72,12 @@ pub const MAX_MIGRATION_BATCH_SIZE: u32 = 100;
 /// - 100 bps = 1%
 /// - 10000 bps = 100%
 pub const MAX_FEE_BPS: u32 = 10000;
+
+/// Minimum fee charged per transaction, in stroops.
+///
+/// Prevents integer-division truncation from producing a zero fee for very
+/// small amounts (e.g. amount < 400 stroops at 250 bps).
+pub const MIN_FEE: i128 = 1;
 
 /// Divisor for converting basis points to actual fee amounts.
 ///
@@ -64,6 +103,23 @@ pub const DEFAULT_RATE_LIMIT_MAX_REQUESTS: u32 = 100;
 /// - Value: 60 seconds (1 minute)
 pub const DEFAULT_RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
 
+// ── Abuse-protection sliding-window constants ────────────────────────────────
+
+/// Sliding-window duration used by abuse_protection rate limiting (seconds).
+pub const RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
+
+/// Maximum number of transfer actions allowed per sliding window.
+pub const MAX_TRANSFERS_PER_WINDOW: u32 = 10;
+
+/// Maximum number of cancellation actions allowed per sliding window.
+pub const MAX_CANCELLATIONS_PER_WINDOW: u32 = 5;
+
+/// Maximum number of query actions allowed per sliding window.
+pub const MAX_QUERIES_PER_WINDOW: u32 = 100;
+
+/// Minimum seconds that must elapse between consecutive transfer/settlement actions.
+pub const TRANSFER_COOLDOWN_SECONDS: u64 = 5;
+
 // ============================================================================
 // Daily Send Limits
 // ============================================================================
@@ -86,6 +142,28 @@ pub const DEFAULT_DAILY_LIMIT_CURRENCY: &str = "USDC";
 /// Used when no specific country is provided for daily limit checks.
 /// - Value: "GLOBAL" (applies to all countries)
 pub const DEFAULT_DAILY_LIMIT_COUNTRY: &str = "GLOBAL";
+
+/// Rolling sender volume window for discount tiers.
+///
+/// Used to calculate high-volume sender fee discounts in a 30-day window.
+pub const SENDER_VOLUME_DISCOUNT_WINDOW_SECONDS: u64 = 30 * 24 * 60 * 60;
+
+/// Bucket duration for sender volume aggregation.
+///
+/// Aggregates transaction volume into daily buckets to keep storage efficient
+/// while providing a rolling 30-day view.
+pub const SENDER_VOLUME_DISCOUNT_BUCKET_SECONDS: u64 = 24 * 60 * 60;
+
+/// High-volume sender threshold for discounted fees.
+///
+/// Senders whose 30-day volume meets or exceeds this threshold pay the
+/// discounted fee tier instead of the default platform fee.
+pub const SENDER_VOLUME_TIER_THRESHOLD_10K: i128 = 10_000;
+
+/// Discounted fee basis points for senders above the high-volume threshold.
+///
+/// This is the fee applied when the sender reaches the 30-day volume threshold.
+pub const SENDER_VOLUME_TIER_FEE_BPS_10K: u32 = 150;
 
 // ============================================================================
 // Storage and Event Schema
@@ -116,6 +194,27 @@ pub const SETTLEMENT_EVENT_EMITTED_FLAG: u32 = 1 << 1;
 /// Used to track migration snapshot format versions. Increment when making
 /// breaking changes to migration data structures.
 pub const MIGRATION_SNAPSHOT_VERSION: u32 = 1;
+
+// ============================================================================
+// Idempotency TTL (#841)
+// ============================================================================
+
+/// Default TTL for idempotency records: 7 days in seconds.
+///
+/// Records older than this can be removed by `cleanup_expired_idempotency_keys`.
+/// The value matches the typical settlement window so that stale deduplication
+/// keys do not accumulate in persistent storage indefinitely.
+pub const IDEMPOTENCY_TTL_SECONDS: u64 = 7 * 24 * 60 * 60; // 604_800 seconds
+
+// ============================================================================
+// Circuit Breaker Cooldown
+// ============================================================================
+
+/// Default post-unpause cooldown period in seconds (1 hour).
+///
+/// During this window after an emergency unpause, per-sender rate limits are
+/// halved to throttle traffic and prevent immediate exploitation.
+pub const DEFAULT_COOLDOWN_PERIOD_SECONDS: u64 = 3_600;
 
 #[cfg(test)]
 mod tests {

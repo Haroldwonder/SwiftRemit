@@ -12,8 +12,14 @@
 use soroban_sdk::{contracttype, Address, Env, String};
 
 use crate::{
-    config::FEE_DIVISOR, get_fee_strategy, get_platform_fee_bps, get_protocol_fee_bps, storage,
-    ContractError, FeeStrategy,
+    config::{
+        FEE_DIVISOR,
+        MIN_FEE,
+        SENDER_VOLUME_TIER_FEE_BPS_10K,
+        SENDER_VOLUME_TIER_THRESHOLD_10K,
+    },
+    get_fee_strategy, get_platform_fee_bps, get_protocol_fee_bps, storage, ContractError,
+    FeeStrategy,
 };
 
 /// Complete breakdown of all fees applied to a transaction
@@ -26,7 +32,9 @@ pub struct FeeBreakdown {
     pub platform_fee: i128,
     /// Protocol fee for treasury
     pub protocol_fee: i128,
-    /// Net amount after all fees (amount - platform_fee - protocol_fee)
+    /// Integrator fee (if applicable)
+    pub integrator_fee: i128,
+    /// Net amount after all fees (amount - platform_fee - protocol_fee - integrator_fee)
     pub net_amount: i128,
     /// Optional corridor identifier (from_country-to_country)
     pub corridor: Option<String>,
@@ -35,7 +43,7 @@ pub struct FeeBreakdown {
 impl FeeBreakdown {
     /// Validates that the fee breakdown is mathematically consistent
     ///
-    /// Ensures: amount = platform_fee + protocol_fee + net_amount
+    /// Ensures: amount = platform_fee + protocol_fee + integrator_fee + net_amount
     ///
     /// # Returns
     ///
@@ -45,6 +53,7 @@ impl FeeBreakdown {
         let total = self
             .platform_fee
             .checked_add(self.protocol_fee)
+            .and_then(|sum| sum.checked_add(self.integrator_fee))
             .and_then(|sum| sum.checked_add(self.net_amount))
             .ok_or(ContractError::Overflow)?;
 
@@ -53,7 +62,7 @@ impl FeeBreakdown {
         }
 
         // Ensure no negative values
-        if self.amount < 0 || self.platform_fee < 0 || self.protocol_fee < 0 || self.net_amount < 0
+        if self.amount < 0 || self.platform_fee < 0 || self.protocol_fee < 0 || self.integrator_fee < 0 || self.net_amount < 0
         {
             return Err(ContractError::InvalidAmount);
         }
@@ -103,6 +112,42 @@ pub fn calculate_platform_fee(
     calculate_fee_by_strategy(amount, &strategy)
 }
 
+/// Calculates the platform fee for a specific sender using rolling volume discounts.
+pub fn calculate_platform_fee_for_sender(
+    env: &Env,
+    sender: &Address,
+    amount: i128,
+    token: Option<&Address>,
+) -> Result<i128, ContractError> {
+    if amount <= 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    let strategy = get_effective_fee_strategy(env, token)?;
+    let prior_volume = storage::get_sender_rolling_volume(env, sender, env.ledger().timestamp());
+    let total_volume = prior_volume
+        .checked_add(amount)
+        .ok_or(ContractError::Overflow)?;
+    let discounted_strategy = apply_volume_discount(total_volume, strategy)?;
+    calculate_fee_by_strategy(amount, &discounted_strategy)
+}
+
+/// Calculates the platform fee for a sender given a pre-computed rolling volume.
+pub fn calculate_platform_fee_for_volume(
+    env: &Env,
+    amount: i128,
+    token: Option<&Address>,
+    total_volume: i128,
+) -> Result<i128, ContractError> {
+    if amount <= 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    let strategy = get_effective_fee_strategy(env, token)?;
+    let discounted_strategy = apply_volume_discount(total_volume, strategy)?;
+    calculate_fee_by_strategy(amount, &discounted_strategy)
+}
+
 /// Calculates complete fee breakdown including platform and protocol fees.
 ///
 /// This is the primary entry point for detailed fee calculations during payout confirmation.
@@ -146,6 +191,15 @@ pub fn calculate_fees_with_breakdown(
     // Calculate protocol fee
     let protocol_fee = calculate_protocol_fee(amount, protocol_fee_bps)?;
 
+    // Validate total fees don't exceed amount
+    let total_fees = platform_fee
+        .checked_add(protocol_fee)
+        .ok_or(ContractError::Overflow)?;
+    
+    if total_fees > amount {
+        return Err(ContractError::Overflow);
+    }
+
     // Calculate net amount
     let net_amount = amount
         .checked_sub(platform_fee)
@@ -156,6 +210,7 @@ pub fn calculate_fees_with_breakdown(
         amount,
         platform_fee,
         protocol_fee,
+        integrator_fee: 0,
         net_amount,
         corridor: corridor_id,
     };
@@ -164,6 +219,95 @@ pub fn calculate_fees_with_breakdown(
     breakdown.validate()?;
 
     Ok(breakdown)
+}
+
+/// Calculates complete fee breakdown for a sender using rolling volume discounts.
+pub fn calculate_fees_with_breakdown_for_sender(
+    env: &Env,
+    sender: &Address,
+    amount: i128,
+    token: Option<&Address>,
+    corridor: Option<&FeeCorridor>,
+) -> Result<FeeBreakdown, ContractError> {
+    if amount <= 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    // Determine which strategy and protocol fee to use
+    let (strategy, protocol_fee_bps, corridor_id) = if let Some(c) = corridor {
+        let protocol_bps = c
+            .protocol_fee_bps
+            .unwrap_or_else(|| get_protocol_fee_bps(env));
+        let id = format_corridor_id(env, &c.from_country, &c.to_country);
+        (c.strategy.clone(), protocol_bps, Some(id))
+    } else {
+        (get_fee_strategy(env), get_protocol_fee_bps(env), None)
+    };
+
+    let effective_strategy = get_effective_fee_strategy_for_strategy(env, &strategy, token)?;
+    let prior_volume = storage::get_sender_rolling_volume(env, sender, env.ledger().timestamp());
+    let total_volume = prior_volume
+        .checked_add(amount)
+        .ok_or(ContractError::Overflow)?;
+    let discounted_strategy = apply_volume_discount(total_volume, effective_strategy)?;
+
+    // Calculate platform fee
+    let platform_fee = calculate_fee_by_strategy(amount, &discounted_strategy)?;
+
+    // Calculate protocol fee
+    let protocol_fee = calculate_protocol_fee(amount, protocol_fee_bps)?;
+
+    // Validate total fees don't exceed amount
+    let total_fees = platform_fee
+        .checked_add(protocol_fee)
+        .ok_or(ContractError::Overflow)?;
+    
+    if total_fees > amount {
+        return Err(ContractError::Overflow);
+    }
+
+    // Calculate net amount
+    let net_amount = amount
+        .checked_sub(platform_fee)
+        .and_then(|v| v.checked_sub(protocol_fee))
+        .ok_or(ContractError::Overflow)?;
+
+    let breakdown = FeeBreakdown {
+        amount,
+        platform_fee,
+        protocol_fee,
+        integrator_fee: 0,
+        net_amount,
+        corridor: corridor_id,
+    };
+
+    breakdown.validate()?;
+    Ok(breakdown)
+}
+
+fn apply_volume_discount(total_volume: i128, strategy: FeeStrategy) -> Result<FeeStrategy, ContractError> {
+    match strategy {
+        FeeStrategy::Percentage(base_fee_bps) => {
+            let discounted_bps = get_discounted_fee_bps(total_volume, base_fee_bps);
+            Ok(FeeStrategy::Percentage(discounted_bps))
+        }
+        other => Ok(other),
+    }
+}
+
+fn get_discounted_fee_bps(total_volume: i128, base_fee_bps: u32) -> u32 {
+    let tiers: &[(i128, u32)] = &[
+        (SENDER_VOLUME_TIER_THRESHOLD_10K, SENDER_VOLUME_TIER_FEE_BPS_10K),
+    ];
+
+    let mut fee_bps = base_fee_bps;
+    for (threshold, tier_bps) in tiers.iter().rev() {
+        if total_volume >= *threshold {
+            fee_bps = fee_bps.min(*tier_bps);
+            break;
+        }
+    }
+    fee_bps
 }
 
 fn get_effective_fee_strategy(
@@ -189,6 +333,18 @@ fn get_effective_fee_strategy_for_strategy(
                 Ok(strategy.clone())
             }
         }
+        // Corridor variant: resolve to the platform percentage fee.
+        // Actual corridor dispatch happens in calculate_fees_with_breakdown
+        // when a FeeCorridor is supplied by the caller.
+        FeeStrategy::Corridor => {
+            let default_fee_bps = get_platform_fee_bps(env)?;
+            let fee_bps = if let Some(token) = token {
+                storage::get_token_fee_bps(env, token).unwrap_or(default_fee_bps)
+            } else {
+                default_fee_bps
+            };
+            Ok(FeeStrategy::Percentage(fee_bps))
+        }
         _ => Ok(strategy.clone()),
     }
 }
@@ -207,16 +363,15 @@ fn get_effective_fee_strategy_for_strategy(
 fn calculate_fee_by_strategy(amount: i128, strategy: &FeeStrategy) -> Result<i128, ContractError> {
     match strategy {
         FeeStrategy::Percentage(fee_bps) => {
-            // Fee = amount * fee_bps / 10000
+            // Fee = amount * fee_bps / 10000, with a minimum of MIN_FEE stroop
             let fee = amount
                 .checked_mul(*fee_bps as i128)
                 .and_then(|v| v.checked_div(FEE_DIVISOR))
                 .ok_or(ContractError::Overflow)?;
-            Ok(fee)
+            Ok(fee.max(MIN_FEE))
         }
         FeeStrategy::Flat(fee_amount) => {
-            // Fixed fee regardless of amount
-            Ok(*fee_amount)
+            Ok((*fee_amount).max(MIN_FEE))
         }
         FeeStrategy::Dynamic(base_fee_bps) => {
             // Dynamic tiered fee: decreases for larger amounts
@@ -238,8 +393,11 @@ fn calculate_fee_by_strategy(amount: i128, strategy: &FeeStrategy) -> Result<i12
                 .checked_mul(effective_bps as i128)
                 .and_then(|v| v.checked_div(FEE_DIVISOR))
                 .ok_or(ContractError::Overflow)?;
-            Ok(fee)
+            Ok(fee.max(MIN_FEE))
         }
+        // Corridor is resolved to Percentage before reaching this function.
+        // If it somehow arrives here, treat as zero fee (safe fallback).
+        FeeStrategy::Corridor => Ok(MIN_FEE),
     }
 }
 
@@ -277,23 +435,34 @@ fn calculate_protocol_fee(amount: i128, protocol_fee_bps: u32) -> Result<i128, C
 /// # Returns
 ///
 /// Formatted corridor ID (e.g., "US-MX")
-fn format_corridor_id(env: &Env, from_country: &String, to_country: &String) -> String {
-    // Create corridor ID as "FROM-TO" using simple approach
-    // Convert Soroban strings to regular strings for manipulation
-    let from_str = from_country.to_string();
-    let to_str = to_country.to_string();
-
-    // Create the combined string manually
-    let combined = from_str + "-" + &to_str;
-
-    // Convert back to Soroban String
-    String::from_str(env, &combined)
+fn format_corridor_id(env: &Env, from: &String, to: &String) -> String {
+    let from_len = from.len() as usize;
+    let to_len = to.len() as usize;
+    let total = from_len + 1 + to_len;
+    let mut buf = [0u8; 16]; // enough for "XX-YY" style codes
+    from.copy_into_slice(&mut buf[..from_len]);
+    buf[from_len] = b'-';
+    to.copy_into_slice(&mut buf[from_len + 1..from_len + 1 + to_len]);
+    String::from_bytes(env, &buf[..total])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::{Env, String};
+
+    // Include property-based tests
+    #[cfg(test)]
+    #[cfg(feature = "legacy-tests")]
+    mod property_tests;
+
+    // Re-export the calculate_fee_by_strategy function for property tests
+    #[cfg(feature = "legacy-tests")]
+    pub(crate) use super::calculate_fee_by_strategy;
+    #[cfg(feature = "legacy-tests")]
+    pub(crate) use super::calculate_protocol_fee;
+    #[cfg(feature = "legacy-tests")]
+    pub(crate) use super::format_corridor_id;
 
     #[test]
     fn test_calculate_fee_percentage() {
@@ -305,12 +474,35 @@ mod tests {
     }
 
     #[test]
+    fn test_calculate_fee_percentage_small_amount_floor() {
+        // 300 stroops * 250 bps / 10000 = 7.5 → truncates to 7, but floor is 1
+        // For amount < 400 stroops at 250 bps the raw result is 0 → floor kicks in
+        let strategy = FeeStrategy::Percentage(250); // 2.5%
+        let amount = 300i128; // 300 * 250 / 10000 = 7 (still > 0 here)
+
+        let fee = calculate_fee_by_strategy(amount, &strategy).unwrap();
+        assert!(fee >= 1, "fee must be at least MIN_FEE");
+
+        // Truly truncating case: 1 stroop * 250 bps / 10000 = 0 → floor to 1
+        let tiny_fee = calculate_fee_by_strategy(1, &strategy).unwrap();
+        assert_eq!(tiny_fee, 1);
+    }
+
+    #[test]
     fn test_calculate_fee_flat() {
         let strategy = FeeStrategy::Flat(100);
         let amount = 10000i128;
 
         let fee = calculate_fee_by_strategy(amount, &strategy).unwrap();
         assert_eq!(fee, 100);
+    }
+
+    #[test]
+    fn test_calculate_fee_flat_zero_applies_min_fee_floor() {
+        // A Flat(0) fee must still return at least MIN_FEE (1 stroop)
+        let strategy = FeeStrategy::Flat(0);
+        let fee = calculate_fee_by_strategy(1_000, &strategy).unwrap();
+        assert_eq!(fee, MIN_FEE);
     }
 
     #[test]
@@ -367,6 +559,7 @@ mod tests {
             amount: 1000,
             platform_fee: 25,
             protocol_fee: 5,
+            integrator_fee: 0,
             net_amount: 970,
             corridor: None,
         };
@@ -380,6 +573,7 @@ mod tests {
             amount: 1000,
             platform_fee: 25,
             protocol_fee: 5,
+            integrator_fee: 0,
             net_amount: 900, // Wrong! Should be 970
             corridor: None,
         };
@@ -393,6 +587,7 @@ mod tests {
             amount: 1000,
             platform_fee: -25,
             protocol_fee: 5,
+            integrator_fee: 0,
             net_amount: 1020,
             corridor: None,
         };
@@ -428,5 +623,47 @@ mod tests {
 
         let corridor_id = format_corridor_id(&env, &from, &to);
         assert_eq!(corridor_id, String::from_str(&env, "GB-NG"));
+    }
+
+    #[test]
+    fn test_fee_breakdown_with_integrator_fee() {
+        let breakdown = FeeBreakdown {
+            amount: 1000,
+            platform_fee: 25,
+            protocol_fee: 5,
+            integrator_fee: 10,
+            net_amount: 960,
+            corridor: None,
+        };
+
+        assert!(breakdown.validate().is_ok());
+    }
+
+    #[test]
+    fn test_fee_breakdown_integrator_fee_mismatch() {
+        let breakdown = FeeBreakdown {
+            amount: 1000,
+            platform_fee: 25,
+            protocol_fee: 5,
+            integrator_fee: 10,
+            net_amount: 970, // Wrong! Should be 960 (1000 - 25 - 5 - 10)
+            corridor: None,
+        };
+
+        assert!(breakdown.validate().is_err());
+    }
+
+    #[test]
+    fn test_fee_breakdown_negative_integrator_fee() {
+        let breakdown = FeeBreakdown {
+            amount: 1000,
+            platform_fee: 25,
+            protocol_fee: 5,
+            integrator_fee: -10,
+            net_amount: 980,
+            corridor: None,
+        };
+
+        assert!(breakdown.validate().is_err());
     }
 }

@@ -5,9 +5,17 @@ import { VerificationStatus, VerificationResult, VerificationSource } from './ty
 const STELLAR_EXPERT_API = 'https://api.stellar.expert/explorer/testnet';
 const REQUEST_TIMEOUT = 5000;
 const MAX_RETRIES = 3;
+const POSITIVE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes for verified assets
+const NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes for unverified/suspicious assets
+
+interface CacheEntry {
+  result: VerificationResult;
+  expiresAt: number;
+}
 
 export class AssetVerifier {
   private httpClient: AxiosInstance;
+  private cache = new Map<string, CacheEntry>();
 
   constructor() {
     this.httpClient = axios.create({
@@ -19,6 +27,11 @@ export class AssetVerifier {
   }
 
   async verifyAsset(assetCode: string, issuer: string): Promise<VerificationResult> {
+    const cacheKey = `${assetCode}:${issuer}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.result;
+    }
     const sources: VerificationSource[] = [];
     let totalScore = 0;
     let sourceCount = 0;
@@ -68,7 +81,7 @@ export class AssetVerifier {
       status = VerificationStatus.Unverified;
     }
 
-    return {
+    const result: VerificationResult = {
       asset_code: assetCode,
       issuer,
       status,
@@ -77,6 +90,11 @@ export class AssetVerifier {
       trustline_count: trustlineResult.details?.count || 0,
       has_toml: tomlResult.verified,
     };
+
+    const ttl = status === VerificationStatus.Verified ? POSITIVE_CACHE_TTL_MS : NEGATIVE_CACHE_TTL_MS;
+    this.cache.set(cacheKey, { result, expiresAt: Date.now() + ttl });
+
+    return result;
   }
 
   private async checkStellarExpert(

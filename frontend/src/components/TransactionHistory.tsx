@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import type { TransactionProgressStatus } from './TransactionStatusTracker';
 import './TransactionHistory.css';
 
@@ -26,6 +26,78 @@ interface TransactionHistoryProps {
   isLoading?: boolean;
 }
 
+// ── URL param helpers ────────────────────────────────────────────────────────
+
+function ReceiptDownloadButtons({ tx }: { tx: TransactionHistoryItem }): React.ReactElement {
+  const csvContent = [
+    ['ID', 'Amount', 'Asset', 'Recipient', 'Status', 'Timestamp'],
+    [tx.id, tx.amount, tx.asset, tx.recipient, tx.status, tx.timestamp],
+  ]
+    .map((row) => row.join(','))
+    .join('\n');
+
+  const handleDownload = (format: 'csv' | 'json') => {
+    const content = format === 'csv' ? csvContent : JSON.stringify(tx, null, 2);
+    const mime = format === 'csv' ? 'text/csv' : 'application/json';
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `receipt-${tx.id}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <span className="receipt-download-buttons">
+      <button type="button" onClick={() => handleDownload('csv')} aria-label="Download CSV receipt">
+        CSV
+      </button>
+      <button type="button" onClick={() => handleDownload('json')} aria-label="Download JSON receipt">
+        JSON
+      </button>
+    </span>
+  );
+}
+
+function getSearchParams(): URLSearchParams {
+  return new URLSearchParams(window.location.search);
+}
+
+function replaceSearchParams(params: URLSearchParams): void {
+  const url = `${window.location.pathname}?${params.toString()}`;
+  window.history.replaceState(null, '', url);
+}
+
+function pushSearchParams(params: URLSearchParams): void {
+  const url = `${window.location.pathname}?${params.toString()}`;
+  window.history.pushState(null, '', url);
+}
+
+function getPageFromSearchParams(params: URLSearchParams, maxPage = Number.MAX_SAFE_INTEGER): number {
+  const rawPage = params.get('page');
+  if (!rawPage) {
+    return 1;
+  }
+
+  const parsedPage = Number.parseInt(rawPage, 10);
+  if (!Number.isFinite(parsedPage) || parsedPage < 1) return 1;
+  return Math.min(parsedPage, maxPage);
+}
+
+// ── Debounce hook ────────────────────────────────────────────────────────────
+
+function useDebounce<T>(value: T, delay = 300): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
+}
+
+// ── Formatting helpers ───────────────────────────────────────────────────────
+
 function formatAmount(amount: number, asset: string): string {
   return `${amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${asset}`;
 }
@@ -35,6 +107,41 @@ function formatTimestamp(value: string): string {
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString();
 }
+
+const SkeletonRow: React.FC = () => (
+  <tr aria-busy="true">
+    <td><div className="skeleton skeleton-text skeleton-amount" /></td>
+    <td><div className="skeleton skeleton-text skeleton-asset" /></td>
+    <td><div className="skeleton skeleton-text skeleton-recipient" /></td>
+    <td><div className="skeleton skeleton-status" /></td>
+    <td><div className="skeleton skeleton-text skeleton-timestamp" /></td>
+    <td><div className="skeleton skeleton-button" /></td>
+  </tr>
+);
+
+const SkeletonCard: React.FC = () => (
+  <article className="history-card skeleton-card" aria-busy="true">
+    <div className="history-card-top">
+      <div className="skeleton skeleton-text skeleton-card-amount" />
+      <div className="skeleton skeleton-status skeleton-card-status" />
+    </div>
+    <div className="history-card-grid">
+      <div>
+        <div className="skeleton skeleton-label" />
+        <div className="skeleton skeleton-text" />
+      </div>
+      <div>
+        <div className="skeleton skeleton-label" />
+        <div className="skeleton skeleton-text" />
+      </div>
+      <div>
+        <div className="skeleton skeleton-label" />
+        <div className="skeleton skeleton-text skeleton-timestamp" />
+      </div>
+    </div>
+    <div className="skeleton skeleton-button skeleton-card-button" />
+  </article>
+);
 
 export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   transactions,
@@ -46,63 +153,164 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   onLoadMore,
   isLoading = false,
 }) => {
+  // Initialise filter state from URL params
+  const initialParams = getSearchParams();
+  const isControlled = controlledPage !== undefined;
+  const syncPageFromHistoryRef = useRef(false);
+
   const [view, setView] = useState<HistoryViewMode>(defaultView);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [uncontrolledPage, setUncontrolledPage] = useState(1);
+  const [uncontrolledPage, setUncontrolledPage] = useState(() =>
+    getPageFromSearchParams(initialParams)
+  );
 
-  const isControlled = controlledPage !== undefined;
+  const [searchText, setSearchText] = useState(initialParams.get('q') ?? '');
+  const [filterStatus, setFilterStatus] = useState(initialParams.get('status') ?? '');
+  const [filterAsset, setFilterAsset] = useState(initialParams.get('asset') ?? '');
+  const [filterDateFrom, setFilterDateFrom] = useState(initialParams.get('from') ?? '');
+  const [filterDateTo, setFilterDateTo] = useState(initialParams.get('to') ?? '');
+
+  const debouncedSearch = useDebounce(searchText);
+
+  // Sync filter state → URL params
+  useEffect(() => {
+    const params = getSearchParams();
+    const set = (key: string, val: string) =>
+      val ? params.set(key, val) : params.delete(key);
+    set('q', debouncedSearch);
+    set('status', filterStatus);
+    set('asset', filterAsset);
+    set('from', filterDateFrom);
+    set('to', filterDateTo);
+    replaceSearchParams(params);
+  }, [debouncedSearch, filterStatus, filterAsset, filterDateFrom, filterDateTo]);
+
   const currentPage = isControlled ? controlledPage : uncontrolledPage;
 
-  const hasTransactions = useMemo(() => transactions.length > 0, [transactions]);
+  useEffect(() => {
+    const params = getSearchParams();
+    const currentUrlPage = getPageFromSearchParams(params);
+
+    if (currentPage <= 1) {
+      params.delete('page');
+    } else {
+      params.set('page', String(currentPage));
+    }
+
+    if (syncPageFromHistoryRef.current) {
+      syncPageFromHistoryRef.current = false;
+      replaceSearchParams(params);
+      return;
+    }
+
+    if (currentUrlPage !== currentPage) {
+      pushSearchParams(params);
+    }
+  }, [currentPage]);
+
+  useEffect(() => {
+    const syncFromUrl = () => {
+      const params = getSearchParams();
+      syncPageFromHistoryRef.current = true;
+      setSearchText(params.get('q') ?? '');
+      setFilterStatus(params.get('status') ?? '');
+      setFilterAsset(params.get('asset') ?? '');
+      setFilterDateFrom(params.get('from') ?? '');
+      setFilterDateTo(params.get('to') ?? '');
+
+      const page = getPageFromSearchParams(params);
+      if (isControlled) {
+        onPageChange?.(page);
+      } else {
+        setUncontrolledPage(page);
+      }
+    };
+
+    window.addEventListener('popstate', syncFromUrl);
+    return () => window.removeEventListener('popstate', syncFromUrl);
+  }, [isControlled, onPageChange]);
+
+  // Derive unique status/asset options from data
+  const statusOptions = useMemo(
+    () => Array.from(new Set(transactions.map(t => t.status))).sort(),
+    [transactions],
+  );
+  const assetOptions = useMemo(
+    () => Array.from(new Set(transactions.map(t => t.asset))).sort(),
+    [transactions],
+  );
+
+  // Apply filters
+  const filtered = useMemo(() => {
+    const q = debouncedSearch.toLowerCase();
+    const fromMs = filterDateFrom ? new Date(filterDateFrom).getTime() : null;
+    const toMs = filterDateTo ? new Date(filterDateTo + 'T23:59:59').getTime() : null;
+
+    return transactions.filter(t => {
+      if (q && !t.id.toLowerCase().includes(q) && !t.recipient.toLowerCase().includes(q)) {
+        return false;
+      }
+      if (filterStatus && t.status !== filterStatus) return false;
+      if (filterAsset && t.asset !== filterAsset) return false;
+      const ts = new Date(t.timestamp).getTime();
+      if (fromMs !== null && ts < fromMs) return false;
+      if (toMs !== null && ts > toMs) return false;
+      return true;
+    });
+  }, [transactions, debouncedSearch, filterStatus, filterAsset, filterDateFrom, filterDateTo]);
 
   const paginationData = useMemo(() => {
-    const total = transactions.length;
-    const totalPages = Math.ceil(total / pageSize);
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const startIdx = (currentPage - 1) * pageSize;
     const endIdx = startIdx + pageSize;
-    const paginatedItems = transactions.slice(startIdx, endIdx);
-
     return {
-      items: paginatedItems,
+      items: filtered.slice(startIdx, endIdx),
       totalPages,
       totalRecords: total,
       startRecord: total === 0 ? 0 : startIdx + 1,
       endRecord: Math.min(endIdx, total),
     };
-  }, [transactions, pageSize, currentPage]);
+  }, [filtered, pageSize, currentPage]);
 
   const handlePageChange = (newPage: number) => {
+    const clamped = Math.min(Math.max(1, newPage), paginationData.totalPages);
     if (isControlled && onPageChange) {
-      onPageChange(newPage);
+      onPageChange(clamped);
     } else {
-      setUncontrolledPage(newPage);
+      setUncontrolledPage(clamped);
     }
   };
 
-  const handlePrevPage = () => {
-    if (currentPage > 1) {
-      handlePageChange(currentPage - 1);
-    }
-  };
-
-  const handleNextPage = () => {
-    if (currentPage < paginationData.totalPages) {
-      handlePageChange(currentPage + 1);
-    } else if (onLoadMore) {
-      onLoadMore();
-    }
-  };
-
-  const toggleExpanded = (id: string) => {
-    setExpandedId((current) => (current === id ? null : id));
-  };
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    if (!isControlled) setUncontrolledPage(1);
+  }, [debouncedSearch, filterStatus, filterAsset, filterDateFrom, filterDateTo, isControlled]);
 
   // Reset to page 1 when transactions change
-  React.useEffect(() => {
-    if (!isControlled) {
-      setUncontrolledPage(1);
-    }
+  useEffect(() => {
+    if (!isControlled) setUncontrolledPage(1);
   }, [transactions, isControlled]);
+
+  const toggleExpanded = (id: string) =>
+    setExpandedId(current => (current === id ? null : id));
+
+  const clearFilters = () => {
+    setSearchText('');
+    setFilterStatus('');
+    setFilterAsset('');
+    setFilterDateFrom('');
+    setFilterDateTo('');
+  };
+
+  const hasActiveFilters =
+    searchText || filterStatus || filterAsset || filterDateFrom || filterDateTo;
+  const hasTransactions = transactions.length > 0;
+  const hasFilteredTransactions = filtered.length > 0;
+  const isEmptyState = !hasFilteredTransactions && !isLoading;
+  const emptyStateMessage = !hasTransactions
+    ? 'No transactions yet.'
+    : 'No transactions match the current filters.';
 
   return (
     <section className="transaction-history" aria-label="Transaction history">
@@ -130,16 +338,49 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
         </div>
       </header>
 
-      {isLoading && (
+      {isLoading && hasTransactions && (
         <div className="history-loading" aria-live="polite">
           <div className="history-loading-spinner" />
           <span>Loading more transactions...</span>
         </div>
       )}
 
-      {!hasTransactions && <p className="history-empty">No transactions yet.</p>}
+      {isEmptyState && <p className="history-empty">{emptyStateMessage}</p>}
 
-      {hasTransactions && (
+      {(!hasTransactions && isLoading) && (
+        <div className="history-skeletons" aria-busy="true" aria-live="polite">
+          {view === 'table' && (
+            <div className="history-table-wrap">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Amount</th>
+                    <th>Asset</th>
+                    <th>Recipient</th>
+                    <th>Status</th>
+                    <th>Timestamp</th>
+                    <th aria-label="Expand details column" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: 5 }, (_, i) => (
+                    <SkeletonRow key={`skeleton-${i}`} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {view === 'card' && (
+            <div className="history-cards">
+              {Array.from({ length: 4 }, (_, i) => (
+                <SkeletonCard key={`skeleton-${i}`} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {filtered.length > 0 && (
         <>
           <div className="history-pagination-info" aria-live="polite" aria-atomic="true">
             Showing {paginationData.startRecord}–{paginationData.endRecord} of{' '}
@@ -157,6 +398,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                     <th>Status</th>
                     <th>Timestamp</th>
                     <th aria-label="Expand details column" />
+                    <th>Receipt</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -184,11 +426,16 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                               {isExpanded ? 'Hide' : 'Expand'}
                             </button>
                           </td>
+                          <td><ReceiptDownloadButtons tx={transaction} /></td>
                         </tr>
                         {isExpanded && (
                           <tr className="history-details-row">
-                            <td colSpan={6}>
+                            <td colSpan={7}>
                               <dl className="history-details">
+                                <div key={`${transaction.id}-id`}>
+                                  <dt>Transaction ID</dt>
+                                  <dd>{transaction.id}</dd>
+                                </div>
                                 {transaction.memo && (
                                   <div key={`${transaction.id}-memo`}>
                                     <dt>Memo</dt>
@@ -247,8 +494,13 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                     >
                       {isExpanded ? 'Hide details' : 'Expand details'}
                     </button>
+                    <ReceiptDownloadButtons tx={transaction} />
                     {isExpanded && (
                       <dl className="history-details">
+                        <div key={`${transaction.id}-id`}>
+                          <dt>Transaction ID</dt>
+                          <dd>{transaction.id}</dd>
+                        </div>
                         {transaction.memo && (
                           <div key={`${transaction.id}-memo`}>
                             <dt>Memo</dt>
@@ -272,7 +524,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
           <nav className="history-pagination" aria-label="Pagination">
             <button
               type="button"
-              onClick={handlePrevPage}
+              onClick={() => handlePageChange(currentPage - 1)}
               disabled={currentPage === 1 || isLoading}
               aria-label="Previous page"
             >
@@ -283,8 +535,12 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
             </span>
             <button
               type="button"
-              onClick={handleNextPage}
-              disabled={currentPage === paginationData.totalPages || isLoading}
+              onClick={() =>
+                currentPage < paginationData.totalPages
+                  ? handlePageChange(currentPage + 1)
+                  : onLoadMore?.()
+              }
+              disabled={currentPage === paginationData.totalPages && !onLoadMore || isLoading}
               aria-label="Next page"
             >
               {onLoadMore && currentPage === paginationData.totalPages ? 'Load More' : 'Next'}

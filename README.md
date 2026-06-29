@@ -13,7 +13,7 @@ SwiftRemit is an escrow-based remittance system that enables secure cross-border
 - **Escrow-Based Transfers**: Secure USDC deposits held in contract until payout confirmation
 - **Agent Network**: Registered agents handle fiat distribution off-chain
 - **Automated Fee Collection**: Platform fees calculated and accumulated automatically
-- **Lifecycle State Management**: Remittances tracked through 4 states (Pending, Processing, Completed, Cancelled) with enforced transitions via a single canonical `RemittanceStatus` enum
+- **Lifecycle State Management**: Remittances tracked through 6 states (Pending, Processing, Completed, Cancelled, Failed, Disputed) with enforced transitions via a single canonical `RemittanceStatus` enum
 - **Authorization Security**: Role-based access control for all operations
 - **Event Emission**: Comprehensive event logging for off-chain monitoring
 - **Cancellation Support**: Senders can cancel pending remittances with full refund
@@ -142,7 +142,8 @@ Fees are calculated in basis points (bps):
 - `create_remittance(sender, agent, amount)` - Create new remittance (sender auth required)
 - `start_processing(remittance_id)` - Mark remittance as being processed (agent auth required)
 - `confirm_payout(remittance_id, proof)` - Confirm fiat payout with optional commitment proof
-- `mark_failed(remittance_id)` - Mark payout as failed with refund (agent auth required)
+- `confirm_partial_payout(remittance_id, amount)` - Disburse a partial amount to the agent; automatically marks the remittance Completed when the total disbursed reaches the net payout (agent auth required)
+- `mark_failed(remittance_id)` - Mark payout as failed and auto-refund escrow to sender (agent auth required)
 - `cancel_remittance(remittance_id)` - Cancel pending remittance (sender auth required)
 - `process_expired_remittances(remittance_ids)` - Auto-refund expired pending remittances in batches (max 50 IDs)
 
@@ -192,31 +193,43 @@ cargo test
 
 ## Quick Start
 
-### Automated Deployment (Recommended)
+### 🚀 Complete Testnet Setup (Recommended)
 
-Run the deployment script to build, deploy, and initialize everything automatically:
+Get up and running with testnet XLM, USDC, and a full end-to-end flow:
 
 **Linux/macOS:**
 ```bash
-chmod +x deploy.sh
-./deploy.sh
-# To deploy to a specific network (default: testnet):
-./deploy.sh mainnet
+./setup-testnet.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-.\deploy.ps1
-# To deploy to a specific network (default: testnet):
-.\deploy.ps1 -Network mainnet
+.\setup-testnet.ps1
 ```
 
-This will:
-- Build and optimize the contract
-- Create/fund a `deployer` identity
-- Deploy the contract and a mock USDC token
-- Initialize the contract
-- Save contract IDs to `.env.local`
+This automated script will:
+- Generate and fund test accounts with XLM
+- Deploy SwiftRemit contract and mock USDC token
+- Register agents and mint test USDC
+- Run a complete test remittance flow
+- Save all configuration files
+
+**📖 For detailed instructions:** [QUICK_START.md](QUICK_START.md) | [TESTNET_SETUP_GUIDE.md](TESTNET_SETUP_GUIDE.md)
+
+### Contract-Only Deployment
+
+If you just need to deploy the contract:
+
+**Linux/macOS:**
+```bash
+chmod +x deploy.sh
+./deploy.sh testnet
+```
+
+**Windows (PowerShell):**
+```powershell
+.\deploy.ps1 -Network testnet
+```
 
 ### Manual Setup
 
@@ -256,6 +269,35 @@ soroban contract invoke \
 See [DEPLOYMENT.md](DEPLOYMENT.md) for complete deployment instructions.
 
 For production readiness assessment, see [PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md).
+
+## Staging Environment
+
+Every merge to `main` automatically triggers a deployment to the staging environment (Stellar **testnet**) via `.github/workflows/deploy-staging.yml`.
+
+| Service  | Staging URL |
+|----------|-------------|
+| API      | `https://api.staging.swiftremit.io` |
+| Backend  | `https://backend.staging.swiftremit.io` |
+| Frontend | `https://staging.swiftremit.io` |
+
+> **Note:** The staging URLs above are placeholders. Configure the actual URLs as GitHub Actions variables `STAGING_API_URL` and `STAGING_BACKEND_URL` in the repository's *Settings → Environments → staging*.
+
+### How it works
+
+1. Docker images for `backend`, `api`, and `frontend` are built and pushed to **GHCR** (`ghcr.io/<owner>/SwiftRemit/<service>:staging`).
+2. The workflow SSH-es into the staging VM and runs `docker compose up -d` with the new image tags.
+3. **Smoke tests** (`scripts/smoke-test-staging.sh`) run immediately after deploy to verify health and key API endpoints. The workflow fails if any check returns an unexpected status code.
+
+### Required repository secrets / variables
+
+| Name | Kind | Description |
+|------|------|-------------|
+| `STAGING_HOST` | Secret | IP or hostname of the staging VM |
+| `STAGING_USER` | Secret | SSH username |
+| `STAGING_SSH_KEY` | Secret | Private key for SSH access |
+| `STAGING_SSH_PORT` | Secret | SSH port (default: 22) |
+| `STAGING_API_URL` | Variable | Base URL for the API service |
+| `STAGING_BACKEND_URL` | Variable | Base URL for the backend service |
 
 ## Environment Validation
 
@@ -313,7 +355,72 @@ SwiftRemit uses environment variables for configuration. This allows you to easi
 
 - **[CONFIGURATION.md](CONFIGURATION.md)**: Complete configuration reference with all variables, validation rules, and examples
 - **[MIGRATION.md](MIGRATION.md)**: Migration guide for existing developers
+- **[RUNBOOK.md](RUNBOOK.md)**: Operational runbook — emergency pause/unpause, admin key rotation, stuck migrations, webhook replay, storage TTL extension
 - **[PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md)**: Current production readiness status — what's complete, what's pending, and known risks before mainnet
+
+## Remittance Lifecycle — Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    actor Sender
+    actor Agent
+    participant Contract as SwiftRemit Contract
+    participant USDC as USDC Token
+    actor Admin
+
+    rect rgb(235, 245, 255)
+        Note over Sender,Contract: Happy path — creation → settlement
+        Sender->>USDC: approve(contract, amount)
+        Sender->>Contract: create_remittance(agent, amount)
+        Contract->>USDC: transfer(sender → escrow, amount)
+        Contract-->>Sender: remittance_id (status: Pending)
+
+        Agent->>Contract: confirm_payout(remittance_id)
+        Note over Contract: Pending → Processing → Completed
+        Contract->>USDC: transfer(escrow → agent, amount − fee)
+        Contract-->>Agent: ok (status: Completed)
+        Note over Contract: fee added to accumulated_fees
+    end
+
+    rect rgb(255, 245, 235)
+        Note over Sender,Contract: Cancellation path
+        Sender->>Contract: cancel_remittance(remittance_id)
+        Note over Contract: Pending → Cancelled
+        Contract->>USDC: transfer(escrow → sender, amount)
+        Contract-->>Sender: ok (full refund)
+    end
+
+    rect rgb(240, 255, 240)
+        Note over Sender,Contract: Expiry path (permissionless)
+        Sender->>Contract: process_expired_remittances([id, ...])
+        Note over Contract: Pending + expired → Cancelled
+        Contract->>USDC: transfer(escrow → sender, amount)
+        Contract-->>Sender: [processed_ids]
+    end
+
+    rect rgb(255, 235, 235)
+        Note over Agent,Contract: Failed / dispute path
+        Agent->>Contract: mark_failed(remittance_id)
+        Note over Contract: Pending/Processing → Failed
+        Sender->>Contract: raise_dispute(remittance_id, evidence_hash)
+        Note over Contract: Failed → Disputed
+        Admin->>Contract: resolve_dispute(remittance_id, in_favour_of_sender)
+        alt in favour of sender
+            Contract->>USDC: transfer(escrow → sender, amount)
+            Note over Contract: Disputed → Cancelled
+        else in favour of agent
+            Contract->>USDC: transfer(escrow → agent, amount − fee)
+            Note over Contract: Disputed → Completed
+        end
+    end
+
+    rect rgb(245, 235, 255)
+        Note over Admin,Contract: Fee management
+        Admin->>Contract: withdraw_fees(to)
+        Contract->>USDC: transfer(escrow → to, accumulated_fees)
+        Contract-->>Admin: ok
+    end
+```
 
 ## State Machine
 
@@ -324,19 +431,22 @@ All remittance lifecycle state is tracked by a single canonical `RemittanceStatu
 │ Pending │  ← initial state (funds locked in escrow)
 └────┬────┘
      │
-     ├──────────────────────┐
-     │                      │
-     ▼                      ▼
-┌────────────┐        ┌───────────┐
-│ Processing │        │ Cancelled │ (Terminal)
-└─────┬──────┘        └───────────┘
-      │                      ▲
-      ├──────────────────────┤
-      │                      │
-      ▼                      │
-┌───────────┐                │
-│ Completed │ (Terminal)     │
-└───────────┘                │
+     ├──────────────────────┬──────────────────────┐
+     │                      │                      │
+     ▼                      ▼                      ▼
+┌────────────┐        ┌───────────┐          ┌────────┐
+│ Processing │        │ Cancelled │(Terminal) │ Failed │
+└─────┬──────┘        └───────────┘          └───┬────┘
+      │                      ▲                   │
+      ├──────────────────────┤                   │
+      │                      │                   ▼
+      ▼                      │            ┌──────────┐
+┌───────────┐                │            │ Disputed │
+│ Completed │(Terminal)      │            └────┬─────┘
+└───────────┘                │                 │
+                             │    Cancelled ◄──┤
+                             │                 │
+                             └──── Completed ◄─┘
 ```
 
 ### Valid Transitions
@@ -344,11 +454,16 @@ All remittance lifecycle state is tracked by a single canonical `RemittanceStatu
 | From       | To         | Trigger                        |
 |------------|------------|--------------------------------|
 | Pending    | Processing | Contract enters processing during `confirm_payout` |
-| Pending    | Cancelled  | Sender calls `cancel_remittance` |
+| Pending    | Cancelled  | Sender calls `cancel_remittance` or expiry processed |
+| Pending    | Failed     | Agent calls `mark_failed` |
 | Processing | Completed  | `confirm_payout` completes successfully and releases USDC |
-| Processing | Cancelled  | Documented internal failure/refund path; no separate public `mark_failed` entrypoint |
+| Processing | Cancelled  | Expiry or internal failure/refund path |
+| Processing | Failed     | Agent calls `mark_failed` |
+| Failed     | Disputed   | Sender calls `raise_dispute` within dispute window |
+| Disputed   | Cancelled  | Admin calls `resolve_dispute` in favour of sender |
+| Disputed   | Completed  | Admin calls `resolve_dispute` in favour of agent |
 
-Terminal states (`Completed`, `Cancelled`) cannot transition further.
+Terminal states (`Completed`, `Cancelled`) cannot transition further. `Failed` and `Disputed` are transient — further transitions are permitted from both.
 
 
 
@@ -449,7 +564,7 @@ The contract emits events for monitoring:
 
 ## Dependencies
 
-- `soroban-sdk = "21.7.0"` - Latest Soroban SDK
+- `soroban-sdk = "25.3.1"` - Latest Soroban SDK
 
 ## License
 
@@ -518,3 +633,20 @@ import { VerificationBadge } from './components/VerificationBadge';
 - [ ] Agent reputation system
 - [ ] Dispute resolution mechanism
 - [ ] Time-locked escrow options
+
+## Error Codes & Troubleshooting
+
+| Code | Error Name | Common Cause | Resolution Steps |
+| :--- | :--- | :--- | :--- |
+| **1** | AlreadyInitialized | Attempting to call initialize() on an active contract. | No action required. If re-configuration is needed, check if an update function exists. |
+| **2** | NotInitialized | Operations attempted before the contract setup is complete. | The administrator must call the initialize() function with valid parameters. |
+| **3** | InvalidAmount | Providing zero or negative values for remittance. | Ensure the transfer amount is a positive integer greater than 0. |
+| **4** | InvalidFeeBps | Fee percentage is set outside the 0-100% (0-10000 bps) range. | Adjust the basis points to fall within the valid range (e.g., 2.5% = 250 bps). |
+| **5** | AgentNotRegistered | Using an address that hasn't been added to the whitelist. | Register the agent address first using the 
+egister_agent function. |
+| **6** | RemittanceNotFound | Querying an ID that does not exist on the ledger. | Verify the Remittance ID from your transaction history or event logs. |
+| **7** | InvalidStatus | Operation not allowed in current state (e.g. canceling a settled payment). | Check the current status of the remittance via get_remittance before retrying. |
+| **11** | SettlementExpired | The time-lock for the remittance has passed. | The sender may need to cancel and recreate the remittance with a new deadline. |
+| **12** | DuplicateSettlement | The payment was already claimed or processed. | Check the transaction ledger; the funds have likely already been disbursed. |
+| **13** | ContractPaused | Circuit breaker active due to maintenance or emergency. | Monitor the project's official status channels; wait for the admin to unpause. |
+

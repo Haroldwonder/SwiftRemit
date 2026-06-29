@@ -1,6 +1,17 @@
 use soroban_sdk::{contracttype, Address, Env, Map, Vec};
 
-use crate::{ContractError, Remittance, RemittanceStatus};
+use crate::{ContractError, MaybeBytes32, Remittance, RemittanceStatus, config::MAX_NETTING_BATCH_SIZE};
+
+/// Result of a netting computation, pairing net transfers with IDs that were
+/// excluded because they are in a non-nettable state (Failed or Disputed).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct NettingResult {
+    /// Minimal set of net transfers to execute on-chain.
+    pub net_transfers: Vec<NetTransfer>,
+    /// Remittance IDs that were skipped due to Failed or Disputed status.
+    pub skipped_ids: Vec<u64>,
+}
 
 /// Represents a net transfer between two parties after offsetting opposing flows.
 /// This structure ensures deterministic ordering by always placing the party
@@ -50,16 +61,33 @@ struct DirectionalFlow {
 ///
 /// # Parameters
 /// - `env`: Environment reference
-/// - `remittances`: Vector of remittances to net
+/// - `remittances`: Vector of remittances to net (max MAX_NETTING_BATCH_SIZE)
 ///
 /// # Returns
 /// Vector of NetTransfer structs representing the minimal set of transfers needed
-pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Vec<NetTransfer> {
+///
+/// # Errors
+/// Returns `ContractError::InvalidBatchSize` if remittances.len() > MAX_NETTING_BATCH_SIZE
+pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Result<NettingResult, ContractError> {
+    // Validate batch size to prevent DoS via large remittance batches
+    if remittances.len() > MAX_NETTING_BATCH_SIZE {
+        return Err(ContractError::InvalidBatchSize);
+    }
+
     let mut flows: Vec<DirectionalFlow> = Vec::new(env);
+    let mut skipped_ids: Vec<u64> = Vec::new(env);
 
     // Extract all directional flows from remittances
     for i in 0..remittances.len() {
         let remittance = remittances.get_unchecked(i);
+
+        // Track Failed/Disputed remittances so callers can reconcile them.
+        if remittance.status == RemittanceStatus::Failed
+            || remittance.status == RemittanceStatus::Disputed
+        {
+            skipped_ids.push_back(remittance.id);
+            continue;
+        }
 
         // Only process pending remittances
         if remittance.status != RemittanceStatus::Pending {
@@ -94,22 +122,17 @@ pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Vec<
     }
 
     // Convert map to vector of NetTransfer structs
-    let mut result: Vec<NetTransfer> = Vec::new(env);
+    let mut net_transfers: Vec<NetTransfer> = Vec::new(env);
     let keys = net_map.keys();
 
     for i in 0..keys.len() {
         let key = keys.get_unchecked(i);
+        let (net_amount, total_fees) = net_map.get(key.clone()).unwrap_or((0, 0));
 
-        // Map.get() returns Option, but we know key exists since we just got it from keys()
-        // This is safe because keys() returns only existing keys
-        let (_net_amount, _total_fees) = net_map.get(key.clone()).unwrap_or((0, 0));
-
-        let (net_amount, total_fees) = net_map.get(key.clone()).unwrap();
-
-
-        // Only include non-zero net transfers
+        // Skip zero-value net positions — attempting a zero-value token transfer
+        // would fail or produce unexpected behaviour (Issue #421).
         if net_amount != 0 {
-            result.push_back(NetTransfer {
+            net_transfers.push_back(NetTransfer {
                 party_a: key.0.clone(),
                 party_b: key.1.clone(),
                 net_amount,
@@ -118,7 +141,7 @@ pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Vec<
         }
     }
 
-    result
+    Ok(NettingResult { net_transfers, skipped_ids })
 }
 
 /// Normalizes a pair of addresses to ensure deterministic ordering.
@@ -222,6 +245,7 @@ pub fn validate_net_settlement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use soroban_sdk::{testutils::Address as _, Env};
 
     #[test]
@@ -241,6 +265,12 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
         // B -> A: 90
@@ -252,9 +282,16 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
-        let net_transfers = compute_net_settlements(&env, &remittances);
+        let result = compute_net_settlements(&env, &remittances).unwrap();
+        let net_transfers = result.net_transfers;
 
         assert_eq!(net_transfers.len(), 1);
         let transfer = net_transfers.get_unchecked(0);
@@ -287,6 +324,12 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
         // B -> A: 100
@@ -298,9 +341,16 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
-        let net_transfers = compute_net_settlements(&env, &remittances);
+        let result = compute_net_settlements(&env, &remittances).unwrap();
+        let net_transfers = result.net_transfers;
 
         // Complete offset should result in no transfers
         assert_eq!(net_transfers.len(), 0);
@@ -324,6 +374,12 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
         // B -> C: 50
@@ -335,6 +391,12 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
         // C -> A: 30
@@ -346,9 +408,16 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
-        let net_transfers = compute_net_settlements(&env, &remittances);
+        let result = compute_net_settlements(&env, &remittances).unwrap();
+        let net_transfers = result.net_transfers;
 
         // Should have 3 net transfers (one for each pair)
         assert_eq!(net_transfers.len(), 3);
@@ -377,6 +446,12 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
         remittances.push_back(Remittance {
@@ -387,9 +462,16 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
-        let net_transfers = compute_net_settlements(&env, &remittances);
+        let result = compute_net_settlements(&env, &remittances).unwrap();
+        let net_transfers = result.net_transfers;
 
         assert!(validate_net_settlement(&remittances, &net_transfers).is_ok());
     }
@@ -410,6 +492,12 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
         remittances1.push_back(Remittance {
             id: 2,
@@ -419,6 +507,12 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
         // Second ordering (reversed)
@@ -431,6 +525,12 @@ mod tests {
             fee: 1,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
         remittances2.push_back(Remittance {
             id: 1,
@@ -440,10 +540,16 @@ mod tests {
             fee: 2,
             status: RemittanceStatus::Pending,
             expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: addr_a.clone(),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
         });
 
-        let net1 = compute_net_settlements(&env, &remittances1);
-        let net2 = compute_net_settlements(&env, &remittances2);
+        let net1 = compute_net_settlements(&env, &remittances1).unwrap().net_transfers;
+        let net2 = compute_net_settlements(&env, &remittances2).unwrap().net_transfers;
 
         // Results should be identical regardless of input order
         assert_eq!(net1.len(), net2.len());
@@ -452,6 +558,199 @@ mod tests {
             let t2 = net2.get_unchecked(0);
             assert_eq!(t1.net_amount, t2.net_amount);
             assert_eq!(t1.total_fees, t2.total_fees);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper: build a Remittance with minimal fields for property tests
+    // -------------------------------------------------------------------------
+
+    fn make_remittance(
+        env: &Env,
+        id: u64,
+        sender: soroban_sdk::Address,
+        agent: soroban_sdk::Address,
+        amount: i128,
+        fee: i128,
+    ) -> Remittance {
+        Remittance {
+            id,
+            sender,
+            agent,
+            amount,
+            fee,
+            status: RemittanceStatus::Pending,
+            expiry: None,
+            settlement_config: crate::MaybeSettlementConfig::None,
+            token: soroban_sdk::Address::generate(env),
+            created_at: 0,
+            failed_at: None,
+            dispute_evidence: MaybeBytes32::None,
+            expires_at: None,
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Property-based tests using proptest
+    //
+    // Addresses cannot be generated by proptest strategies directly (they
+    // require a soroban Env), so we generate plain-data parameters and create
+    // the soroban objects inside each test body.  proptest drives the data;
+    // soroban drives the objects.
+    // -------------------------------------------------------------------------
+
+    proptest! {
+        /// Invariant 1 — Fee preservation
+        ///
+        /// The sum of fees across all net transfers equals the sum of fees
+        /// across all pending remittances, regardless of how many remittances
+        /// are given or what amounts they carry.
+        #[test]
+        fn prop_fees_preserved(
+            // Generate up to 8 (amount, fee) pairs for A->B remittances
+            ab_pairs in prop::collection::vec((1i128..=500_000i128, 1i128..=1_000i128), 0..8),
+            // Generate up to 8 (amount, fee) pairs for B->A remittances
+            ba_pairs in prop::collection::vec((1i128..=500_000i128, 1i128..=1_000i128), 0..8),
+        ) {
+            let env = Env::default();
+            let addr_a = soroban_sdk::Address::generate(&env);
+            let addr_b = soroban_sdk::Address::generate(&env);
+
+            let mut remittances = Vec::new(&env);
+            let mut expected_fees: i128 = 0;
+            let mut id: u64 = 1;
+
+            for (amount, fee) in &ab_pairs {
+                remittances.push_back(make_remittance(&env, id, addr_a.clone(), addr_b.clone(), *amount, *fee));
+                expected_fees += fee;
+                id += 1;
+            }
+            for (amount, fee) in &ba_pairs {
+                remittances.push_back(make_remittance(&env, id, addr_b.clone(), addr_a.clone(), *amount, *fee));
+                expected_fees += fee;
+                id += 1;
+            }
+
+            // Skip oversized batches (MAX_NETTING_BATCH_SIZE enforcement is tested elsewhere)
+            prop_assume!(remittances.len() <= crate::config::MAX_NETTING_BATCH_SIZE);
+
+            let result = compute_net_settlements(&env, &remittances).unwrap();
+
+            let actual_fees: i128 = (0..result.net_transfers.len())
+                .map(|i| result.net_transfers.get_unchecked(i).total_fees)
+                .sum();
+
+            prop_assert_eq!(
+                actual_fees,
+                expected_fees,
+                "fee sum mismatch: expected {expected_fees}, got {actual_fees}"
+            );
+        }
+
+        /// Invariant 2 — Net amount correctness
+        ///
+        /// For a single pair (A, B), the net amount equals the absolute
+        /// difference between the sum of A->B flows and the sum of B->A flows.
+        /// When the two sums are equal the result should be a zero-transfer
+        /// (which is elided, leaving an empty transfers list).
+        #[test]
+        fn prop_net_amount_correct_for_single_pair(
+            ab_amounts in prop::collection::vec(1i128..=500_000i128, 0..6),
+            ba_amounts in prop::collection::vec(1i128..=500_000i128, 0..6),
+        ) {
+            let env = Env::default();
+            let addr_a = soroban_sdk::Address::generate(&env);
+            let addr_b = soroban_sdk::Address::generate(&env);
+
+            let mut remittances = Vec::new(&env);
+            let mut id: u64 = 1;
+
+            let ab_sum: i128 = ab_amounts.iter().sum();
+            let ba_sum: i128 = ba_amounts.iter().sum();
+
+            for &amount in &ab_amounts {
+                remittances.push_back(make_remittance(&env, id, addr_a.clone(), addr_b.clone(), amount, 0));
+                id += 1;
+            }
+            for &amount in &ba_amounts {
+                remittances.push_back(make_remittance(&env, id, addr_b.clone(), addr_a.clone(), amount, 0));
+                id += 1;
+            }
+
+            prop_assume!(remittances.len() <= crate::config::MAX_NETTING_BATCH_SIZE);
+
+            let result = compute_net_settlements(&env, &remittances).unwrap();
+            let expected_net = (ab_sum - ba_sum).abs();
+
+            if expected_net == 0 {
+                // Fully offset — no transfer emitted
+                prop_assert_eq!(result.net_transfers.len(), 0);
+            } else {
+                prop_assert_eq!(result.net_transfers.len(), 1);
+                let transfer = result.net_transfers.get_unchecked(0);
+                prop_assert_eq!(
+                    transfer.net_amount.abs(),
+                    expected_net,
+                    "net amount mismatch: expected {expected_net}"
+                );
+            }
+        }
+
+        /// Invariant 3 — Order independence
+        ///
+        /// Shuffling the input remittances must not change the set of net
+        /// transfers.  We verify this by reversing the input and comparing
+        /// the resulting net amounts and fee totals for each unique party pair.
+        #[test]
+        fn prop_order_independence(
+            ab_pairs in prop::collection::vec((1i128..=100_000i128, 1i128..=500i128), 1..5),
+            ba_pairs in prop::collection::vec((1i128..=100_000i128, 1i128..=500i128), 1..5),
+        ) {
+            let env = Env::default();
+            let addr_a = soroban_sdk::Address::generate(&env);
+            let addr_b = soroban_sdk::Address::generate(&env);
+
+            let mut forward = Vec::new(&env);
+            let mut reversed = Vec::new(&env);
+            let mut id: u64 = 1;
+
+            // Build forward order: all A->B then all B->A
+            for &(amount, fee) in &ab_pairs {
+                forward.push_back(make_remittance(&env, id, addr_a.clone(), addr_b.clone(), amount, fee));
+                id += 1;
+            }
+            for &(amount, fee) in &ba_pairs {
+                forward.push_back(make_remittance(&env, id, addr_b.clone(), addr_a.clone(), amount, fee));
+                id += 1;
+            }
+
+            // Build reversed order: all B->A then all A->B
+            let mut id2: u64 = 1;
+            for &(amount, fee) in &ba_pairs {
+                reversed.push_back(make_remittance(&env, id2, addr_b.clone(), addr_a.clone(), amount, fee));
+                id2 += 1;
+            }
+            for &(amount, fee) in &ab_pairs {
+                reversed.push_back(make_remittance(&env, id2, addr_a.clone(), addr_b.clone(), amount, fee));
+                id2 += 1;
+            }
+
+            prop_assume!(forward.len() <= crate::config::MAX_NETTING_BATCH_SIZE);
+
+            let r1 = compute_net_settlements(&env, &forward).unwrap();
+            let r2 = compute_net_settlements(&env, &reversed).unwrap();
+
+            prop_assert_eq!(r1.net_transfers.len(), r2.net_transfers.len(),
+                "transfer count differs between orderings");
+
+            if r1.net_transfers.len() > 0 {
+                let t1 = r1.net_transfers.get_unchecked(0);
+                let t2 = r2.net_transfers.get_unchecked(0);
+                prop_assert_eq!(t1.net_amount, t2.net_amount,
+                    "net_amount differs between orderings");
+                prop_assert_eq!(t1.total_fees, t2.total_fees,
+                    "total_fees differ between orderings");
+            }
         }
     }
 }

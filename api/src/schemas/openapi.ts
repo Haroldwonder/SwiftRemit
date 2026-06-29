@@ -86,4 +86,16 @@ export const HealthResponseSchema = z.object({
   status: z.string().openapi({ example: 'ok' }),
   timestamp: z.string().datetime(),
   uptime: z.number(),
+  checks: z.object({
+    database: z.object({
+      status: z.enum(['ok', 'error', 'not_configured']),
+      endpoint: z.string().optional(),
+      message: z.string().optional(),
+    }),
+    contract: z.object({
+      status: z.enum(['ok', 'error', 'not_configured']),
+      endpoint: z.string().optional(),
+      message: z.string().optional(),
+    }),
+  }),
 }).openapi('HealthResponse');

@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TransactionStatusTracker, TransactionProgressStatus } from '../TransactionStatusTracker';
+import { axe, toHaveNoViolations } from 'jest-axe';
+import { TransactionStatusTracker } from '../TransactionStatusTracker';
+import type { TransactionProgressStatus } from '../TransactionStatusTracker';
+
+expect.extend(toHaveNoViolations);
 
 describe('TransactionStatusTracker', () => {
   beforeEach(() => {
@@ -51,6 +55,13 @@ describe('TransactionStatusTracker', () => {
       render(<TransactionStatusTracker currentStatus="processing" enablePolling={false} />);
       expect(screen.queryByText('Cancelled')).not.toBeInTheDocument();
     });
+
+    it('includes aria-live region for status announcements', () => {
+      render(<TransactionStatusTracker currentStatus="initiated" enablePolling={false} />);
+      const liveRegion = document.querySelector('[aria-live="polite"]');
+      expect(liveRegion).toBeInTheDocument();
+      expect(liveRegion).toHaveAttribute('aria-atomic', 'true');
+    });
   });
 
   describe('Status Display', () => {
@@ -88,9 +99,71 @@ describe('TransactionStatusTracker', () => {
       expect(failedStep).not.toBeNull();
       expect(failedStep?.textContent).toBe('Failed');
     });
+
+    it('adds role="status" to the active step', () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="processing" enablePolling={false} />
+      );
+      const activeStep = container.querySelector('.transaction-tracker-step.active');
+      expect(activeStep).toHaveAttribute('role', 'status');
+    });
+
+    it('does not add role="status" to non-active steps', () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="processing" enablePolling={false} />
+      );
+      const doneSteps = container.querySelectorAll('.transaction-tracker-step.done');
+      doneSteps.forEach(step => {
+        expect(step).not.toHaveAttribute('role', 'status');
+      });
+    });
   });
 
-  describe('Manual Refresh', () => {
+  describe('Accessibility', () => {
+    it('announces status changes to screen readers', () => {
+      const { rerender } = render(
+        <TransactionStatusTracker currentStatus="initiated" enablePolling={false} />
+      );
+      const liveRegion = document.querySelector('[aria-live="polite"]');
+      // Initially has the initiated status announcement
+      expect(liveRegion?.textContent).toContain('Transaction initiated');
+
+      rerender(
+        <TransactionStatusTracker currentStatus="processing" enablePolling={false} />
+      );
+      expect(liveRegion?.textContent).toContain('Transaction is being processed');
+    });
+
+    it('has role="status" on aria-live region', () => {
+      render(<TransactionStatusTracker currentStatus="initiated" enablePolling={false} />);
+      const liveRegion = document.querySelector('[aria-live="polite"]');
+      expect(liveRegion).toHaveAttribute('role', 'status');
+    });
+
+    it('announces completed status to screen readers', () => {
+      const { rerender } = render(
+        <TransactionStatusTracker currentStatus="processing" enablePolling={false} />
+      );
+      const liveRegion = document.querySelector('[aria-live="polite"]');
+      
+      rerender(
+        <TransactionStatusTracker currentStatus="completed" enablePolling={false} />
+      );
+      expect(liveRegion?.textContent).toContain('Transaction completed successfully');
+    });
+
+    it('announces failed status to screen readers', () => {
+      const { rerender } = render(
+        <TransactionStatusTracker currentStatus="processing" enablePolling={false} />
+      );
+      const liveRegion = document.querySelector('[aria-live="polite"]');
+      
+      rerender(
+        <TransactionStatusTracker currentStatus="failed" enablePolling={false} />
+      );
+      expect(liveRegion?.textContent).toContain('Transaction failed');
+    });
+  });
     it('calls onRefresh when refresh button is clicked', async () => {
       const user = userEvent.setup({ delay: null });
       const onRefresh = vi.fn().mockResolvedValue(undefined);
@@ -111,7 +184,7 @@ describe('TransactionStatusTracker', () => {
 
     it('shows refreshing state during refresh', async () => {
       const user = userEvent.setup({ delay: null });
-      const onRefresh = vi.fn(() => new Promise((resolve) => setTimeout(resolve, 100)));
+      const onRefresh = vi.fn((): Promise<void> => new Promise((resolve) => setTimeout(resolve, 100)));
 
       render(
         <TransactionStatusTracker
@@ -152,6 +225,10 @@ describe('TransactionStatusTracker', () => {
   });
 
   describe('Polling Functionality', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
     it('starts polling when enablePolling is true', () => {
       const onRefresh = vi.fn().mockResolvedValue(undefined);
 
@@ -421,6 +498,10 @@ describe('TransactionStatusTracker', () => {
   });
 
   describe('Cleanup', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
     it('cleans up polling interval on unmount', () => {
       const onRefresh = vi.fn().mockResolvedValue(undefined);
 
@@ -470,6 +551,10 @@ describe('TransactionStatusTracker', () => {
   });
 
   describe('Polling Interval Configuration', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
     it('uses default polling interval of 5000ms', () => {
       const onRefresh = vi.fn().mockResolvedValue(undefined);
 
@@ -581,4 +666,49 @@ describe('TransactionStatusTracker', () => {
       vi.useFakeTimers();
     });
   });
-});
+
+  describe('accessibility', () => {
+    it('has no a11y violations in initiated state', async () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="initiated" enablePolling={false} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations in processing state', async () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="processing" enablePolling={false} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations in completed state', async () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="completed" enablePolling={false} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations in failed state', async () => {
+      const { container } = render(
+        <TransactionStatusTracker currentStatus="failed" enablePolling={false} />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations when refresh button is present', async () => {
+      const { container } = render(
+        <TransactionStatusTracker
+          currentStatus="processing"
+          onRefresh={vi.fn().mockResolvedValue(undefined)}
+          enablePolling={false}
+        />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+  });

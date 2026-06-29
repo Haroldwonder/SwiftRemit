@@ -38,6 +38,10 @@ VITE_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 # Your deployed contract address (C...)
 VITE_CONTRACT_ID=
 
+# Asset issuer addresses
+VITE_USDC_ISSUER=
+VITE_EURC_ISSUER=
+
 # Testnet USDC token contract address
 VITE_USDC_TOKEN_ID=
 ```
@@ -50,6 +54,8 @@ VITE_USDC_TOKEN_ID=
 | `VITE_HORIZON_URL` | Horizon API endpoint for Stellar operations | `https://horizon-testnet.stellar.org` |
 | `VITE_SOROBAN_RPC_URL` | Soroban RPC endpoint for smart contract calls | `https://soroban-testnet.stellar.org` |
 | `VITE_CONTRACT_ID` | Your deployed SwiftRemit contract address (starts with `C`) | `CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX` |
+| `VITE_USDC_ISSUER` | Issuer account for the USDC asset used by wallet payments | `G...` |
+| `VITE_EURC_ISSUER` | Issuer account for the EURC asset used by wallet payments | `G...` |
 | `VITE_USDC_TOKEN_ID` | Testnet USDC token contract address | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
 
 **Important Notes:**

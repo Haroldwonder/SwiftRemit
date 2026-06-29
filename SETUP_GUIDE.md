@@ -2,6 +2,46 @@
 
 Quick start guide for deploying and running the asset verification system.
 
+## Docker Compose Quick-Start (Recommended)
+
+The fastest way to get a full local environment running — no manual PostgreSQL setup required.
+
+**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose v2)
+
+```bash
+# 1. Clone the repo and enter the directory
+git clone https://github.com/HaroldwonderSwiftRemit/SwiftRemit.git
+cd SwiftRemit
+
+# 2. (Optional) Create a local secrets override
+cp docker-compose.override.yml docker-compose.override.local.yml
+# Edit docker-compose.override.local.yml with real secrets
+
+# 3. Start all services
+docker compose up --build
+
+# Services will be available at:
+#   PostgreSQL  → localhost:5432
+#   Backend     → http://localhost:3001
+#   API         → http://localhost:3000
+#   Frontend    → http://localhost:5173
+```
+
+Source files are volume-mounted so changes to `backend/src`, `api/src`, and `frontend/src` trigger hot-reload without rebuilding the image.
+
+To stop and remove containers:
+```bash
+docker compose down
+# Add -v to also remove the postgres_data volume (wipes the database)
+docker compose down -v
+```
+
+---
+
+## Manual Setup
+
+Follow the steps below if you prefer to run services directly on your machine.
+
 ## Prerequisites
 
 - Node.js 18+ and npm

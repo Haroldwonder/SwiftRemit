@@ -1,13 +1,19 @@
+import crypto from 'crypto';
 import {
   enqueueWebhookDelivery,
   getActiveWebhookSubscribers,
+  getWebhookSubscriberById,
   getPendingWebhookDeliveries,
   markWebhookDeliveryFailure,
   markWebhookDeliverySuccess,
 } from './database';
-import { RemittanceCreatedWebhookPayload, WebhookDelivery } from './types';
+import { RemittanceCreatedWebhookPayload, Sep24ExpiredRefundWebhookPayload, WebhookDelivery, WebhookSubscriber } from './types';
 
 const MAX_RETRIES = 5;
+const RETRY_BASE_MS = parseInt(process.env.WEBHOOK_RETRY_BASE_MS || '1000', 10);
+const RETRY_MAX_MS = parseInt(process.env.WEBHOOK_RETRY_MAX_MS || '300000', 10);
+const RETRY_JITTER_PERCENT = parseInt(process.env.WEBHOOK_RETRY_JITTER_PERCENT || '20', 10);
+const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
 
 export class WebhookDispatcher {
   constructor(private readonly fetchImpl: typeof fetch = fetch) {}
@@ -20,30 +26,77 @@ export class WebhookDispatcher {
       )
     );
 
-    for (const delivery of deliveries) {
-      await this.attemptDelivery(delivery);
+    for (let i = 0; i < deliveries.length; i++) {
+      await this.attemptDelivery(deliveries[i], subscribers[i]);
+    }
+  }
+
+  async dispatchSep24ExpiredRefund(payload: Sep24ExpiredRefundWebhookPayload): Promise<void> {
+    const subscribers = await getActiveWebhookSubscribers();
+    const deliveries = await Promise.all(
+      subscribers.map((subscriber) =>
+        enqueueWebhookDelivery('sep24.expired_refund', payload.transaction_id, subscriber, payload, MAX_RETRIES)
+      )
+    );
+
+    for (let i = 0; i < deliveries.length; i++) {
+      await this.attemptDelivery(deliveries[i], subscribers[i]);
     }
   }
 
   async retryPendingDeliveries(limit: number = 100): Promise<void> {
     const deliveries = await getPendingWebhookDeliveries(limit);
     for (const delivery of deliveries) {
-      await this.attemptDelivery(delivery);
+      const subscriber = await getWebhookSubscriberById(delivery.subscriber_id);
+      await this.attemptDelivery(delivery, subscriber ?? undefined);
     }
   }
 
-  private async attemptDelivery(delivery: WebhookDelivery): Promise<void> {
+  private validateUrl(url: string): void {
+    if (!url.startsWith('https://')) {
+      throw new Error(`Webhook delivery rejected: URL must use HTTPS (received: ${url})`);
+    }
+  }
+
+  private buildSignatureHeaders(body: string, subscriber: WebhookSubscriber | undefined): Record<string, string> {
+    if (!subscriber?.secret) return {};
+
+    const timestamp = Date.now().toString();
+    const msg = `${timestamp}.${body}`;
+    const headers: Record<string, string> = {
+      'x-webhook-timestamp': timestamp,
+      'x-webhook-signature': crypto.createHmac('sha256', subscriber.secret).update(msg).digest('hex'),
+    };
+
+    if (subscriber.previous_secret && subscriber.secret_rotated_at) {
+      const age = Date.now() - new Date(subscriber.secret_rotated_at).getTime();
+      if (age < ROTATION_GRACE_MS) {
+        headers['x-webhook-signature-prev'] = crypto
+          .createHmac('sha256', subscriber.previous_secret)
+          .update(msg)
+          .digest('hex');
+      }
+    }
+
+    return headers;
+  }
+
+  private async attemptDelivery(delivery: WebhookDelivery, subscriber?: WebhookSubscriber): Promise<void> {
     const nextAttempt = delivery.attempt_count + 1;
 
     try {
+      this.validateUrl(delivery.target_url);
+
+      const body = JSON.stringify(delivery.payload);
       const response = await this.fetchImpl(delivery.target_url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           'x-event-type': delivery.event_type,
           'x-attempt': String(nextAttempt),
+          ...this.buildSignatureHeaders(body, subscriber),
         },
-        body: JSON.stringify(delivery.payload),
+        body,
       });
 
       if (response.ok) {
@@ -82,6 +135,12 @@ export class WebhookDispatcher {
   }
 
   private retryDelayMs(attempt: number): number {
-    return 1000 * attempt;
+    const exponentialDelay = RETRY_BASE_MS * Math.pow(2, attempt - 1);
+    const capped = Math.min(exponentialDelay, RETRY_MAX_MS);
+    const jitterRange = (capped * RETRY_JITTER_PERCENT) / 100;
+    const jitter = (Math.random() - 0.5) * 2 * jitterRange;
+    const finalDelay = Math.max(0, capped + jitter);
+    console.log(`Webhook retry attempt ${attempt}: exponential=${exponentialDelay}ms, capped=${capped}ms, jitter=${jitter.toFixed(0)}ms, final=${finalDelay.toFixed(0)}ms`);
+    return finalDelay;
   }
 }

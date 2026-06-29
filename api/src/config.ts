@@ -8,21 +8,14 @@ const currencySchema = Joi.object({
   code: Joi.string()
     .required()
     .custom((value, helpers) => {
-      if (!/^[A-Z][A-Z0-9]*$/.test(value)) {
-        return helpers.error('string.uppercase');
-      }
-      if (value.length < 3) {
-        return helpers.error('string.min', { limit: 3 });
-      }
-      if (value.length > 12) {
-        return helpers.error('string.max', { limit: 12 });
+      // Validate ISO 4217 format: exactly 3 uppercase letters
+      if (!/^[A-Z]{3}$/.test(value)) {
+        return helpers.error('string.iso4217');
       }
       return value;
     })
     .messages({
-      'string.uppercase': 'Currency code must contain only uppercase letters and numbers',
-      'string.min': 'Currency code must be at least 3 characters',
-      'string.max': 'Currency code must not exceed 12 characters',
+      'string.iso4217': 'Currency code must conform to ISO 4217 format (exactly 3 uppercase letters)',
     }),
   symbol: Joi.string()
     .min(1)

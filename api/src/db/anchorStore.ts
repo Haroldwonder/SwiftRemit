@@ -28,6 +28,7 @@ type AnchorRow = {
 export type AnchorFilters = {
   status?: string;
   currency?: string;
+  currencies?: string[];
 };
 
 export type AnchorUpdateInput = Partial<AnchorProvider>;
@@ -109,7 +110,7 @@ export interface AnchorStore {
 }
 
 export class PostgresAnchorStore implements AnchorStore {
-  constructor(private readonly db: Queryable) {}
+  constructor(private readonly db: Pool) {}
 
   async initializeSchema(): Promise<void> {
     await this.db.query(FULL_SCHEMA_SQL);
@@ -162,9 +163,20 @@ export class PostgresAnchorStore implements AnchorStore {
       clauses.push(`status = $${params.length}`);
     }
 
-    if (filters.currency) {
-      params.push(filters.currency.toUpperCase());
+    // currencies[] takes precedence; fall back to single currency
+    const currencyList = filters.currencies?.length
+      ? filters.currencies
+      : filters.currency
+        ? [filters.currency]
+        : [];
+
+    if (currencyList.length === 1) {
+      params.push(currencyList[0].toUpperCase());
       clauses.push(`$${params.length} = ANY(supported_currencies)`);
+    } else if (currencyList.length > 1) {
+      params.push(currencyList.map(c => c.toUpperCase()));
+      // Anchor must support ALL requested currencies
+      clauses.push(`$${params.length}::text[] <@ supported_currencies`);
     }
 
     const result = await this.db.query(
@@ -306,8 +318,21 @@ export class PostgresAnchorStore implements AnchorStore {
   }
 
   async delete(id: string): Promise<boolean> {
-    const result = await this.db.query('DELETE FROM anchors WHERE id = $1', [id]);
-    return (result.rowCount ?? 0) > 0;
+    const conn = await this.db.connect();
+    try {
+      await conn.query('BEGIN');
+      await conn.query('DELETE FROM webhook_subscriptions WHERE anchor_id = $1', [id]);
+      await conn.query('DELETE FROM kyc_configurations WHERE anchor_id = $1', [id]);
+      await conn.query('DELETE FROM sep24_transactions WHERE anchor_id = $1', [id]);
+      const result = await conn.query('DELETE FROM anchors WHERE id = $1', [id]);
+      await conn.query('COMMIT');
+      return (result.rowCount ?? 0) > 0;
+    } catch (err) {
+      await conn.query('ROLLBACK');
+      throw err;
+    } finally {
+      conn.release();
+    }
   }
 }
 

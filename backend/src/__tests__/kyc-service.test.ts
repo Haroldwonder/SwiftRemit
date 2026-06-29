@@ -8,6 +8,7 @@ vi.mock('../database', () => ({
   saveUserKycStatus: vi.fn(),
   getUserKycStatus: vi.fn(),
   getApprovedUsers: vi.fn(),
+  getPool: vi.fn(() => ({ query: vi.fn().mockResolvedValue({ rows: [] }) })),
 }));
 
 // Mock the stellar functions
@@ -69,6 +70,7 @@ describe('KycService', () => {
 
       expect(getUsersNeedingKycCheck).toHaveBeenCalledWith('anchor-1', 60);
     });
+
   });
 
   describe('queryAnchorKycStatus', () => {

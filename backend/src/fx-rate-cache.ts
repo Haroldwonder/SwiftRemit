@@ -8,6 +8,10 @@ export interface FxRateResponse {
   timestamp: Date;
   provider: string;
   cached: boolean;
+  /** True when the rate is served from a stale cache entry due to a provider error (e.g. 429) */
+  stale?: boolean;
+  /** Age in seconds of a stale rate served during provider fallback */
+  stale_age_seconds?: number;
 }
 
 export interface FxRateCacheOptions {
@@ -16,15 +20,20 @@ export interface FxRateCacheOptions {
   refreshBeforeExpirySeconds?: number;
   externalApiUrl?: string;
   externalApiKey?: string;
+  staleAgeWarningThresholdSeconds?: number;
 }
 
 export class FxRateCache {
   private cache: NodeCache;
+  /** Stale-only store: survives TTL expiry, used as 429 fallback */
+  private staleCache: Map<string, FxRateResponse>;
   private ttlSeconds: number;
   private refreshBeforeExpirySeconds: number;
   private externalApiUrl: string;
   private externalApiKey: string;
+  private staleAgeWarningThresholdSeconds: number;
   private refreshTimers: Map<string, NodeJS.Timeout>;
+  private inflight: Map<string, Promise<FxRateResponse>>;
 
   constructor(options: FxRateCacheOptions = {}) {
     this.ttlSeconds = options.ttlSeconds || 60;
@@ -32,12 +41,16 @@ export class FxRateCache {
     this.externalApiUrl = options.externalApiUrl || process.env.FX_API_URL || 'https://api.exchangerate-api.com/v4/latest';
     this.externalApiKey = options.externalApiKey || process.env.FX_API_KEY || '';
     this.refreshTimers = new Map();
+    this.staleCache = new Map();
+    this.inflight = new Map();
 
     this.cache = new NodeCache({
       stdTTL: this.ttlSeconds,
       checkperiod: options.checkPeriodSeconds || 120,
       useClones: false,
     });
+
+    this.staleAgeWarningThresholdSeconds = options.staleAgeWarningThresholdSeconds ?? 60;
 
     // Listen for cache expiry events
     this.cache.on('expired', (key: string) => {
@@ -46,7 +59,8 @@ export class FxRateCache {
   }
 
   /**
-   * Get current FX rate with caching
+   * Get current FX rate with caching.
+   * On provider 429, returns the last known stale rate with `stale: true`.
    */
   async getCurrentRate(from: string, to: string): Promise<FxRateResponse> {
     // Normalize to uppercase
@@ -61,16 +75,41 @@ export class FxRateCache {
       return { ...cached, cached: true };
     }
 
-    // Cache miss - fetch from external API
-    const rate = await this.fetchFromExternalApi(fromUpper, toUpper);
-    
-    // Store in cache
-    this.cache.set(cacheKey, rate);
+    // Cache miss - deduplicate concurrent requests for the same pair
+    if (!this.inflight.has(cacheKey)) {
+      const fetch = this.fetchFromExternalApi(fromUpper, toUpper).then(rate => {
+        this.cache.set(cacheKey, rate);
+        this.staleCache.set(cacheKey, rate);
+        this.scheduleBackgroundRefresh(cacheKey, fromUpper, toUpper);
+        return rate;
+      }).finally(() => {
+        this.inflight.delete(cacheKey);
+      });
+      this.inflight.set(cacheKey, fetch);
+    }
 
-    // Schedule background refresh
-    this.scheduleBackgroundRefresh(cacheKey, fromUpper, toUpper);
-
-    return { ...rate, cached: false };
+    try {
+      const rate = await this.inflight.get(cacheKey)!;
+      return { ...rate, cached: false };
+    } catch (error) {
+      // On 429, serve stale rate if available
+      if (axios.isAxiosError(error) && error.response?.status === 429) {
+        const stale = this.staleCache.get(cacheKey);
+        if (stale) {
+          const staleAgeSeconds = this.getStaleAgeSeconds(stale);
+          const message = `FX provider rate-limited (429) for ${fromUpper}/${toUpper}; serving stale rate (${staleAgeSeconds}s old)`;
+          if (staleAgeSeconds >= this.staleAgeWarningThresholdSeconds) {
+            console.warn(message);
+          } else {
+            console.info(message);
+          }
+          // Schedule a jittered background retry so all pairs don't hammer the API simultaneously
+          this.scheduleJitteredRetry(cacheKey, fromUpper, toUpper);
+          return { ...stale, cached: true, stale: true, stale_age_seconds: staleAgeSeconds };
+        }
+      }
+      throw error;
+    }
   }
 
   /**
@@ -107,6 +146,10 @@ export class FxRateCache {
         cached: false,
       };
     } catch (error) {
+      // Re-throw axios errors as-is so callers can inspect the status code (e.g. 429)
+      if (axios.isAxiosError(error)) {
+        throw error;
+      }
       console.error(`Failed to fetch FX rate for ${from}/${to}:`, error);
       throw new Error(`Failed to fetch FX rate: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -115,6 +158,10 @@ export class FxRateCache {
   /**
    * Schedule background refresh before cache expires
    */
+  private getStaleAgeSeconds(stale: FxRateResponse): number {
+    return Math.max(0, Math.floor((Date.now() - new Date(stale.timestamp).getTime()) / 1000));
+  }
+
   private scheduleBackgroundRefresh(cacheKey: string, from: string, to: string): void {
     // Clear any existing timer
     this.clearRefreshTimer(cacheKey);
@@ -127,6 +174,7 @@ export class FxRateCache {
         try {
           const rate = await this.fetchFromExternalApi(from, to);
           this.cache.set(cacheKey, rate);
+          this.staleCache.set(cacheKey, rate);
           
           // Schedule next refresh
           this.scheduleBackgroundRefresh(cacheKey, from, to);
@@ -138,6 +186,27 @@ export class FxRateCache {
 
       this.refreshTimers.set(cacheKey, timer);
     }
+  }
+
+  /**
+   * Schedule a jittered retry after a 429 response to avoid thundering herd.
+   * Retries after 60–120 s (base 60 s + up to 60 s random jitter).
+   */
+  private scheduleJitteredRetry(cacheKey: string, from: string, to: string): void {
+    if (this.refreshTimers.has(cacheKey)) return; // already scheduled
+    const jitterMs = 60_000 + Math.random() * 60_000;
+    const timer = setTimeout(async () => {
+      this.refreshTimers.delete(cacheKey);
+      try {
+        const rate = await this.fetchFromExternalApi(from, to);
+        this.cache.set(cacheKey, rate);
+        this.staleCache.set(cacheKey, rate);
+        this.scheduleBackgroundRefresh(cacheKey, from, to);
+      } catch (error) {
+        console.error(`Jittered retry failed for ${cacheKey}:`, error);
+      }
+    }, jitterMs);
+    this.refreshTimers.set(cacheKey, timer);
   }
 
   /**
@@ -172,8 +241,10 @@ export class FxRateCache {
    */
   clearAll(): void {
     this.cache.flushAll();
+    this.staleCache.clear();
     this.refreshTimers.forEach(timer => clearTimeout(timer));
     this.refreshTimers.clear();
+    this.inflight.clear();
   }
 
   /**

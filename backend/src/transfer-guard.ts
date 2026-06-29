@@ -19,6 +19,19 @@ export function createTransferGuard(kycUpsertService: KycUpsertService) {
       const status = await kycUpsertService.getStatusForUser(userId);
 
       if (status.can_transfer) {
+        // Explicitly verify no approved record is expired (KycExpiry check)
+        const now = new Date();
+        const hasExpiredApproved = status.anchors.some(
+          a => a.kyc_status === 'approved' && a.expires_at && a.expires_at <= now
+        );
+        if (hasExpiredApproved) {
+          return res.status(403).json({ error: { code: 'KYC_EXPIRED', message: 'KYC has expired' } });
+        }
+        // Block users in re-verification regardless of other approved records
+        const inReVerification = status.anchors.some(a => (a.kyc_status as string) === 're_verification_pending');
+        if (inReVerification) {
+          return res.status(403).json({ error: { code: 'KYC_RE_VERIFICATION_PENDING', message: 'KYC re-verification in progress' } });
+        }
         return next();
       }
 
@@ -29,6 +42,10 @@ export function createTransferGuard(kycUpsertService: KycUpsertService) {
         case 'kyc_expired':
           code = 'KYC_EXPIRED';
           message = 'KYC has expired';
+          break;
+        case 're_verification_pending':
+          code = 'KYC_RE_VERIFICATION_PENDING';
+          message = 'KYC re-verification in progress';
           break;
         case 'kyc_pending':
         case 'no_kyc_record':

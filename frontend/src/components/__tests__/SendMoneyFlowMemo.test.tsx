@@ -13,7 +13,10 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import { SendMoneyFlow } from '../SendMoneyFlow';
+
+expect.extend(toHaveNoViolations);
 
 const VALID_RECIPIENT = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWNA';
 
@@ -140,5 +143,20 @@ describe('SendMoneyFlow – memo field', () => {
 
     // Step 4 – memo row should not appear
     expect(screen.queryByText(/^memo$/i)).not.toBeInTheDocument();
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations on the memo step', async () => {
+      const VALID_RECIPIENT_MEMO = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWNA';
+      const { container } = render(<SendMoneyFlow />);
+      fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: '50' } });
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+      fireEvent.change(screen.getByLabelText(/asset/i), { target: { value: 'USDC' } });
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+      fireEvent.change(screen.getByLabelText(/recipient/i), { target: { value: VALID_RECIPIENT_MEMO } });
+      await waitFor(() => expect(screen.getByLabelText(/memo/i)).toBeInTheDocument());
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
   });
 });

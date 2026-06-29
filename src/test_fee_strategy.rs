@@ -1,8 +1,9 @@
 #![cfg(test)]
+extern crate std;
 
 use crate::{SwiftRemitContract, SwiftRemitContractClient, FeeStrategy};
 use soroban_sdk::{
-    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation},
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, LedgerInfo, Ledger as _},
     token, Address, Env, IntoVal, Symbol,
 };
 
@@ -35,13 +36,111 @@ fn test_percentage_strategy() {
     // Set percentage strategy: 5%
     client.update_fee_strategy(&admin, &FeeStrategy::Percentage(500));
 
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
-    let remittance_id = client.create_remittance(&sender, &agent, &10000, &None, &None, &None);
+    let remittance_id = client.create_remittance(&sender, &agent, &10000, &None, &None, &None, &None, &None);
     let remittance = client.get_remittance(&remittance_id);
 
     // Fee should be 5% of 10000 = 500
     assert_eq!(remittance.fee, 500);
+}
+
+#[test]
+fn test_sender_volume_discount_applies_after_threshold() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (token, token_admin) = create_token_contract(&env, &admin);
+    token_admin.mint(&sender, &100_000);
+
+    let contract_id = env.register_contract(None, SwiftRemitContract);
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &token.address, &500, &0, &0, &treasury);
+    client.register_agent(&agent, &None);
+
+    // First remittance stays below the rolling threshold and pays the base fee.
+    let id1 = client.create_remittance(&sender, &agent, &9_000, &None, &None, &None, &None, &None);
+    assert_eq!(client.get_remittance(&id1).fee, 450);
+
+    // Second remittance pushes rolling volume over 10k; fee should drop to 1.5% (150 bps).
+    let id2 = client.create_remittance(&sender, &agent, &2_000, &None, &None, &None, &None, &None);
+    assert_eq!(client.get_remittance(&id2).fee, 30);
+}
+
+#[test]
+fn test_sender_volume_discount_rolls_off_after_30_days() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (token, token_admin) = create_token_contract(&env, &admin);
+    token_admin.mint(&sender, &100_000);
+
+    let contract_id = env.register_contract(None, SwiftRemitContract);
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &token.address, &500, &0, &0, &treasury);
+    client.register_agent(&agent, &None);
+
+    let id1 = client.create_remittance(&sender, &agent, &9_000, &None, &None, &None, &None, &None);
+    assert_eq!(client.get_remittance(&id1).fee, 450);
+
+    // Advance ledger 31 days so the first volume falls out of the rolling window.
+    env.ledger().with_mut(|li| li.timestamp += 31 * 24 * 60 * 60);
+
+    let id2 = client.create_remittance(&sender, &agent, &9_000, &None, &None, &None, &None, &None);
+    assert_eq!(client.get_remittance(&id2).fee, 450);
+}
+
+#[test]
+fn test_batch_remittances_apply_cumulative_sender_volume_discount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (token, token_admin) = create_token_contract(&env, &admin);
+    token_admin.mint(&sender, &100_000);
+
+    let contract_id = env.register_contract(None, SwiftRemitContract);
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &token.address, &500, &0, &0, &treasury);
+    client.register_agent(&agent, &None);
+
+    let mut entries = soroban_sdk::Vec::new(&env);
+    entries.push_back(crate::BatchCreateEntry {
+        agent: agent.clone(),
+        amount: 7_000,
+        expiry: None,
+    });
+    entries.push_back(crate::BatchCreateEntry {
+        agent: agent.clone(),
+        amount: 7_000,
+        expiry: None,
+    });
+
+    let remittance_ids = client.batch_create_remittances(&sender, &entries);
+    assert_eq!(remittance_ids.len(), 2);
+
+    let fee1 = client.get_remittance(&remittance_ids.get_unchecked(0)).fee;
+    let fee2 = client.get_remittance(&remittance_ids.get_unchecked(1)).fee;
+
+    assert_eq!(fee1, 175); // 7k * 2.5% = 175
+    assert_eq!(fee2, 105); // discounted 7k * 1.5% = 105
 }
 
 #[test]
@@ -65,14 +164,14 @@ fn test_flat_strategy() {
     // Set flat fee: 100 units
     client.update_fee_strategy(&admin, &FeeStrategy::Flat(100));
 
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Small amount
-    let id1 = client.create_remittance(&sender, &agent, &1000, &None, &None, &None);
+    let id1 = client.create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
     assert_eq!(client.get_remittance(&id1).fee, 100);
 
     // Large amount - same fee
-    let id2 = client.create_remittance(&sender, &agent, &50000, &None, &None, &None);
+    let id2 = client.create_remittance(&sender, &agent, &50000, &None, &None, &None, &None, &None);
     assert_eq!(client.get_remittance(&id2).fee, 100);
 }
 
@@ -97,18 +196,18 @@ fn test_dynamic_strategy() {
     // Set dynamic strategy: 4% base
     client.update_fee_strategy(&admin, &FeeStrategy::Dynamic(400));
 
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Tier 1: amount < 1_000_0000000 -> full 4%
-    let id1 = client.create_remittance(&sender, &agent, &5_000_000_000, &None, &None, &None);
+    let id1 = client.create_remittance(&sender, &agent, &5_000_000_000, &None, &None, &None, &None, &None);
     assert_eq!(client.get_remittance(&id1).fee, 200_000_000);
 
     // Tier 2: 1_000_0000000 <= amount < 10_000_0000000 -> 80% of base = 3.2%
-    let id2 = client.create_remittance(&sender, &agent, &50_000_000_000, &None, &None, &None);
+    let id2 = client.create_remittance(&sender, &agent, &50_000_000_000, &None, &None, &None, &None, &None);
     assert_eq!(client.get_remittance(&id2).fee, 1_600_000_000);
 
     // Tier 3: amount >= 10_000_0000000 -> 60% of base = 2.4%
-    let id3 = client.create_remittance(&sender, &agent, &200_000_000_000, &None, &None, &None);
+    let id3 = client.create_remittance(&sender, &agent, &200_000_000_000, &None, &None, &None, &None, &None);
     assert_eq!(client.get_remittance(&id3).fee, 4_800_000_000);
 }
 
@@ -129,21 +228,21 @@ fn test_strategy_switch_without_redeployment() {
     let client = SwiftRemitContractClient::new(&env, &contract_id);
 
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Start with percentage
     client.update_fee_strategy(&admin, &FeeStrategy::Percentage(250));
-    let id1 = client.create_remittance(&sender, &agent, &10000, &None, &None, &None);
+    let id1 = client.create_remittance(&sender, &agent, &10000, &None, &None, &None, &None, &None);
     assert_eq!(client.get_remittance(&id1).fee, 250);
 
     // Switch to flat
     client.update_fee_strategy(&admin, &FeeStrategy::Flat(150));
-    let id2 = client.create_remittance(&sender, &agent, &10000, &None, &None, &None);
+    let id2 = client.create_remittance(&sender, &agent, &10000, &None, &None, &None, &None, &None);
     assert_eq!(client.get_remittance(&id2).fee, 150);
 
     // Switch to dynamic: Tier 3 (>= 10_000_0000000) -> 60% of 4% = 2.4%
     client.update_fee_strategy(&admin, &FeeStrategy::Dynamic(400));
-    let id3 = client.create_remittance(&sender, &agent, &200_000_000_000, &None, &None, &None);
+    let id3 = client.create_remittance(&sender, &agent, &200_000_000_000, &None, &None, &None, &None, &None);
     assert_eq!(client.get_remittance(&id3).fee, 4_800_000_000);
 }
 
@@ -189,10 +288,10 @@ fn test_backwards_compatibility() {
 
     // Initialize with old fee_bps parameter (250 = 2.5%)
     client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
-    client.register_agent(&agent);
+    client.register_agent(&agent, &None);
 
     // Should default to Percentage strategy with 2.5%
-    let id = client.create_remittance(&sender, &agent, &10000, &None, &None, &None);
+    let id = client.create_remittance(&sender, &agent, &10000, &None, &None, &None, &None, &None);
     assert_eq!(client.get_remittance(&id).fee, 250);
 
     // Old update_fee should still work (updates percentage strategy)
@@ -232,7 +331,7 @@ mod property_tests {
                 FeeStrategy::Dynamic(dynamic_bps),
             ] {
                 crate::storage::set_fee_strategy(&env, strategy);
-                let b = calculate_fees_with_breakdown(&env, amount, None).unwrap();
+                let b = calculate_fees_with_breakdown(&env, amount, None, None).unwrap();
                 prop_assert!(b.platform_fee >= 0, "platform_fee < 0: strategy={:?} amount={}", strategy, amount);
                 prop_assert!(b.net_amount >= 0, "net_amount < 0: strategy={:?} amount={}", strategy, amount);
             }
@@ -250,7 +349,7 @@ mod property_tests {
             crate::storage::set_fee_strategy(&env, &FeeStrategy::Percentage(fee_bps));
             crate::storage::set_protocol_fee_bps(&env, protocol_fee_bps).unwrap();
 
-            let b = calculate_fees_with_breakdown(&env, amount, None).unwrap();
+            let b = calculate_fees_with_breakdown(&env, amount, None, None).unwrap();
 
             prop_assert_eq!(
                 b.net_amount + b.platform_fee + b.protocol_fee,
@@ -275,9 +374,9 @@ mod property_tests {
             let tier2 = 5_000_0000000i128;      // 1000–10000 range → 80% of base
             let tier3 = 50_000_0000000i128;     // > 10_000_0000000 → 60% of base
 
-            let b1 = calculate_fees_with_breakdown(&env, tier1, None).unwrap();
-            let b2 = calculate_fees_with_breakdown(&env, tier2, None).unwrap();
-            let b3 = calculate_fees_with_breakdown(&env, tier3, None).unwrap();
+            let b1 = calculate_fees_with_breakdown(&env, tier1, None, None).unwrap();
+            let b2 = calculate_fees_with_breakdown(&env, tier2, None, None).unwrap();
+            let b3 = calculate_fees_with_breakdown(&env, tier3, None, None).unwrap();
 
             // Effective rate in bps = platform_fee * 10000 / amount
             let rate1 = b1.platform_fee * 10000 / tier1;
@@ -290,4 +389,35 @@ mod property_tests {
                 "Tier2 rate ({}) should be >= Tier3 rate ({}) for base_bps={}", rate2, rate3, base_bps);
         }
     }
+}
+
+#[test]
+fn test_corridor_strategy_hot_swap() {
+    // Issue #423: FeeStrategy::Corridor can be set without a contract upgrade.
+    // When no corridor config exists for the pair, it falls back to the platform fee bps.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (token, token_admin) = create_token_contract(&env, &admin);
+    token_admin.mint(&sender, &100_000);
+
+    let contract_id = env.register_contract(None, SwiftRemitContract);
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+
+    // Initialize with 2.5% fee
+    client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
+    client.register_agent(&agent, &None);
+
+    // Hot-swap to Corridor strategy — no WASM upgrade needed
+    client.update_fee_strategy(&admin, &FeeStrategy::Corridor);
+    assert_eq!(client.get_fee_strategy(), FeeStrategy::Corridor);
+
+    // Without a corridor config, falls back to platform fee bps (250 = 2.5%)
+    let id = client.create_remittance(&sender, &agent, &10000, &None, &None, &None, &None, &None);
+    assert_eq!(client.get_remittance(&id).fee, 250);
 }

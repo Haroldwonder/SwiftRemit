@@ -9,8 +9,11 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
 import { TransactionHistory } from '../TransactionHistory';
 import type { TransactionHistoryItem } from '../TransactionHistory';
+
+expect.extend(toHaveNoViolations);
 
 afterEach(cleanup);
 
@@ -58,5 +61,55 @@ describe('TransactionHistory – memo display', () => {
     fireEvent.click(screen.getByRole('button', { name: /expand details/i }));
 
     expect(screen.queryByText('Memo')).not.toBeInTheDocument();
+  });
+});
+
+describe('TransactionHistory – loading state', () => {
+  it('shows skeleton rows in table view when loading and no transactions', () => {
+    render(<TransactionHistory transactions={[]} defaultView="table" isLoading={true} />);
+
+    expect(document.querySelector('[aria-busy="true"]')).toBeInTheDocument();
+    expect(screen.getAllByRole('row')).toHaveLength(6); // 1 header + 5 skeleton rows
+  });
+
+  it('shows skeleton cards in card view when loading and no transactions', () => {
+    render(<TransactionHistory transactions={[]} defaultView="card" isLoading={true} />);
+
+    expect(document.querySelector('[aria-busy="true"]')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(4); // 4 skeleton cards
+  });
+
+  it('does not show skeletons when not loading', () => {
+    render(<TransactionHistory transactions={[]} defaultView="table" isLoading={false} />);
+
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(screen.getByText('No transactions yet.')).toBeInTheDocument();
+  });
+
+  it('shows loading spinner when loading and has transactions', () => {
+    render(<TransactionHistory transactions={[BASE_TX]} defaultView="table" isLoading={true} />);
+
+    expect(screen.getByText('Loading more transactions...')).toBeInTheDocument();
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
+  describe('accessibility', () => {
+    it('has no a11y violations with transaction list', async () => {
+      const { container } = render(
+        <TransactionHistory transactions={[BASE_TX]} defaultView="table" />
+      );
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('has no a11y violations with memo visible', async () => {
+      const tx = { ...BASE_TX, memo: 'Invoice #1234' };
+      const { container } = render(
+        <TransactionHistory transactions={[tx]} defaultView="table" />
+      );
+      fireEvent.click(screen.getByRole('button', { name: /expand/i }));
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
   });
 });

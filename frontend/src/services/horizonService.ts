@@ -1,4 +1,4 @@
-import { Server, Horizon } from '@stellar/stellar-sdk';
+import { rpc, xdr } from '@stellar/stellar-sdk';
 
 export interface RemittanceCompletedEvent {
   remittanceId: string;
@@ -15,39 +15,51 @@ export interface SettlementCompletedEvent extends RemittanceCompletedEvent {
   asset: string;
 }
 
-interface ContractEventValue {
-  _value?: {
-    _value?: string | number | { _value?: string };
-  };
-}
-
 /**
- * Service for fetching Soroban contract events from Horizon
+ * Service for fetching Soroban contract events via Soroban RPC
  */
 export class HorizonService {
-  private server: Server;
+  private server: rpc.Server;
   private contractId: string;
+  /** Last successfully fetched fee per remittance ID (fallback cache) */
+  private feeCache = new Map<number, string>();
 
-  constructor(horizonUrl?: string, contractId?: string) {
-    this.server = new Server(
-      horizonUrl || import.meta.env.VITE_HORIZON_URL || 'https://soroban-testnet.stellar.org'
+  constructor(rpcUrl?: string, contractId?: string) {
+    this.server = new rpc.Server(
+      rpcUrl || import.meta.env.VITE_HORIZON_URL || 'https://soroban-testnet.stellar.org'
     );
     this.contractId = contractId || import.meta.env.VITE_CONTRACT_ID || '';
   }
 
-  /**
-   * Parse ScVal from contract event data
-   */
-  private parseScVal(value: ContractEventValue): string {
-    if (!value || !value._value) return '';
-    
-    const innerValue = value._value._value;
-    if (typeof innerValue === 'string') return innerValue;
-    if (typeof innerValue === 'number') return innerValue.toString();
-    if (innerValue && typeof innerValue === 'object' && '_value' in innerValue) {
-      return innerValue._value || '';
+  private parseScVal(val: xdr.ScVal): string {
+    try {
+      switch (val.switch().name) {
+        case 'scvSymbol': return val.sym().toString();
+        case 'scvString': return val.str().toString();
+        case 'scvI64': return val.i64().toString();
+        case 'scvU64': return val.u64().toString();
+        case 'scvU32': return val.u32().toString();
+        case 'scvI32': return val.i32().toString();
+        default: return '';
+      }
+    } catch {
+      return '';
     }
-    return '';
+  }
+
+  private async getStartLedger(): Promise<number> {
+    const { sequence } = await this.server.getLatestLedger();
+    return Math.max(1, sequence - 17280);
+  }
+
+  private async fetchContractEvents(): Promise<rpc.Api.EventResponse[]> {
+    const startLedger = await this.getStartLedger();
+    const response = await this.server.getEvents({
+      startLedger,
+      filters: [{ type: 'contract', contractIds: [this.contractId] }],
+      limit: 200,
+    });
+    return response.events;
   }
 
   /**
@@ -59,54 +71,29 @@ export class HorizonService {
     }
 
     try {
-      // Fetch contract events for the settlement completion
-      const eventsPage = await this.server
-        .events()
-        .forContract(this.contractId)
-        .limit(200)
-        .order('desc')
-        .call();
+      const events = await this.fetchContractEvents();
 
-      // Find the settlement completed event for this remittance ID
-      for (const event of eventsPage.records) {
-        const eventData = event as any;
-        
-        // Check if this is a settlement completed event
+      for (const event of events) {
         if (
-          eventData.topic &&
-          eventData.topic.length >= 2 &&
-          this.parseScVal(eventData.topic[0]) === 'settle' &&
-          this.parseScVal(eventData.topic[1]) === 'complete'
+          event.topic.length >= 2 &&
+          this.parseScVal(event.topic[0]) === 'settle' &&
+          this.parseScVal(event.topic[1]) === 'complete'
         ) {
-          // Parse event data
-          const eventRemittanceId = eventData.value?._value?.[3];
-          const parsedRemittanceId = this.parseScVal(eventRemittanceId);
+          const vec = event.value.switch().name === 'scvVec' ? event.value.vec()! : [];
+          if (vec.length < 8) continue;
 
-          if (parsedRemittanceId === remittanceId.toString()) {
-            // Extract event details
-            const sender = this.parseScVal(eventData.value._value[4]);
-            const agent = this.parseScVal(eventData.value._value[5]);
-            const asset = this.parseScVal(eventData.value._value[6]);
-            const amount = this.parseScVal(eventData.value._value[7]);
-
-            // Get transaction details
-            const txHash = eventData.txHash || '';
-            const ledgerSequence = eventData.ledger || 0;
-            const timestamp = eventData.ledgerClosedAt || new Date().toISOString();
-
-            // Calculate fee (this would need to come from the remittance_created event)
+          if (this.parseScVal(vec[3]) === remittanceId.toString()) {
             const fee = await this.fetchRemittanceFee(remittanceId);
-
             return {
               remittanceId: remittanceId.toString(),
-              sender,
-              agent,
-              amount,
+              sender: this.parseScVal(vec[4]),
+              agent: this.parseScVal(vec[5]),
+              asset: this.parseScVal(vec[6]),
+              amount: this.parseScVal(vec[7]),
               fee,
-              asset,
-              timestamp,
-              transactionHash: txHash,
-              ledgerSequence,
+              timestamp: event.ledgerClosedAt,
+              transactionHash: event.txHash,
+              ledgerSequence: event.ledger,
             };
           }
         }
@@ -114,46 +101,59 @@ export class HorizonService {
 
       return null;
     } catch (error) {
-      console.error('Error fetching completed event from Horizon:', error);
+      console.error('Error fetching completed event from RPC:', error);
       throw new Error(`Failed to fetch completed event: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   /**
-   * Fetch the fee from the remittance_created event
+   * Fetch the fee from the remittance_created event.
+   * Retries up to 3 times with exponential backoff on 429 responses.
+   * Falls back to the last cached value if all retries are exhausted.
    */
   private async fetchRemittanceFee(remittanceId: number): Promise<string> {
-    try {
-      const eventsPage = await this.server
-        .events()
-        .forContract(this.contractId)
-        .limit(200)
-        .order('desc')
-        .call();
+    const MAX_RETRIES = 3;
+    const BASE_DELAY_MS = 500;
 
-      for (const event of eventsPage.records) {
-        const eventData = event as any;
-        
-        if (
-          eventData.topic &&
-          eventData.topic.length >= 2 &&
-          this.parseScVal(eventData.topic[0]) === 'remit' &&
-          this.parseScVal(eventData.topic[1]) === 'created'
-        ) {
-          const eventRemittanceId = this.parseScVal(eventData.value?._value?.[3]);
-          
-          if (eventRemittanceId === remittanceId.toString()) {
-            // Fee is at index 7 in the created event
-            return this.parseScVal(eventData.value._value[7]);
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const events = await this.fetchContractEvents();
+
+        for (const event of events) {
+          if (
+            event.topic.length >= 2 &&
+            this.parseScVal(event.topic[0]) === 'remit' &&
+            this.parseScVal(event.topic[1]) === 'created'
+          ) {
+            const vec = event.value.switch().name === 'scvVec' ? event.value.vec()! : [];
+            if (vec.length < 8) continue;
+
+            if (this.parseScVal(vec[3]) === remittanceId.toString()) {
+              const fee = this.parseScVal(vec[7]);
+              this.feeCache.set(remittanceId, fee);
+              return fee;
+            }
           }
         }
-      }
 
-      return '0';
-    } catch (error) {
-      console.error('Error fetching remittance fee:', error);
-      return '0';
+        return this.feeCache.get(remittanceId) ?? '0';
+      } catch (error: any) {
+        const isRateLimit =
+          error?.response?.status === 429 ||
+          (error?.message && error.message.includes('429'));
+
+        if (isRateLimit && attempt < MAX_RETRIES) {
+          const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+
+        console.error('Error fetching remittance fee:', error);
+        return this.feeCache.get(remittanceId) ?? '0';
+      }
     }
+
+    return this.feeCache.get(remittanceId) ?? '0';
   }
 
   /**
@@ -164,5 +164,7 @@ export class HorizonService {
   }
 }
 
-// Export singleton instance
-export const horizonService = new HorizonService();
+// Export singleton instance — reads VITE_HORIZON_URL from env, falls back to testnet
+export const horizonService = new HorizonService(
+  import.meta.env.VITE_HORIZON_URL || 'https://horizon-testnet.stellar.org'
+);

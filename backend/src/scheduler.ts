@@ -4,11 +4,20 @@ import { getStaleAssets, saveAssetVerification, getPool } from './database';
 import { storeVerificationOnChain } from './stellar';
 import { KycService } from './kyc-service';
 import { Sep24Service } from './sep24-service';
+import { SorobanRpc, Keypair } from '@stellar/stellar-sdk';
+import { SwiftRemitClient } from '@swiftremit/sdk';
+import { KycExpiryNotifier } from './kyc-expiry-notifier';
+import { createWebhookStore } from './webhooks/store';
+import { withAdvisoryLock } from './distributed-lock';
+import { AnchorHealthChecker } from './anchor-health-checker';
+import { getMetricsService } from './metrics';
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
 const pool = getPool();
 const sep24Service = new Sep24Service(pool);
+const metricsService = getMetricsService(pool);
+const anchorHealthChecker = new AnchorHealthChecker(pool, metricsService);
 
 export async function startBackgroundJobs() {
   // Initialize KYC service
@@ -19,20 +28,56 @@ export async function startBackgroundJobs() {
 
   // Run every 6 hours
   cron.schedule('0 */6 * * *', async () => {
-    console.log('Starting periodic asset revalidation...');
-    await revalidateStaleAssets();
+    const ran = await withAdvisoryLock(pool, 'revalidate-stale-assets', async () => {
+      console.log('Starting periodic asset revalidation...');
+      await revalidateStaleAssets();
+    });
+    if (!ran) console.log('revalidate-stale-assets: skipped (another instance holds the lock)');
   });
 
   // Run KYC polling every 30 minutes
   cron.schedule('*/30 * * * *', async () => {
-    console.log('Starting KYC status polling...');
-    await pollKycStatuses();
+    const ran = await withAdvisoryLock(pool, 'poll-kyc-statuses', async () => {
+      console.log('Starting KYC status polling...');
+      await pollKycStatuses();
+    });
+    if (!ran) console.log('poll-kyc-statuses: skipped (another instance holds the lock)');
   });
 
   // Run SEP-24 transaction polling every 2 minutes
   cron.schedule('*/2 * * * *', async () => {
-    console.log('Starting SEP-24 transaction polling...');
-    await pollSep24Transactions();
+    const ran = await withAdvisoryLock(pool, 'poll-sep24-transactions', async () => {
+      console.log('Starting SEP-24 transaction polling...');
+      await pollSep24Transactions();
+    });
+    if (!ran) console.log('poll-sep24-transactions: skipped (another instance holds the lock)');
+  });
+
+  // Extend contract storage TTLs daily to prevent data loss
+  cron.schedule('0 0 * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'extend-contract-storage-ttl', async () => {
+      console.log('Starting contract storage TTL extension...');
+      await extendContractStorageTtl();
+    });
+    if (!ran) console.log('extend-contract-storage-ttl: skipped (another instance holds the lock)');
+  });
+
+  // Send KYC expiry warnings daily at 08:00 UTC
+  cron.schedule('0 8 * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'notify-kyc-expiries', async () => {
+      console.log('Starting KYC expiry notification job...');
+      await notifyKycExpiries();
+    });
+    if (!ran) console.log('notify-kyc-expiries: skipped (another instance holds the lock)');
+  });
+
+  // Run anchor health checks every 5 minutes
+  cron.schedule('*/5 * * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'check-anchor-health', async () => {
+      console.log('Starting anchor health checks...');
+      await checkAnchorHealth();
+    });
+    if (!ran) console.log('check-anchor-health: skipped (another instance holds the lock)');
   });
 
   console.log('Background jobs scheduled');
@@ -101,5 +146,69 @@ async function pollSep24Transactions() {
     console.log('SEP-24 polling completed');
   } catch (error) {
     console.error('Error in SEP-24 polling job:', error);
+  }
+}
+
+/**
+ * Extend contract storage TTLs to prevent data loss.
+ * Calls `extend_storage_ttl` on the SwiftRemit contract using the admin keypair
+ * configured via environment variables. Runs daily so TTLs never expire between
+ * scheduled runs.
+ *
+ * Required env vars:
+ *   CONTRACT_ID, SOROBAN_RPC_URL, NETWORK_PASSPHRASE, ADMIN_SECRET_KEY
+ */
+async function extendContractStorageTtl() {
+  const contractId = process.env.CONTRACT_ID;
+  const rpcUrl = process.env.SOROBAN_RPC_URL;
+  const networkPassphrase = process.env.NETWORK_PASSPHRASE;
+  const adminSecretKey = process.env.ADMIN_SECRET_KEY;
+
+  if (!contractId || !rpcUrl || !networkPassphrase || !adminSecretKey) {
+    console.warn('extend_storage_ttl: missing env vars (CONTRACT_ID, SOROBAN_RPC_URL, NETWORK_PASSPHRASE, ADMIN_SECRET_KEY). Skipping.');
+    return;
+  }
+
+  try {
+    const client = new SwiftRemitClient({ contractId, rpcUrl, networkPassphrase });
+    const keypair = Keypair.fromSecret(adminSecretKey);
+    const adminAddress = keypair.publicKey();
+
+    // Extend by ~30 days worth of ledgers (5-second ledger time)
+    const extendByLedgers = 30 * 24 * 60 * 12; // 518_400 ledgers
+
+    const tx = await (client as any).prepareTransaction(adminAddress, 'extend_storage_ttl', [
+      // caller (Address) and extend_by_ledgers (u32) are encoded by the contract call
+      // We use the raw prepareTransaction helper with pre-encoded args via the SDK
+    ]);
+
+    // Use the SDK's extendStorageTtl method
+    const preparedTx = await (client as any).extendStorageTtl(adminAddress, extendByLedgers);
+    await (client as any).submitTransaction(preparedTx, keypair);
+    console.log(`Contract storage TTLs extended by ${extendByLedgers} ledgers`);
+  } catch (error) {
+    console.error('Failed to extend contract storage TTLs:', error);
+  }
+}
+
+async function notifyKycExpiries() {
+  try {
+    const store = createWebhookStore(pool);
+    const notifier = new KycExpiryNotifier(pool, store);
+    await notifier.run();
+  } catch (error) {
+    console.error('Error in KYC expiry notification job:', error);
+  }
+}
+
+async function checkAnchorHealth() {
+  try {
+    const results = await anchorHealthChecker.checkAllAnchors();
+    console.log(`Anchor health check completed: ${results.length} anchors checked`);
+    for (const result of results) {
+      console.log(`  ${result.anchor_id}: ${result.status} (${result.response_time_ms}ms)`);
+    }
+  } catch (error) {
+    console.error('Error in anchor health check job:', error);
   }
 }

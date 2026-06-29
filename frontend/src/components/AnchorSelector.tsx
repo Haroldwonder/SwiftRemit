@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './AnchorSelector.css';
 
+function useDebounce<T>(value: T, delay = 300): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
+}
+
 export interface AnchorProvider {
   id: string;
   name: string;
@@ -39,7 +48,9 @@ export interface AnchorProvider {
 interface AnchorSelectorProps {
   onSelect: (anchor: AnchorProvider) => void;
   selectedAnchorId?: string;
+  /** @deprecated Use currencies instead */
   currency?: string;
+  currencies?: string[];
   apiUrl?: string;
 }
 
@@ -47,8 +58,11 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
   onSelect,
   selectedAnchorId,
   currency,
+  currencies,
   apiUrl = 'http://localhost:3000',
 }) => {
+  // Normalise to array; single `currency` prop is backward-compatible
+  const activeCurrencies = currencies ?? (currency ? [currency] : []);
   const [anchors, setAnchors] = useState<AnchorProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +70,11 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
   const [selectedAnchor, setSelectedAnchor] = useState<AnchorProvider | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+  const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearch = useDebounce(searchQuery, 300);
+  const filteredAnchors = debouncedSearch
+    ? anchors.filter(a => a.name.toLowerCase().includes(debouncedSearch.toLowerCase()) || a.domain.toLowerCase().includes(debouncedSearch.toLowerCase()))
+    : anchors;
   
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -63,7 +82,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
 
   useEffect(() => {
     fetchAnchors();
-  }, [currency]);
+  }, [activeCurrencies.join(',')]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (selectedAnchorId && anchors.length > 0) {
@@ -77,7 +96,13 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
       setLoading(true);
       setError(null);
       const params = new URLSearchParams();
-      if (currency) params.append('currency', currency);
+      // Send each currency as a separate `currencies[]` param; fall back to
+      // legacy `currency` for servers that haven't been updated yet.
+      if (activeCurrencies.length === 1) {
+        params.append('currency', activeCurrencies[0]);
+      } else if (activeCurrencies.length > 1) {
+        activeCurrencies.forEach(c => params.append('currencies[]', c));
+      }
       params.append('status', 'active');
       const response = await fetch(`${apiUrl}/api/anchors?${params}`);
       const data = await response.json();
@@ -107,7 +132,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
       setIsOpen(true);
       // Set focus to selected item or first item when opening
       const selectedIndex = selectedAnchor 
-        ? anchors.findIndex(a => a.id === selectedAnchor.id)
+        ? filteredAnchors.findIndex(a => a.id === selectedAnchor.id)
         : 0;
       setFocusedIndex(selectedIndex >= 0 ? selectedIndex : 0);
     } else {
@@ -123,7 +148,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
         e.preventDefault();
         setIsOpen(true);
         const selectedIndex = selectedAnchor 
-          ? anchors.findIndex(a => a.id === selectedAnchor.id)
+          ? filteredAnchors.findIndex(a => a.id === selectedAnchor.id)
           : 0;
         setFocusedIndex(selectedIndex >= 0 ? selectedIndex : 0);
       }
@@ -134,7 +159,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        setFocusedIndex(prev => (prev < anchors.length - 1 ? prev + 1 : prev));
+        setFocusedIndex(prev => (prev < filteredAnchors.length - 1 ? prev + 1 : prev));
         break;
       case 'ArrowUp':
         e.preventDefault();
@@ -146,13 +171,13 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
         break;
       case 'End':
         e.preventDefault();
-        setFocusedIndex(anchors.length - 1);
+        setFocusedIndex(filteredAnchors.length - 1);
         break;
       case 'Enter':
       case ' ':
         e.preventDefault();
-        if (focusedIndex >= 0 && focusedIndex < anchors.length) {
-          handleSelect(anchors[focusedIndex]);
+        if (focusedIndex >= 0 && focusedIndex < filteredAnchors.length) {
+          handleSelect(filteredAnchors[focusedIndex]);
         }
         break;
       case 'Escape':
@@ -162,12 +187,17 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
         triggerRef.current?.focus();
         break;
       case 'Tab':
-        // Close on tab and allow default behavior
-        setIsOpen(false);
-        setFocusedIndex(-1);
+        // Trap focus: cycle through options instead of leaving the dropdown
+        e.preventDefault();
+        if (filteredAnchors.length === 0) break;
+        if (e.shiftKey) {
+          setFocusedIndex(prev => (prev > 0 ? prev - 1 : filteredAnchors.length - 1));
+        } else {
+          setFocusedIndex(prev => (prev < filteredAnchors.length - 1 ? prev + 1 : 0));
+        }
         break;
     }
-  }, [isOpen, focusedIndex, anchors, selectedAnchor]);
+  }, [isOpen, focusedIndex, filteredAnchors, selectedAnchor]);
 
   // Scroll focused option into view
   useEffect(() => {
@@ -179,9 +209,9 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
     }
   }, [focusedIndex, isOpen]);
 
-  // Close dropdown when clicking outside
+  // Close dropdown when clicking/tapping outside (pointerdown covers mouse + touch)
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleOutsidePointer = (event: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node) &&
           triggerRef.current && !triggerRef.current.contains(event.target as Node)) {
         setIsOpen(false);
@@ -190,8 +220,8 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
     };
 
     if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+      document.addEventListener('pointerdown', handleOutsidePointer);
+      return () => document.removeEventListener('pointerdown', handleOutsidePointer);
     }
   }, [isOpen]);
 
@@ -232,7 +262,6 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
           aria-expanded={isOpen}
           aria-labelledby={`${listboxId}-label`}
           aria-controls={isOpen ? listboxId : undefined}
-          aria-activedescendant={isOpen && focusedIndex >= 0 ? `${listboxId}-option-${focusedIndex}` : undefined}
         >
           {selectedAnchor ? (
             <div className="selected-anchor">
@@ -254,7 +283,16 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
             aria-labelledby={`${listboxId}-label`}
             tabIndex={-1}
           >
-            {anchors.map((anchor, index) => (
+            <input
+              type="search"
+              className="anchor-search-input"
+              placeholder="Search anchors..."
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setFocusedIndex(0); }}
+              aria-label="Search anchor providers"
+              autoFocus
+            />
+            {filteredAnchors.map((anchor, index) => (
               <div 
                 key={anchor.id} 
                 className={`anchor-option ${selectedAnchor?.id === anchor.id ? 'selected' : ''} ${focusedIndex === index ? 'focused' : ''}`}
@@ -305,6 +343,29 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
                   {selectedAnchor.fees.min_fee && <div className="detail-item"><span className="detail-label">Minimum Fee:</span><span className="detail-value">{formatAmount(selectedAnchor.fees.min_fee)}</span></div>}
                   {selectedAnchor.fees.max_fee && <div className="detail-item"><span className="detail-label">Maximum Fee:</span><span className="detail-value">{formatAmount(selectedAnchor.fees.max_fee)}</span></div>}
                 </div>
+                {activeCurrencies.length > 0 && (
+                  <div className="per-currency-fees" aria-label="Per-currency fee breakdown">
+                    <h5>Per-Currency Breakdown</h5>
+                    {activeCurrencies.map(cur => {
+                      const supported = selectedAnchor.supported_currencies.includes(cur.toUpperCase());
+                      return (
+                        <div key={cur} className={`currency-fee-row ${supported ? '' : 'unsupported'}`}>
+                          <span className="currency-code">{cur.toUpperCase()}</span>
+                          {supported ? (
+                            <>
+                              <span className="detail-label">Deposit:</span>
+                              <span className="detail-value">{formatFee(selectedAnchor.fees.deposit_fee_percent, selectedAnchor.fees.deposit_fee_fixed)}</span>
+                              <span className="detail-label">Withdrawal:</span>
+                              <span className="detail-value">{formatFee(selectedAnchor.fees.withdrawal_fee_percent, selectedAnchor.fees.withdrawal_fee_fixed)}</span>
+                            </>
+                          ) : (
+                            <span className="unsupported-label" aria-label={`${cur} not supported`}>⚠️ Not supported</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               <div className="details-section">
                 <h4>Transaction Limits</h4>

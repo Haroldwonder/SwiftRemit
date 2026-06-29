@@ -1,0 +1,117 @@
+name: Publish Contract ABI & Metadata
+
+# Runs automatically after a mainnet deployment tag is pushed (v*.*.*),
+# or can be triggered manually with a contract ID.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      contract_id:
+        description: 'Deployed mainnet contract ID (C...)'
+        required: true
+        type: string
+      network:
+        description: 'Network'
+        required: false
+        default: mainnet
+        type: choice
+        options:
+          - mainnet
+          - testnet
+
+env:
+  STELLAR_CLI_VERSION: '25.3.1'
+
+jobs:
+  publish-abi:
+    name: Extract ABI & Update stellar.toml
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # needed to commit abi/ and stellar.toml back to the repo
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Install Stellar CLI ──────────────────────────────────────────────────
+      - name: Install Stellar CLI
+        run: |
+          curl -sSL https://github.com/stellar/stellar-cli/releases/download/v${{ env.STELLAR_CLI_VERSION }}/stellar-cli-${{ env.STELLAR_CLI_VERSION }}-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C /usr/local/bin stellar
+          stellar --version
+
+      # ── Resolve CONTRACT_ID ──────────────────────────────────────────────────
+      # On tag push: read from the MAINNET_CONTRACT_ID secret.
+      # On manual dispatch: use the workflow input.
+      - name: Resolve contract ID
+        id: contract
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "id=${{ inputs.contract_id }}" >> "$GITHUB_OUTPUT"
+            echo "network=${{ inputs.network }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "id=${{ secrets.MAINNET_CONTRACT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "network=mainnet" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate contract ID
+        run: |
+          CONTRACT_ID="${{ steps.contract.outputs.id }}"
+          if [[ -z "${CONTRACT_ID}" ]]; then
+            echo "❌ CONTRACT_ID is empty. Set the MAINNET_CONTRACT_ID secret or pass it as a workflow input." >&2
+            exit 1
+          fi
+          echo "Contract ID: ${CONTRACT_ID}"
+
+      # ── Run publish script ───────────────────────────────────────────────────
+      - name: Extract ABI and update stellar.toml
+        env:
+          CONTRACT_ID: ${{ steps.contract.outputs.id }}
+          NETWORK: ${{ steps.contract.outputs.network }}
+        run: |
+          chmod +x scripts/publish-abi.sh
+          ./scripts/publish-abi.sh "${CONTRACT_ID}" "${NETWORK}"
+
+      # ── Upload ABI as workflow artifact ─────────────────────────────────────
+      - name: Upload ABI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftremit-abi
+          path: abi/
+          retention-days: 90
+
+      # ── Commit updated files back to main ───────────────────────────────────
+      - name: Commit ABI and stellar.toml
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add abi/ public/.well-known/stellar.toml
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update ABI and stellar.toml for ${{ steps.contract.outputs.id }}"
+            git push origin HEAD:main
+          fi
+
+      # ── Job summary ─────────────────────────────────────────────────────────
+      - name: Write job summary
+        run: |
+          WASM_HASH=$(cat abi/swiftremit.wasm.hash 2>/dev/null || echo "unknown")
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## ✅ ABI & Metadata Published
+
+          | Field | Value |
+          |---|---|
+          | Contract ID | \`${{ steps.contract.outputs.id }}\` |
+          | Network | \`${{ steps.contract.outputs.network }}\` |
+          | WASM Hash | \`${WASM_HASH}\` |
+
+          ### Next step
+          Deploy \`public/.well-known/stellar.toml\` to your home domain so
+          [Stellar Expert](https://stellar.expert) can index the contract.
+          EOF

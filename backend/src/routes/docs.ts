@@ -27,7 +27,7 @@ try {
 }
 
 // Serve Swagger UI
-router.use('/', swaggerUi.serve);
+router.use('/', ...swaggerUi.serve);
 router.get('/', swaggerUi.setup(openApiSpec, {
   customSiteTitle: 'SwiftRemit Backend API Documentation',
   customCss: '.swagger-ui .topbar { display: none }',

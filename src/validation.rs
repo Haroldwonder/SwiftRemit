@@ -11,20 +11,6 @@ use crate::{
     RemittanceStatus,
 };
 
-/// Centralized validation module for all API requests.
-/// Validates required fields before controller logic to prevent invalid data
-/// from reaching business logic.
-// NOTE: validate_address has been intentionally removed.
-//
-// In Soroban SDK, the `Address` type is constructed and validated by the host
-// environment before it ever reaches contract code. An invalid or zero address
-// cannot be passed in — the host will trap before the contract executes.
-// There is no "zero address" concept in Stellar/Soroban, and no runtime API
-// to distinguish account vs contract addresses in SDK v21.
-//
-// Therefore, any `validate_address` call was a no-op that added noise without
-// providing safety. All former call sites have been removed accordingly.
-
 /// Validates fee basis points are within acceptable range (0-10000 = 0%-100%).
 pub fn validate_fee_bps(fee_bps: u32) -> Result<(), ContractError> {
     if fee_bps > MAX_FEE_BPS {
@@ -112,6 +98,8 @@ pub fn validate_initialize_request(
     _token: &Address,
     fee_bps: u32,
 ) -> Result<(), ContractError> {
+    // Address type is guaranteed valid by the Soroban SDK runtime; no further
+    // address validation is required or possible at the contract level.
     validate_fee_bps(fee_bps)?;
 
     // Check if already initialized
@@ -133,10 +121,12 @@ pub fn validate_escrow_ttl(ttl: u64) -> Result<(), ContractError> {
 /// Comprehensive validation for create_remittance request.
 pub fn validate_create_remittance_request(
     env: &Env,
-    _sender: &Address,
+    sender: &Address,
     agent: &Address,
     amount: i128,
 ) -> Result<(), ContractError> {
+    // Address type is guaranteed valid by the Soroban SDK runtime; no further
+    // address validation is required or possible at the contract level.
     validate_amount(amount)?;
     validate_agent_registered(env, agent)?;
     if is_user_blacklisted(env, sender) {
@@ -159,6 +149,8 @@ pub fn validate_confirm_payout_request(
     }
     validate_no_duplicate_settlement(env, remittance_id)?;
     validate_settlement_not_expired(env, remittance.expiry)?;
+    // Address type is guaranteed valid by the Soroban SDK runtime; no further
+    // address validation is required or possible at the contract level.
     Ok(remittance)
 }
 
@@ -171,6 +163,8 @@ pub fn validate_cancel_remittance_request(
 ) -> Result<crate::Remittance, ContractError> {
     let remittance = validate_remittance_exists(env, remittance_id)?;
     validate_remittance_pending(&remittance)?;
+    // Address type is guaranteed valid by the Soroban SDK runtime; no further
+    // address validation is required or possible at the contract level.
     Ok(remittance)
 }
 
@@ -178,8 +172,12 @@ pub fn validate_cancel_remittance_request(
 /// Returns the fees amount to avoid re-reading in the caller.
 pub fn validate_withdraw_fees_request(
     env: &Env,
-    _to: &Address,
+    to: &Address,
 ) -> Result<i128, ContractError> {
+    // Prevent fees from being sent to the contract itself, which would lock them (#609)
+    if *to == env.current_contract_address() {
+        return Err(ContractError::InvalidAddress);
+    }
     let fees = crate::get_accumulated_fees(env)?;
     validate_fees_available(fees)?;
     Ok(fees)
@@ -197,6 +195,8 @@ pub fn validate_admin_operation(
     caller: &Address,
     _target: &Address,
 ) -> Result<(), ContractError> {
+    // Address type is guaranteed valid by the Soroban SDK runtime; no further
+    // address validation is required or possible at the contract level.
     crate::require_admin(env, caller)?;
     Ok(())
 }
@@ -206,12 +206,21 @@ pub fn normalize_symbol(_env: &Env, symbol: &soroban_sdk::String) -> Result<soro
     Ok(symbol.clone())
 }
 
+/// Validates that an evidence hash is a 32-byte SHA-256 commitment.
+///
+/// Rejects hashes that are not exactly 32 bytes, returning a descriptive error
+/// so callers know precisely what constraint was violated.
+pub fn validate_evidence_hash(hash: &soroban_sdk::Bytes) -> Result<(), ContractError> {
+    if hash.len() != 32 {
+        return Err(ContractError::MalformedEvidenceHash);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::Env;
-
-    // validate_address was removed — no test needed.
 
     #[test]
     fn test_validate_fee_bps_valid() {
