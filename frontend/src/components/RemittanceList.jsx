@@ -7,6 +7,7 @@ import {
   Networks,
   nativeToScVal,
 } from '@stellar/stellar-sdk'
+import { SkeletonTable } from './SkeletonLoader'
 
 const RPC_URL = import.meta.env.VITE_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
 const NETWORK_PASSPHRASE = import.meta.env.VITE_NETWORK === 'mainnet'
@@ -111,7 +112,7 @@ export default function RemittanceList({ walletAddress, contractId }) {
     <div className="panel remittance-list">
       <h2>Your Remittances</h2>
 
-      {loading && <p>Loading...</p>}
+      {loading && <SkeletonTable count={3} />}
 
       {!loading && remittances.length === 0 && (
         <p className="hint">No remittances found</p>

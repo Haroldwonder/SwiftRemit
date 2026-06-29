@@ -32,6 +32,10 @@ export class MetricsService {
   private fxCacheHitsTotal = 0;
   private fxCacheMissesTotal = 0;
 
+  // Job monitoring metrics (#866)
+  private jobLastRunTimestamp: Map<string, number> = new Map();
+  private jobFailureTotal: Map<string, number> = new Map();
+
   constructor(pool: Pool, fxRateCache?: FxRateCache) {
     this.pool = pool;
     this.fxRateCache = fxRateCache;
@@ -156,6 +160,11 @@ export class MetricsService {
     }
   }
 
+  setFxRateStalenessMetric(from: string, to: string, stalenessSeconds: number): void {
+    const pairKey = `${from.toUpperCase()}/${to.toUpperCase()}`;
+    this.metrics.swiftremit_fx_rate_staleness_seconds[pairKey] = stalenessSeconds;
+  }
+
   /**
    * Update dead-letter queue count from the database
    */
@@ -202,6 +211,16 @@ export class MetricsService {
    */
   recordKycPollFailure(): void {
     this.metrics.swiftremit_kyc_poll_failures_total += 1;
+  }
+
+  /** Record a successful job run (updates last-run timestamp). */
+  recordJobRun(jobName: string): void {
+    this.jobLastRunTimestamp.set(jobName, Math.floor(Date.now() / 1000));
+  }
+
+  /** Record a job failure (increments failure counter). */
+  recordJobFailure(jobName: string): void {
+    this.jobFailureTotal.set(jobName, (this.jobFailureTotal.get(jobName) ?? 0) + 1);
   }
 
   /**
@@ -337,6 +356,19 @@ export class MetricsService {
     lines.push('# TYPE swiftremit_rate_limit_exceeded_total counter');
     Object.entries(this.metrics.swiftremit_rate_limit_exceeded_total).forEach(([path, count]) => {
       lines.push(`swiftremit_rate_limit_exceeded_total{path="${this.sanitizeLabelValue(path)}"} ${count}`);
+    });
+
+    // Job monitoring metrics (#866)
+    lines.push('# HELP swiftremit_job_last_run_timestamp Unix timestamp of the last run for each background job');
+    lines.push('# TYPE swiftremit_job_last_run_timestamp gauge');
+    this.jobLastRunTimestamp.forEach((ts, jobName) => {
+      lines.push(`swiftremit_job_last_run_timestamp{job_name="${this.sanitizeLabelValue(jobName)}"} ${ts}`);
+    });
+
+    lines.push('# HELP swiftremit_job_failure_total Total number of failures per background job');
+    lines.push('# TYPE swiftremit_job_failure_total counter');
+    this.jobFailureTotal.forEach((count, jobName) => {
+      lines.push(`swiftremit_job_failure_total{job_name="${this.sanitizeLabelValue(jobName)}"} ${count}`);
     });
 
     return lines.join('\n') + '\n';

@@ -17,6 +17,8 @@ import type {
   HealthStatus,
   CreateRemittanceParams,
   BatchCreateEntry,
+  BatchCreateResult,
+  BatchCreateResponse,
   GovernanceConfig,
   DailyLimitStatus,
   Proposal,
@@ -26,14 +28,19 @@ import type {
   RemittanceEventType,
   SubscribeOptions,
   Unsubscribe,
+  RetryPolicy,
+  Corridor,
+  FeeEstimate,
+  EventHandler,
 } from "./types.js";
 import { parseContractError, SwiftRemitError, ErrorCode } from "./errors.js";
-import { withRetry } from "./retry.js";
+import { withRetry, withRetryPolicy } from "./retry.js";
 import {
   parseRemittance,
   parseAgentStats,
   parseCircuitBreakerStatus,
   parseHealthStatus,
+  parseFeeBreakdown,
   addressToScVal,
   u64ToScVal,
   i128ToScVal,
@@ -190,7 +197,31 @@ export class SwiftRemitClient {
   private readonly retries: number;
   private readonly retryDelayMs: number;
   private readonly retryBackoffFactor: number;
+  private readonly writeRetryPolicy: RetryPolicy;
+  private readonly feeCache = new Map<string, { cachedAt: number; estimate: FeeEstimate }>();
+  private static readonly FEE_CACHE_TTL_MS = 30_000;
 
+  /**
+   * Initialize a SwiftRemit SDK client.
+   * 
+   * @param options - Client configuration
+   * @param options.contractId - The deployed SwiftRemit contract address
+   * @param options.networkPassphrase - Stellar network passphrase (e.g., Networks.TESTNET)
+   * @param options.rpcUrl - Soroban RPC endpoint URL
+   * @param options.fee - Optional: Transaction fee in stroops (default: 100)
+   * @param options.retries - Optional: Retry attempts for transient errors (default: 3)
+   * @param options.retryDelayMs - Optional: Initial retry delay in ms (default: 1000)
+   * @param options.retryBackoffFactor - Optional: Backoff multiplier for retries (default: 2)
+   * 
+   * @example
+   * import { SwiftRemitClient, Networks, RpcUrls } from '@swiftremit/sdk';
+   * 
+   * const client = new SwiftRemitClient({
+   *   contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4',
+   *   networkPassphrase: Networks.TESTNET,
+   *   rpcUrl: RpcUrls.TESTNET,
+   * });
+   */
   constructor(options: SwiftRemitClientOptions) {
     this.contract = new Contract(options.contractId);
     const allowHttp = shouldAllowHttp(options.rpcUrl);
@@ -205,6 +236,23 @@ export class SwiftRemitClient {
     this.retries = options.retries ?? 3;
     this.retryDelayMs = options.retryDelayMs ?? 1000;
     this.retryBackoffFactor = options.retryBackoffFactor ?? 2;
+    this.writeRetryPolicy = options.writeRetryPolicy ?? { retries: 0 };
+  }
+
+  private withTimeout<T>(promise: Promise<T>, timeoutMs = 30_000): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`RPC call timed out after ${timeoutMs}ms`)),
+          timeoutMs
+        )
+      ),
+    ]);
+  }
+
+  private resolveWriteRetryPolicy(perCallPolicy?: RetryPolicy): RetryPolicy {
+    return perCallPolicy ?? this.writeRetryPolicy;
   }
 
   // ─── Transaction helpers ────────────────────────────────────────────────────
@@ -236,35 +284,48 @@ export class SwiftRemitClient {
     return SorobanRpc.assembleTransaction(tx, simResult).build();
   }
 
-  /** Sign and submit a prepared transaction; wait for confirmation. */
+  /**
+   * Sign and submit a prepared transaction; wait for confirmation.
+   *
+   * @param tx - Transaction prepared by any write method (e.g. `createRemittance`)
+   * @param keypair - Keypair used to sign the transaction
+   * @param options.retryPolicy - Per-call retry policy that overrides the client's
+   *   `writeRetryPolicy`. Idempotent operations (those using an idempotency key or
+   *   inherently safe to re-submit) may opt in to retries by passing
+   *   `RetryPolicies.AGGRESSIVE` here. Non-idempotent operations should leave this
+   *   unset to rely on the default (no retries).
+   */
   async submitTransaction(
     tx: Transaction,
-    keypair: Keypair
+    keypair: Keypair,
+    options?: { retryPolicy?: RetryPolicy }
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
+    const writePolicy = this.resolveWriteRetryPolicy(options?.retryPolicy);
+    const defaults = { delayMs: this.retryDelayMs, backoffFactor: this.retryBackoffFactor };
+
     tx.sign(keypair);
-    const sendResult = await withRetry(
+    const sendResult = await withRetryPolicy(
       () => this.server.sendTransaction(tx),
-      this.retries,
-      this.retryDelayMs,
-      this.retryBackoffFactor
+      writePolicy,
+      defaults
     );
     if (sendResult.status === "ERROR") {
       throw new Error(`Submit failed: ${JSON.stringify(sendResult.errorResult)}`);
     }
 
-    let getResult = await withRetry(
+    // Polling for confirmation is always idempotent — use the global read retry config.
+    const readPolicy: RetryPolicy = { retries: this.retries };
+    let getResult = await withRetryPolicy(
       () => this.server.getTransaction(sendResult.hash),
-      this.retries,
-      this.retryDelayMs,
-      this.retryBackoffFactor
+      readPolicy,
+      defaults
     );
     while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
       await new Promise((r) => setTimeout(r, 1000));
-      getResult = await withRetry(
+      getResult = await withRetryPolicy(
         () => this.server.getTransaction(sendResult.hash),
-        this.retries,
-        this.retryDelayMs,
-        this.retryBackoffFactor
+        readPolicy,
+        defaults
       );
     }
 
@@ -282,7 +343,8 @@ export class SwiftRemitClient {
   private async simulateCall(
     sourceAddress: string,
     method: string,
-    args: xdr.ScVal[]
+    args: xdr.ScVal[],
+    retryPolicy?: RetryPolicy
   ): Promise<xdr.ScVal> {
     const account = await this.withTimeout(this.server.getAccount(sourceAddress));
     const tx = new TransactionBuilder(account, {
@@ -293,11 +355,12 @@ export class SwiftRemitClient {
       .setTimeout(30)
       .build();
 
-    const sim = await withRetry(
+    const policy = retryPolicy ?? { retries: this.retries };
+    const defaults = { delayMs: this.retryDelayMs, backoffFactor: this.retryBackoffFactor };
+    const sim = await withRetryPolicy(
       () => this.server.simulateTransaction(tx),
-      this.retries,
-      this.retryDelayMs,
-      this.retryBackoffFactor
+      policy,
+      defaults
     );
     if (SorobanRpc.Api.isSimulationError(sim)) {
       const typed = parseContractError(sim.error);
@@ -313,6 +376,17 @@ export class SwiftRemitClient {
   // ─── Query functions ─────────────────────────────────────────────────────────
 
   /** Retrieve a remittance record by ID. */
+  /**
+   * Retrieve a single remittance by ID.
+   * 
+   * @param sourceAddress - Query account address
+   * @param remittanceId - The remittance ID to retrieve
+   * @returns The remittance details including sender, agent, amount, status, etc.
+   * 
+   * @example
+   * const remittance = await client.getRemittance(senderAddress, 1n);
+   * console.log(`Status: ${remittance.status}`);
+   */
   async getRemittance(
     sourceAddress: string,
     remittanceId: bigint
@@ -323,7 +397,15 @@ export class SwiftRemitClient {
     return parseRemittance(val);
   }
 
-  /** Get paginated remittance IDs for a sender. */
+  /**
+   * Get paginated remittance IDs for a sender.
+   * 
+   * @param sourceAddress - Query account address
+   * @param sender - Sender address to filter remittances
+   * @param offset - Pagination offset
+   * @param limit - Maximum results to return
+   * @returns Array of remittance IDs for the sender
+   */
   async getRemittancesBySender(
     sourceAddress: string,
     sender: string,
@@ -573,7 +655,32 @@ export class SwiftRemitClient {
     ]);
   }
 
-  /** Create a new remittance. */
+  /**
+   * Create a new remittance transaction.
+   * 
+   * The sender approves USDC to the contract, and this method creates a remittance
+   * escrow. The contract holds USDC until an agent confirms payout or the remittance expires.
+   * 
+   * @param params - Remittance creation parameters
+   * @param params.sender - Sender's Stellar address (must authorize transaction)
+   * @param params.agent - Agent's Stellar address to receive payout notification
+   * @param params.amount - Amount in stroops (1 USDC = 10_000_000 stroops)
+   * @param params.expiry - Optional: Ledger sequence after which remittance auto-expires
+   * @param params.token - Optional: Token contract ID (defaults to USDC)
+   * @param params.idempotencyKey - Optional: Prevent duplicate remittances on retry
+   * @param params.recipientHash - Optional: Hash for recipient verification
+   * @returns Prepared transaction ready for signing
+   * 
+   * @example
+   * const tx = await client.createRemittance({
+   *   sender: senderAddress,
+   *   agent: agentAddress,
+   *   amount: toStroops(100), // 100 USDC
+   *   expiry: ledgerSeq + 1000, // ~5 minutes
+   *   idempotencyKey: 'order-12345',
+   * });
+   * // Sign and submit tx
+   */
   async createRemittance(params: CreateRemittanceParams): Promise<Transaction> {
     return this.prepareTransaction(params.sender, "create_remittance", [
       addressToScVal(params.sender),
@@ -594,7 +701,69 @@ export class SwiftRemitClient {
     ]);
   }
 
-  /** Create multiple remittances in one batch. */
+  /**
+   * Create multiple remittances with per-item success/failure handling.
+   * Each entry is prepared independently; failures don't abort the batch.
+   * Returns a BatchCreateResponse with per-item results.
+   */
+  async createRemittanceBatch(
+    sender: string,
+    entries: BatchCreateEntry[]
+  ): Promise<BatchCreateResponse> {
+    if (entries.length === 0) {
+      throw new SwiftRemitError(ErrorCode.InvalidBatchSize, "Batch must contain at least one entry");
+    }
+    if (entries.length > MAX_BATCH_SIZE) {
+      throw new SwiftRemitError(
+        ErrorCode.InvalidBatchSize,
+        `Batch size ${entries.length} exceeds MAX_BATCH_SIZE (${MAX_BATCH_SIZE})`
+      );
+    }
+
+    const results: BatchCreateResult[] = await Promise.all(
+      entries.map(async (entry, index): Promise<BatchCreateResult> => {
+        try {
+          const tx = await withRetry(
+            () =>
+              this.createRemittance({
+                sender,
+                agent: entry.agent,
+                amount: entry.amount,
+                expiry: entry.expiry,
+              }),
+            this.retries,
+            this.retryDelayMs,
+            this.retryBackoffFactor
+          );
+          return { index, entry, success: true, tx };
+        } catch (err) {
+          return { index, entry, success: false, error: err instanceof Error ? err : new Error(String(err)) };
+        }
+      })
+    );
+
+    return {
+      results,
+      successCount: results.filter((r) => r.success).length,
+      failureCount: results.filter((r) => !r.success).length,
+    };
+  }
+
+  /**
+   * Create multiple remittances in a single batch transaction.
+   *
+   * More efficient than individual create_remittance calls when creating many remittances.
+   *
+   * @param sender - Batch creator's address
+   * @param entries - Array of remittance entries (max 50 per batch)
+   * @returns Prepared batch transaction
+   *
+   * @example
+   * const tx = await client.batchCreateRemittances(senderAddress, [
+   *   { agent: agent1, amount: toStroops(100) },
+   *   { agent: agent2, amount: toStroops(250) },
+   * ]);
+   */
   async batchCreateRemittances(
     sender: string,
     entries: BatchCreateEntry[]
@@ -892,6 +1061,55 @@ export class SwiftRemitClient {
     return proposals;
   }
 
+  // ─── Fee estimation ──────────────────────────────────────────────────────────
+
+  /**
+   * Estimate the fee breakdown for a remittance before committing a transaction.
+   *
+   * Results are cached for 30 seconds per unique (senderAddress, amount, corridor)
+   * combination. Pass `retryPolicy` to override the client's default read retry
+   * behaviour for this call.
+   *
+   * @param amount - Send amount in stroops (use {@link toStroops} to convert from USDC)
+   * @param corridor - Destination currency and country
+   * @param senderAddress - Address used to simulate the contract call
+   * @param retryPolicy - Optional per-call retry override (defaults to global read retries)
+   */
+  async estimateFee(
+    amount: bigint,
+    corridor: Corridor,
+    senderAddress: string,
+    retryPolicy?: RetryPolicy
+  ): Promise<FeeEstimate> {
+    const cacheKey = `${senderAddress}:${amount}:${corridor.currency}:${corridor.country}`;
+    const cached = this.feeCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < SwiftRemitClient.FEE_CACHE_TTL_MS) {
+      return { ...cached.estimate, fromCache: true };
+    }
+
+    const val = await this.simulateCall(
+      senderAddress,
+      "get_fee_breakdown",
+      [i128ToScVal(amount), stringToScVal(corridor.currency), stringToScVal(corridor.country)],
+      retryPolicy
+    );
+
+    const breakdown = parseFeeBreakdown(val);
+    const totalFee = breakdown.platformFee + breakdown.protocolFee;
+    const estimate: FeeEstimate = {
+      amount,
+      platformFee: breakdown.platformFee,
+      protocolFee: breakdown.protocolFee,
+      netAmount: breakdown.netAmount,
+      totalFee,
+      estimatedAt: new Date(),
+      fromCache: false,
+    };
+
+    this.feeCache.set(cacheKey, { cachedAt: Date.now(), estimate });
+    return estimate;
+  }
+
   /** Check whether `voterAddress` has already voted on `proposalId`. */
   async getVoteStatus(
     sourceAddress: string,
@@ -1010,4 +1228,105 @@ export class SwiftRemitClient {
       active = false;
     };
   }
+
+  /**
+   * Subscribe to typed contract events with full TypeScript type safety.
+   * 
+   * @param eventType - The specific event type to listen for
+   * @param handler - Callback function called when an event of this type is emitted
+   * @param options - Optional subscription options (filter by remittanceId, sender, agent, etc)
+   * @returns Unsubscribe function to stop listening
+   * 
+   * @example
+   * const unsubscribe = client.on('created', (event) => {
+   *   console.log(`Remittance ${event.data.remittanceId} created`);
+   * });
+   * // Later:
+   * unsubscribe();
+   */
+  on<T extends RemittanceEventType>(
+    eventType: T,
+    handler: EventHandler<T>,
+    options?: SubscribeOptions
+  ): Unsubscribe {
+    return this.subscribe(
+      (event) => {
+        if (event.type === eventType) {
+          handler({
+            type: eventType,
+            data: event.raw,
+            ledger: event.ledger,
+            ledgerClosedAt: event.ledgerClosedAt,
+          });
+        }
+      },
+      options
+    );
+  }
+
+  /**
+   * Subscribe to multiple event types with a single handler.
+   * 
+   * @param eventTypes - Array of event types to listen for
+   * @param handler - Callback called when any of the specified events are emitted
+   * @param options - Optional subscription options
+   * @returns Unsubscribe function
+   * 
+   * @example
+   * const unsubscribe = client.onAny(['created', 'completed', 'failed'], (event) => {
+   *   console.log(`Event: ${event.type}`);
+   * });
+   */
+  onAny(
+    eventTypes: RemittanceEventType[],
+    handler: (event: { type: RemittanceEventType; ledger: number; ledgerClosedAt: string }) => Promise<void> | void,
+    options?: SubscribeOptions
+  ): Unsubscribe {
+    return this.subscribe(
+      (event) => {
+        if (eventTypes.includes(event.type)) {
+          handler({
+            type: event.type,
+            ledger: event.ledger,
+            ledgerClosedAt: event.ledgerClosedAt,
+          });
+        }
+      },
+      options
+    );
+  }
+
+  /**
+   * Get all available contract event types.
+   */
+  static readonly ALL_EVENTS: RemittanceEventType[] = [
+    "created",
+    "completed",
+    "cancelled",
+    "failed",
+    "disputed",
+    "partial_payout",
+    "expired",
+    "agent_registered",
+    "agent_removed",
+    "fee_updated",
+    "paused",
+    "unpaused",
+    "admin_added",
+    "admin_removed",
+    "circuit_breaker_paused",
+    "circuit_breaker_unpaused",
+    "user_blacklisted",
+    "user_removed_from_blacklist",
+    "token_whitelisted",
+    "token_removed_from_whitelist",
+    "daily_limit_updated",
+    "dispute_raised",
+    "dispute_resolved",
+    "proposal_created",
+    "proposal_voted",
+    "proposal_approved",
+    "proposal_executed",
+    "settlement_completed",
+  ];
 }

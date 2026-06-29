@@ -179,3 +179,20 @@ export interface WebhookDelivery {
   response_status?: number | null;
   delivered_at?: Date | null;
 }
+
+export type AgentKycStatus = 'submitted' | 'under_review' | 'approved' | 'rejected';
+
+export interface AgentKycRecord {
+  agent_id: string;
+  business_registration?: any; // structured business registration data (JSON)
+  owner_id?: string;
+  operating_country?: string;
+  payout_address?: string;
+  contact_email?: string;
+  status: AgentKycStatus;
+  rejection_reason?: string;
+  submitted_at: Date;
+  reviewed_at?: Date;
+  created_at?: Date;
+  updated_at?: Date;
+}

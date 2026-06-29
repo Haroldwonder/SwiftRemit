@@ -24,6 +24,7 @@ import { storeVerificationOnChain, simulateSettlement } from './stellar';
 import { VerificationStatus, AnchorKycConfig } from './types';
 import { KycUpsertService } from './kyc-upsert-service';
 import { createTransferGuard, AuthenticatedRequest } from './transfer-guard';
+import { AgentKycService } from './agent-kyc-service';
 import { getFxRateCache } from './fx-rate-cache';
 import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
@@ -31,10 +32,12 @@ import { sanitizeInput } from './sanitizer';
 import docsRouter from './routes/docs';
 import { Sep24Service, Sep24InitiateRequest, Sep24ConfigError, Sep24AnchorError } from './sep24-service';
 import { AdminAuditLogService } from './admin-audit-log';
+import { getJobSummaries } from './job-tracker';
 import { saveContractEvent, queryContractEvents } from './database';
 import { remittanceEventEmitter } from './remittance/events';
 import { handleKycWebhook } from './kyc-webhook-handler';
 import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
+import { createComplianceRouter } from './routes/compliance';
 
 const app = express();
 const fxRateCache = getFxRateCache();
@@ -42,6 +45,9 @@ const verifier = new AssetVerifier();
 const logger = createLogger('api');
 const pool = getPool();
 const metricsService = getMetricsService(pool);
+fxRateCache.setMetricsObserver((from, to, stalenessSeconds) => {
+  metricsService.setFxRateStalenessMetric(from, to, stalenessSeconds);
+});
 
 // Security middleware
 app.use(helmet());
@@ -109,6 +115,7 @@ app.get('/metrics', async (req: Request, res: Response) => {
 
 // API documentation
 app.use('/api/docs', docsRouter);
+app.use('/api/compliance', createComplianceRouter(pool));
 
 // Input validation middleware
 function validateAssetParams(req: Request, res: Response, next: Function) {
@@ -188,6 +195,16 @@ app.post('/api/webhooks/:id/rotate-secret', adminLimiter, async (req: Request, r
   try {
     const { newSecret, rotatedAt } = await rotateWebhookSecret(id);
     const subscriber = await getWebhookSubscriberById(id);
+
+    const auditService = new AdminAuditLogService(pool);
+    await auditService.log({
+      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+      action: 'rotate_webhook_secret',
+      target: id,
+      params_json: null,
+      tx_hash: null,
+      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
+    });
 
     // Notify subscriber of new secret via a signed delivery (best-effort)
     if (subscriber?.url) {
@@ -478,7 +495,10 @@ app.get('/api/fx-rate/:transactionId', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'FX rate not found for this transaction' });
     }
 
-    res.json(fxRate);
+    res.json({
+      ...fxRate,
+      fx_rate_source: fxRate.provider,
+    });
   } catch (error) {
     console.error('Error fetching FX rate:', error);
     res.status(500).json({ error: 'Failed to fetch FX rate' });
@@ -528,6 +548,16 @@ app.post('/api/kyc/config', async (req: Request, res: Response) => {
 
     await saveAnchorKycConfig(config);
 
+    const auditService = new AdminAuditLogService(pool);
+    await auditService.log({
+      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+      action: 'configure_kyc',
+      target: anchorId,
+      params_json: { kycServerUrl, pollingIntervalMinutes, enabled },
+      tx_hash: null,
+      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
+    });
+
     res.json({ success: true, message: 'Anchor KYC config saved successfully' });
   } catch (error) {
     console.error('Error saving anchor KYC config:', error);
@@ -569,6 +599,16 @@ app.post('/api/kyc/register', async (req: Request, res: Response) => {
     const kycService = (await import('./kyc-service')).KycService;
     const service = new kycService();
     await service.registerUserForKyc(userId, anchorId);
+
+    const auditService = new AdminAuditLogService(pool);
+    await auditService.log({
+      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+      action: 'register_kyc_user',
+      target: userId,
+      params_json: { anchorId },
+      tx_hash: null,
+      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
+    });
 
     res.json({ success: true, message: 'User registered for KYC successfully' });
   } catch (error) {
@@ -705,6 +745,12 @@ app.get('/api/kyc/approved/:userId', async (req: Request, res: Response) => {
 app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { sender, agent, amount, fee, expiry, memo } = req.body;
+    const fromCurrency = typeof req.body.fromCurrency === 'string' ? req.body.fromCurrency : req.body.from_currency;
+    const toCurrency = typeof req.body.toCurrency === 'string' ? req.body.toCurrency : req.body.to_currency;
+    const maxStalenessSeconds = Number.parseInt(
+      String(req.body.fxRateMaxStalenessSeconds ?? req.body.fx_rate_max_staleness_seconds ?? process.env.FX_RATE_MAX_STALENESS_SECONDS ?? '3600'),
+      10
+    );
 
     if (!sender || typeof sender !== 'string') {
       return res.status(400).json({ error: 'Invalid or missing sender' });
@@ -728,6 +774,22 @@ app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, re
       sanitizedMemo = sanitizeInput(memo);
     }
 
+    if (typeof fromCurrency === 'string' && fromCurrency && typeof toCurrency === 'string' && toCurrency) {
+      try {
+        const fxRate = await fxRateCache.getCurrentRate(fromCurrency.toUpperCase(), toCurrency.toUpperCase());
+        if (fxRate.stale && typeof fxRate.stalenessSeconds === 'number' && fxRate.stalenessSeconds > (Number.isFinite(maxStalenessSeconds) ? maxStalenessSeconds : 3600)) {
+          return res.status(409).json({
+            error: `FX rate is stale beyond the allowed maximum (${Number.isFinite(maxStalenessSeconds) ? maxStalenessSeconds : 3600}s)`,
+            fx_rate_source: fxRate.fx_rate_source || fxRate.provider,
+            fx_rate_staleness_seconds: fxRate.stalenessSeconds,
+          });
+        }
+      } catch (error) {
+        logger.error('Failed to resolve FX rate for remittance', error);
+        return res.status(503).json({ error: 'Unable to obtain a valid FX rate' });
+      }
+    }
+
     const remittanceId = `rem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     await pool.query(
@@ -736,6 +798,12 @@ app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, re
        VALUES ($1, $2, 'withdrawal', 'pending_user_transfer_start', $3, $4, NOW(), NOW())`,
       [remittanceId, agent, amount, sanitizedMemo ?? null]
     );
+
+    // Auto-flag for compliance if amount exceeds any configured threshold
+    try {
+      const { autoFlagIfAboveThreshold } = await import('./routes/compliance');
+      await autoFlagIfAboveThreshold(pool, remittanceId, parseFloat(amount), 'USD');
+    } catch { /* compliance tables may not exist in all environments */ }
 
     return res.status(201).json({
       success: true,
@@ -828,6 +896,51 @@ app.get('/api/admin/audit-log', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Error fetching audit log', error);
     res.status(500).json({ error: 'Failed to fetch audit log' });
+  }
+});
+
+// Background job monitoring dashboard (#866)
+app.get('/api/admin/jobs', adminLimiter, async (req: Request, res: Response) => {
+  try {
+    const summaries = await getJobSummaries(pool);
+    res.json({ jobs: summaries });
+  } catch (error) {
+    logger.error('Error fetching job summaries', error);
+    res.status(500).json({ error: 'Failed to fetch job summaries' });
+  }
+});
+
+// Compliance export — streams all audit log entries as newline-delimited JSON
+app.get('/api/admin/audit-log/export', adminLimiter, async (req: Request, res: Response) => {
+  try {
+    const auditService = new AdminAuditLogService(pool);
+    const filter = {
+      admin_address: req.query.admin_address as string | undefined,
+      action:        req.query.action        as string | undefined,
+      from:  req.query.from ? new Date(req.query.from as string) : undefined,
+      to:    req.query.to   ? new Date(req.query.to   as string) : undefined,
+      limit: 200,
+      offset: 0,
+    };
+
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Content-Disposition', 'attachment; filename="audit-log.ndjson"');
+
+    let offset = 0;
+    while (true) {
+      filter.offset = offset;
+      const { entries } = await auditService.query(filter);
+      if (entries.length === 0) break;
+      for (const entry of entries) {
+        res.write(JSON.stringify(entry) + '\n');
+      }
+      if (entries.length < filter.limit) break;
+      offset += filter.limit;
+    }
+    res.end();
+  } catch (error) {
+    logger.error('Error exporting audit log', error);
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to export audit log' });
   }
 });
 

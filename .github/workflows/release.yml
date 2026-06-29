@@ -2,16 +2,68 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
 permissions:
   contents: write
   packages: write
+  # Required for npm provenance signing via OIDC
+  id-token: write
+  # Required for changesets to open version-bump PRs
+  pull-requests: write
 
 jobs:
+  # ── Changesets: version bump PR or automatic npm publish on merge to main ──────
+  changesets:
+    name: Changesets release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use a PAT or the default GITHUB_TOKEN so changesets can push commits/PRs
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: npm ci
+
+      - name: Build SDK
+        working-directory: sdk
+        run: npm run build
+
+      - name: Run changesets action
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          # When a changeset is present this creates/updates a "Version Packages" PR.
+          # When that PR is merged, this step publishes to npm automatically.
+          publish: npm run release --workspace=sdk
+          version: npx changeset version
+          commit: "chore: version packages"
+          title: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
+
+  # ── Tag-based release: manual semver tags publish and attach contract artifact ──
   release:
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

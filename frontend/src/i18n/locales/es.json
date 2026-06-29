@@ -66,6 +66,7 @@
       "incomplete": "Los detalles de la transacción están incompletos.",
       "failed": "La transacción falló. Por favor inténtalo de nuevo.",
       "rejected": "La transacción fue rechazada por la billetera.",
+      "freighterNotInstalled": "Freighter Wallet no está instalado. Por favor instálalo para continuar.",
       "assetIssuerNotConfigured": "El activo {{asset}} no está disponible en este entorno."
     },
     "limits": {

@@ -7,6 +7,7 @@ export interface AuditLogEntry {
   target: string | null;
   params_json: Record<string, unknown> | null;
   tx_hash: string | null;
+  ip_address: string | null;
   created_at: Date;
 }
 
@@ -24,14 +25,15 @@ export class AdminAuditLogService {
 
   async log(entry: Omit<AuditLogEntry, 'id' | 'created_at'>): Promise<void> {
     await this.pool.query(
-      `INSERT INTO admin_audit_log (admin_address, action, target, params_json, tx_hash)
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO admin_audit_log (admin_address, action, target, params_json, tx_hash, ip_address)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [
         entry.admin_address,
         entry.action,
         entry.target ?? null,
         entry.params_json ? JSON.stringify(entry.params_json) : null,
         entry.tx_hash ?? null,
+        entry.ip_address ?? null,
       ]
     );
   }
