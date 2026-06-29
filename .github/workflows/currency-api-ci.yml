@@ -100,7 +100,7 @@ jobs:
         run: npm test -- --coverage
 
       - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v7
         with:
           files: ./api/coverage/coverage-final.json
           flags: currency-api
