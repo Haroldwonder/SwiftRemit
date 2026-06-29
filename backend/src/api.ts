@@ -21,6 +21,7 @@ import { storeVerificationOnChain, simulateSettlement } from './stellar';
 import { VerificationStatus, AnchorKycConfig } from './types';
 import { KycUpsertService } from './kyc-upsert-service';
 import { createTransferGuard, AuthenticatedRequest } from './transfer-guard';
+import { AgentKycService } from './agent-kyc-service';
 import { getFxRateCache } from './fx-rate-cache';
 import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
@@ -681,6 +682,92 @@ app.post('/api/simulate-settlement', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error simulating settlement:', error);
     res.status(500).json({ error: 'Failed to simulate settlement' });
+  }
+});
+
+// Agent KYC endpoints
+const agentKycService = new AgentKycService();
+
+// Submit agent KYC
+app.post('/api/agents/kyc', async (req: Request, res: Response) => {
+  try {
+    const { agentId, business_registration, owner_id, operating_country, payout_address, contact_email } = req.body;
+    if (!agentId || typeof agentId !== 'string') {
+      return res.status(400).json({ error: 'Missing or invalid agentId' });
+    }
+
+    const record = await agentKycService.submitKyc({
+      agent_id: agentId,
+      business_registration,
+      owner_id,
+      operating_country,
+      payout_address,
+      contact_email,
+    });
+
+    res.status(201).json({ success: true, kyc: record });
+  } catch (error) {
+    console.error('Error submitting agent KYC:', error);
+    res.status(500).json({ error: 'Failed to submit agent KYC' });
+  }
+});
+
+// Get agent KYC status
+app.get('/api/agents/kyc/:agentId', async (req: Request, res: Response) => {
+  try {
+    const { agentId } = req.params;
+    if (!agentId) return res.status(400).json({ error: 'Missing agentId' });
+
+    const record = await agentKycService.getKyc(agentId);
+    if (!record) return res.status(404).json({ error: 'Agent KYC not found' });
+
+    res.json({ success: true, kyc: record });
+  } catch (error) {
+    console.error('Error fetching agent KYC:', error);
+    res.status(500).json({ error: 'Failed to fetch agent KYC' });
+  }
+});
+
+// Admin review endpoint (requires x-admin header = 'true')
+app.post('/api/agents/kyc/:agentId/review', async (req: Request, res: Response) => {
+  try {
+    const isAdmin = String(req.headers['x-admin']) === 'true';
+    if (!isAdmin) return res.status(401).json({ error: 'Admin access required' });
+
+    const { agentId } = req.params;
+    const { status, rejection_reason } = req.body;
+
+    if (!agentId) return res.status(400).json({ error: 'Missing agentId' });
+    if (!status || !['under_review','approved','rejected'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    const updated = await agentKycService.reviewKyc(agentId, status as 'under_review' | 'approved' | 'rejected', rejection_reason);
+
+    res.json({ success: true, kyc: updated });
+  } catch (error) {
+    console.error('Error reviewing agent KYC:', error);
+    res.status(500).json({ error: 'Failed to review agent KYC' });
+  }
+});
+
+// Gate on-chain agent registration behind approved KYC
+app.post('/api/agents/register', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { agentId } = req.body;
+    if (!agentId) return res.status(400).json({ error: 'Missing agentId' });
+
+    const record = await agentKycService.getKyc(agentId);
+    if (!record || record.status !== 'approved') {
+      return res.status(403).json({ error: 'Agent KYC must be approved before on-chain registration' });
+    }
+
+    // At this layer we only gate registration; actual on-chain registration should be performed
+    // by an administrative process which calls the smart contract. Here we confirm it's allowed.
+    res.json({ success: true, message: 'Agent KYC approved. Proceed with on-chain registration.' });
+  } catch (error) {
+    console.error('Error checking agent registration:', error);
+    res.status(500).json({ error: 'Failed to check agent registration' });
   }
 });
 

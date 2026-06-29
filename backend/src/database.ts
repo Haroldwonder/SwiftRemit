@@ -167,11 +167,91 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_sep24_status ON sep24_transactions(status);
       CREATE INDEX IF NOT EXISTS idx_sep24_last_polled ON sep24_transactions(last_polled);
     `);
+
+    // Agent KYC table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS agent_kyc (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id VARCHAR(255) NOT NULL UNIQUE,
+        business_registration JSONB,
+        owner_id VARCHAR(255),
+        operating_country VARCHAR(100),
+        payout_address VARCHAR(255),
+        contact_email VARCHAR(255),
+        status VARCHAR(20) NOT NULL CHECK (status IN ('submitted','under_review','approved','rejected')),
+        rejection_reason TEXT,
+        sep12_customer_id VARCHAR(255),
+        submitted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        reviewed_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_agent_kyc_agent_id ON agent_kyc(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_kyc_status ON agent_kyc(status);
+    `);
+
     console.log('Database initialized successfully');
   } finally {
     client.release();
   }
 }
+
+export async function upsertAgentKyc(record: any): Promise<void> {
+  const query = `
+    INSERT INTO agent_kyc (
+      agent_id, business_registration, owner_id, operating_country, payout_address, contact_email, status, rejection_reason, sep12_customer_id, submitted_at, reviewed_at, created_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+    ON CONFLICT (agent_id) DO UPDATE SET
+      business_registration = EXCLUDED.business_registration,
+      owner_id = EXCLUDED.owner_id,
+      operating_country = EXCLUDED.operating_country,
+      payout_address = EXCLUDED.payout_address,
+      contact_email = EXCLUDED.contact_email,
+      status = EXCLUDED.status,
+      rejection_reason = EXCLUDED.rejection_reason,
+      sep12_customer_id = COALESCE(EXCLUDED.sep12_customer_id, agent_kyc.sep12_customer_id),
+      reviewed_at = EXCLUDED.reviewed_at,
+      updated_at = NOW()
+  `;
+
+  await pool.query(query, [
+    record.agent_id,
+    record.business_registration ? JSON.stringify(record.business_registration) : null,
+    record.owner_id || null,
+    record.operating_country || null,
+    record.payout_address || null,
+    record.contact_email || null,
+    record.status,
+    record.rejection_reason || null,
+    record.sep12_customer_id || null,
+    record.submitted_at || new Date(),
+    record.reviewed_at || null,
+  ]);
+}
+
+export async function getAgentKyc(agentId: string): Promise<any | null> {
+  const query = `SELECT * FROM agent_kyc WHERE agent_id = $1`;
+  const result = await pool.query(query, [agentId]);
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0];
+  return {
+    agent_id: row.agent_id,
+    business_registration: row.business_registration,
+    owner_id: row.owner_id,
+    operating_country: row.operating_country,
+    payout_address: row.payout_address,
+    contact_email: row.contact_email,
+    status: row.status,
+    rejection_reason: row.rejection_reason,
+    sep12_customer_id: row.sep12_customer_id,
+    submitted_at: row.submitted_at,
+    reviewed_at: row.reviewed_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 
 export async function saveAssetVerification(verification: AssetVerification): Promise<void> {
   const query = `
