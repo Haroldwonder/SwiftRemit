@@ -11,19 +11,38 @@ import { WebhookHandler } from './webhook-handler';
 import { KycService } from './kyc-service';
 import { createWebhookVerificationMiddleware } from './webhook-middleware';
 import { patchConsoleForProduction } from './console-shim';
+import { getSecretsManager, getDatabaseUrl, getAdminSecretKey, getContractId, initializeSecretRotation } from './secrets-manager';
 
 dotenv.config();
 patchConsoleForProduction();
 
 const PORT = process.env.PORT || 3000;
-/** Graceful-shutdown timeout in milliseconds (configurable via env). */
 const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? '30000', 10);
 
-// Module-level reference so signal handlers can reach the dispatcher.
 let webhookHandler: WebhookHandler | null = null;
+
+async function loadSecrets(): Promise<void> {
+  const sm = getSecretsManager();
+
+  const databaseUrl = await getDatabaseUrl();
+  const adminSecretKey = await getAdminSecretKey();
+  const contractId = await getContractId();
+
+  process.env.DATABASE_URL = databaseUrl;
+  process.env.ADMIN_SECRET_KEY = adminSecretKey;
+  process.env.CONTRACT_ID = contractId;
+
+  console.log('[secrets] All required secrets loaded successfully');
+}
 
 async function start() {
   try {
+    // Load secrets from Secrets Manager before initializing services
+    await loadSecrets();
+
+    // Initialize secret rotation hooks
+    await initializeSecretRotation();
+
     // Initialize database
     await initDatabase();
     console.log('Database initialized');
@@ -40,7 +59,7 @@ async function start() {
 
     // Apply HMAC verification middleware to all /webhooks routes
     const webhookVerification = createWebhookVerificationMiddleware({
-      timestampWindowSeconds: 300, // 5 minutes
+      timestampWindowSeconds: 300,
       requireSignature: true,
     });
 
@@ -72,17 +91,14 @@ async function start() {
       console.log(`FX rate WebSocket available at ws://...:${PORT}/ws/fx-rates`);
     });
 
-    // ── Graceful shutdown ────────────────────────────────────────────────────
-
+    // Graceful shutdown
     async function shutdown(signal: string): Promise<void> {
       console.log(`\n${signal} received — starting graceful shutdown…`);
 
-      // 1. Stop accepting new HTTP connections
       server.close(() => {
         console.log('HTTP server closed (no new connections accepted)');
       });
 
-      // 2. Drain in-flight webhook dispatches
       if (webhookHandler) {
         const dispatcher = (webhookHandler as any).dispatcher;
         if (dispatcher && typeof dispatcher.drain === 'function') {
@@ -90,10 +106,8 @@ async function start() {
         }
       }
 
-      // 3. Close WebSocket server
       fxRateWss.close();
 
-      // 4. Close the PostgreSQL pool
       try {
         await closePool();
         console.log('PostgreSQL pool closed');
@@ -106,7 +120,7 @@ async function start() {
     }
 
     process.once('SIGTERM', () => shutdown('SIGTERM'));
-    process.once('SIGINT',  () => shutdown('SIGINT'));
+    process.once('SIGINT', () => shutdown('SIGINT'));
 
   } catch (error) {
     console.error('Failed to start server:', error);

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getSecretsManager } from './secrets-manager';
 
 export interface FxRateProvider {
   name: string;
@@ -10,19 +11,19 @@ export interface FxRateProvider {
 export class PrimaryFxProvider implements FxRateProvider {
   readonly name = 'primary';
   private apiUrl: string;
-  private apiKey: string;
 
   constructor(
-    apiUrl = process.env.FX_API_URL || 'https://v6.exchangerate-api.com/v6',
-    apiKey = process.env.FX_API_KEY || ''
+    apiUrl = process.env.FX_API_URL || 'https://v6.exchangerate-api.com/v6'
   ) {
     this.apiUrl = apiUrl;
-    this.apiKey = apiKey;
   }
 
   async getRate(from: string, to: string): Promise<number> {
-    const url = this.apiKey
-      ? `${this.apiUrl}/${this.apiKey}/latest/${from}`
+    const sm = getSecretsManager();
+    const apiKey = await sm.getSecret({ secretId: 'FX_API_KEY', required: false });
+
+    const url = apiKey
+      ? `${this.apiUrl}/${apiKey}/latest/${from}`
       : `${this.apiUrl}/latest/${from}`;
     const { data } = await axios.get(url, { timeout: 5000 });
     const rate = data?.conversion_rates?.[to] ?? data?.rates?.[to];
@@ -36,20 +37,15 @@ export class PrimaryFxProvider implements FxRateProvider {
 export class SecondaryFxProvider implements FxRateProvider {
   readonly name = 'secondary';
   private apiUrl: string;
-  private apiKey: string;
 
   constructor(
-    apiUrl = process.env.FX_SECONDARY_API_URL || 'https://open.er-api.com/v6/latest',
-    apiKey = process.env.FX_SECONDARY_API_KEY || ''
+    apiUrl = process.env.FX_SECONDARY_API_URL || 'https://open.er-api.com/v6/latest'
   ) {
     this.apiUrl = apiUrl;
-    this.apiKey = apiKey;
   }
 
   async getRate(from: string, to: string): Promise<number> {
-    const url = this.apiKey
-      ? `${this.apiUrl}/${from}?apikey=${this.apiKey}`
-      : `${this.apiUrl}/${from}`;
+    const url = `${this.apiUrl}/${from}`;
     const { data } = await axios.get(url, { timeout: 5000 });
     const rate = data?.rates?.[to];
     if (!rate) throw new Error(`Secondary: rate not found for ${from}/${to}`);
@@ -68,7 +64,7 @@ interface CircuitBreaker {
 function isCircuitOpen(cb: CircuitBreaker): boolean {
   if (!cb.open) return false;
   if (Date.now() - cb.openedAt >= cb.halfOpenAfterMs) {
-    cb.open = false; // transition to half-open: allow one probe
+    cb.open = false;
     return false;
   }
   return true;
@@ -80,7 +76,6 @@ export class FailoverFxService {
   private primary: FxRateProvider;
   private secondary: FxRateProvider;
   private cb: CircuitBreaker;
-  /** In-process stale cache keyed by "FROM_TO" */
   private staleCache = new Map<string, { rate: number; ts: number }>();
 
   constructor(
@@ -106,13 +101,11 @@ export class FailoverFxService {
       }
     }
 
-    // Primary unavailable — try secondary
     try {
       const rate = await this.secondary.getRate(from, to);
       this.staleCache.set(key, { rate, ts: Date.now() });
       return rate;
     } catch (err) {
-      // Both failed — serve stale cache if available
       const stale = this.staleCache.get(key);
       if (stale) {
         console.warn(`[FailoverFxService] Both providers failed for ${from}/${to}; serving stale rate (${Math.floor((Date.now() - stale.ts) / 1000)}s old)`);
@@ -135,13 +128,11 @@ export class FailoverFxService {
     }));
   }
 
-  /** Expose circuit state for testing / health endpoints. */
   isCircuitOpen(): boolean {
     return isCircuitOpen(this.cb);
   }
 }
 
-// Singleton
 let instance: FailoverFxService | null = null;
 export function getFailoverFxService(): FailoverFxService {
   if (!instance) instance = new FailoverFxService();

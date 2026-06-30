@@ -1,5 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { WebhookVerifier } from './webhook-verifier';
+import { getSecretsManager } from './secrets-manager';
+import { createLogger } from './correlation-id';
+
+const logger = createLogger('WebhookMiddleware');
 
 /**
  * Extended Express Request with raw body for signature verification
@@ -90,9 +94,16 @@ export function createWebhookVerificationMiddleware(
       
       if (getAnchorSecret) {
         anchorSecret = await getAnchorSecret(anchorId);
-      } else {
-        // Fallback: try to get from environment variable
-        anchorSecret = process.env[`WEBHOOK_SECRET_${anchorId.toUpperCase()}`] || null;
+      }
+      
+      if (!anchorSecret) {
+        const sm = getSecretsManager();
+        try {
+          const secretFromManager = await sm.getSecret({ secretId: `WEBHOOK_SECRET_${anchorId.toUpperCase()}`, required: false });
+          anchorSecret = secretFromManager || null;
+        } catch {
+          anchorSecret = process.env[`WEBHOOK_SECRET_${anchorId.toUpperCase()}`] || null;
+        }
       }
 
       if (!anchorSecret) {

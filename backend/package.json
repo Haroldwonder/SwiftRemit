@@ -18,6 +18,7 @@
     "migrate:rollback": "tsx src/migrate.ts rollback"
   },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.600.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
     "@opentelemetry/instrumentation-express": "^0.66.0",

@@ -1,16 +1,32 @@
 # values.production.yaml — production cluster overrides
 # Usage: helm install swiftremit ./charts/swiftremit -f charts/swiftremit/values.production.yaml
 #
-# All secret values MUST be injected at deploy time via --set or a secrets manager.
+# All secrets ARE injected from AWS Secrets Manager via External Secrets Operator.
 # Never commit real credentials to this file.
 #
-#   helm upgrade --install swiftremit ./charts/swiftremit \
-#     -f charts/swiftremit/values.production.yaml \
-#     --set api.secret.DATABASE_URL="$DATABASE_URL" \
-#     --set api.secret.ANCHORS_ADMIN_API_KEY="$ANCHORS_ADMIN_API_KEY" \
-#     --set backend.secret.DATABASE_URL="$DATABASE_URL" \
-#     --set backend.secret.CONTRACT_ID="$CONTRACT_ID" \
-#     --set backend.secret.ADMIN_SECRET_KEY="$ADMIN_SECRET_KEY"
+# Required secrets in AWS Secrets Manager:
+#   - swiftremit/DATABASE_URL
+#   - swiftremit/ADMIN_SECRET_KEY
+#   - swiftremit/CONTRACT_ID
+#   - swiftremit/JWT_SECRET
+#   - swiftremit/FX_API_KEY (optional)
+#   - swiftremit/WEBHOOK_SECRET_{ANCHOR_ID} (per anchor)
+#
+# Example ExternalSecret for AWS Secrets Manager:
+#   apiVersion: external-secrets.io/v1beta1
+#   kind: ExternalSecret
+#   metadata:
+#     name: swiftremit-api-secrets
+#   spec:
+#     secretStoreRef:
+#       name: aws-secrets-manager
+#       kind: SecretStore
+#     target:
+#       name: swiftremit-api
+#     data:
+#       - secretKey: DATABASE_URL
+#         remoteRef:
+#           key: swiftremit/DATABASE_URL
 
 global:
   imageRegistry: "ghcr.io/your-org"
