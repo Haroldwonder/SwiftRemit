@@ -28,6 +28,25 @@ function isAdminAuthorized(req: Request): boolean {
   return req.headers['x-api-key'] === adminKey;
 }
 
+/**
+ * Validates admin authorization using Secrets Manager (async version for startup).
+ */
+export async function validateAdminKey(key: string): Promise<boolean> {
+  try {
+    const { getSecretsManager } = await import('../../secrets-manager.js');
+    const sm = getSecretsManager();
+    const adminKey = await sm.getSecret({ secretId: 'ADMIN_API_KEY', required: false });
+    if (adminKey && key === adminKey) {
+      return true;
+    }
+  } catch {
+    // Fall through to environment variable
+  }
+
+  const adminKey = process.env.ADMIN_API_KEY;
+  return adminKey === key;
+}
+
 export interface IntegratorFeeEntry {
   integrator: string;
   accumulated_fees: number;

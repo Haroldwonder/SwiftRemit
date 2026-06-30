@@ -49,12 +49,20 @@ api:
     RATE_LIMIT_WINDOW_MS: "900000"
     RATE_LIMIT_MAX_REQUESTS: "100"
     CURRENCY_CONFIG_PATH: "./config/currencies.json"
+    SECRETS_MANAGER_ENABLED: "true"
+    AWS_REGION: "us-east-1"
 
-  # Keys placed here end up in the api-secret Secret (base64-encoded by Helm)
+  # Secrets should be injected via AWS Secrets Manager or External Secrets Operator.
+  # Do NOT put real credentials here — use external secret management.
+  # See CONFIGURATION.md for AWS Secrets Manager setup.
+  # Example with External Secrets:
+  #   The secret values are populated by ExternalSecret resources referencing
+  #   AWS Secrets Manager paths like swiftremit/DATABASE_URL
   secret:
     DATABASE_URL: ""
     CONTRACT_RPC_URL: ""
     ANCHORS_ADMIN_API_KEY: ""
+    JWT_SECRET: ""
 
   livenessProbe:
     httpGet:
@@ -114,7 +122,12 @@ backend:
     WEBHOOK_RETRY_BASE_MS: "1000"
     WEBHOOK_RETRY_MAX_MS: "300000"
     WEBHOOK_RETRY_JITTER_PERCENT: "20"
+    SECRETS_MANAGER_ENABLED: "true"
+    AWS_REGION: "us-east-1"
 
+  # Secrets should be injected via AWS Secrets Manager or External Secrets Operator.
+  # Do NOT put real credentials here — use external secret management.
+  # See CONFIGURATION.md for AWS Secrets Manager setup.
   secret:
     DATABASE_URL: ""
     CONTRACT_ID: ""

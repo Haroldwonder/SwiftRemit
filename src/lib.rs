@@ -88,6 +88,8 @@ mod test_governance;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_governance_property;
 #[cfg(test)]
+mod test_governance_integration;
+#[cfg(test)]
 mod test_dispute;
 #[cfg(test)]
 mod test_features_589_592;
@@ -3307,5 +3309,96 @@ impl SwiftRemitContract {
         operation_id: u64,
     ) -> Result<PendingOperation, ContractError> {
         multisig::get_operation(&env, operation_id)
+    }
+
+    // ── DAO Governance ────────────────────────────────────────────────────────
+
+    /// One-time migration from single-admin to multi-admin DAO governance.
+    ///
+    /// Only the legacy admin may call this.  Sets the initial quorum, timelock,
+    /// and proposal TTL without requiring a proposal.
+    pub fn migrate_to_governance(
+        env: Env,
+        caller: Address,
+        quorum: u32,
+        timelock_seconds: u64,
+        proposal_ttl_seconds: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        governance::do_migrate(&env, &caller, quorum, timelock_seconds, proposal_ttl_seconds)
+    }
+
+    /// Creates a new governance proposal.
+    ///
+    /// Returns the new proposal's unique ID.
+    pub fn propose(
+        env: Env,
+        proposer: Address,
+        action: ProposalAction,
+    ) -> Result<u64, ContractError> {
+        proposer.require_auth();
+        governance::do_propose(&env, &proposer, action)
+    }
+
+    /// Casts an approval vote on a pending proposal.
+    pub fn vote(env: Env, voter: Address, proposal_id: u64) -> Result<(), ContractError> {
+        voter.require_auth();
+        governance::do_vote(&env, &voter, proposal_id)
+    }
+
+    /// Executes an approved proposal after the timelock has elapsed.
+    pub fn execute(
+        env: Env,
+        executor: Address,
+        proposal_id: u64,
+    ) -> Result<(), ContractError> {
+        executor.require_auth();
+        governance::do_execute(&env, &executor, proposal_id)
+    }
+
+    /// Transitions an expired proposal to Expired state and removes it from storage.
+    ///
+    /// Can be called by any address once the proposal TTL has elapsed.
+    pub fn expire_proposal(env: Env, proposal_id: u64) -> Result<(), ContractError> {
+        governance::do_expire(&env, proposal_id)
+    }
+
+    /// Deletes already-executed or already-expired proposals to reclaim storage.
+    pub fn cleanup_expired_proposals(
+        env: Env,
+        caller: Address,
+        proposal_ids: Vec<u64>,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        governance::cleanup_expired_proposals(&env, &caller, proposal_ids)
+    }
+
+    /// Returns the full proposal record for a given ID.
+    pub fn get_proposal(env: Env, proposal_id: u64) -> Result<Proposal, ContractError> {
+        storage::get_proposal(&env, proposal_id)
+    }
+
+    /// Returns the current governance quorum threshold.
+    pub fn get_quorum(env: Env) -> u32 {
+        storage::get_governance_quorum(&env)
+    }
+
+    /// Returns the current governance timelock in seconds.
+    pub fn get_timelock_seconds(env: Env) -> u64 {
+        storage::get_governance_timelock(&env)
+    }
+
+    /// Returns the list of current admin addresses.
+    pub fn get_admin_list(env: Env) -> Vec<Address> {
+        storage::get_admin_list(&env)
+    }
+
+    /// Returns the governance configuration (quorum, timelock, proposal TTL).
+    pub fn get_governance_config(env: Env) -> GovernanceConfig {
+        GovernanceConfig {
+            quorum: storage::get_governance_quorum(&env),
+            timelock_seconds: storage::get_governance_timelock(&env),
+            proposal_ttl_seconds: storage::get_proposal_ttl(&env),
+        }
     }
 }

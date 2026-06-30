@@ -68,6 +68,9 @@ function calculateFeeBreakdown(
   return { amount, platformFee, protocolFee, netAmount };
 }
 
+// Read per-run count from env (CI sets FC_NUM_RUNS=100000); default 100k.
+const NUM_RUNS = parseInt(process.env.FC_NUM_RUNS ?? '100000', 10);
+
 describe('Fee Calculation Property-Based Tests', () => {
   describe('Percentage Fee Properties', () => {
     it('should never exceed the original amount', () => {
@@ -80,7 +83,7 @@ describe('Fee Calculation Property-Based Tests', () => {
             expect(fee).toBeLessThanOrEqual(amount);
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
 
@@ -94,14 +97,14 @@ describe('Fee Calculation Property-Based Tests', () => {
             expect(fee).toBeGreaterThanOrEqual(MIN_FEE);
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
 
     it('should be monotonically increasing with fee basis points', () => {
       fc.assert(
         fc.property(
-          fc.integer({ min: 100, max: 1_000_000_000_000_000 }), // Use larger amounts to avoid MIN_FEE floor
+          fc.integer({ min: 100, max: 1_000_000_000_000_000 }),
           fc.integer({ min: 0, max: MAX_FEE_BPS - 1 }),
           (amount, feeBps) => {
             const fee1 = calculatePercentageFee(amount, feeBps);
@@ -109,22 +112,22 @@ describe('Fee Calculation Property-Based Tests', () => {
             expect(fee2).toBeGreaterThanOrEqual(fee1);
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
 
     it('should be monotonically increasing with amount (when not floored)', () => {
       fc.assert(
         fc.property(
-          fc.integer({ min: 1000, max: 1_000_000_000_000_000 - 1 }), // Large enough to avoid MIN_FEE effects
-          fc.integer({ min: 100, max: MAX_FEE_BPS }), // Non-zero fee to ensure meaningful comparison
+          fc.integer({ min: 1000, max: 1_000_000_000_000_000 - 1 }),
+          fc.integer({ min: 100, max: MAX_FEE_BPS }),
           (amount, feeBps) => {
             const fee1 = calculatePercentageFee(amount, feeBps);
             const fee2 = calculatePercentageFee(amount + 1, feeBps);
             expect(fee2).toBeGreaterThanOrEqual(fee1);
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
 
@@ -139,7 +142,7 @@ describe('Fee Calculation Property-Based Tests', () => {
             expect(fee).toBe(expectedFee);
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
   });
@@ -154,12 +157,11 @@ describe('Fee Calculation Property-Based Tests', () => {
             expect(fee).toBe(0);
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
 
     it('should never exceed the original amount', () => {
-      // Cap at 10^15 (1 quadrillion stroops ≈ 100M USDC) to stay within float precision range
       fc.assert(
         fc.property(
           fc.integer({ min: 1, max: 1_000_000_000_000_000 }),
@@ -169,7 +171,7 @@ describe('Fee Calculation Property-Based Tests', () => {
             expect(fee).toBeLessThanOrEqual(amount);
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
 
@@ -184,7 +186,7 @@ describe('Fee Calculation Property-Based Tests', () => {
             expect(fee2).toBeGreaterThanOrEqual(fee1);
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
   });
@@ -225,7 +227,7 @@ describe('Fee Calculation Property-Based Tests', () => {
             expect(normalizedTier2).toBeGreaterThanOrEqual(normalizedTier3);
           }
         ),
-        { numRuns: 500 }
+        { numRuns: NUM_RUNS }
       );
     });
   });
@@ -234,26 +236,25 @@ describe('Fee Calculation Property-Based Tests', () => {
     it('should maintain mathematical consistency: amount = platformFee + protocolFee + netAmount', () => {
       fc.assert(
         fc.property(
-          fc.integer({ min: 100, max: 1000000 }), // Reasonable amounts
-          fc.integer({ min: 0, max: 1000 }), // Platform fee bps (0-10%)
-          fc.integer({ min: 0, max: 500 }), // Protocol fee bps (0-5%)
+          fc.integer({ min: 100, max: 1000000 }),
+          fc.integer({ min: 0, max: 1000 }),
+          fc.integer({ min: 0, max: 500 }),
           (amount, platformFeeBps, protocolFeeBps) => {
-            // Skip combinations where total fees would exceed amount
             const maxPlatformFee = Math.floor((amount * platformFeeBps) / FEE_DIVISOR);
             const maxProtocolFee = Math.floor((amount * protocolFeeBps) / FEE_DIVISOR);
-            
+
             if (maxPlatformFee + maxProtocolFee >= amount) {
-              return; // Skip this test case
+              return;
             }
 
             const breakdown = calculateFeeBreakdown(amount, platformFeeBps, protocolFeeBps);
-            
+
             expect(breakdown.amount).toBe(amount);
             expect(breakdown.platformFee + breakdown.protocolFee + breakdown.netAmount).toBe(amount);
             expect(breakdown.netAmount).toBeGreaterThanOrEqual(0);
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
 
@@ -261,19 +262,18 @@ describe('Fee Calculation Property-Based Tests', () => {
       fc.assert(
         fc.property(
           fc.integer({ min: 1000, max: 1000000 }),
-          fc.integer({ min: 0, max: 500 }), // Keep fees reasonable
+          fc.integer({ min: 0, max: 500 }),
           fc.integer({ min: 0, max: 250 }),
           (amount, platformFeeBps, protocolFeeBps) => {
             try {
               const breakdown = calculateFeeBreakdown(amount, platformFeeBps, protocolFeeBps);
               expect(breakdown.netAmount).toBeGreaterThanOrEqual(0);
             } catch (error) {
-              // It's acceptable to throw if fees exceed amount
               expect((error as Error).message).toBe('Fees exceed amount');
             }
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
   });
@@ -291,7 +291,7 @@ describe('Fee Calculation Property-Based Tests', () => {
             }).not.toThrow();
           }
         ),
-        { numRuns: 100 }
+        { numRuns: NUM_RUNS }
       );
     });
 
@@ -301,10 +301,10 @@ describe('Fee Calculation Property-Based Tests', () => {
           fc.integer({ min: 0, max: MAX_FEE_BPS }),
           (feeBps) => {
             const fee = calculatePercentageFee(1, feeBps);
-            expect(fee).toBe(MIN_FEE); // Should always be floored to MIN_FEE
+            expect(fee).toBe(MIN_FEE);
           }
         ),
-        { numRuns: 1000 }
+        { numRuns: NUM_RUNS }
       );
     });
 
@@ -312,8 +312,8 @@ describe('Fee Calculation Property-Based Tests', () => {
       fc.assert(
         fc.property(
           fc.oneof(
-            fc.integer({ max: 0 }), // Non-positive amounts
-            fc.integer({ min: -1000, max: -1 }) // Negative amounts
+            fc.integer({ max: 0 }),
+            fc.integer({ min: -1000, max: -1 })
           ),
           fc.integer({ min: 0, max: MAX_FEE_BPS }),
           (invalidAmount, feeBps) => {
@@ -322,7 +322,7 @@ describe('Fee Calculation Property-Based Tests', () => {
             }).toThrow('Invalid amount');
           }
         ),
-        { numRuns: 500 }
+        { numRuns: NUM_RUNS }
       );
     });
 
@@ -331,8 +331,8 @@ describe('Fee Calculation Property-Based Tests', () => {
         fc.property(
           fc.integer({ min: 1, max: 1000000 }),
           fc.oneof(
-            fc.integer({ max: -1 }), // Negative bps
-            fc.integer({ min: MAX_FEE_BPS + 1, max: MAX_FEE_BPS + 1000 }) // Too high bps
+            fc.integer({ max: -1 }),
+            fc.integer({ min: MAX_FEE_BPS + 1, max: MAX_FEE_BPS + 1000 })
           ),
           (amount, invalidFeeBps) => {
             expect(() => {
@@ -340,7 +340,7 @@ describe('Fee Calculation Property-Based Tests', () => {
             }).toThrow('Invalid fee bps');
           }
         ),
-        { numRuns: 500 }
+        { numRuns: NUM_RUNS }
       );
     });
   });
@@ -373,7 +373,7 @@ describe('Fee Calculation Property-Based Tests', () => {
             expect(fee).toBe(MIN_FEE); // Should be floored to MIN_FEE even with 0 bps
           }
         ),
-        { numRuns: 100 }
+        { numRuns: NUM_RUNS }
       );
     });
 
@@ -383,10 +383,10 @@ describe('Fee Calculation Property-Based Tests', () => {
           fc.integer({ min: 1, max: 1000000 }),
           (amount) => {
             const fee = calculatePercentageFee(amount, MAX_FEE_BPS);
-            expect(fee).toBe(amount); // 100% fee should equal the amount
+            expect(fee).toBe(amount);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: NUM_RUNS }
       );
     });
   });

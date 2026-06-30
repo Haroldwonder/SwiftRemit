@@ -2,6 +2,7 @@ import NodeCache from 'node-cache';
 import axios from 'axios';
 import { getFailoverFxService } from './fx-provider';
 import { EventEmitter } from 'events';
+import { getSecretsManager } from './secrets-manager';
 
 // Lazily resolved to avoid circular import — set by fx-rate-websocket.ts initialisation
 let _fxRateEvents: EventEmitter | null = null;

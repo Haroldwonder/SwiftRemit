@@ -306,3 +306,139 @@ If any validation fails, the application will throw a descriptive error and exit
 - [Stellar Documentation](https://developers.stellar.org/)
 - [Soroban Documentation](https://soroban.stellar.org/)
 - [dotenv Documentation](https://github.com/motdotla/dotenv)
+
+## AWS Secrets Manager Integration
+
+SwiftRemit supports AWS Secrets Manager for secure secret management in production environments. This integration eliminates plaintext secrets in environment variables.
+
+### Required Secrets
+
+All the following secrets must be stored in AWS Secrets Manager:
+
+| Secret Name | Description | Required |
+|-------------|-------------|----------|
+| `DATABASE_URL` | PostgreSQL connection string | Yes |
+| `ADMIN_SECRET_KEY` | Stellar admin keypair secret (for contract operations) | Yes |
+| `CONTRACT_ID` | Deployed SwiftRemit contract address | Yes |
+| `JWT_SECRET` | Secret key for JWT signing (API service) | Yes |
+| `FX_API_KEY` | External FX rate API key | No (optional) |
+| `WEBHOOK_SECRET_{ANCHOR_ID}` | HMAC secrets for webhook verification | Required per anchor |
+
+### Environment Variables for Secrets Manager
+
+Configure the following environment variables to enable AWS Secrets Manager:
+
+```bash
+# Enable Secrets Manager integration (set to 'false' to disable)
+SECRETS_MANAGER_ENABLED=true
+
+# AWS region for Secrets Manager
+AWS_REGION=us-east-1
+
+# Cache TTL for secrets (default: 5 minutes)
+SECRETS_CACHE_TTL_MS=300000
+
+# Rotation check interval (default: 1 minute)
+SECRETS_ROTATION_CHECK_INTERVAL_MS=60000
+```
+
+### Setting Up Secrets in AWS Secrets Manager
+
+```bash
+# Create DATABASE_URL secret
+aws secretsmanager create-secret \
+  --name swiftremit/DATABASE_URL \
+  --secret-string "postgresql://user:password@rds-endpoint:5432/swiftremit"
+
+# Create ADMIN_SECRET_KEY secret
+aws secretsmanager create-secret \
+  --name swiftremit/ADMIN_SECRET_KEY \
+  --secret-string "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+# Create CONTRACT_ID secret
+aws secretsmanager create-secret \
+  --name swiftremit/CONTRACT_ID \
+  --secret-string "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
+
+# Create JWT_SECRET secret
+aws secretsmanager create-secret \
+  --name swiftremit/JWT_SECRET \
+  --secret-string "your-jwt-signing-secret-here"
+
+# Create webhook secrets (per anchor)
+aws secretsmanager create-secret \
+  --name swiftremit/WEBHOOK_SECRET_PRIMARY \
+  --secret-string "webhook-hmac-secret-here"
+```
+
+### Secret Rotation
+
+SwiftRemit supports automatic secret rotation detection. When secrets are rotated in AWS Secrets Manager:
+
+1. The application polls for changes (configurable via `SECRETS_ROTATION_CHECK_INTERVAL_MS`)
+2. Rotation hooks update in-memory caches automatically
+3. New values take effect immediately without service restart
+
+For manual rotation via API:
+
+```bash
+# Rotate a secret programmatically
+curl -X POST http://localhost:3000/api/secrets/rotate \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"secretId": "FX_API_KEY", "newValue": "new-api-key"}'
+```
+
+### Helm Chart Configuration
+
+When deploying via Helm, secrets should be injected via AWS Secrets and Configs Controller or External Secrets Operator:
+
+```yaml
+# values.production.yaml
+api:
+  secret:
+    DATABASE_URL: ""  # Injected from AWS Secrets Manager
+    JWT_SECRET: ""    # Injected from AWS Secrets Manager
+
+backend:
+  secret:
+    DATABASE_URL: ""        # Injected from AWS Secrets Manager
+    ADMIN_SECRET_KEY: ""    # Injected from AWS Secrets Manager
+    CONTRACT_ID: ""         # Injected from AWS Secrets Manager
+```
+
+For AWS Secrets Manager with External Secrets Operator:
+
+```yaml
+# Create ExternalSecret resource
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: swiftremit-api-secrets
+spec:
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: SecretStore
+  target:
+    name: swiftremit-api
+  data:
+    - secretKey: DATABASE_URL
+      remoteRef:
+        key: swiftremit/DATABASE_URL
+    - secretKey: JWT_SECRET
+      remoteRef:
+        key: swiftremit/JWT_SECRET
+```
+
+### Local Development
+
+For local development, secrets can still be loaded from `.env` files. Set `SECRETS_MANAGER_ENABLED=false` or leave `AWS_REGION` unset to use environment variables.
+
+```bash
+# .env for local development
+SECRETS_MANAGER_ENABLED=false
+DATABASE_URL=postgresql://user:password@localhost:5432/swiftremit
+ADMIN_SECRET_KEY=SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+CONTRACT_ID=CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+JWT_SECRET=development-jwt-secret
+```

@@ -1,15 +1,18 @@
 /**
- * Notification Service — Issue #852
+ * Notification Service — Issue #852, #950
  *
  * Sends email (SendGrid) and SMS (Twilio) notifications when remittance
- * status changes to completed or failed. Respects per-user opt-out preferences.
+ * status changes to completed or failed. Respects per-user opt-out preferences
+ * and preferred_language for localised message templates.
  */
 
 import axios from 'axios';
 import { Pool } from 'pg';
+import { buildLocalizedMessage, TemplateKey } from './notification-templates';
 
 export type NotificationChannel = 'email' | 'sms';
 export type RemittanceNotificationStatus = 'completed' | 'failed' | 'created';
+export type KycNotificationEvent = 'kyc_approved' | 'kyc_expired';
 
 export interface NotificationPreferences {
   user_id: string;
@@ -17,6 +20,7 @@ export interface NotificationPreferences {
   phone?: string;
   email_opt_in: boolean;
   sms_opt_in: boolean;
+  preferred_language?: string;
 }
 
 export interface RemittanceNotificationPayload {
@@ -25,6 +29,11 @@ export interface RemittanceNotificationPayload {
   amount: number;
   currency: string;
   senderUserId: string;
+}
+
+export interface KycNotificationPayload {
+  event: KycNotificationEvent;
+  userId: string;
 }
 
 // ─── Provider abstractions ────────────────────────────────────────────────────
@@ -59,26 +68,41 @@ async function sendSms(to: string, body: string): Promise<void> {
   );
 }
 
-// ─── Message builders ─────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildMessage(status: RemittanceNotificationStatus, id: string, amount: number, currency: string): { subject: string; text: string } {
+function remittanceStatusToTemplateKey(status: RemittanceNotificationStatus): TemplateKey {
   switch (status) {
-    case 'completed':
-      return {
-        subject: 'Your remittance has been completed',
-        text: `Your remittance ${id} of ${amount} ${currency} has been successfully completed.`,
-      };
-    case 'failed':
-      return {
-        subject: 'Your remittance has failed',
-        text: `Your remittance ${id} of ${amount} ${currency} could not be completed. Funds will be refunded.`,
-      };
-    case 'created':
-      return {
-        subject: 'Your remittance has been created',
-        text: `Your remittance ${id} of ${amount} ${currency} has been created and is pending processing.`,
-      };
+    case 'completed': return 'remittance_completed';
+    case 'failed':    return 'remittance_failed';
+    case 'created':   return 'remittance_created';
   }
+}
+
+async function dispatch(
+  prefs: NotificationPreferences,
+  subject: string,
+  text: string,
+  userId: string,
+): Promise<void> {
+  const tasks: Promise<void>[] = [];
+
+  if (prefs.email_opt_in && prefs.email) {
+    tasks.push(
+      sendEmail(prefs.email, subject, text).catch(err =>
+        console.error(`[notification] email failed for ${userId}:`, err),
+      ),
+    );
+  }
+
+  if (prefs.sms_opt_in && prefs.phone) {
+    tasks.push(
+      sendSms(prefs.phone, text).catch(err =>
+        console.error(`[notification] sms failed for ${userId}:`, err),
+      ),
+    );
+  }
+
+  await Promise.all(tasks);
 }
 
 // ─── Main service ─────────────────────────────────────────────────────────────
@@ -92,7 +116,7 @@ export class NotificationService {
    */
   async getPreferences(userId: string): Promise<NotificationPreferences | null> {
     const result = await this.pool.query<NotificationPreferences>(
-      `SELECT user_id, email, phone, email_opt_in, sms_opt_in
+      `SELECT user_id, email, phone, email_opt_in, sms_opt_in, preferred_language
        FROM notification_preferences WHERE user_id = $1`,
       [userId],
     );
@@ -104,48 +128,56 @@ export class NotificationService {
    */
   async setPreferences(prefs: NotificationPreferences): Promise<void> {
     await this.pool.query(
-      `INSERT INTO notification_preferences (user_id, email, phone, email_opt_in, sms_opt_in)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO notification_preferences (user_id, email, phone, email_opt_in, sms_opt_in, preferred_language)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (user_id) DO UPDATE SET
          email = EXCLUDED.email,
          phone = EXCLUDED.phone,
          email_opt_in = EXCLUDED.email_opt_in,
          sms_opt_in = EXCLUDED.sms_opt_in,
+         preferred_language = EXCLUDED.preferred_language,
          updated_at = NOW()`,
-      [prefs.user_id, prefs.email ?? null, prefs.phone ?? null, prefs.email_opt_in, prefs.sms_opt_in],
+      [
+        prefs.user_id,
+        prefs.email ?? null,
+        prefs.phone ?? null,
+        prefs.email_opt_in,
+        prefs.sms_opt_in,
+        prefs.preferred_language ?? 'en',
+      ],
     );
   }
 
   /**
    * Send notifications for a remittance status change.
-   * Only notifies for completed/failed/created statuses; silently skips others.
-   * Respects opt-out preferences.
+   * Messages are localised to the user's preferred_language; falls back to English.
    */
   async notifyRemittanceStatus(payload: RemittanceNotificationPayload): Promise<void> {
     const { remittanceId, status, amount, currency, senderUserId } = payload;
     const prefs = await this.getPreferences(senderUserId);
-    if (!prefs) return; // no contact info registered
+    if (!prefs) return;
 
-    const { subject, text } = buildMessage(status, remittanceId, amount, currency);
+    const key = remittanceStatusToTemplateKey(status);
+    const { subject, text } = buildLocalizedMessage(prefs.preferred_language, key, {
+      remittanceId,
+      amount,
+      currency,
+    });
 
-    const tasks: Promise<void>[] = [];
+    await dispatch(prefs, subject, text, senderUserId);
+  }
 
-    if (prefs.email_opt_in && prefs.email) {
-      tasks.push(
-        sendEmail(prefs.email, subject, text).catch(err =>
-          console.error(`[notification] email failed for ${senderUserId}:`, err),
-        ),
-      );
-    }
+  /**
+   * Send a KYC event notification (approved / expired).
+   * Messages are localised to the user's preferred_language; falls back to English.
+   */
+  async notifyKycEvent(payload: KycNotificationPayload): Promise<void> {
+    const { event, userId } = payload;
+    const prefs = await this.getPreferences(userId);
+    if (!prefs) return;
 
-    if (prefs.sms_opt_in && prefs.phone) {
-      tasks.push(
-        sendSms(prefs.phone, text).catch(err =>
-          console.error(`[notification] sms failed for ${senderUserId}:`, err),
-        ),
-      );
-    }
+    const { subject, text } = buildLocalizedMessage(prefs.preferred_language, event, {});
 
-    await Promise.all(tasks);
+    await dispatch(prefs, subject, text, userId);
   }
 }
