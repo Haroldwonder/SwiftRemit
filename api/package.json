@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:pact": "vitest run src/__tests__/pact",
     "lint": "eslint src --ext .ts",
     "generate:openapi": "tsx generate-openapi.ts",
     "validate:openapi": "swagger-cli validate openapi.yaml"
@@ -44,6 +45,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@pact-foundation/pact": "^13.1.0",
     "@apidevtools/swagger-cli": "^4.0.4",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",

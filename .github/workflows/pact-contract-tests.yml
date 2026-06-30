@@ -1,0 +1,83 @@
+name: Pact Contract Tests
+
+on:
+  push:
+    branches: [main, "feat/**"]
+    paths:
+      - "frontend/src/**"
+      - "api/src/**"
+      - "frontend/package.json"
+      - "api/package.json"
+      - ".github/workflows/pact-contract-tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "frontend/src/**"
+      - "api/src/**"
+      - "frontend/package.json"
+      - "api/package.json"
+      - ".github/workflows/pact-contract-tests.yml"
+
+jobs:
+  # ── Step 1: Consumer — generate pact files ────────────────────────────────
+  consumer-tests:
+    name: Frontend Consumer Tests (generate pacts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Run Pact consumer tests
+        run: npm run test:pact
+
+      - name: Upload pact files as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-files
+          path: pacts/
+          retention-days: 7
+
+  # ── Step 2: Provider — verify pact files against the real API ─────────────
+  provider-verification:
+    name: API Provider Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: consumer-tests
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - run: npm ci
+
+      - name: Download pact files from consumer job
+        uses: actions/download-artifact@v4
+        with:
+          name: pact-files
+          path: pacts/
+
+      - name: Run Pact provider verification
+        env:
+          JWT_SECRET: ci-pact-verification-secret
+          CURRENCY_CONFIG_PATH: ./config/currencies.json
+        run: npm run test:pact

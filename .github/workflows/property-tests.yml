@@ -1,4 +1,4 @@
-name: Rust Property Tests
+name: Property-Based Tests
 
 on:
   push:
@@ -7,6 +7,8 @@ on:
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "backend/src/__tests__/fee-calculation-property.test.ts"
+      - "backend/package.json"
       - ".github/workflows/property-tests.yml"
   pull_request:
     branches: [main]
@@ -14,17 +16,22 @@ on:
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "backend/src/__tests__/fee-calculation-property.test.ts"
+      - "backend/package.json"
       - ".github/workflows/property-tests.yml"
 
 env:
   CARGO_TERM_COLOR: always
-  # Reduce proptest cases in CI to keep runs fast while still catching regressions
-  PROPTEST_CASES: 50
+  # Run 100,000 cases per property to satisfy the acceptance criterion:
+  # "100,000 random fee inputs do not violate any fee invariants"
+  PROPTEST_CASES: 100000
 
 jobs:
-  property-tests:
-    name: Property-Based Tests
+  # ── Rust proptest fee invariants ────────────────────────────────────────────
+  rust-fee-property-tests:
+    name: Rust Fee Property Tests (100k cases)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -41,11 +48,41 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-proptest-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Run property tests (invariants)
-        run: cargo test test_invariants -- --nocapture
+      - name: Run fee property tests — 100k cases
+        run: cargo test --features legacy-tests test_fee_property -- --nocapture
 
-      - name: Run all property tests
-        run: cargo test prop_ -- --nocapture
+      - name: Run all prop_ prefixed property tests
+        run: cargo test --features legacy-tests prop_ -- --nocapture
+
+      - name: Run state machine property tests
+        run: cargo test test_state_machine_property -- --nocapture
+
+  # ── TypeScript fast-check fee invariants ────────────────────────────────────
+  typescript-fee-property-tests:
+    name: TypeScript Fee Property Tests (fast-check, 100k runs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      - name: Run fast-check fee property tests
+        run: npx vitest run src/__tests__/fee-calculation-property.test.ts --reporter=verbose
+        env:
+          # fast-check numRuns is configured inline in the test file; this env
+          # var is exposed so tests can override the count if needed.
+          FC_NUM_RUNS: "100000"
