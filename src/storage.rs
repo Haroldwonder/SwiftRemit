@@ -240,6 +240,34 @@ enum DataKey {
 
     /// Pending multi-sig operation record indexed by operation ID (persistent storage).
     PendingOp(u64),
+
+    // === DAO Governance ===
+    /// Minimum admin approvals required to pass a governance proposal (instance storage).
+    GovernanceQuorum,
+
+    /// Seconds that must elapse between proposal approval and execution (instance storage).
+    GovernanceTimelock,
+
+    /// Whether migrate_to_governance has been called (instance storage).
+    GovernanceInitialized,
+
+    /// Monotonically-increasing counter for governance proposal IDs (instance storage).
+    GovernanceProposalCounter,
+
+    /// Full governance proposal record indexed by proposal ID (persistent storage).
+    GovernanceProposal(u64),
+
+    /// Vote sentinel: true once admin at Address has voted on proposal u64 (persistent storage).
+    GovernanceVote(u64, Address),
+
+    /// Proposal ID of the currently-active fee-update proposal, if any (instance storage).
+    ActiveFeeProposal,
+
+    /// Seconds after creation before a governance proposal expires (instance storage).
+    GovernanceProposalTtl,
+
+    /// Ordered list of all current admin addresses (instance storage).
+    GovernanceAdminList,
 }
 
 /// Checks if the contract has an admin configured.
@@ -426,12 +454,7 @@ pub fn set_agent_registered(env: &Env, agent: &Address, registered: bool) {
         .persistent()
         .set(&DataKey::AgentRegistered(agent.clone()), &registered);
 
-    // Keep the AgentList index in sync so agents can be iterated during migration.
-    if registered {
-        add_admin_to_list(env, agent);
-    } else {
-        remove_admin_from_list(env, agent);
-    }
+    // No admin-list side-effect needed here; agent and admin lists are separate.
 }
 
 /// Checks if an address is registered as an agent.
@@ -1633,4 +1656,152 @@ pub fn remove_pending_operation(env: &Env, op_id: u64) {
     env.storage()
         .persistent()
         .remove(&DataKey::PendingOp(op_id));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DAO Governance Storage Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub fn get_governance_quorum(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::GovernanceQuorum)
+        .unwrap_or(1)
+}
+
+pub fn set_governance_quorum(env: &Env, quorum: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::GovernanceQuorum, &quorum);
+}
+
+pub fn get_governance_timelock(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::GovernanceTimelock)
+        .unwrap_or(0)
+}
+
+pub fn set_governance_timelock(env: &Env, seconds: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::GovernanceTimelock, &seconds);
+}
+
+pub fn is_governance_initialized(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::GovernanceInitialized)
+        .unwrap_or(false)
+}
+
+pub fn set_governance_initialized(env: &Env) {
+    env.storage()
+        .instance()
+        .set(&DataKey::GovernanceInitialized, &true);
+}
+
+pub fn next_proposal_id(env: &Env) -> u64 {
+    let current: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::GovernanceProposalCounter)
+        .unwrap_or(0);
+    let next = current + 1;
+    env.storage()
+        .instance()
+        .set(&DataKey::GovernanceProposalCounter, &next);
+    next
+}
+
+pub fn get_proposal(env: &Env, proposal_id: u64) -> Result<crate::Proposal, ContractError> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::GovernanceProposal(proposal_id))
+        .ok_or(ContractError::ProposalNotFound)
+}
+
+pub fn set_proposal(env: &Env, proposal: &crate::Proposal) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::GovernanceProposal(proposal.id), proposal);
+}
+
+pub fn delete_proposal(env: &Env, proposal_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::GovernanceProposal(proposal_id));
+}
+
+pub fn has_governance_voted(env: &Env, proposal_id: u64, voter: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::GovernanceVote(proposal_id, voter.clone()))
+        .unwrap_or(false)
+}
+
+pub fn record_governance_vote(env: &Env, proposal_id: u64, voter: &Address) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::GovernanceVote(proposal_id, voter.clone()), &true);
+}
+
+pub fn get_active_fee_proposal(env: &Env) -> Option<u64> {
+    env.storage()
+        .instance()
+        .get(&DataKey::ActiveFeeProposal)
+        .unwrap_or(None)
+}
+
+pub fn set_active_fee_proposal(env: &Env, proposal_id: Option<u64>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ActiveFeeProposal, &proposal_id);
+}
+
+pub fn get_proposal_ttl(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::GovernanceProposalTtl)
+        .unwrap_or(604_800) // default 7 days
+}
+
+pub fn set_proposal_ttl(env: &Env, ttl_seconds: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::GovernanceProposalTtl, &ttl_seconds);
+}
+
+pub fn get_admin_list(env: &Env) -> soroban_sdk::Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::GovernanceAdminList)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+
+pub fn add_admin_to_list(env: &Env, admin: &Address) {
+    let mut list = get_admin_list(env);
+    for i in 0..list.len() {
+        if list.get_unchecked(i) == *admin {
+            return; // already present
+        }
+    }
+    list.push_back(admin.clone());
+    env.storage()
+        .instance()
+        .set(&DataKey::GovernanceAdminList, &list);
+}
+
+pub fn remove_admin_from_list(env: &Env, admin: &Address) {
+    let list = get_admin_list(env);
+    let mut new_list = soroban_sdk::Vec::new(env);
+    for i in 0..list.len() {
+        let addr = list.get_unchecked(i);
+        if addr != *admin {
+            new_list.push_back(addr);
+        }
+    }
+    env.storage()
+        .instance()
+        .set(&DataKey::GovernanceAdminList, &new_list);
 }

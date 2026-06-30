@@ -261,9 +261,6 @@ pub enum ContractError {
     /// Contract is not currently paused.
     NotPaused = 55,
 
-    /// This operation requires the remittance to be in a Disputed state.
-    NotDisputed = 55,
-
     // ═══════════════════════════════════════════════════════════════════════════
     // Multi-Sig Errors (56-59)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -279,7 +276,47 @@ pub enum ContractError {
 
     /// Multi-sig threshold must be at least 1 and no greater than the admin count.
     InvalidMultiSigThreshold = 59,
-}
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Governance / DAO Errors (60-70)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Address is already in the admin set.
+    AlreadyAdmin = 60,
+
+    /// Removing this admin would drop the admin count below quorum or below 1.
+    InsufficientAdmins = 61,
+
+    /// Quorum must be ≥ 1 and ≤ current admin count.
+    InvalidQuorum = 62,
+
+    /// Admin has already cast a vote on this proposal.
+    AlreadyVoted = 63,
+
+    /// Proposal is not in the required state for this operation.
+    InvalidProposalState = 64,
+
+    /// A fee-update proposal is already pending or approved; only one may be active.
+    ProposalAlreadyPending = 65,
+
+    /// Proposal timelock has not elapsed; cannot execute yet.
+    TimelockActive = 66,
+
+    /// Governance has already been initialized via migrate_to_governance.
+    GovernanceAlreadyInitialized = 67,
+
+    /// Proposal with the given ID does not exist.
+    ProposalNotFound = 68,
+
+    /// Agent is already registered in the system.
+    AgentAlreadyRegistered = 69,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Dispute Errors (71-83)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// This operation requires the remittance to be in a Disputed state.
+    NotDisputed = 71,
 
     /// Evidence hash for a dispute is not a valid 32-byte SHA-256 commitment.
     MalformedEvidenceHash = 83,
