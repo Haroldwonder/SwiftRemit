@@ -19,6 +19,7 @@ import { Router, Request, Response } from 'express';
 import { ErrorResponse } from '../types';
 import { RemittanceStore } from '../db/remittanceStore';
 import { createRemittanceSchema, validateRequest } from '../schemas/requestValidation';
+import { generateReceiptPdf } from '../services/receiptGenerator';
 
 export type RemittanceStatus = 'Pending' | 'Processing' | 'Completed' | 'Cancelled' | 'Failed' | 'Disputed';
 
@@ -225,6 +226,85 @@ export function createRemittancesRouter(options: RemittancesRouterOptions = {}):
       }
       throw error;
     }
+  });
+
+  /**
+   * @openapi
+   * /api/remittances/{id}/receipt:
+   *   get:
+   *     summary: Download a PDF receipt for a completed remittance
+   *     description: >
+   *       Generates and returns a PDF receipt for the specified remittance.
+   *       Requires authentication via X-API-Key (admin) or X-Sender-Address
+   *       matching the remittance sender.
+   *     tags:
+   *       - Remittances
+   *     parameters:
+   *       - name: id
+   *         in: path
+   *         required: true
+   *         description: Remittance ID
+   *         schema:
+   *           type: string
+   *     security:
+   *       - ApiKeyAuth: []
+   *       - SenderAddressAuth: []
+   *     responses:
+   *       200:
+   *         description: PDF receipt file
+   *         content:
+   *           application/pdf:
+   *             schema:
+   *               type: string
+   *               format: binary
+   *       401:
+   *         description: Missing or invalid authentication
+   *       403:
+   *         description: Sender address does not match remittance owner
+   *       404:
+   *         description: Remittance not found
+   *       503:
+   *         description: Remittance store not configured
+   */
+  router.get('/:id/receipt', async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    if (!remittanceStore) {
+      return sendError(res, 503, 'Remittance store not configured', 'SERVICE_UNAVAILABLE');
+    }
+
+    // Authentication: admin API key or sender address
+    const adminKey = process.env.ADMIN_API_KEY;
+    const providedApiKey = req.headers['x-api-key'] as string | undefined;
+    const senderAddress = req.headers['x-sender-address'] as string | undefined;
+    const isAdmin = adminKey && providedApiKey === adminKey;
+
+    if (!isAdmin && !senderAddress) {
+      return sendError(
+        res,
+        401,
+        'Authentication required. Provide X-API-Key (admin) or X-Sender-Address header.',
+        'UNAUTHORIZED',
+      );
+    }
+
+    const remittance = await remittanceStore.getById(id);
+    if (!remittance) {
+      return sendError(res, 404, `Remittance ${id} not found`, 'NOT_FOUND');
+    }
+
+    // Non-admin callers can only download their own receipts
+    if (!isAdmin && senderAddress !== remittance.sender_id) {
+      return sendError(res, 403, 'Sender address does not match remittance owner', 'FORBIDDEN');
+    }
+
+    const pdfBuffer = await generateReceiptPdf(remittance);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="receipt-${id}.pdf"`,
+      'Content-Length': String(pdfBuffer.length),
+    });
+    return res.send(pdfBuffer);
   });
 
   return router;

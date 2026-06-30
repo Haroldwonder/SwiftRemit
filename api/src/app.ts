@@ -17,6 +17,7 @@ import { createAdminRouter } from './routes/admin';
 import { createAnalyticsRouter } from './routes/analytics';
 import { createAgentsRouter } from './routes/agents';
 import { createAuthRouter } from './routes/auth';
+import { createAccountsRouter } from './routes/accounts';
 import { ErrorResponse } from './types';
 import { AnchorStore } from './db/anchorStore';
 import { Server as SocketIOServer } from 'socket.io';
@@ -185,6 +186,9 @@ export function createApp(options: AppOptions = {}): Application {
 
   // Agents — registration and management (Issue #880)
   app.use('/api/agents', createAgentsRouter());
+
+  // Accounts — Stellar fee estimation and XLM balance (Issue #949)
+  app.use('/api/accounts', createAccountsRouter());
 
   // WebSocket health endpoint (development only — guarded inside the router)
   if (options.io) {
