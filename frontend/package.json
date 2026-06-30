@@ -1,15 +1,13 @@
 {
   "name": "swiftremit-frontend",
-  "private": true,
   "version": "1.0.0",
+  "private": true,
   "type": "module",
-  "description": "Frontend for SwiftRemit cross-border remittance platform",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
-    "preview": "vite preview",
-    "test": "vitest",
+    "build": "tsc && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:pact": "vitest run src/pact",
     "e2e": "playwright test",
@@ -17,13 +15,8 @@
     "e2e:debug": "playwright test --debug"
   },
   "dependencies": {
-    "@stellar/freighter-api": "^6.0.1",
-    "@stellar/stellar-sdk": "^14.5.0",
-    "i18next": "^24.2.3",
-    "jspdf": "^2.5.2",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-i18next": "^17.0.8"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@pact-foundation/pact": "^13.1.0",

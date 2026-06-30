@@ -1,0 +1,37 @@
+version: "3.9"
+
+# Toxiproxy + webhook echo server for chaos/webhook delivery tests.
+# Usage:
+#   docker-compose -f tests/docker/chaos-docker-compose.yml up -d
+#   TOXIPROXY_URL=http://localhost:8474 \
+#   WEBHOOK_PROXY_PORT=9090 \
+#   WEBHOOK_TARGET_URL=http://webhook-echo:3001 \
+#   npm run test:chaos  (from api/)
+
+services:
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    ports:
+      - "8474:8474"   # Toxiproxy management API
+      - "9090:9090"   # Proxied webhook port (configured at runtime)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8474/proxies"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  webhook-echo:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./webhook-echo-server.js:/app/server.js:ro
+    command: node /app/server.js
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: "3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

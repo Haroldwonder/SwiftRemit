@@ -1,0 +1,92 @@
+name: Frontend Snapshot Tests
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "frontend/**"
+  pull_request:
+    paths:
+      - "frontend/**"
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  snapshot-tests:
+    name: Vitest snapshot tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run snapshot tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+
+      - name: Publish coverage summary
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            echo "## Frontend Coverage" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            npx c8 report --reporter=text 2>/dev/null || cat coverage/coverage-summary.json | \
+              node -e "
+                const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).total;
+                console.log('Lines:     ' + d.lines.pct + '%');
+                console.log('Branches:  ' + d.branches.pct + '%');
+                console.log('Functions: ' + d.functions.pct + '%');
+                console.log('Statements:' + d.statements.pct + '%');
+              "
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail on outdated snapshots
+        run: |
+          # Re-run with --update-snapshots dry-run; fail if any snapshot would change.
+          npx vitest run --reporter=verbose 2>&1 | tee /tmp/vitest-out.txt
+          if grep -q "obsolete snapshot" /tmp/vitest-out.txt; then
+            echo "Obsolete snapshots detected. Run: npm run test:snapshot:update" >&2
+            exit 1
+          fi
+
+  storybook-build:
+    name: Storybook build check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Storybook
+        run: npm run build-storybook
+
+      - name: Upload Storybook build
+        uses: actions/upload-artifact@v4
+        with:
+          name: storybook-static
+          path: frontend/storybook-static/

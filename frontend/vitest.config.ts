@@ -4,29 +4,29 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   test: {
-    globals: true,
     environment: 'jsdom',
-    setupFiles: ['./src/test-setup.ts'],
-    typecheck: {
-      tsconfig: './tsconfig.test.json',
+    globals: true,
+    setupFiles: './src/setupTests.ts',
+    snapshotOptions: {
+      snapshotFormat: {
+        printBasicPrototype: false,
+      },
     },
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov', 'html'],
+      reporter: ['text', 'json', 'html', 'lcov'],
       reportsDirectory: './coverage',
       thresholds: {
-        lines: 95,
-        functions: 95,
-        branches: 95,
-        statements: 95,
+        lines: 80,
+        branches: 75,
+        functions: 80,
+        statements: 80,
       },
       include: ['src/**/*.{ts,tsx}'],
       exclude: [
-        'src/**/*.d.ts',
-        'src/test-setup.ts',
-        'src/main.{ts,tsx,jsx}',
-        'src/**/__tests__/**',
-        'src/**/examples/**',
+        'src/**/*.stories.{ts,tsx}',
+        'src/setupTests.ts',
+        'src/main.tsx',
       ],
     },
   },

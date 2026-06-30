@@ -1,0 +1,62 @@
+version: "3.9"
+
+# Anchor Platform testnet for SEP-24 integration tests.
+# Usage:
+#   docker-compose -f tests/docker/sep24-docker-compose.yml up -d
+#   ANCHOR_PLATFORM_URL=http://localhost:8080 npm run test:integration  (from api/)
+
+services:
+  anchor-platform:
+    image: stellar/anchor-platform:3.0.0
+    pull_policy: always
+    environment:
+      APP_LOGGING_LEVEL: INFO
+      SERVER_PORT: 8080
+      DATA_TYPE: h2
+      STELLAR_NETWORK: TESTNET
+      STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+      STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+
+      # Assets
+      ASSETS_USDC_CODE: USDC
+      ASSETS_USDC_ISSUER: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+      ASSETS_USDC_DISTRIBUTION_ACCOUNT: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+      ASSETS_USDC_DEPOSIT_ENABLED: "true"
+      ASSETS_USDC_DEPOSIT_MIN_AMOUNT: "1"
+      ASSETS_USDC_DEPOSIT_MAX_AMOUNT: "10000"
+
+      # SEP-10 (JWT auth) — signing key is for testnet only
+      SEP10_ENABLED: "true"
+      SEP10_HOME_DOMAIN: localhost:8080
+      SEP10_WEB_AUTH_DOMAIN: localhost:8080
+      SEP10_CLIENT_ATTRIBUTION_REQUIRED: "false"
+
+      # SEP-24 interactive deposit
+      SEP24_ENABLED: "true"
+      SEP24_INTERACTIVE_URL: http://localhost:8080/sep24/interactive
+      SEP24_INTERACTIVE_EXPIRATION_SECONDS: "120"
+
+      # No external business server needed for simple tests
+      CALLBACK_API_ENDPOINT: ""
+      PLATFORM_API_AUTH_TYPE: none
+
+      # Short expiry for expiry-path tests
+      DEPOSIT_EXPIRY_SECONDS: "30"
+
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  horizon-mock:
+    image: stellar/quickstart:latest
+    command: --testnet --enable-soroban-rpc
+    environment:
+      NETWORK: testnet
+    ports:
+      - "8000:8000"
+      - "11626:11626"

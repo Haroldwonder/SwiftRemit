@@ -1,0 +1,81 @@
+name: Webhook Chaos Tests
+
+on:
+  schedule:
+    # Run nightly at 03:00 UTC alongside SEP-24 integration suite
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: api
+
+env:
+  TOXIPROXY_URL: http://localhost:8474
+  WEBHOOK_PROXY_PORT: "9090"
+  WEBHOOK_TARGET_URL: http://localhost:3001
+
+jobs:
+  webhook-chaos:
+    name: Chaos tests — latency, reset, timeout, DLQ
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start Toxiproxy + webhook echo server
+        working-directory: tests/docker
+        run: |
+          docker compose -f chaos-docker-compose.yml up -d
+          echo "Waiting for Toxiproxy..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8474/proxies; do sleep 2; done'
+          echo "Waiting for echo server..."
+          timeout 30 bash -c 'until curl -sf http://localhost:3001/health; do sleep 2; done'
+          echo "Infrastructure ready."
+
+      - name: Create Toxiproxy webhook proxy
+        run: |
+          curl -sf -X POST http://localhost:8474/proxies \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "webhook-target",
+              "listen": "0.0.0.0:9090",
+              "upstream": "webhook-echo:3001",
+              "enabled": true
+            }'
+
+      - name: Run chaos tests
+        run: npm run test:chaos
+
+      - name: Collect infrastructure logs on failure
+        if: failure()
+        working-directory: tests/docker
+        run: docker compose -f chaos-docker-compose.yml logs --no-color
+
+      - name: Tear down infrastructure
+        if: always()
+        working-directory: tests/docker
+        run: docker compose -f chaos-docker-compose.yml down -v
+
+      - name: Publish chaos test summary
+        if: always()
+        run: |
+          echo "## Webhook Chaos Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Fault | Expected behaviour |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| No fault (baseline) | Delivers on first attempt |" >> $GITHUB_STEP_SUMMARY
+          echo "| +1 s latency | Delivers within timeout |" >> $GITHUB_STEP_SUMMARY
+          echo "| Connection reset | Retries → DLQ after max retries |" >> $GITHUB_STEP_SUMMARY
+          echo "| 30 s timeout | Timeout fires → DLQ after max retries |" >> $GITHUB_STEP_SUMMARY
+          echo "| Exponential backoff | Delays grow monotonically |" >> $GITHUB_STEP_SUMMARY
