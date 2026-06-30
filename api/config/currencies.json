@@ -1,0 +1,70 @@
+{
+  "currencies": [
+    {
+      "code": "USD",
+      "symbol": "$",
+      "decimal_precision": 2,
+      "name": "United States Dollar"
+    },
+    {
+      "code": "EUR",
+      "symbol": "€",
+      "decimal_precision": 2,
+      "name": "Euro"
+    },
+    {
+      "code": "GBP",
+      "symbol": "£",
+      "decimal_precision": 2,
+      "name": "British Pound Sterling"
+    },
+    {
+      "code": "JPY",
+      "symbol": "¥",
+      "decimal_precision": 0,
+      "name": "Japanese Yen"
+    },
+    {
+      "code": "NGN",
+      "symbol": "₦",
+      "decimal_precision": 2,
+      "name": "Nigerian Naira"
+    },
+    {
+      "code": "KES",
+      "symbol": "KSh",
+      "decimal_precision": 2,
+      "name": "Kenyan Shilling"
+    },
+    {
+      "code": "GHS",
+      "symbol": "₵",
+      "decimal_precision": 2,
+      "name": "Ghanaian Cedi"
+    },
+    {
+      "code": "ZAR",
+      "symbol": "R",
+      "decimal_precision": 2,
+      "name": "South African Rand"
+    },
+    {
+      "code": "INR",
+      "symbol": "₹",
+      "decimal_precision": 2,
+      "name": "Indian Rupee"
+    },
+    {
+      "code": "PHP",
+      "symbol": "₱",
+      "decimal_precision": 2,
+      "name": "Philippine Peso"
+    },
+    {
+      "code": "USDC",
+      "symbol": "USDC",
+      "decimal_precision": 7,
+      "name": "USD Coin (Stellar)"
+    }
+  ]
+}

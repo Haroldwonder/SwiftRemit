@@ -1,0 +1,17 @@
+{
+  "entryPoints": ["src/index.ts"],
+  "out": "docs",
+  "plugin": ["typedoc-plugin-markdown"],
+  "readme": "README.md",
+  "includeVersion": true,
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "excludeProtected": false,
+  "sort": ["source-order"],
+  "tsconfig": "tsconfig.json",
+  "markdown": {
+    "hideBreadcrumbs": false,
+    "hideInPageTOC": false,
+    "indexFormat": "table"
+  }
+}

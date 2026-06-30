@@ -2,6 +2,104 @@ target/
 Cargo.lock
 *.wasm
 *.optimized.wasm
+# ABI output — generated files are committed, but ignore any local overrides
+abi/*.json.local
 .soroban/
+.env
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+backend/node_modules/
+backend/dist/
+backend/.env
+backend/.env.local
+
+# SDK
+sdk/node_modules/
+sdk/dist/
+sdk/docs/
+sdk/react-native/node_modules/
+sdk/react-native/dist/
+
+# API
+api/node_modules/
+api/dist/
+api/.env
+api/.env.local
+
+# Editor / IDE
+.vscode/extensions.json
+.idea/
+*.iml
+*.suo
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime / toolchain
 .kiro
-# scratch/audit workfiles
+.env.testnet.local
+.env.local
+.env.*.local
+
+# Test artifacts
+test_snapshots/
+proptest-regressions/
+coverage/
+lcov.info
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.DS_Store
+
+# OS metadata
+Thumbs.db
+
+# Generated / build artifacts
+node_modules/
+api/node_modules/
+sdk/node_modules/
+examples/node_modules/
+dist/
+out/
+build/
+*.log
+*.lock
+*.tmp
+*.bak
+*.orig
+
+# Coverage output
+backend/coverage/
+frontend/coverage/
+
+# Local environment overrides
+.env.local
+.env.*.local
+
+# Soroban CLI identity files (contain private keys)
+.soroban-identity/
+identity/
+
+# k6 load test results
+tests/load/results/*.html
+tests/load/results/*.json
+tests/load/results/*.txt
+

@@ -1,0 +1,107 @@
+name: Currency API CI
+
+on:
+  push:
+    branches: [main, feature/currency-config-api]
+    paths:
+      - 'api/**'
+      - '.github/workflows/currency-api-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'api/**'
+      - '.github/workflows/currency-api-ci.yml'
+
+jobs:
+  test:
+    name: Test Currency API
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./api
+        run: npm ci
+
+      - name: Run linter
+        working-directory: ./api
+        run: npm run lint || echo "Linter not configured yet"
+
+      - name: Run unit tests
+        working-directory: ./api
+        run: npm test
+
+      - name: Run integration tests
+        working-directory: ./api
+        run: npm run test:integration
+
+      - name: Check build
+        working-directory: ./api
+        run: npm run build
+
+      - name: Test startup with valid config
+        working-directory: ./api
+        run: |
+          timeout 10s npm start &
+          sleep 5
+          curl -f http://localhost:3000/health || exit 1
+          curl -f http://localhost:3000/api/currencies || exit 1
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+
+      - name: Install dependencies
+        working-directory: ./api
+        run: npm ci
+
+      - name: Run security audit
+        working-directory: ./api
+        run: npm audit --audit-level=moderate
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+
+      - name: Install dependencies
+        working-directory: ./api
+        run: npm ci
+
+      - name: Run tests with coverage
+        working-directory: ./api
+        run: npm test -- --coverage
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./api/coverage/coverage-final.json
+          flags: currency-api
+          name: currency-api-coverage

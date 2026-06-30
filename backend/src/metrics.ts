@@ -1,0 +1,394 @@
+import { Pool } from 'pg';
+import { createLogger } from './correlation-id';
+import { FxRateCache } from './fx-rate-cache';
+
+export class MetricsService {
+  private pool: Pool;
+  private logger = createLogger('MetricsService');
+  private fxRateCache?: FxRateCache;
+
+  // Metrics storage
+  private metrics = {
+    swiftremit_settlements_total: {} as Record<string, number>,
+    swiftremit_webhook_deliveries_total: {} as Record<string, number>,
+    swiftremit_active_remittances: 0,
+    swiftremit_accumulated_fees: 0,
+    swiftremit_webhook_dead_letter_count: 0,
+    swiftremit_kyc_poll_runs_total: 0,
+    swiftremit_kyc_poll_failures_total: 0,
+    kyc_poller_last_run_timestamp_seconds: 0,
+    contract_event_indexer_lag_ledgers: 0,
+    swiftremit_rate_limit_exceeded_total: {} as Record<string, number>,
+    db_pool_active_connections: 0,
+    db_pool_idle_connections: 0,
+    db_pool_waiting_connections: 0,
+  };
+
+  // Anchor availability metrics
+  private anchorAvailability: Map<string, string> = new Map();
+
+  // FX rate staleness metrics
+  private fxRateAgeSeconds: Map<string, number> = new Map();
+  private fxCacheHitsTotal = 0;
+  private fxCacheMissesTotal = 0;
+
+  // Job monitoring metrics (#866)
+  private jobLastRunTimestamp: Map<string, number> = new Map();
+  private jobFailureTotal: Map<string, number> = new Map();
+
+  constructor(pool: Pool, fxRateCache?: FxRateCache) {
+    this.pool = pool;
+    this.fxRateCache = fxRateCache;
+  }
+
+  /** Record current availability status for an anchor. */
+  recordAnchorAvailability(anchorId: string, status: string): void {
+    this.anchorAvailability.set(anchorId, status);
+  }
+
+  /** Record a cache hit for a currency pair. */
+  recordFxCacheHit(from: string, to: string): void {
+    this.fxCacheHitsTotal++;
+    // Age is 0 when served from live cache (fresh)
+    const key = `${from.toUpperCase()}_${to.toUpperCase()}`;
+    this.fxRateAgeSeconds.set(key, 0);
+  }
+
+  /** Record a cache miss and the age of the rate that was fetched. */
+  recordFxCacheMiss(from: string, to: string, rateTimestamp: Date): void {
+    this.fxCacheMissesTotal++;
+    const ageSeconds = (Date.now() - rateTimestamp.getTime()) / 1000;
+    const key = `${from.toUpperCase()}_${to.toUpperCase()}`;
+    this.fxRateAgeSeconds.set(key, ageSeconds);
+  }
+
+  /** Update the recorded age for a currency pair (call after each successful fetch). */
+  updateFxRateAge(from: string, to: string, rateTimestamp: Date): void {
+    const ageSeconds = (Date.now() - rateTimestamp.getTime()) / 1000;
+    const key = `${from.toUpperCase()}_${to.toUpperCase()}`;
+    this.fxRateAgeSeconds.set(key, ageSeconds);
+  }
+
+  /**
+   * Update settlement metrics
+   */
+  async updateSettlementMetrics(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT status, COUNT(*) as count 
+         FROM transactions 
+         WHERE kind = 'withdrawal' 
+         GROUP BY status`
+      );
+
+      this.metrics.swiftremit_settlements_total = {};
+      result.rows.forEach(row => {
+        this.metrics.swiftremit_settlements_total[row.status] = parseInt(row.count);
+      });
+
+      this.logger.debug('Settlement metrics updated', {
+        metrics: this.metrics.swiftremit_settlements_total,
+      });
+    } catch (error) {
+      this.logger.error('Failed to update settlement metrics', error);
+    }
+  }
+
+  /**
+   * Update webhook delivery metrics
+   */
+  async updateWebhookDeliveryMetrics(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT status, COUNT(*) as count 
+         FROM webhook_deliveries 
+         GROUP BY status`
+      );
+
+      this.metrics.swiftremit_webhook_deliveries_total = {};
+      result.rows.forEach(row => {
+        this.metrics.swiftremit_webhook_deliveries_total[row.status] = parseInt(row.count);
+      });
+
+      this.logger.debug('Webhook delivery metrics updated', {
+        metrics: this.metrics.swiftremit_webhook_deliveries_total,
+      });
+    } catch (error) {
+      this.logger.error('Failed to update webhook delivery metrics', error);
+    }
+  }
+
+  /**
+   * Update active remittances gauge
+   */
+  async updateActiveRemittances(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT COUNT(*) as count 
+         FROM transactions 
+         WHERE status IN ('pending', 'processing', 'submitted')`
+      );
+
+      this.metrics.swiftremit_active_remittances = parseInt(result.rows[0].count);
+
+      this.logger.debug('Active remittances updated', {
+        count: this.metrics.swiftremit_active_remittances,
+      });
+    } catch (error) {
+      this.logger.error('Failed to update active remittances', error);
+    }
+  }
+
+/**
+    * Update accumulated fees gauge
+    */
+  async updateAccumulatedFees(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT COALESCE(SUM(amount_fee), 0) as total_fees 
+         FROM transactions 
+         WHERE status = 'completed'`
+      );
+
+      this.metrics.swiftremit_accumulated_fees = parseFloat(result.rows[0].total_fees);
+
+      this.logger.debug('Accumulated fees updated', {
+        fees: this.metrics.swiftremit_accumulated_fees,
+      });
+    } catch (error) {
+      this.logger.error('Failed to update accumulated fees', error);
+    }
+  }
+
+  setFxRateStalenessMetric(from: string, to: string, stalenessSeconds: number): void {
+    const pairKey = `${from.toUpperCase()}/${to.toUpperCase()}`;
+    this.metrics.swiftremit_fx_rate_staleness_seconds[pairKey] = stalenessSeconds;
+  }
+
+  /**
+   * Update dead-letter queue count from the database
+   */
+  async updateDeadLetterCount(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT COUNT(*) as count FROM webhook_dead_letters WHERE replayed_at IS NULL`
+      );
+
+      this.metrics.swiftremit_webhook_dead_letter_count = parseInt(result.rows[0].count);
+
+      this.logger.debug('Dead-letter count updated', {
+        count: this.metrics.swiftremit_webhook_dead_letter_count,
+      });
+    } catch (error) {
+      this.logger.error('Failed to update dead-letter count', error);
+    }
+  }
+
+  /** Increment rate-limit-exceeded counter for a given path. */
+  incrementRateLimitExceeded(path: string): void {
+    const key = path || 'unknown';
+    this.metrics.swiftremit_rate_limit_exceeded_total[key] =
+      (this.metrics.swiftremit_rate_limit_exceeded_total[key] ?? 0) + 1;
+  }
+
+  /**
+   * Increment dead-letter counter (called by dispatcher on each DLQ insertion)
+   */
+  incrementDeadLetterCount(): void {
+    this.metrics.swiftremit_webhook_dead_letter_count++;
+  }
+
+  /**
+   * Record that the KYC poller completed a run (call at the end of each poll cycle).
+   */
+  recordKycPollerRun(): void {
+    this.metrics.kyc_poller_last_run_timestamp_seconds = Math.floor(Date.now() / 1000);
+    this.metrics.swiftremit_kyc_poll_runs_total += 1;
+  }
+
+  /**
+   * Record a KYC poll failure.
+   */
+  recordKycPollFailure(): void {
+    this.metrics.swiftremit_kyc_poll_failures_total += 1;
+  }
+
+  /** Record a successful job run (updates last-run timestamp). */
+  recordJobRun(jobName: string): void {
+    this.jobLastRunTimestamp.set(jobName, Math.floor(Date.now() / 1000));
+  }
+
+  /** Record a job failure (increments failure counter). */
+  recordJobFailure(jobName: string): void {
+    this.jobFailureTotal.set(jobName, (this.jobFailureTotal.get(jobName) ?? 0) + 1);
+  }
+
+  /**
+   * Update the contract event indexer lag (ledgers behind the chain tip).
+   * Call this from the Stellar event listener after each poll.
+   */
+  updateContractEventIndexerLag(lagLedgers: number): void {
+    this.metrics.contract_event_indexer_lag_ledgers = lagLedgers;
+  }
+
+/**
+    * Update all metrics
+    */
+  async updateAllMetrics(): Promise<void> {
+    const p = this.pool as any;
+    this.metrics.db_pool_idle_connections = p.idleCount ?? 0;
+    this.metrics.db_pool_waiting_connections = p.waitingCount ?? 0;
+    this.metrics.db_pool_active_connections = (p.totalCount ?? 0) - (p.idleCount ?? 0);
+
+    await Promise.all([
+      this.updateSettlementMetrics(),
+      this.updateWebhookDeliveryMetrics(),
+      this.updateActiveRemittances(),
+      this.updateAccumulatedFees(),
+      this.updateDeadLetterCount(),
+    ]);
+  }
+
+  /**
+   * Sanitize a Prometheus label value by escaping backslashes, double quotes,
+   * and newlines to prevent label injection or broken text format output.
+   */
+  private sanitizeLabelValue(value: string): string {
+    return value
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n');
+  }
+
+  /**
+   * Generate Prometheus text format output
+   */
+  generatePrometheusText(): string {
+    const lines: string[] = [];
+
+    // Settlements counter
+    lines.push('# HELP swiftremit_settlements_total Total number of settlements by status');
+    lines.push('# TYPE swiftremit_settlements_total counter');
+    Object.entries(this.metrics.swiftremit_settlements_total).forEach(([status, count]) => {
+      lines.push(`swiftremit_settlements_total{status="${this.sanitizeLabelValue(status)}"} ${count}`);
+    });
+
+    // Webhook deliveries counter
+    lines.push('# HELP swiftremit_webhook_deliveries_total Total number of webhook deliveries by result');
+    lines.push('# TYPE swiftremit_webhook_deliveries_total counter');
+    Object.entries(this.metrics.swiftremit_webhook_deliveries_total).forEach(([result, count]) => {
+      lines.push(`swiftremit_webhook_deliveries_total{result="${this.sanitizeLabelValue(result)}"} ${count}`);
+    });
+
+    // Active remittances gauge
+    lines.push('# HELP swiftremit_active_remittances Number of active remittances');
+    lines.push('# TYPE swiftremit_active_remittances gauge');
+    lines.push(`swiftremit_active_remittances ${this.metrics.swiftremit_active_remittances}`);
+
+    // Accumulated fees gauge
+    lines.push('# HELP swiftremit_accumulated_fees Total accumulated fees from completed transactions');
+    lines.push('# TYPE swiftremit_accumulated_fees gauge');
+    lines.push(`swiftremit_accumulated_fees ${this.metrics.swiftremit_accumulated_fees}`);
+
+    // Anchor availability gauge
+    lines.push('# HELP swiftremit_anchor_availability Current availability status of each anchor');
+    lines.push('# TYPE swiftremit_anchor_availability gauge');
+    this.anchorAvailability.forEach((status, anchorId) => {
+      lines.push(`swiftremit_anchor_availability{anchor_id="${this.sanitizeLabelValue(anchorId)}",status="${this.sanitizeLabelValue(status)}"} 1`);
+    });
+
+    // FX rate age gauge (per currency pair)
+    lines.push('# HELP fx_rate_age_seconds Age of the cached FX rate in seconds');
+    lines.push('# TYPE fx_rate_age_seconds gauge');
+    this.fxRateAgeSeconds.forEach((ageSeconds, key) => {
+      const [from, to] = key.split('_');
+      lines.push(`fx_rate_age_seconds{from="${from}",to="${to}"} ${ageSeconds.toFixed(3)}`);
+    });
+
+    // FX cache hit counter
+    lines.push('# HELP fx_rate_cache_hits_total Total number of FX rate cache hits');
+    lines.push('# TYPE fx_rate_cache_hits_total counter');
+    lines.push(`fx_rate_cache_hits_total ${this.fxCacheHitsTotal}`);
+
+    // FX cache miss counter
+    lines.push('# HELP fx_rate_cache_misses_total Total number of FX rate cache misses');
+    lines.push('# TYPE fx_rate_cache_misses_total counter');
+    lines.push(`fx_rate_cache_misses_total ${this.fxCacheMissesTotal}`);
+
+    // DB pool connection gauges
+    lines.push('# HELP db_pool_active_connections Number of active (checked-out) connections in the PostgreSQL pool');
+    lines.push('# TYPE db_pool_active_connections gauge');
+    lines.push(`db_pool_active_connections ${this.metrics.db_pool_active_connections}`);
+
+    lines.push('# HELP db_pool_idle_connections Number of idle connections in the PostgreSQL pool');
+    lines.push('# TYPE db_pool_idle_connections gauge');
+    lines.push(`db_pool_idle_connections ${this.metrics.db_pool_idle_connections}`);
+
+    lines.push('# HELP db_pool_waiting_connections Number of requests waiting for a connection from the PostgreSQL pool');
+    lines.push('# TYPE db_pool_waiting_connections gauge');
+    lines.push(`db_pool_waiting_connections ${this.metrics.db_pool_waiting_connections}`);
+
+    // KYC poller last run timestamp
+    lines.push('# HELP kyc_poller_last_run_timestamp_seconds Unix timestamp of the last successful KYC poller run');
+    lines.push('# TYPE kyc_poller_last_run_timestamp_seconds gauge');
+    lines.push(`kyc_poller_last_run_timestamp_seconds ${this.metrics.kyc_poller_last_run_timestamp_seconds}`);
+
+    // KYC poller counters
+    lines.push('# HELP swiftremit_kyc_poll_runs_total Total number of KYC poll cycles executed');
+    lines.push('# TYPE swiftremit_kyc_poll_runs_total counter');
+    lines.push(`swiftremit_kyc_poll_runs_total ${this.metrics.swiftremit_kyc_poll_runs_total}`);
+    lines.push('# HELP swiftremit_kyc_poll_failures_total Total number of KYC poll failures');
+    lines.push('# TYPE swiftremit_kyc_poll_failures_total counter');
+    lines.push(`swiftremit_kyc_poll_failures_total ${this.metrics.swiftremit_kyc_poll_failures_total}`);
+
+    // Contract event indexer lag
+    lines.push('# HELP contract_event_indexer_lag_ledgers Number of ledgers the event indexer is behind the chain tip');
+    lines.push('# TYPE contract_event_indexer_lag_ledgers gauge');
+    lines.push(`contract_event_indexer_lag_ledgers ${this.metrics.contract_event_indexer_lag_ledgers}`);
+
+    // Dead-letter queue count
+    lines.push('# HELP swiftremit_webhook_dead_letter_count Total number of webhook deliveries in the dead-letter queue');
+    lines.push('# TYPE swiftremit_webhook_dead_letter_count gauge');
+    lines.push(`swiftremit_webhook_dead_letter_count ${this.metrics.swiftremit_webhook_dead_letter_count}`);
+
+    // Rate limit exceeded counter
+    lines.push('# HELP swiftremit_rate_limit_exceeded_total Total number of rate limit exceeded events by path');
+    lines.push('# TYPE swiftremit_rate_limit_exceeded_total counter');
+    Object.entries(this.metrics.swiftremit_rate_limit_exceeded_total).forEach(([path, count]) => {
+      lines.push(`swiftremit_rate_limit_exceeded_total{path="${this.sanitizeLabelValue(path)}"} ${count}`);
+    });
+
+    // Job monitoring metrics (#866)
+    lines.push('# HELP swiftremit_job_last_run_timestamp Unix timestamp of the last run for each background job');
+    lines.push('# TYPE swiftremit_job_last_run_timestamp gauge');
+    this.jobLastRunTimestamp.forEach((ts, jobName) => {
+      lines.push(`swiftremit_job_last_run_timestamp{job_name="${this.sanitizeLabelValue(jobName)}"} ${ts}`);
+    });
+
+    lines.push('# HELP swiftremit_job_failure_total Total number of failures per background job');
+    lines.push('# TYPE swiftremit_job_failure_total counter');
+    this.jobFailureTotal.forEach((count, jobName) => {
+      lines.push(`swiftremit_job_failure_total{job_name="${this.sanitizeLabelValue(jobName)}"} ${count}`);
+    });
+
+    return lines.join('\n') + '\n';
+  }
+
+  /**
+   * Get metrics in Prometheus format
+   */
+  async getMetrics(): Promise<string> {
+    await this.updateAllMetrics();
+    return this.generatePrometheusText();
+  }
+}
+
+// Singleton instance
+let metricsServiceInstance: MetricsService | null = null;
+
+export function getMetricsService(pool: Pool, fxRateCache?: FxRateCache): MetricsService {
+  if (!metricsServiceInstance) {
+    metricsServiceInstance = new MetricsService(pool, fxRateCache);
+  }
+  return metricsServiceInstance;
+}

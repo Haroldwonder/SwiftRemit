@@ -1,0 +1,117 @@
+name: Load Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+      create_vus:
+        description: "VUs for remittance-create scenario"
+        required: false
+        default: "150"
+        type: string
+      list_vus:
+        description: "VUs for remittance-list scenario"
+        required: false
+        default: "300"
+        type: string
+      ws_vus:
+        description: "VUs for WebSocket scenario"
+        required: false
+        default: "50"
+        type: string
+
+  # Optional: run after every successful staging deploy
+  # Uncomment if you want automatic load tests on staging after each merge:
+  # workflow_run:
+  #   workflows: ["Deploy to Staging"]
+  #   types: [completed]
+  #   branches: [main]
+
+permissions:
+  contents: write   # for uploading results as release assets
+
+concurrency:
+  group: load-tests-${{ github.event.inputs.target }}
+  cancel-in-progress: true
+
+jobs:
+  load-test:
+    name: k6 load test (${{ github.event.inputs.target }})
+    runs-on: ubuntu-latest
+    # Prevent accidental runs against production
+    if: ${{ github.event.inputs.target != 'production' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target URLs
+        id: urls
+        run: |
+          if [ "${{ github.event.inputs.target }}" = "staging" ]; then
+            echo "api_url=${{ vars.STAGING_API_URL }}"       >> "$GITHUB_OUTPUT"
+            echo "backend_url=${{ vars.STAGING_BACKEND_URL }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] \
+            https://dl.k6.io/deb stable main" | \
+            sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -q && sudo apt-get install -q k6
+
+      - name: Create results directory
+        run: mkdir -p tests/load/results
+
+      - name: Run k6 load tests
+        env:
+          API_URL:     ${{ steps.urls.outputs.api_url }}
+          BACKEND_URL: ${{ steps.urls.outputs.backend_url }}
+          CREATE_VUS:  ${{ github.event.inputs.create_vus || '150' }}
+          LIST_VUS:    ${{ github.event.inputs.list_vus   || '300' }}
+          WS_VUS:      ${{ github.event.inputs.ws_vus     || '50'  }}
+        run: |
+          k6 run tests/load/main.js \
+            -e API_URL="$API_URL" \
+            -e BACKEND_URL="$BACKEND_URL" \
+            -e CREATE_VUS="$CREATE_VUS" \
+            -e LIST_VUS="$LIST_VUS" \
+            -e WS_VUS="$WS_VUS" \
+            --out json=tests/load/results/metrics.json
+
+      - name: Upload load test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results-${{ github.run_id }}
+          path: tests/load/results/
+          retention-days: 30
+
+      - name: Post summary
+        if: always()
+        run: |
+          echo "### Load test results — ${{ github.event.inputs.target }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| API URL | \`${{ steps.urls.outputs.api_url }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend URL | \`${{ steps.urls.outputs.backend_url }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| create VUs | ${{ github.event.inputs.create_vus }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| list VUs | ${{ github.event.inputs.list_vus }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ws VUs | ${{ github.event.inputs.ws_vus }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f tests/load/results/summary.txt ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat tests/load/results/summary.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi

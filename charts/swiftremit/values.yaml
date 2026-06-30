@@ -1,0 +1,208 @@
+# Default values for swiftremit.
+# Override per environment with values.dev.yaml / values.staging.yaml / values.production.yaml
+
+global:
+  imageRegistry: ""      # e.g. ghcr.io/your-org — prepended to all image names
+  imagePullSecrets: []
+  nodeEnv: production
+
+# ─── PostgreSQL (managed externally; supply DATABASE_URL via secret) ───────────
+postgresql:
+  # Set to true to spin up an in-cluster postgres (dev only)
+  enabled: false
+  auth:
+    username: swiftremit
+    password: swiftremit
+    database: swiftremit
+
+# ─── API service ───────────────────────────────────────────────────────────────
+api:
+  replicaCount: 2
+
+  image:
+    repository: swiftremit-api
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 3000
+    targetPort: 3000
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+  config:
+    PORT: "3000"
+    NODE_ENV: production
+    RATE_LIMIT_WINDOW_MS: "900000"
+    RATE_LIMIT_MAX_REQUESTS: "100"
+    CURRENCY_CONFIG_PATH: "./config/currencies.json"
+
+  # Keys placed here end up in the api-secret Secret (base64-encoded by Helm)
+  secret:
+    DATABASE_URL: ""
+    CONTRACT_RPC_URL: ""
+    ANCHORS_ADMIN_API_KEY: ""
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 15
+    periodSeconds: 20
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# ─── Backend service ───────────────────────────────────────────────────────────
+backend:
+  replicaCount: 2
+
+  image:
+    repository: swiftremit-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 3001
+    targetPort: 3001
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+  config:
+    PORT: "3001"
+    NODE_ENV: production
+    STELLAR_NETWORK: mainnet
+    HORIZON_URL: "https://horizon.stellar.org"
+    SOROBAN_RPC_URL: "https://soroban-rpc.stellar.org"
+    NETWORK_PASSPHRASE: "Public Global Stellar Network ; September 2015"
+    VERIFICATION_INTERVAL_HOURS: "24"
+    ANCHOR_TIMEOUT_HOURS: "24"
+    RATE_LIMIT_WINDOW_MS: "900000"
+    RATE_LIMIT_MAX_REQUESTS: "100"
+    API_KEY_RATE_LIMIT_WINDOW_MS: "60000"
+    API_KEY_RATE_LIMIT_MAX: "200"
+    WEBHOOK_RETRY_BASE_MS: "1000"
+    WEBHOOK_RETRY_MAX_MS: "300000"
+    WEBHOOK_RETRY_JITTER_PERCENT: "20"
+
+  secret:
+    DATABASE_URL: ""
+    CONTRACT_ID: ""
+    ADMIN_SECRET_KEY: ""
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 3001
+    initialDelaySeconds: 30
+    periodSeconds: 20
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 3001
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+# ─── Frontend service ──────────────────────────────────────────────────────────
+frontend:
+  replicaCount: 2
+
+  image:
+    repository: swiftremit-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 5173
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  # Frontend does not autoscale by default (static assets; CDN preferred in prod)
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+
+  config:
+    VITE_NETWORK: mainnet
+    VITE_HORIZON_URL: "https://horizon.stellar.org"
+    VITE_SOROBAN_RPC_URL: "https://soroban-rpc.stellar.org"
+    VITE_CONTRACT_ID: ""
+    VITE_USDC_ISSUER: ""
+    VITE_EURC_ISSUER: ""
+    VITE_USDC_TOKEN_ID: ""
+
+  secret: {}
+
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 5173
+    initialDelaySeconds: 10
+    periodSeconds: 20
+
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 5173
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# ─── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: swiftremit.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: api
+        - path: /backend
+          pathType: Prefix
+          service: backend
+        - path: /
+          pathType: Prefix
+          service: frontend
+  tls: []

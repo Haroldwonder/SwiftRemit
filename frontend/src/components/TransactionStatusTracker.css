@@ -1,0 +1,178 @@
+.transaction-tracker {
+  width: min(100%, 840px);
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 14px;
+  padding: 1rem;
+  background: var(--gradient-card-alt);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.transaction-tracker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.transaction-tracker-header h2 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 1.1rem;
+}
+
+.transaction-tracker-refresh {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.tracker-refresh-meta {
+  font-size: 0.8rem;
+  color: var(--color-text-tertiary);
+}
+
+.tracker-refresh-button {
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 8px;
+  padding: 0.42rem 0.75rem;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tracker-refresh-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.transaction-tracker-steps {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding: 0;
+  margin: 1rem 0 0;
+}
+
+.transaction-tracker-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 10px;
+  padding: 0.55rem 0.6rem;
+  background: var(--color-bg-tertiary);
+}
+
+.step-marker {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 999px;
+  border: 2px solid var(--color-border-secondary);
+  background: var(--color-bg-primary);
+  flex-shrink: 0;
+}
+
+.step-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.transaction-tracker-step.done {
+  background: var(--color-success-bg);
+  border-color: var(--color-success-border);
+}
+
+.transaction-tracker-step.done .step-marker {
+  border-color: var(--color-success);
+  background: var(--color-success);
+}
+
+.transaction-tracker-step.done .step-label {
+  color: var(--color-success-text);
+}
+
+.transaction-tracker-step.active {
+  background: var(--color-info-bg);
+  border-color: var(--color-info-border);
+}
+
+.transaction-tracker-step.active .step-marker {
+  border-color: var(--color-info);
+  background: var(--color-info);
+}
+
+.transaction-tracker-step.active .step-label {
+  color: var(--color-info-text);
+}
+
+.transaction-tracker-step.future {
+  opacity: 0.85;
+}
+
+.transaction-tracker-step.failed {
+  background: var(--color-error-bg);
+  border-color: var(--color-error-border);
+}
+
+.transaction-tracker-step.failed .step-marker {
+  border-color: var(--color-error);
+  background: var(--color-error);
+}
+
+.transaction-tracker-step.failed .step-label {
+  color: var(--color-error-text);
+}
+
+.transaction-tracker-step.cancelled {
+  background: var(--color-neutral-100);
+  border-color: var(--color-neutral-400);
+}
+
+.transaction-tracker-step.cancelled .step-marker {
+  border-color: var(--color-neutral-600);
+  background: var(--color-neutral-600);
+}
+
+.transaction-tracker-step.cancelled .step-label {
+  color: var(--color-neutral-700);
+}
+
+@media (max-width: 860px) {
+  .transaction-tracker-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .transaction-tracker {
+    padding: 0.85rem;
+  }
+
+  .transaction-tracker-header {
+    flex-direction: column;
+  }
+
+  .transaction-tracker-refresh {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .transaction-tracker-steps {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,59 @@
+.fee-preview {
+  padding: 1rem;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  margin: 1rem 0;
+}
+
+.fee-preview-empty,
+.fee-preview-error {
+  color: var(--text-secondary);
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.fee-preview-error {
+  color: var(--error-color);
+}
+
+.fee-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.fee-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.fee-item.fee-net {
+  font-weight: 600;
+  border-bottom: 2px solid var(--primary-color);
+}
+
+.fee-label {
+  color: var(--text-secondary);
+}
+
+.fee-amount {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.fee-preview-spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: 0.5rem;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

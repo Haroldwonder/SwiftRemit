@@ -1,0 +1,76 @@
+.pdf-export {
+  margin: 1.5rem 0;
+}
+
+.pdf-export-controls {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+.pdf-export-controls label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pdf-export-controls input[type="date"] {
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.pdf-export-controls button {
+  padding: 0.5rem 1.5rem;
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.pdf-export-controls button:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.pdf-export-controls button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pdf-export-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.pdf-export-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+
+.pdf-export-item button {
+  padding: 0.4rem 0.8rem;
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+.pdf-export-item button:hover {
+  background: var(--primary-hover);
+}

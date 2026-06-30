@@ -1,339 +1,465 @@
 # SwiftRemit Deployment Guide
 
-Complete guide for building, testing, and deploying the SwiftRemit smart contract to Stellar testnet.
+## Frontend Deployment
 
-## Prerequisites
+### Quick Deploy to Vercel (Recommended)
 
-1. Install Rust and Cargo:
+#### Option 1: Deploy via Vercel Dashboard (Easiest)
+
+1. **Go to Vercel**: https://vercel.com
+2. **Sign in** with your GitHub account
+3. **Import Project**:
+   - Click "Add New..." → "Project"
+   - Select your GitHub repository: `Haroldwonder/SwiftRemit`
+   - Select branch: `refactor/production-readiness-soroban`
+4. **Configure Project**:
+   - Framework Preset: Vite
+   - Root Directory: `frontend`
+   - Build Command: `npm install --legacy-peer-deps && npm run build`
+   - Output Directory: `dist`
+   - Install Command: `npm install --legacy-peer-deps`
+5. **Environment Variables** (Add these in Vercel dashboard):
+   ```
+   VITE_NETWORK=testnet
+   VITE_HORIZON_URL=https://horizon-testnet.stellar.org
+   VITE_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+   VITE_CONTRACT_ID=your_contract_id_here
+   VITE_USDC_TOKEN_ID=your_usdc_token_id_here
+   ```
+6. **Deploy**: Click "Deploy"
+
+Your site will be live at: `https://swiftremit-[random].vercel.app`
+
+#### Option 2: Deploy via Vercel CLI
+
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Install Vercel CLI globally
+npm install -g vercel
+
+# Navigate to frontend directory
+cd SwiftRemit/frontend
+
+# Login to Vercel
+vercel login
+
+# Deploy
+vercel
+
+# Follow the prompts:
+# - Set up and deploy? Yes
+# - Which scope? Your account
+# - Link to existing project? No
+# - Project name? swiftremit-frontend
+# - Directory? ./
+# - Override settings? No
+
+# Your deployment URL will be shown!
 ```
 
-2. Add the WebAssembly target:
+#### Option 3: Deploy via GitHub Integration
+
+1. Push your code to GitHub (already done ✅)
+2. Go to https://vercel.com/new
+3. Import your repository
+4. Vercel will auto-detect Vite and deploy
+
+---
+
+### Alternative: Deploy to Netlify
+
+#### Via Netlify Dashboard
+
+1. **Go to Netlify**: https://app.netlify.com
+2. **Sign in** with GitHub
+3. **Add new site** → "Import an existing project"
+4. **Connect to Git provider**: GitHub
+5. **Select repository**: `Haroldwonder/SwiftRemit`
+6. **Configure**:
+   - Branch: `refactor/production-readiness-soroban`
+   - Base directory: `frontend`
+   - Build command: `npm install --legacy-peer-deps && npm run build`
+   - Publish directory: `frontend/dist`
+7. **Environment variables**: Add the same as Vercel
+8. **Deploy**
+
+Your site will be live at: `https://swiftremit-[random].netlify.app`
+
+#### Via Netlify CLI
+
 ```bash
-rustup target add wasm32-unknown-unknown
+# Install Netlify CLI
+npm install -g netlify-cli
+
+# Navigate to frontend
+cd SwiftRemit/frontend
+
+# Login
+netlify login
+
+# Deploy
+netlify deploy --prod
+
+# Follow prompts and your site will be live!
 ```
 
-3. Install Soroban CLI:
+---
+
+### Alternative: GitHub Pages
+
+1. **Enable GitHub Pages**:
+   - Go to: https://github.com/Haroldwonder/SwiftRemit/settings/pages
+   - Source: Deploy from a branch
+   - Branch: `refactor/production-readiness-soroban`
+   - Folder: `/frontend` (if available) or `/` (root)
+   - Save
+
+2. **Add GitHub Actions workflow** (if needed):
+   Create `.github/workflows/deploy.yml`:
+   ```yaml
+   name: Deploy to GitHub Pages
+   
+   on:
+     push:
+       branches: [refactor/production-readiness-soroban]
+   
+   jobs:
+     build-and-deploy:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v3
+         - uses: actions/setup-node@v3
+           with:
+             node-version: '18'
+         - name: Install and Build
+           run: |
+             cd frontend
+             npm install --legacy-peer-deps
+             npm run build
+         - name: Deploy
+           uses: peaceiris/actions-gh-pages@v3
+           with:
+             github_token: ${{ secrets.GITHUB_TOKEN }}
+             publish_dir: ./frontend/dist
+   ```
+
+Your site will be at: `https://haroldwonder.github.io/SwiftRemit/`
+
+---
+
+## Smart Contract Deployment
+
+### Prerequisites
+
+1. **Install Stellar CLI**:
+   ```bash
+   cargo install --locked stellar-cli
+   ```
+
+2. **Create Testnet Identity**:
+   ```bash
+   stellar keys generate --global admin --network testnet
+   stellar keys address admin
+   ```
+
+3. **Fund Account**:
+   - Go to: https://laboratory.stellar.org/#account-creator?network=test
+   - Paste your address and click "Get test network lumens"
+
+### Deploy Contract
+
 ```bash
-cargo install --locked soroban-cli --features opt
-```
-
-4. Configure Soroban CLI for testnet:
-```bash
-soroban network add --global testnet \
-  --rpc-url https://soroban-testnet.stellar.org:443 \
-  --network-passphrase "Test SDF Network ; September 2015"
-```
-
-## Automated Deployment (Recommended)
-
-For convenience, use the provided deployment scripts which handle building, optimizing, deploying, and initializing the contract in one step.
-
-**Linux/macOS:**
-```bash
-./deploy.sh [network]
-# Example: ./deploy.sh testnet
-```
-
-**Windows (PowerShell):**
-```powershell
-.\deploy.ps1 -Network [network]
-# Example: .\deploy.ps1 -Network testnet
-```
-
-These scripts will automatically:
-1. Build and optimize the contract
-2. Create/fund a deployer identity (if needed)
-3. Deploy the contract and a mock USDC token
-4. Initialize the contract
-5. Save contract IDs to `.env.local`
-
-## Build the Contract
-
-1. Navigate to the project directory:
-```bash
+# Navigate to contract directory
 cd SwiftRemit
-```
 
-2. Build the contract:
-```bash
-cargo build --target wasm32-unknown-unknown --release
-```
+# Build the contract
+stellar contract build
 
-3. Optimize the WASM binary:
-```bash
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
-```
-
-This creates an optimized `swiftremit.optimized.wasm` file.
-
-## Run Tests
-
-Execute the comprehensive test suite:
-
-```bash
-cargo test
-```
-
-For verbose output:
-```bash
-cargo test -- --nocapture
-```
-
-Run specific tests:
-```bash
-cargo test test_create_remittance
-cargo test test_confirm_payout
-cargo test test_fee_calculation
-```
-
-## Deploy to Stellar Testnet
-
-### Step 1: Create and Fund Identity
-
-Create a new identity for deployment:
-```bash
-soroban keys generate --global deployer --network testnet
-```
-
-Get the public key:
-```bash
-soroban keys address deployer
-```
-
-Fund the account using the Stellar Friendbot:
-```bash
-soroban keys fund deployer --network testnet
-```
-
-Or visit: https://laboratory.stellar.org/#account-creator?network=test
-
-### Step 2: Deploy the Contract
-
-Deploy the optimized contract:
-```bash
-soroban contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm \
-  --source deployer \
+# Deploy to testnet
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm \
+  --source admin \
   --network testnet
+
+# Save the contract ID that's returned!
 ```
 
-Save the returned contract ID (e.g., `CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX`).
-
-### Step 3: Deploy or Get USDC Token Address
-
-For testnet, you can use the native USDC token or deploy a test token.
-
-To deploy a test token contract:
-```bash
-soroban contract asset deploy \
-  --asset USDC:GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
-  --source deployer \
-  --network testnet
-```
-
-Or use an existing testnet USDC token address.
-
-### Step 4: Initialize the Contract
-
-Initialize with admin address, USDC token, and fee (250 = 2.5%):
+### Initialize Contract
 
 ```bash
-soroban contract invoke \
-  --id <CONTRACT_ID> \
-  --source deployer \
+# Set variables
+CONTRACT_ID="your_contract_id_here"
+ADMIN_ADDRESS="your_admin_address_here"
+USDC_TOKEN="USDC_testnet_token_id"
+
+# Initialize
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --source admin \
   --network testnet \
   -- \
   initialize \
-  --admin <ADMIN_ADDRESS> \
-  --usdc_token <USDC_TOKEN_ADDRESS> \
-  --fee_bps 250
+  --admin $ADMIN_ADDRESS \
+  --usdc_token $USDC_TOKEN \
+  --fee_bps 250 \
+  --rate_limit_cooldown 5 \
+  --protocol_fee_bps 50 \
+  --treasury $ADMIN_ADDRESS
 ```
 
-Example:
-```bash
-soroban contract invoke \
-  --id CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM \
-  --source deployer \
-  --network testnet \
-  -- \
-  initialize \
-  --admin GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
-  --usdc_token CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBD2KM \
-  --fee_bps 250
+### Update Frontend Environment Variables
+
+After deploying the contract, update your frontend `.env` or Vercel environment variables:
+
+```env
+VITE_CONTRACT_ID=your_actual_contract_id
+VITE_USDC_TOKEN_ID=your_actual_usdc_token_id
 ```
 
-## Contract Interaction Examples
+Then redeploy the frontend.
 
-### Register an Agent
+---
+
+## Post-Deployment Checklist
+
+### Frontend
+- [ ] Site is accessible via public URL
+- [ ] Wallet connection works (Freighter)
+- [ ] Can view remittances
+- [ ] Forms render correctly
+- [ ] No console errors
+
+### Smart Contract
+- [ ] Contract deployed to testnet
+- [ ] Contract initialized successfully
+- [ ] Admin can register agents
+- [ ] Can create remittances
+- [ ] Can confirm payouts
+- [ ] Events are emitted correctly
+
+---
+
+## Monitoring & Maintenance
+
+### Frontend Monitoring
+- **Vercel**: Built-in analytics at https://vercel.com/dashboard
+- **Netlify**: Analytics at https://app.netlify.com
+
+### Contract Monitoring
+- **Stellar Expert**: https://stellar.expert/explorer/testnet
+- **Horizon API**: https://horizon-testnet.stellar.org
+
+### Contract Function Examples
+
+#### Get Settlement Hash
+
+Retrieve the stored settlement hash for a settled remittance:
 
 ```bash
-soroban contract invoke \
-  --id <CONTRACT_ID> \
-  --source deployer \
+# Get settlement hash for a remittance
+stellar contract invoke \
+  --id $CONTRACT_ID \
   --network testnet \
   -- \
-  register_agent \
-  --agent <AGENT_ADDRESS>
-```
-
-### Create a Remittance
-
-First, ensure the sender has USDC tokens and has approved the contract.
-
-```bash
-soroban contract invoke \
-  --id <CONTRACT_ID> \
-  --source sender \
-  --network testnet \
-  -- \
-  create_remittance \
-  --sender <SENDER_ADDRESS> \
-  --agent <AGENT_ADDRESS> \
-  --amount 1000000000
-```
-
-Amount is in stroops (7 decimals for USDC).
-
-### Confirm Payout
-
-Agent confirms they paid out fiat:
-
-```bash
-soroban contract invoke \
-  --id <CONTRACT_ID> \
-  --source agent \
-  --network testnet \
-  -- \
-  confirm_payout \
+  get_settlement_hash \
   --remittance_id 1
 ```
 
-### Cancel Remittance
+This function returns the 32-byte SHA-256 settlement hash that was stored when the remittance was settled. External systems can use this to verify their computed hash matches the on-chain value.
 
-Sender cancels before payout:
+**Example Response:**
+```
+"a1b2c3d4e5f6789012345678901234567890123456789012345678901234abcd"
+```
+
+**Error Cases:**
+- `RemittanceNotFound`: The remittance ID doesn't exist
+- `InvalidStatus`: The remittance hasn't been settled yet
+
+#### Compute Settlement Hash
+
+Compute the deterministic settlement hash for any remittance (settled or not):
 
 ```bash
-soroban contract invoke \
-  --id <CONTRACT_ID> \
-  --source sender \
+# Compute settlement hash for a remittance
+stellar contract invoke \
+  --id $CONTRACT_ID \
   --network testnet \
   -- \
-  cancel_remittance \
+  compute_settlement_hash \
   --remittance_id 1
 ```
 
-### Withdraw Platform Fees
+This function computes the hash using the canonical ordering specified in the contract. External systems can use this to pre-compute hashes before settlement or verify their hashing implementation matches the contract's.
 
-Admin withdraws accumulated fees:
+**Use Cases:**
+- Pre-compute settlement IDs before submission
+- Verify external system hashing matches contract implementation
+- Enable cross-system reconciliation using deterministic IDs
 
-```bash
-soroban contract invoke \
-  --id <CONTRACT_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  withdraw_fees \
-  --to <RECIPIENT_ADDRESS>
-```
+### Logs
+- **Frontend**: Check Vercel/Netlify deployment logs
+- **Contract**: Use Stellar CLI to query contract state
 
-### Query Contract State
-
-Get remittance details:
-```bash
-soroban contract invoke \
-  --id <CONTRACT_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  get_remittance \
-  --remittance_id 1
-```
-
-Check if agent is registered:
-```bash
-soroban contract invoke \
-  --id <CONTRACT_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  is_agent_registered \
-  --agent <AGENT_ADDRESS>
-```
-
-Get accumulated fees:
-```bash
-soroban contract invoke \
-  --id <CONTRACT_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  get_accumulated_fees
-```
-
-Get platform fee in basis points:
-```bash
-soroban contract invoke \
-  --id <CONTRACT_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  get_platform_fee_bps
-```
-
-## Mainnet Deployment
-
-For mainnet deployment, follow the same steps but use the mainnet network configuration:
-
-```bash
-soroban network add --global mainnet \
-  --rpc-url https://soroban-mainnet.stellar.org:443 \
-  --network-passphrase "Public Global Stellar Network ; September 2015"
-```
-
-Then replace `--network testnet` with `--network mainnet` in all commands.
-
-## Security Considerations
-
-1. Store private keys securely - never commit them to version control
-2. Use hardware wallets for mainnet admin keys
-3. Test thoroughly on testnet before mainnet deployment
-4. Verify all contract addresses before transactions
-5. Monitor contract events for suspicious activity
-6. Implement multi-signature for admin operations in production
-7. Regular security audits recommended before mainnet launch
+---
 
 ## Troubleshooting
 
-### Build Errors
+### Frontend Build Fails
+```bash
+# Clear cache and reinstall
+cd frontend
+rm -rf node_modules package-lock.json
+npm install --legacy-peer-deps
+npm run build
+```
 
-If you encounter build errors, ensure:
-- Rust toolchain is up to date: `rustup update`
-- Correct target is installed: `rustup target add wasm32-unknown-unknown`
-- Dependencies are current: `cargo update`
+### Contract Deployment Fails
+```bash
+# Check account balance
+stellar account --id admin
 
-### Transaction Failures
+# Rebuild contract
+cargo clean
+stellar contract build
+```
 
-Common issues:
-- Insufficient XLM balance for fees
-- Incorrect authorization (wrong source account)
-- Contract not initialized
-- Agent not registered
-- Invalid remittance status
+### Environment Variables Not Working
+- Ensure variables start with `VITE_` prefix
+- Redeploy after changing variables
+- Check browser console for actual values
 
-Check transaction details in Stellar Laboratory: https://laboratory.stellar.org/
+---
 
-### Network Issues
+## Storage TTL Management
 
-If RPC calls fail:
-- Verify network configuration: `soroban network ls`
-- Check Stellar testnet status
-- Try alternative RPC endpoints
+Soroban contracts use two storage tiers with different TTL behaviours:
 
-## Additional Resources
+| Storage type | Scope | Default TTL | Risk if expired |
+|---|---|---|---|
+| **Instance** | Contract-wide config (admin, fee, counters) | ~1 month | Contract becomes unusable |
+| **Persistent** | Per-entity data (remittances, agents, limits) | ~1 month | Individual records lost |
+| **Temporary** | Rate-limit windows, sliding windows | Short (hours) | Resets automatically — acceptable |
 
-- Soroban Documentation: https://soroban.stellar.org/docs
-- Stellar Laboratory: https://laboratory.stellar.org/
-- Soroban CLI Reference: https://soroban.stellar.org/docs/reference/soroban-cli
-- Stellar Discord: https://discord.gg/stellar
+### Key audit
+
+| Key | Storage | TTL strategy |
+|---|---|---|
+| `Admin`, `UsdcToken`, `PlatformFeeBps`, `RemittanceCounter`, `AccumulatedFees` | Instance | Extended by `extend_storage_ttl` |
+| `Remittance(id)` | Persistent | Extended by `extend_storage_ttl` for all IDs up to counter |
+| `AgentRegistered(addr)` | Persistent | Extended by `extend_storage_ttl` |
+| `DailyLimit(currency, country)` | Persistent | Extended by `extend_storage_ttl` |
+| `RateLimitEntry(addr)` | Temporary | Self-managed (TTL = window + 1 h) |
+| `SlidingWindowEntry(addr, tag)` | Temporary | Self-managed (TTL = 2 × window) |
+
+### Extending TTLs manually
+
+```bash
+stellar contract invoke \
+  --id $CONTRACT_ID \
+  --source admin \
+  --network testnet \
+  -- \
+  extend_storage_ttl \
+  --caller $ADMIN_ADDRESS \
+  --extend_by_ledgers 518400
+```
+
+`518400` ledgers ≈ 30 days at 5-second ledger time.
+
+### Automated TTL extension (backend scheduler)
+
+The backend scheduler runs `extendContractStorageTtl()` daily at midnight UTC.
+Configure the following environment variables in `backend/.env`:
+
+```env
+CONTRACT_ID=your_contract_id
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+NETWORK_PASSPHRASE=Test SDF Network ; September 2015
+ADMIN_SECRET_KEY=your_admin_secret_key
+```
+
+The job extends TTLs by **518 400 ledgers (~30 days)** each run, providing a
+comfortable buffer before the next scheduled execution.
+
+---
+
+## Production Environment Variables
+
+All required environment variables are documented in the `.env.example` files for each service.
+Copy the relevant example file and fill in production values before deploying.
+
+### Backend Service (`backend/.env.example`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | ✅ | PostgreSQL connection string, e.g. `postgresql://user:pass@host:5432/swiftremit` |
+| `STELLAR_NETWORK` | ✅ | Stellar network to connect to: `testnet` or `mainnet` |
+| `HORIZON_URL` | ✅ | Horizon API endpoint, e.g. `https://horizon.stellar.org` |
+| `SOROBAN_RPC_URL` | ✅ | Soroban RPC endpoint, e.g. `https://soroban-rpc.mainnet.stellar.gateway.fm` |
+| `NETWORK_PASSPHRASE` | ✅ | Stellar network passphrase (e.g. `Public Global Stellar Network ; September 2015`) |
+| `CONTRACT_ID` | ✅ | Deployed SwiftRemit contract address |
+| `ADMIN_SECRET_KEY` | ✅ | Stellar secret key for the admin account (keep secret) |
+| `PORT` | ✅ | Port the backend HTTP server listens on (default: `3000`) |
+| `NODE_ENV` | ✅ | Runtime environment: `production` |
+| `RATE_LIMIT_WINDOW_MS` | ❌ | Rate-limit window in milliseconds (default: `900000`) |
+| `RATE_LIMIT_MAX_REQUESTS` | ❌ | Max requests per window per IP (default: `100`) |
+| `VERIFICATION_INTERVAL_HOURS` | ❌ | How often to re-verify assets in hours (default: `24`) |
+| `MIN_TRUSTLINE_COUNT` | ❌ | Minimum trustline count for asset verification (default: `10`) |
+| `MIN_REPUTATION_SCORE` | ❌ | Minimum reputation score for asset verification (default: `50`) |
+| `ANCHOR_TIMEOUT_HOURS` | ❌ | Hours before a pending anchor transaction is marked as error (default: `24`) |
+| `ANCHOR_TIMEOUT_WEBHOOK_URL` | ❌ | Webhook URL notified when a transaction times out in `pending_anchor` status |
+
+See [`backend/.env.example`](backend/.env.example) for the full list with inline comments.
+
+### API Service (`api/.env.example`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `PORT` | ✅ | Port the API HTTP server listens on (default: `3000`) |
+| `NODE_ENV` | ✅ | Runtime environment: `production` |
+| `DATABASE_URL` | ✅ | PostgreSQL connection string |
+| `CONTRACT_RPC_URL` | ✅ | Soroban RPC URL used by the API to read contract state |
+| `ANCHORS_ADMIN_API_KEY` | ✅ | Admin API key for anchor management endpoints |
+| `RATE_LIMIT_WINDOW_MS` | ❌ | Rate-limit window in milliseconds (default: `900000`) |
+| `RATE_LIMIT_MAX_REQUESTS` | ❌ | Max requests per window per IP (default: `100`) |
+| `CURRENCY_CONFIG_PATH` | ❌ | Path to the currency configuration JSON file (default: `./config/currencies.json`) |
+| `CURRENCY_CONFIG_ENV_OVERRIDE` | ❌ | Set to `true` to allow env-variable overrides of currency config (default: `false`) |
+| `CURRENCY_OVERRIDES` | ❌ | JSON array of currency overrides, e.g. `[{"code":"USD","symbol":"$","decimal_precision":2}]` |
+
+See [`api/.env.example`](api/.env.example) for the full list with inline comments.
+
+### Frontend (`frontend/.env.example`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `VITE_NETWORK` | ✅ | Stellar network: `testnet` or `mainnet` |
+| `VITE_HORIZON_URL` | ✅ | Horizon API endpoint |
+| `VITE_SOROBAN_RPC_URL` | ✅ | Soroban RPC endpoint |
+| `VITE_CONTRACT_ID` | ✅ | Deployed SwiftRemit contract address |
+| `VITE_USDC_ISSUER` | ✅ | USDC issuer public key on the target network |
+| `VITE_EURC_ISSUER` | ❌ | EURC issuer public key (optional, for EURC support) |
+| `VITE_USDC_TOKEN_ID` | ✅ | USDC token contract ID on Soroban |
+
+See [`frontend/.env.example`](frontend/.env.example) for the full list with inline comments.
+
+> **Security note:** Never commit `.env` files to version control. Use your deployment
+> platform's secret management (e.g. Vercel environment variables, AWS Secrets Manager,
+> or Docker secrets) for all production values, especially `ADMIN_SECRET_KEY` and
+> `ANCHORS_ADMIN_API_KEY`.
+
+---
+
+## Support
+
+- **Documentation**: See README.md files in each directory
+- **Issues**: https://github.com/Haroldwonder/SwiftRemit/issues
+- **Stellar Discord**: https://discord.gg/stellar
+
+---
+
+## Quick Links
+
+- **Repository**: https://github.com/Haroldwonder/SwiftRemit
+- **Branch**: refactor/production-readiness-soroban
+- **Stellar Testnet**: https://horizon-testnet.stellar.org
+- **Freighter Wallet**: https://www.freighter.app/

@@ -1,86 +1,286 @@
+//! Error types for the SwiftRemit contract.
+//!
+//! This module defines all possible error conditions that can occur
+//! during contract execution. All errors are explicitly defined with
+//! unique error codes to ensure deterministic error handling.
+
 use soroban_sdk::contracterror;
 
-/// Contract error codes with descriptive meanings for debugging.
-/// 
-/// Each error provides specific context about what went wrong to help
-/// developers quickly identify and fix integration issues.
-#[contracterror]
+#[contracterror(export = false)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum ContractError {
-    /// Contract has already been initialized. Cannot initialize twice.
-    /// Cause: Calling initialize() on an already initialized contract.
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Initialization Errors (1-2)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Contract has already been initialized.
+    /// Cause: Attempting to call initialize() on an already initialized contract.
     AlreadyInitialized = 1,
-    
-    /// Contract has not been initialized yet. Call initialize() first.
-    /// Cause: Attempting operations before contract initialization.
+
+    /// Contract has not been initialized yet.
+    /// Cause: Attempting operations before calling initialize().
     NotInitialized = 2,
-    
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Validation Errors (3-10)
+    // ═══════════════════════════════════════════════════════════════════════════
+
     /// Amount must be greater than zero.
-    /// Cause: Passing 0 or negative amount to create_remittance().
+    /// Cause: Providing zero or negative amount in remittance creation.
     InvalidAmount = 3,
-    
-    /// Fee basis points must be between 0-10000 (0%-100%).
-    /// Cause: Setting fee_bps > 10000 in initialize() or update_fee().
+
+    /// Fee must be between 0 and 10000 basis points (0-100%).
+    /// Cause: Setting platform fee outside valid range.
     InvalidFeeBps = 4,
-    
-    /// Agent address is not registered in the system.
-    /// Cause: Creating remittance with unregistered agent or agent was removed.
+
+    /// Agent is not registered in the system.
+    /// Cause: Attempting to create remittance with unregistered agent.
     AgentNotRegistered = 5,
-    
-    /// Remittance ID does not exist in storage.
-    /// Cause: Querying or operating on non-existent remittance_id.
+
+    /// Remittance not found.
+    /// Cause: Querying or operating on non-existent remittance ID.
     RemittanceNotFound = 6,
-    
-    /// Operation not allowed in current remittance status.
-    /// Cause: Confirming/cancelling already completed or cancelled remittance.
+
+    /// Invalid remittance status for this operation.
+    /// Cause: Attempting operation on remittance in wrong status (e.g., settling completed remittance).
     InvalidStatus = 7,
-    
-    /// Arithmetic operation resulted in overflow.
-    /// Cause: Fee calculation or amount operations exceeded i128 limits.
-    Overflow = 8,
-    
-    /// No accumulated fees available to withdraw.
-    /// Cause: Calling withdraw_fees() when accumulated fees are zero.
+
+    /// Invalid state transition attempted.
+    /// Cause: Attempting to transition remittance to invalid state.
+    InvalidStateTransition = 8,
+
+    /// No fees available to withdraw.
+    /// Cause: Attempting to withdraw fees when accumulated fees is zero or negative.
     NoFeesToWithdraw = 9,
-    
-    /// Address validation failed.
-    /// Cause: Invalid or malformed address provided.
+
+    /// Invalid address format or validation failed.
+    /// Cause: Address does not meet validation requirements.
     InvalidAddress = 10,
-    
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Settlement Errors (11-12)
+    // ═══════════════════════════════════════════════════════════════════════════
+
     /// Settlement window has expired.
-    /// Cause: Attempting confirm_payout() after expiry timestamp.
+    /// Cause: Attempting to settle remittance after expiry timestamp.
     SettlementExpired = 11,
-    
-    /// Settlement already executed for this remittance.
-    /// Cause: Attempting to settle the same remittance twice.
+
+    /// Settlement has already been executed.
+    /// Cause: Attempting to settle the same remittance twice (duplicate prevention).
     DuplicateSettlement = 12,
-    
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Contract State & User Errors (13-22)
+    // ═══════════════════════════════════════════════════════════════════════════
+
     /// Contract is paused. Settlements are temporarily disabled.
     /// Cause: Attempting confirm_payout() while contract is in paused state.
     ContractPaused = 13,
-    
+
+    /// Asset verification record not found.
+    AssetNotFound = 14,
+
+    /// User is blacklisted and cannot perform transactions.
+    /// Cause: User address is on the blacklist.
+    UserBlacklisted = 15,
+
+    /// Reputation score must be between 0 and 100.
+    InvalidReputationScore = 16,
+
+    /// User KYC is not approved.
+    /// Cause: User has not completed KYC verification.
+    KycNotApproved = 17,
+
+    /// Asset has been flagged as suspicious.
+    SuspiciousAsset = 18,
+
+    /// Anchor transaction failed.
+    /// Cause: Anchor withdrawal/deposit operation failed.
+    AnchorTransactionFailed = 19,
+
     /// Caller is not authorized to perform admin operations.
     /// Cause: Non-admin attempting to perform admin-only operations.
-    Unauthorized = 14,
-    
-    /// Admin address already exists in the system.
-    /// Cause: Attempting to add an admin that is already registered.
-    AdminAlreadyExists = 15,
-    
-    /// Admin address does not exist in the system.
-    /// Cause: Attempting to remove an admin that is not registered.
-    AdminNotFound = 16,
-    
-    /// Cannot remove the last admin from the system.
-    /// Cause: Attempting to remove the only remaining admin.
-    CannotRemoveLastAdmin = 17,
-    
-    /// Token is not whitelisted for use in the system.
-    /// Cause: Attempting to initialize contract with non-whitelisted token.
-    TokenNotWhitelisted = 18,
-    
+    Unauthorized = 20,
+
+    /// Daily send limit exceeded for this user.
+    /// Cause: User's total transfers in the last 24 hours exceed the configured limit.
+    DailySendLimitExceeded = 21,
+
     /// Token is already whitelisted in the system.
     /// Cause: Attempting to add a token that is already whitelisted.
-    TokenAlreadyWhitelisted = 19,
+    TokenAlreadyWhitelisted = 22,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // KYC / Transaction Errors (23-25)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// User KYC has expired.
+    /// Cause: User's KYC verification has expired and needs renewal.
+    KycExpired = 23,
+
+    /// Transaction record not found.
+    /// Cause: Querying non-existent transaction record.
+    TransactionNotFound = 24,
+
+    /// Rate limit exceeded.
+    RateLimitExceeded = 25,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Authorization Errors (26-29)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Admin address already exists in the system.
+    /// Cause: Attempting to add an admin that is already registered.
+    AdminAlreadyExists = 26,
+
+    /// Admin address does not exist in the system.
+    /// Cause: Attempting to remove an admin that is not registered.
+    AdminNotFound = 27,
+
+    /// Cannot remove the last admin from the system.
+    /// Cause: Attempting to remove the only remaining admin.
+    CannotRemoveLastAdmin = 28,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Token Whitelist Errors (29)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Token is not whitelisted for use in the system.
+    /// Cause: Attempting to initialize contract with non-whitelisted token.
+    TokenNotWhitelisted = 29,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Migration Errors (30-32)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Migration hash verification failed.
+    /// Cause: Snapshot hash doesn't match computed hash (data tampering or corruption).
+    InvalidMigrationHash = 30,
+
+    /// Migration already in progress or completed.
+    /// Cause: Attempting to start migration when one is already active.
+    MigrationInProgress = 31,
+
+    /// Migration batch out of order or invalid.
+    /// Cause: Importing batches in wrong order or invalid batch number.
+    InvalidMigrationBatch = 32,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Rate Limiting / Abuse Errors (33-36)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Cooldown period is still active.
+    /// Cause: Attempting action before cooldown period has elapsed.
+    CooldownActive = 33,
+
+    /// Suspicious activity detected.
+    /// Cause: Pattern matching known abuse behaviors (rapid retries, unusual patterns).
+    SuspiciousActivity = 34,
+
+    /// Action temporarily blocked due to abuse protection.
+    /// Cause: Multiple violations or severe abuse detected.
+    ActionBlocked = 35,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Arithmetic / Data Errors (36-52)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Arithmetic overflow occurred during calculation.
+    /// Cause: Result of arithmetic operation exceeds maximum value.
+    Overflow = 36,
+
+    /// Net settlement validation failed.
+    /// Cause: Net settlement calculations don't match expected values.
+    NetSettlementValidationFailed = 37,
+
+    /// Escrow not found.
+    /// Cause: Querying non-existent escrow record.
+    EscrowNotFound = 38,
+
+    /// Invalid escrow status for this operation.
+    /// Cause: Attempting operation on escrow in wrong status.
+    InvalidEscrowStatus = 39,
+
+    /// Settlement counter overflow.
+    /// Cause: Settlement counter would exceed u64::MAX.
+    SettlementCounterOverflow = 40,
+
+    /// Invalid batch size for batch operations.
+    /// Cause: Provided batch size is zero or exceeds max limits.
+    InvalidBatchSize = 41,
+
+    /// Data corruption detected in stored values.
+    /// Cause: Integrity checks failed on stored data.
+    DataCorruption = 42,
+
+    /// Index out of bounds.
+    /// Cause: Accessing collection with invalid index.
+    IndexOutOfBounds = 43,
+
+    /// Collection is empty.
+    /// Cause: Operation requires at least one element.
+    EmptyCollection = 44,
+
+    /// Key not found in map.
+    /// Cause: Lookup failed for required key.
+    KeyNotFound = 45,
+
+    /// String conversion failed.
+    /// Cause: Invalid or malformed string conversion.
+    StringConversionFailed = 46,
+
+    /// Invalid symbol string.
+    /// Cause: Symbol is invalid or malformed.
+    InvalidSymbol = 47,
+
+    /// Arithmetic underflow occurred.
+    /// Cause: Result of arithmetic operation is below minimum.
+    Underflow = 48,
+
+    /// No pending admin transfer to accept.
+    /// Cause: accept_admin() called when no propose_admin() has been issued.
+    NoPendingAdminTransfer = 49,
+
+    /// Idempotency key conflict with different payload.
+    IdempotencyConflict = 50,
+
+    /// Proof validation failed.
+    InvalidProof = 51,
+
+    /// Proof is required but not provided.
+    MissingProof = 52,
+
+    /// Oracle address is invalid or not configured.
+    InvalidOracleAddress = 53,
+
+    /// Contract is already paused.
+    /// Cause: Calling emergency_pause when the contract is already in paused state.
+    AlreadyPaused = 54,
+
+    /// Contract is not currently paused.
+    NotPaused = 55,
+
+    /// This operation requires the remittance to be in a Disputed state.
+    NotDisputed = 55,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Multi-Sig Errors (56-59)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Pending admin operation not found.
+    OperationNotFound = 56,
+
+    /// Caller has already approved this pending operation.
+    AlreadyApproved = 57,
+
+    /// Pending operation has exceeded its time-to-live and cannot be approved or executed.
+    OperationExpired = 58,
+
+    /// Multi-sig threshold must be at least 1 and no greater than the admin count.
+    InvalidMultiSigThreshold = 59,
+}
+
+    /// Evidence hash for a dispute is not a valid 32-byte SHA-256 commitment.
+    MalformedEvidenceHash = 83,
 }

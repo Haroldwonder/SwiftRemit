@@ -1,10 +1,22 @@
 #!/bin/bash
 set -e
 
-# Configuration
-NETWORK=${1:-testnet}
-DEPLOYER="deployer"
+# Configuration - Read from environment with defaults
+NETWORK=${NETWORK:-testnet}
+DEPLOYER=${DEPLOYER_IDENTITY:-deployer}
+INITIAL_FEE_BPS=${INITIAL_FEE_BPS:-250}
 WASM_PATH="target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm"
+
+# Allow CLI override for NETWORK (first argument)
+if [ -n "$1" ]; then
+  NETWORK=$1
+fi
+
+# Validate INITIAL_FEE_BPS range (0-10000)
+if [ "$INITIAL_FEE_BPS" -lt 0 ] || [ "$INITIAL_FEE_BPS" -gt 10000 ]; then
+  echo "❌ Error: INITIAL_FEE_BPS must be between 0 and 10000, got: $INITIAL_FEE_BPS"
+  exit 1
+fi
 
 echo "🚀 SwiftRemit Deployment Script"
 echo "Network: $NETWORK"
@@ -36,6 +48,7 @@ fi
 
 # Build and Optimize
 echo "🔨 Building and Optimizing Contract..."
+# Note: To enable debug logging for local testing, add: --features debug-log
 cargo build --target wasm32-unknown-unknown --release
 soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 
