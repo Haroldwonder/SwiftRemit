@@ -94,5 +94,31 @@ services:
       - api
       - backend
 
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./backend/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./backend/monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    restart: unless-stopped
+    ports:
+      - "3003:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/provisioning/dashboards/swiftremit.yml:/etc/grafana/provisioning/dashboards/swiftremit.yml:ro
+      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      - prometheus
+
 volumes:
   postgres_data:
+  grafana_data:

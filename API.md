@@ -138,3 +138,68 @@ soroban contract invoke \
   -- \
   register_agent \
   --agent GXXXXXXXXXXXXXXXXXX
+---
+
+## WebSocket — Real-time FX Rate Feed
+
+SwiftRemit exposes a Socket.io namespace at `/fx-rates` (mounted under the WebSocket path `/ws`) for real-time FX rate pushes. Clients subscribe to currency pairs and receive updates within 1 s of each cache refresh.
+
+### Connection
+
+```
+ws://<host>:<port>/ws/fx-rates
+```
+
+Socket.io client path option: `{ path: '/ws' }`
+
+### Events — Client → Server
+
+#### `subscribe`
+Subscribe to one or more currency pairs. The server immediately sends the last known rate for each pair (rate-replay).
+
+```json
+{ "pairs": ["USD/PHP", "USD/MXN"] }
+```
+
+#### `unsubscribe`
+Unsubscribe from one or more currency pairs.
+
+```json
+{ "pairs": ["USD/MXN"] }
+```
+
+### Events — Server → Client
+
+#### `fx_rate`
+Emitted whenever the FX cache refreshes a subscribed pair.
+
+```json
+{
+  "pair": "USD/PHP",
+  "from": "USD",
+  "to": "PHP",
+  "rate": 57.83,
+  "timestamp": "2026-06-28T10:00:01.000Z",
+  "provider": "ExchangeRateAPI"
+}
+```
+
+### Reconnect behaviour
+Socket.io handles reconnect automatically. On reconnect the client should re-send `subscribe` for all pairs it needs; the server will replay the last known rate immediately.
+
+### Example (JavaScript)
+
+```js
+import { io } from 'socket.io-client';
+
+const socket = io('http://localhost:3000', { path: '/ws' }).of('/fx-rates');
+
+socket.on('connect', () => {
+  socket.emit('subscribe', { pairs: ['USD/PHP', 'USD/MXN'] });
+});
+
+socket.on('fx_rate', (update) => {
+  console.log(`${update.pair}: ${update.rate} @ ${update.timestamp}`);
+});
+```
+

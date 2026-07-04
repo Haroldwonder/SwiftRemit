@@ -1,0 +1,138 @@
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.onboarding-modal {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  max-width: 500px;
+  width: 90%;
+  padding: 40px;
+  position: relative;
+}
+
+.onboarding-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.onboarding-progress {
+  display: flex;
+  gap: 8px;
+}
+
+.progress-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e0e0e0;
+  transition: background 0.3s ease;
+}
+
+.progress-dot.active {
+  background: #2563eb;
+}
+
+.onboarding-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: #999;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.onboarding-close:hover {
+  color: #333;
+}
+
+.onboarding-content {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.onboarding-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.onboarding-content h2 {
+  font-size: 24px;
+  margin: 16px 0;
+  color: #1f2937;
+}
+
+.onboarding-content p {
+  font-size: 16px;
+  color: #6b7280;
+  line-height: 1.5;
+  margin: 12px 0;
+}
+
+.onboarding-link {
+  display: inline-block;
+  color: #2563eb;
+  text-decoration: none;
+  margin-top: 12px;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.onboarding-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.onboarding-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.onboarding-buttons {
+  display: flex;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.btn-tertiary {
+  background: #f3f4f6;
+  color: #1f2937;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.2s;
+}
+
+.btn-tertiary:hover {
+  background: #e5e7eb;
+}
+
+.onboarding-step-counter {
+  position: absolute;
+  bottom: 12px;
+  left: 40px;
+  font-size: 12px;
+  color: #9ca3af;
+}

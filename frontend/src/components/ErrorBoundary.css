@@ -100,6 +100,21 @@
   background: var(--color-secondary-light);
 }
 
+.error-boundary-btn-tertiary {
+  background: var(--color-warning);
+  color: white;
+}
+
+.error-boundary-btn-tertiary:hover {
+  background: var(--color-warning-dark, #d97706);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.error-boundary-btn-tertiary:active {
+  transform: translateY(0);
+}
+
 .error-boundary-details {
   margin-top: 1.5rem;
   padding-top: 1.5rem;

@@ -19,6 +19,7 @@ export type {
   RemittanceStatus,
   RemittanceEvent,
   RemittanceEventType,
+  EventHandler,
   SubscribeOptions,
   Unsubscribe,
   AgentStats,
@@ -27,16 +28,22 @@ export type {
   HealthStatus,
   FeeBreakdown,
   BatchCreateEntry,
+  BatchCreateResult,
+  BatchCreateResponse,
   CreateRemittanceParams,
   SettlementConfig,
   EscrowStatus,
   Role,
   GovernanceConfig,
   DailyLimitStatus,
+  RetryPolicy,
+  Corridor,
+  FeeEstimate,
   Proposal,
   ProposalAction,
   ProposalState,
 } from "./types.js";
+export { RetryPolicies } from "./types.js";
 export {
   parseRemittance,
   parseAgentStats,
@@ -64,7 +71,7 @@ export const RpcUrls = {
   MAINNET: "https://soroban-mainnet.stellar.org",
 } as const;
 
-export { withRetry, isTransientError } from "./retry.js";
+export { withRetry, withRetryPolicy, isTransientError } from "./retry.js";
 
 /** USDC multiplier: 1 USDC = 10_000_000 stroops. */
 export const USDC_MULTIPLIER = 10_000_000n;

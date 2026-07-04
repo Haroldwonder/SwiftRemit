@@ -20,6 +20,7 @@ backend/.env.local
 # SDK
 sdk/node_modules/
 sdk/dist/
+sdk/docs/
 sdk/react-native/node_modules/
 sdk/react-native/dist/
 

@@ -54,7 +54,7 @@ export interface FxRateRecord {
   created_at: Date;
 }
 
-export type KycStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 're_verification_pending';
+export type KycStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 're_verification_pending' | 'needs_info';
 
 export type KycLevel = 'basic' | 'intermediate' | 'advanced';
 
@@ -178,4 +178,21 @@ export interface WebhookDelivery {
   last_error?: string | null;
   response_status?: number | null;
   delivered_at?: Date | null;
+}
+
+export type AgentKycStatus = 'submitted' | 'under_review' | 'approved' | 'rejected';
+
+export interface AgentKycRecord {
+  agent_id: string;
+  business_registration?: any; // structured business registration data (JSON)
+  owner_id?: string;
+  operating_country?: string;
+  payout_address?: string;
+  contact_email?: string;
+  status: AgentKycStatus;
+  rejection_reason?: string;
+  submitted_at: Date;
+  reviewed_at?: Date;
+  created_at?: Date;
+  updated_at?: Date;
 }

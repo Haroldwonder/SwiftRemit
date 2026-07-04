@@ -1,0 +1,15 @@
+{{- range list "api" "backend" "frontend" }}
+{{- $svc := index $.Values . }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "swiftremit.fullname" $ }}-{{ . }}
+  labels:
+    {{- include "swiftremit.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ . }}
+data:
+  {{- range $k, $v := $svc.config }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}

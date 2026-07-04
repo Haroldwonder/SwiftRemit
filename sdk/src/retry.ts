@@ -1,3 +1,5 @@
+import type { RetryPolicy } from "./types.js";
+
 export function isTransientError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return (
@@ -7,7 +9,8 @@ export function isTransientError(err: unknown): boolean {
     msg.includes("ECONNREFUSED") ||
     msg.includes("ETIMEDOUT") ||
     msg.includes("network") ||
-    msg.includes("timeout")
+    msg.includes("timeout") ||
+    msg.includes("timed out")
   );
 }
 
@@ -29,4 +32,22 @@ export async function withRetry<T>(
       attempt++;
     }
   }
+}
+
+/**
+ * Apply a {@link RetryPolicy} object, filling in omitted fields from the provided
+ * client defaults. Use this when you have a RetryPolicy that may be missing
+ * delayMs or backoffFactor.
+ */
+export async function withRetryPolicy<T>(
+  fn: () => Promise<T>,
+  policy: RetryPolicy,
+  defaults: { delayMs: number; backoffFactor: number }
+): Promise<T> {
+  return withRetry(
+    fn,
+    policy.retries,
+    policy.delayMs ?? defaults.delayMs,
+    policy.backoffFactor ?? defaults.backoffFactor
+  );
 }

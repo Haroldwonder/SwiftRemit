@@ -44,12 +44,39 @@ const verifier_1 = require("./verifier");
 const database_1 = require("./database");
 const stellar_1 = require("./stellar");
 const types_1 = require("./types");
+const kyc_upsert_service_1 = require("./kyc-upsert-service");
+const transfer_guard_1 = require("./transfer-guard");
+const fx_rate_cache_1 = require("./fx-rate-cache");
+const correlation_id_1 = require("./correlation-id");
+const metrics_1 = require("./metrics");
+const sanitizer_1 = require("./sanitizer");
+const docs_1 = __importDefault(require("./routes/docs"));
 const app = (0, express_1.default)();
+const fxRateCache = (0, fx_rate_cache_1.getFxRateCache)();
 const verifier = new verifier_1.AssetVerifier();
+const logger = (0, correlation_id_1.createLogger)('api');
+const pool = (0, database_1.getPool)();
+const metricsService = (0, metrics_1.getMetricsService)(pool);
+fxRateCache.setMetricsObserver((from, to, stalenessSeconds) => {
+    metricsService.setFxRateStalenessMetric(from, to, stalenessSeconds);
+});
 // Security middleware
 app.use((0, helmet_1.default)());
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
+// Correlation ID middleware
+app.use(correlation_id_1.correlationIdMiddleware);
+const kycUpsertService = new kyc_upsert_service_1.KycUpsertService(pool);
+const transferGuard = (0, transfer_guard_1.createTransferGuard)(kycUpsertService);
+// Initialize SEP-24 service
+let sep24Service = null;
+async function getSep24ServiceInstance() {
+    if (!sep24Service) {
+        sep24Service = new Sep24Service(pool);
+        await sep24Service.initialize();
+    }
+    return sep24Service;
+}
 // Rate limiting
 const limiter = (0, express_rate_limit_1.default)({
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
@@ -57,6 +84,20 @@ const limiter = (0, express_rate_limit_1.default)({
     message: 'Too many requests from this IP, please try again later.',
 });
 app.use('/api/', limiter);
+// Metrics endpoint (excluded from rate limiting)
+app.get('/metrics', async (req, res) => {
+    try {
+        const metrics = await metricsService.getMetrics();
+        res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+        res.send(metrics);
+    }
+    catch (error) {
+        logger.error('Error generating metrics', error);
+        res.status(500).send('# Error generating metrics\n');
+    }
+});
+// API documentation
+app.use('/api/docs', docs_1.default);
 // Input validation middleware
 function validateAssetParams(req, res, next) {
     const { assetCode, issuer } = req.body;
@@ -66,6 +107,14 @@ function validateAssetParams(req, res, next) {
     if (!issuer || typeof issuer !== 'string' || issuer.length !== 56) {
         return res.status(400).json({ error: 'Invalid issuer address' });
     }
+    next();
+}
+function authMiddleware(req, res, next) {
+    const userId = req.headers['x-user-id'] || '';
+    if (!userId || typeof userId !== 'string') {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    req.user = { id: userId };
     next();
 }
 // Health check
@@ -139,6 +188,8 @@ app.post('/api/verification/report', validateAssetParams, async (req, res) => {
         if (!reason || typeof reason !== 'string' || reason.length > 500) {
             return res.status(400).json({ error: 'Invalid or missing reason' });
         }
+        // Sanitize input to prevent XSS attacks
+        const sanitizedReason = (0, sanitizer_1.sanitizeInput)(reason);
         // Check if asset exists
         const existing = await (0, database_1.getAssetVerification)(assetCode, issuer);
         if (!existing) {
@@ -146,6 +197,8 @@ app.post('/api/verification/report', validateAssetParams, async (req, res) => {
         }
         // Increment report count
         await (0, database_1.reportSuspiciousAsset)(assetCode, issuer);
+        // Save the report with sanitized reason for audit trail
+        await (0, database_1.saveAssetReport)(assetCode, issuer, sanitizedReason);
         // If reports exceed threshold, mark as suspicious
         const updated = await (0, database_1.getAssetVerification)(assetCode, issuer);
         if (updated && updated.community_reports && updated.community_reports >= 5) {
@@ -217,6 +270,25 @@ app.post('/api/verification/batch', async (req, res) => {
         res.status(500).json({ error: 'Batch verification failed' });
     }
 });
+// KYC status endpoint
+app.get('/api/kyc/status', authMiddleware, async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        const status = await kycUpsertService.getStatusForUser(userId);
+        return res.status(200).json(status);
+    }
+    catch (error) {
+        console.error('Error fetching KYC status:', error);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+// Transfer endpoint (guarded)
+app.post('/api/transfer', authMiddleware, transferGuard, async (req, res) => {
+    return res.status(200).json({ success: true, message: 'Transfer allowed' });
+});
 // Store FX rate for transaction
 app.post('/api/fx-rate', async (req, res) => {
     try {
@@ -259,11 +331,32 @@ app.get('/api/fx-rate/:transactionId', async (req, res) => {
         if (!fxRate) {
             return res.status(404).json({ error: 'FX rate not found for this transaction' });
         }
-        res.json(fxRate);
+        res.json({
+            ...fxRate,
+            fx_rate_source: fxRate.provider,
+        });
     }
     catch (error) {
         console.error('Error fetching FX rate:', error);
         res.status(500).json({ error: 'Failed to fetch FX rate' });
+    }
+});
+// Get current FX rate (cached)
+app.get('/api/fx-rate/current', async (req, res) => {
+    try {
+        const { from, to } = req.query;
+        if (!from || typeof from !== 'string' || from.length > 10) {
+            return res.status(400).json({ error: 'Invalid from currency' });
+        }
+        if (!to || typeof to !== 'string' || to.length > 10) {
+            return res.status(400).json({ error: 'Invalid to currency' });
+        }
+        const rate = await fxRateCache.getCurrentRate(from.toUpperCase(), to.toUpperCase());
+        res.json(rate);
+    }
+    catch (error) {
+        console.error('Error fetching current FX rate:', error);
+        res.status(500).json({ error: 'Failed to fetch current FX rate' });
     }
 });
 // KYC-related endpoints
@@ -324,6 +417,95 @@ app.post('/api/kyc/register', async (req, res) => {
         res.status(500).json({ error: 'Failed to register user for KYC' });
     }
 });
+// SEP-24: Initiate deposit/withdrawal flow
+app.post('/api/anchor/initiate', async (req, res) => {
+    try {
+        const { user_id, anchor_id, direction, asset_code, amount, user_address, user_email } = req.body;
+        // Validate required fields
+        if (!user_id || typeof user_id !== 'string') {
+            return res.status(400).json({ error: 'Invalid or missing user_id' });
+        }
+        if (!anchor_id || typeof anchor_id !== 'string') {
+            return res.status(400).json({ error: 'Invalid or missing anchor_id' });
+        }
+        if (!direction || (direction !== 'deposit' && direction !== 'withdrawal')) {
+            return res.status(400).json({ error: 'Invalid direction (must be deposit or withdrawal)' });
+        }
+        if (!asset_code || typeof asset_code !== 'string') {
+            return res.status(400).json({ error: 'Invalid or missing asset_code' });
+        }
+        if (!amount || typeof amount !== 'string' || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+            return res.status(400).json({ error: 'Invalid or missing amount' });
+        }
+        const service = await getSep24ServiceInstance();
+        const request = {
+            user_id,
+            anchor_id,
+            direction: direction,
+            asset_code,
+            amount,
+            user_address,
+            user_email,
+        };
+        const result = await service.initiateFlow(request);
+        res.json({
+            success: true,
+            transaction_id: result.transaction_id,
+            url: result.url,
+            message: result.message,
+        });
+    }
+    catch (error) {
+        if (error instanceof Sep24ConfigError) {
+            return res.status(400).json({ error: error.message, code: 'CONFIG_ERROR' });
+        }
+        if (error instanceof Sep24AnchorError) {
+            return res.status(error.statusCode || 502).json({
+                error: error.message,
+                code: 'ANCHOR_ERROR'
+            });
+        }
+        console.error('Error initiating SEP-24 flow:', error);
+        res.status(500).json({ error: 'Failed to initiate transaction' });
+    }
+});
+// SEP-24: Get transaction status
+app.get('/api/anchor/transaction/:transactionId', async (req, res) => {
+    try {
+        const { transactionId } = req.params;
+        if (!transactionId) {
+            return res.status(400).json({ error: 'Invalid transaction ID' });
+        }
+        const service = await getSep24ServiceInstance();
+        const transaction = await service.getTransactionStatus(transactionId);
+        if (!transaction) {
+            return res.status(404).json({ error: 'Transaction not found' });
+        }
+        res.json({
+            success: true,
+            transaction: {
+                transaction_id: transaction.transaction_id,
+                anchor_id: transaction.anchor_id,
+                direction: transaction.direction,
+                status: transaction.status,
+                asset_code: transaction.asset_code,
+                amount: transaction.amount,
+                amount_in: transaction.amount_in,
+                amount_out: transaction.amount_out,
+                amount_fee: transaction.amount_fee,
+                stellar_transaction_id: transaction.stellar_transaction_id,
+                external_transaction_id: transaction.external_transaction_id,
+                kyc_status: transaction.kyc_status,
+                created_at: transaction.created_at,
+                updated_at: transaction.updated_at,
+            },
+        });
+    }
+    catch (error) {
+        console.error('Error getting transaction status:', error);
+        res.status(500).json({ error: 'Failed to get transaction status' });
+    }
+});
 // Check if user is KYC approved (for transfer validation)
 app.get('/api/kyc/approved/:userId', async (req, res) => {
     try {
@@ -339,6 +521,97 @@ app.get('/api/kyc/approved/:userId', async (req, res) => {
     catch (error) {
         console.error('Error checking KYC approval:', error);
         res.status(500).json({ error: 'Failed to check KYC approval' });
+    }
+});
+// Create remittance
+app.post('/api/remittance', authMiddleware, async (req, res) => {
+    try {
+        const { sender, agent, amount, fee, expiry, memo } = req.body;
+        const fromCurrency = typeof req.body.fromCurrency === 'string' ? req.body.fromCurrency : req.body.from_currency;
+        const toCurrency = typeof req.body.toCurrency === 'string' ? req.body.toCurrency : req.body.to_currency;
+        const maxStalenessSeconds = Number.parseInt(String(req.body.fxRateMaxStalenessSeconds ?? req.body.fx_rate_max_staleness_seconds ?? process.env.FX_RATE_MAX_STALENESS_SECONDS ?? '3600'), 10);
+        if (!sender || typeof sender !== 'string') {
+            return res.status(400).json({ error: 'Invalid or missing sender' });
+        }
+        if (!agent || typeof agent !== 'string') {
+            return res.status(400).json({ error: 'Invalid or missing agent' });
+        }
+        if (!amount || typeof amount !== 'string' || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+            return res.status(400).json({ error: 'Invalid or missing amount' });
+        }
+        // Validate memo — optional, max 100 chars, plain text only
+        let sanitizedMemo;
+        if (memo !== undefined && memo !== null && memo !== '') {
+            if (typeof memo !== 'string') {
+                return res.status(400).json({ error: 'memo must be a string' });
+            }
+            if (memo.length > 100) {
+                return res.status(400).json({ error: 'memo must not exceed 100 characters' });
+            }
+            sanitizedMemo = (0, sanitizer_1.sanitizeInput)(memo);
+        }
+        if (typeof fromCurrency === 'string' && fromCurrency && typeof toCurrency === 'string' && toCurrency) {
+            try {
+                const fxRate = await fxRateCache.getCurrentRate(fromCurrency.toUpperCase(), toCurrency.toUpperCase());
+                if (fxRate.stale && typeof fxRate.stalenessSeconds === 'number' && fxRate.stalenessSeconds > (Number.isFinite(maxStalenessSeconds) ? maxStalenessSeconds : 3600)) {
+                    return res.status(409).json({
+                        error: `FX rate is stale beyond the allowed maximum (${Number.isFinite(maxStalenessSeconds) ? maxStalenessSeconds : 3600}s)`,
+                        fx_rate_source: fxRate.fx_rate_source || fxRate.provider,
+                        fx_rate_staleness_seconds: fxRate.stalenessSeconds,
+                    });
+                }
+            }
+            catch (error) {
+                logger.error('Failed to resolve FX rate for remittance', error);
+                return res.status(503).json({ error: 'Unable to obtain a valid FX rate' });
+            }
+        }
+        const remittanceId = `rem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        await pool.query(`INSERT INTO transactions
+         (transaction_id, anchor_id, kind, status, amount_in, memo, created_at, updated_at)
+       VALUES ($1, $2, 'withdrawal', 'pending_user_transfer_start', $3, $4, NOW(), NOW())`, [remittanceId, agent, amount, sanitizedMemo ?? null]);
+        return res.status(201).json({
+            success: true,
+            remittance: {
+                remittance_id: remittanceId,
+                sender,
+                agent,
+                amount,
+                fee: fee ?? null,
+                expiry: expiry ?? null,
+                memo: sanitizedMemo ?? null,
+                status: 'pending_user_transfer_start',
+            },
+        });
+    }
+    catch (error) {
+        logger.error('Error creating remittance', error);
+        return res.status(500).json({ error: 'Failed to create remittance' });
+    }
+});
+// Get remittance by ID
+app.get('/api/remittance/:remittanceId', async (req, res) => {
+    try {
+        const { remittanceId } = req.params;
+        const result = await pool.query(`SELECT transaction_id, anchor_id, status, amount_in, memo, created_at, updated_at
+         FROM transactions WHERE transaction_id = $1`, [remittanceId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Remittance not found' });
+        }
+        const row = result.rows[0];
+        return res.json({
+            remittance_id: row.transaction_id,
+            agent: row.anchor_id,
+            status: row.status,
+            amount: row.amount_in,
+            memo: row.memo ?? null,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        });
+    }
+    catch (error) {
+        logger.error('Error fetching remittance', error);
+        return res.status(500).json({ error: 'Failed to fetch remittance' });
     }
 });
 // Simulate settlement — preview fees and payout before confirming

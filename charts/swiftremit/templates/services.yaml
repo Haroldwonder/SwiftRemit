@@ -1,0 +1,20 @@
+{{- range list "api" "backend" "frontend" }}
+{{- $svc := index $.Values . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "swiftremit.fullname" $ }}-{{ . }}
+  labels:
+    {{- include "swiftremit.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ . }}
+spec:
+  type: {{ $svc.service.type }}
+  ports:
+    - port: {{ $svc.service.port }}
+      targetPort: {{ $svc.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "swiftremit.selectorLabels" (merge (dict "component" .) $) | nindent 4 }}
+{{- end }}

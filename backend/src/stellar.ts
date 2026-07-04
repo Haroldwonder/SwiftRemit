@@ -13,7 +13,7 @@ import { correlationFetch } from './stellar-fetch';
 import { withSpan } from './tracing';
 
 const { rpcUrl, networkPassphrase } = getStellarRuntimeConfig();
-const server = new SorobanRpc.Server(rpcUrl, { allowHttp: true, fetch: correlationFetch });
+const server = new SorobanRpc.Server(rpcUrl, { allowHttp: true });
 
 export async function getBaseFee(): Promise<string> {
   const envFee = process.env.STELLAR_BASE_FEE;

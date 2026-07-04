@@ -1,0 +1,184 @@
+.corridor-comparison {
+  padding: 1.5rem;
+  background: var(--color-bg-secondary);
+  border-radius: 12px;
+  border: 1px solid var(--color-border-secondary);
+}
+
+.corridor-comparison h2 {
+  margin: 0 0 1.5rem 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.corridor-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.filter-group label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--color-text-primary);
+}
+
+.filter-group select {
+  padding: 0.75rem;
+  border: 1px solid var(--color-border-secondary);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: white;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.filter-group select:hover {
+  border-color: var(--color-secondary);
+}
+
+.filter-group select:focus {
+  outline: none;
+  border-color: var(--color-secondary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.corridor-table-container {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-secondary);
+}
+
+.corridor-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.corridor-table thead {
+  background: var(--color-bg-tertiary);
+  border-bottom: 2px solid var(--color-border-secondary);
+}
+
+.corridor-table th {
+  padding: 1rem;
+  text-align: left;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.corridor-table td {
+  padding: 1rem;
+  border-bottom: 1px solid var(--color-border-secondary);
+  color: var(--color-text-secondary);
+}
+
+.corridor-table tbody tr:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.route-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 600;
+}
+
+.route-badge {
+  display: inline-block;
+  background: var(--color-secondary);
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.route-arrow {
+  color: var(--color-text-tertiary);
+  font-size: 1.2rem;
+}
+
+.fee-cell {
+  font-weight: 600;
+}
+
+.fee-badge {
+  background: var(--color-success-light, #d1fae5);
+  color: var(--color-success, #10b981);
+  padding: 0.3rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.corridor-select-btn {
+  padding: 0.5rem 1rem;
+  background: var(--color-secondary);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.corridor-select-btn:hover {
+  background: var(--color-secondary-dark);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.corridor-select-btn:active {
+  transform: translateY(0);
+}
+
+.corridor-loading,
+.corridor-error,
+.corridor-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 1rem;
+}
+
+.corridor-error {
+  background: var(--color-error-light, #fee);
+  color: var(--color-error, #dc2626);
+  border-radius: 8px;
+  border: 1px solid var(--color-error, #fca5a5);
+}
+
+@media (max-width: 768px) {
+  .corridor-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .corridor-table {
+    font-size: 0.85rem;
+  }
+
+  .corridor-table th,
+  .corridor-table td {
+    padding: 0.75rem;
+  }
+
+  .route-cell {
+    flex-wrap: wrap;
+  }
+
+  .corridor-select-btn {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.85rem;
+  }
+}

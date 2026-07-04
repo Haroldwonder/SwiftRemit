@@ -50,7 +50,7 @@ export function mapKycStatus(status: string): 'approved' | 'rejected' | 'pending
  * Handle SEP-12 KYC webhook callback from anchor.
  */
 export async function handleKycWebhook(req: Request, res: Response): Promise<void> {
-  const { anchor_id } = req.params;
+  const anchor_id = req.params.anchor_id as string;
   const payload: KycWebhookPayload = req.body;
 
   try {
@@ -60,7 +60,7 @@ export async function handleKycWebhook(req: Request, res: Response): Promise<voi
       return;
     }
 
-    const userId = payload.user_id || payload.external_id;
+    const userId = (payload.user_id || payload.external_id) as string;
     const internalStatus = mapKycStatus(payload.status);
 
     logger.info('Processing KYC webhook', { anchor_id, userId, status: internalStatus });
@@ -70,7 +70,7 @@ export async function handleKycWebhook(req: Request, res: Response): Promise<voi
       user_id: userId,
       anchor_id,
       status: internalStatus,
-      updated_at: new Date(payload.timestamp ? payload.timestamp * 1000 : Date.now()),
+      last_checked: new Date(payload.timestamp ? payload.timestamp * 1000 : Date.now()),
     });
 
     logger.info('KYC webhook processed successfully', { anchor_id, userId });

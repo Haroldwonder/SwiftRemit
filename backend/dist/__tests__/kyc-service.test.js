@@ -38,7 +38,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const vitest_1 = require("vitest");
 const kyc_service_1 = require("../kyc-service");
-const types_1 = require("../types");
 // Mock the database functions
 vitest_1.vi.mock('../database', () => ({
     getAnchorKycConfigs: vitest_1.vi.fn(),
@@ -141,10 +140,10 @@ const axios_1 = __importDefault(require("axios"));
     });
     (0, vitest_1.describe)('mapSep12StatusToInternal', () => {
         (0, vitest_1.it)('should map SEP-12 statuses correctly', () => {
-            (0, vitest_1.expect)(kycService.mapSep12StatusToInternal('approved')).toBe(types_1.KycStatus.Approved);
-            (0, vitest_1.expect)(kycService.mapSep12StatusToInternal('rejected')).toBe(types_1.KycStatus.Rejected);
-            (0, vitest_1.expect)(kycService.mapSep12StatusToInternal('pending')).toBe(types_1.KycStatus.Pending);
-            (0, vitest_1.expect)(kycService.mapSep12StatusToInternal('unknown')).toBe(types_1.KycStatus.Pending);
+            (0, vitest_1.expect)(kycService.mapSep12StatusToInternal('approved')).toBe('approved');
+            (0, vitest_1.expect)(kycService.mapSep12StatusToInternal('rejected')).toBe('rejected');
+            (0, vitest_1.expect)(kycService.mapSep12StatusToInternal('pending')).toBe('pending');
+            (0, vitest_1.expect)(kycService.mapSep12StatusToInternal('unknown')).toBe('pending');
         });
     });
     (0, vitest_1.describe)('isUserKycApproved', () => {
@@ -154,7 +153,7 @@ const axios_1 = __importDefault(require("axios"));
                 {
                     user_id: 'user123',
                     anchor_id: 'anchor-1',
-                    status: types_1.KycStatus.Approved,
+                    status: 'approved',
                     last_checked: new Date(),
                 },
             ]);

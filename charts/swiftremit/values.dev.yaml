@@ -1,0 +1,52 @@
+# values.dev.yaml — local / dev cluster overrides
+# Usage: helm install swiftremit ./charts/swiftremit -f charts/swiftremit/values.dev.yaml
+
+global:
+  nodeEnv: development
+
+api:
+  replicaCount: 1
+  image:
+    pullPolicy: Always
+  autoscaling:
+    enabled: false
+  config:
+    NODE_ENV: development
+  secret:
+    DATABASE_URL: "postgres://swiftremit:swiftremit@swiftremit-postgres:5432/swiftremit"
+    CONTRACT_RPC_URL: "https://soroban-testnet.stellar.org"
+    ANCHORS_ADMIN_API_KEY: "dev-admin-key"
+
+backend:
+  replicaCount: 1
+  image:
+    pullPolicy: Always
+  autoscaling:
+    enabled: false
+  config:
+    NODE_ENV: development
+    STELLAR_NETWORK: testnet
+    HORIZON_URL: "https://horizon-testnet.stellar.org"
+    SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org"
+    NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+  secret:
+    DATABASE_URL: "postgres://swiftremit:swiftremit@swiftremit-postgres:5432/swiftremit"
+    CONTRACT_ID: ""
+    ADMIN_SECRET_KEY: ""
+
+frontend:
+  replicaCount: 1
+  image:
+    pullPolicy: Always
+  config:
+    VITE_NETWORK: testnet
+    VITE_HORIZON_URL: "https://horizon-testnet.stellar.org"
+    VITE_SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org"
+    VITE_CONTRACT_ID: ""
+    VITE_USDC_ISSUER: ""
+    VITE_EURC_ISSUER: ""
+    VITE_USDC_TOKEN_ID: ""
+
+# Dev-only in-cluster postgres
+postgresql:
+  enabled: true

@@ -9,6 +9,7 @@ const database_1 = require("./database");
 const scheduler_1 = require("./scheduler");
 const webhook_handler_1 = require("./webhook-handler");
 const kyc_service_1 = require("./kyc-service");
+const webhook_middleware_1 = require("./webhook-middleware");
 dotenv_1.default.config();
 const PORT = process.env.PORT || 3000;
 async function start() {
@@ -22,6 +23,20 @@ async function start() {
         console.log('KYC service initialized');
         // Setup webhook handler
         const pool = (0, database_1.getPool)();
+        // Apply HMAC verification middleware to all /webhooks routes
+        const webhookVerification = (0, webhook_middleware_1.createWebhookVerificationMiddleware)({
+            timestampWindowSeconds: 300, // 5 minutes
+            requireSignature: true,
+        });
+        // Use before webhook routes - but skip for health check
+        api_1.default.use('/webhooks', (req, res, next) => {
+            if (req.path === '/health') {
+                next();
+            }
+            else {
+                webhookVerification(req, res, next);
+            }
+        });
         const webhookHandler = new webhook_handler_1.WebhookHandler(pool);
         webhookHandler.setupRoutes(api_1.default);
         webhookHandler.setupHealthCheck(api_1.default);

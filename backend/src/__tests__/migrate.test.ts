@@ -107,8 +107,8 @@ describe('migrate()', () => {
       (c: any[]) => typeof c[0] === 'string' && c[0].includes('failed') && c[0].includes('INSERT INTO schema_migrations')
     );
     expect(failInsert).toBeDefined();
-    expect(failInsert[1]).toContain('001_init.sql');
-    expect(failInsert[1]).toContain('syntax error');
+    expect(failInsert![1]).toContain('001_init.sql');
+    expect(failInsert![1]).toContain('syntax error');
   });
 });
 

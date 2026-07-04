@@ -75,6 +75,7 @@ export class AdminConfirmationService {
       target: action.id,
       params_json: params,
       tx_hash: null,
+      ip_address: null,
     });
 
     return action;
@@ -119,6 +120,7 @@ export class AdminConfirmationService {
       target: actionId,
       params_json: existing.params,
       tx_hash: null,
+      ip_address: null,
     });
 
     return action;

@@ -8,15 +8,6 @@ import axios from 'axios';
 
 // ── database mock ─────────────────────────────────────────────────────────────
 vi.mock('../database', () => ({
-  getAnchorKycConfigs: vi.fn().mockResolvedValue([
-    {
-      anchor_id: 'anchor-1',
-      kyc_server_url: 'https://kyc.anchor1.com',
-      auth_token: 'tok',
-      polling_interval_minutes: 60,
-      enabled: true,
-    },
-  ]),
   getUsersNeedingKycCheck: vi.fn().mockResolvedValue([]),
   saveUserKycStatus: vi.fn(),
   getApprovedUsers: vi.fn().mockResolvedValue([]),

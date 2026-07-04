@@ -1,0 +1,45 @@
+{{- $svc := .Values.frontend }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "swiftremit.fullname" . }}-frontend
+  labels:
+    {{- include "swiftremit.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  {{- if not $svc.autoscaling.enabled }}
+  replicas: {{ $svc.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "swiftremit.selectorLabels" (merge (dict "component" "frontend") .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "swiftremit.selectorLabels" (merge (dict "component" "frontend") .) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: frontend
+          image: {{ include "swiftremit.image" (dict "global" .Values.global "image" $svc.image) }}
+          imagePullPolicy: {{ $svc.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $svc.service.targetPort }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "swiftremit.fullname" . }}-frontend
+            {{- if $svc.secret }}
+            - secretRef:
+                name: {{ include "swiftremit.fullname" . }}-frontend
+            {{- end }}
+          livenessProbe:
+            {{- toYaml $svc.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml $svc.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}

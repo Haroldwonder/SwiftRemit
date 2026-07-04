@@ -1,0 +1,13 @@
+apiVersion: v2
+name: swiftremit
+description: SwiftRemit — Soroban USDC remittance platform (api, backend, frontend)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - stellar
+  - soroban
+  - remittance
+  - usdc
+maintainers:
+  - name: SwiftRemit Team

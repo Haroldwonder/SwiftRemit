@@ -8,16 +8,22 @@ const express_1 = __importDefault(require("express"));
 const webhook_verifier_1 = require("./webhook-verifier");
 const webhook_logger_1 = require("./webhook-logger");
 const transaction_state_1 = require("./transaction-state");
+const kyc_upsert_service_1 = require("./kyc-upsert-service");
+const sep24_service_1 = require("./sep24-service");
 class WebhookHandler {
     pool;
     verifier;
     logger;
     stateManager;
+    kycUpsertService;
+    sep24Service;
     constructor(pool) {
         this.pool = pool;
         this.verifier = new webhook_verifier_1.WebhookVerifier(300); // 5 minute replay window
         this.logger = new webhook_logger_1.WebhookLogger(pool);
         this.stateManager = new transaction_state_1.TransactionStateManager(pool);
+        this.kycUpsertService = new kyc_upsert_service_1.KycUpsertService(pool);
+        this.sep24Service = new sep24_service_1.Sep24Service(pool);
     }
     /**
      * Middleware to capture raw body for signature verification
@@ -74,11 +80,12 @@ class WebhookHandler {
                 return;
             }
             // Process webhook
-            const { event_type, transaction_id } = req.body;
+            const { event_type, transaction_id, remittance_id } = req.body;
+            const correlationId = transaction_id || remittance_id || 'unknown';
             // Log webhook
-            const webhookId = await this.logger.logWebhook(anchorId, transaction_id, event_type, req.body, true);
+            const webhookId = await this.logger.logWebhook(anchorId, correlationId, event_type, req.body, true);
             // Check for suspicious patterns
-            const suspiciousReasons = await this.logger.checkSuspiciousPatterns(anchorId, transaction_id);
+            const suspiciousReasons = await this.logger.checkSuspiciousPatterns(anchorId, correlationId);
             if (suspiciousReasons.length > 0) {
                 await this.logSuspicious(anchorId, suspiciousReasons.join(', '), req.body, webhookId);
             }
@@ -91,7 +98,11 @@ class WebhookHandler {
                     await this.handleWithdrawalUpdate(req.body);
                     break;
                 case 'kyc_update':
-                    await this.handleKYCUpdate(req.body);
+                    await this.handleKYCUpdate(req.body, anchorId);
+                    break;
+                case 'sep24_deposit_update':
+                case 'sep24_withdrawal_update':
+                    await this.handleSep24Update(req.body);
                     break;
                 default:
                     res.status(400).json({ error: 'Unknown event type' });
@@ -107,6 +118,26 @@ class WebhookHandler {
             console.error('Webhook processing error:', error);
             res.status(500).json({ error: 'Internal server error' });
         }
+    }
+    /**
+     * Handle contract-created event and fan out remittance.created webhook.
+     */
+    async handleRemittanceCreated(payload) {
+        const requiredFields = ['remittance_id', 'sender', 'agent', 'amount', 'fee', 'expiry'];
+        for (const field of requiredFields) {
+            if (payload[field] === undefined || payload[field] === null) {
+                throw new Error(`Missing required remittance_created field: ${field}`);
+            }
+        }
+        const remittancePayload = {
+            remittance_id: String(payload.remittance_id),
+            sender: String(payload.sender),
+            agent: String(payload.agent),
+            amount: String(payload.amount),
+            fee: String(payload.fee),
+            expiry: String(payload.expiry),
+        };
+        await this.dispatcher.dispatchRemittanceCreated(remittancePayload);
     }
     /**
      * Handle deposit update webhook
@@ -161,9 +192,24 @@ class WebhookHandler {
         await this.stateManager.updateTransactionState(update, 'withdrawal');
     }
     /**
+     * Handle SEP-24 deposit/withdrawal update webhook
+     */
+    async handleSep24Update(payload) {
+        await this.sep24Service.handleWebhookNotification({
+            transaction_id: payload.transaction_id,
+            status: payload.status,
+            amount_in: payload.amount_in,
+            amount_out: payload.amount_out,
+            amount_fee: payload.amount_fee,
+            stellar_transaction_id: payload.stellar_transaction_id,
+            external_transaction_id: payload.external_transaction_id,
+            message: payload.message,
+        });
+    }
+    /**
      * Handle KYC update webhook
      */
-    async handleKYCUpdate(payload) {
+    async handleKYCUpdate(payload, anchorId) {
         const update = {
             transaction_id: payload.transaction_id,
             kyc_status: payload.kyc_status,
@@ -171,6 +217,29 @@ class WebhookHandler {
             rejection_reason: payload.rejection_reason
         };
         await this.stateManager.updateKYCStatus(update);
+        const userId = payload.user_id;
+        const payloadAnchorId = payload.anchor_id || anchorId;
+        if (!userId) {
+            // Cannot update KYC store without user_id; this might indicate an incomplete webhook payload.
+            console.warn(`Skipping KYC store upsert for transaction ${payload.transaction_id}: missing user_id`);
+            return;
+        }
+        if (!payloadAnchorId) {
+            console.warn(`Skipping KYC store upsert for transaction ${payload.transaction_id}: missing anchor_id`);
+            return;
+        }
+        const verifiedAt = payload.verified_at ? new Date(payload.verified_at) : new Date();
+        const expiresAt = payload.expires_at ? new Date(payload.expires_at) : undefined;
+        const kycRecord = {
+            user_id: userId,
+            anchor_id: payloadAnchorId,
+            kyc_status: payload.kyc_status,
+            kyc_level: payload.kyc_level,
+            rejection_reason: payload.rejection_reason,
+            verified_at: verifiedAt,
+            expires_at: expiresAt,
+        };
+        await this.kycUpsertService.upsert(kycRecord);
     }
     /**
      * Log suspicious activity

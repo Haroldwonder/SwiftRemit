@@ -1,0 +1,47 @@
+{
+  "name": "swiftremit-mobile",
+  "version": "1.0.0",
+  "description": "SwiftRemit mobile app for senders (iOS & Android)",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "prebuild": "expo prebuild",
+    "lint": "eslint src --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.1.0",
+    "@react-native-community/netinfo": "^11.4.1",
+    "@react-navigation/bottom-tabs": "^7.3.13",
+    "@react-navigation/native": "^7.1.6",
+    "@react-navigation/native-stack": "^7.3.21",
+    "axios": "^1.8.2",
+    "expo": "~53.0.0",
+    "expo-build-properties": "~0.14.6",
+    "expo-camera": "~16.1.6",
+    "expo-constants": "~17.1.5",
+    "expo-crypto": "~14.1.4",
+    "expo-device": "~7.1.4",
+    "expo-font": "~13.3.1",
+    "expo-image-picker": "~16.1.4",
+    "expo-local-authentication": "~14.1.4",
+    "expo-notifications": "~0.29.13",
+    "expo-router": "~4.0.20",
+    "expo-secure-store": "~14.2.3",
+    "expo-splash-screen": "~0.29.22",
+    "expo-status-bar": "~2.2.3",
+    "react": "19.0.0",
+    "react-native": "0.79.2",
+    "react-native-safe-area-context": "^5.4.0",
+    "react-native-screens": "^4.5.0",
+    "react-native-svg": "^15.12.0",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.10",
+    "@types/react": "~19.0.10",
+    "@types/react-native": "^0.73.0",
+    "typescript": "~5.8.3"
+  }
+}

@@ -60,6 +60,7 @@ export class RemittanceEventEmitter extends EventEmitter {
           target: event.target ?? null,
           params_json: event.params ?? null,
           tx_hash: event.txHash ?? null,
+          ip_address: null,
         });
       } catch (err) {
         console.error('Failed to write admin audit log entry:', err);

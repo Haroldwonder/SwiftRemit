@@ -38,7 +38,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.KycService = void 0;
 const axios_1 = __importDefault(require("axios"));
-const types_1 = require("./types");
 const database_1 = require("./database");
 const stellar_1 = require("./stellar");
 class KycService {
@@ -75,7 +74,7 @@ class KycService {
                     };
                     await (0, database_1.saveUserKycStatus)(updatedStatus);
                     // Update on-chain status if approved
-                    if (updatedStatus.status === types_1.KycStatus.Approved) {
+                    if (updatedStatus.status === 'approved') {
                         try {
                             await (0, stellar_1.updateKycStatusOnChain)(userKyc.user_id, true);
                         }
@@ -83,7 +82,7 @@ class KycService {
                             console.error(`Failed to update on-chain KYC status for user ${userKyc.user_id}:`, error);
                         }
                     }
-                    else if (updatedStatus.status === types_1.KycStatus.Rejected) {
+                    else if (updatedStatus.status === 'rejected') {
                         try {
                             await (0, stellar_1.updateKycStatusOnChain)(userKyc.user_id, false);
                         }
@@ -129,12 +128,12 @@ class KycService {
     mapSep12StatusToInternal(sep12Status) {
         switch (sep12Status.toLowerCase()) {
             case 'approved':
-                return types_1.KycStatus.Approved;
+                return 'approved';
             case 'rejected':
-                return types_1.KycStatus.Rejected;
+                return 'rejected';
             case 'pending':
             default:
-                return types_1.KycStatus.Pending;
+                return 'pending';
         }
     }
     async getUserKycStatus(userId, anchorId) {
@@ -149,7 +148,7 @@ class KycService {
         const initialStatus = {
             user_id: userId,
             anchor_id: anchorId,
-            status: types_1.KycStatus.Pending,
+            status: 'pending',
             last_checked: new Date(),
         };
         await (0, database_1.saveUserKycStatus)(initialStatus);

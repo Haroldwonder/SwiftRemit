@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import type { TransactionProgressStatus } from './TransactionStatusTracker';
+import { SkeletonTable } from './SkeletonLoader';
 import './TransactionHistory.css';
 
 type HistoryViewMode = 'table' | 'card';
@@ -337,6 +338,8 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
           </button>
         </div>
       </header>
+
+      {isLoading && !hasTransactions && <SkeletonTable count={5} />}
 
       {isLoading && hasTransactions && (
         <div className="history-loading" aria-live="polite">

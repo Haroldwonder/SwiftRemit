@@ -11,6 +11,7 @@ import { createWebhookStore } from './webhooks/store';
 import { withAdvisoryLock } from './distributed-lock';
 import { AnchorHealthChecker } from './anchor-health-checker';
 import { getMetricsService } from './metrics';
+import { runTracked } from './job-tracker';
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
@@ -29,8 +30,7 @@ export async function startBackgroundJobs() {
   // Run every 6 hours
   cron.schedule('0 */6 * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'revalidate-stale-assets', async () => {
-      console.log('Starting periodic asset revalidation...');
-      await revalidateStaleAssets();
+      await runTracked(pool, 'revalidate-stale-assets', revalidateStaleAssets);
     });
     if (!ran) console.log('revalidate-stale-assets: skipped (another instance holds the lock)');
   });
@@ -38,8 +38,7 @@ export async function startBackgroundJobs() {
   // Run KYC polling every 30 minutes
   cron.schedule('*/30 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'poll-kyc-statuses', async () => {
-      console.log('Starting KYC status polling...');
-      await pollKycStatuses();
+      await runTracked(pool, 'poll-kyc-statuses', pollKycStatuses);
     });
     if (!ran) console.log('poll-kyc-statuses: skipped (another instance holds the lock)');
   });
@@ -47,8 +46,7 @@ export async function startBackgroundJobs() {
   // Run SEP-24 transaction polling every 2 minutes
   cron.schedule('*/2 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'poll-sep24-transactions', async () => {
-      console.log('Starting SEP-24 transaction polling...');
-      await pollSep24Transactions();
+      await runTracked(pool, 'poll-sep24-transactions', pollSep24Transactions);
     });
     if (!ran) console.log('poll-sep24-transactions: skipped (another instance holds the lock)');
   });
@@ -56,8 +54,7 @@ export async function startBackgroundJobs() {
   // Extend contract storage TTLs daily to prevent data loss
   cron.schedule('0 0 * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'extend-contract-storage-ttl', async () => {
-      console.log('Starting contract storage TTL extension...');
-      await extendContractStorageTtl();
+      await runTracked(pool, 'extend-contract-storage-ttl', extendContractStorageTtl);
     });
     if (!ran) console.log('extend-contract-storage-ttl: skipped (another instance holds the lock)');
   });
@@ -65,8 +62,7 @@ export async function startBackgroundJobs() {
   // Send KYC expiry warnings daily at 08:00 UTC
   cron.schedule('0 8 * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'notify-kyc-expiries', async () => {
-      console.log('Starting KYC expiry notification job...');
-      await notifyKycExpiries();
+      await runTracked(pool, 'notify-kyc-expiries', notifyKycExpiries);
     });
     if (!ran) console.log('notify-kyc-expiries: skipped (another instance holds the lock)');
   });
@@ -74,8 +70,7 @@ export async function startBackgroundJobs() {
   // Run anchor health checks every 5 minutes
   cron.schedule('*/5 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'check-anchor-health', async () => {
-      console.log('Starting anchor health checks...');
-      await checkAnchorHealth();
+      await runTracked(pool, 'check-anchor-health', checkAnchorHealth);
     });
     if (!ran) console.log('check-anchor-health: skipped (another instance holds the lock)');
   });

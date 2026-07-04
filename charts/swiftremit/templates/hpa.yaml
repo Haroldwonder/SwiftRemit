@@ -1,0 +1,27 @@
+{{- range list "api" "backend" "frontend" }}
+{{- $svc := index $.Values . }}
+{{- if $svc.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "swiftremit.fullname" $ }}-{{ . }}
+  labels:
+    {{- include "swiftremit.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ . }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "swiftremit.fullname" $ }}-{{ . }}
+  minReplicas: {{ $svc.autoscaling.minReplicas }}
+  maxReplicas: {{ $svc.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $svc.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}

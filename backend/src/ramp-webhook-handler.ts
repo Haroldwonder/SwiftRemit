@@ -27,7 +27,7 @@ export function rawBodyMiddleware() {
 }
 
 export async function handleRampWebhook(req: RawBodyRequest, res: Response): Promise<void> {
-  const providerName = req.params.provider?.toLowerCase();
+  const providerName = (req.params.provider as string)?.toLowerCase();
   const provider = getProvider(providerName);
 
   if (!provider) {

@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "SwiftRemit",
+    "slug": "swiftremit",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1A56DB"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.swiftremit.app",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "SwiftRemit uses Face ID to confirm transactions.",
+        "NSCameraUsageDescription": "SwiftRemit needs camera access for KYC document scanning.",
+        "NSPhotoLibraryUsageDescription": "SwiftRemit needs photo library access for KYC document uploads."
+      }
+    },
+    "android": {
+      "package": "com.swiftremit.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1A56DB"
+      },
+      "permissions": [
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "CAMERA",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ],
+      "googleServicesFile": "./google-services.json"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#1A56DB",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow SwiftRemit to use Face ID."
+        }
+      ],
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "scheme": "swiftremit",
+    "extra": {
+      "eas": {
+        "projectId": "swiftremit-mobile"
+      }
+    }
+  }
+}

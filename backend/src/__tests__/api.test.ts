@@ -16,6 +16,11 @@ const db = vi.hoisted(() => ({
   ],
 }));
 
+const fxRateCacheMock = vi.hoisted(() => ({
+  getCurrentRate: vi.fn(),
+  setMetricsObserver: vi.fn(),
+}));
+
 vi.mock('../database', () => ({
   initDatabase: vi.fn().mockResolvedValue(undefined),
   getPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn() })),
@@ -63,12 +68,17 @@ vi.mock('../stellar', () => ({
   }),
 }));
 
+vi.mock('../fx-rate-cache', () => ({
+  getFxRateCache: vi.fn(() => fxRateCacheMock),
+}));
+
 import app from '../api';
 import * as stellar from '../stellar';
 
 describe('API Endpoints', () => {
   beforeEach(() => {
     db.verifications.clear();
+    fxRateCacheMock.getCurrentRate.mockReset();
   });
 
   describe('GET /health', () => {
@@ -180,6 +190,37 @@ describe('API Endpoints', () => {
 
       const response = await request(app).post('/api/verification/batch').send({ assets });
       expect(response.status).toBe(400);
+    });
+  });
+
+  describe('POST /api/remittance', () => {
+    it('rejects remittance creation when the FX rate is stale beyond the hard maximum', async () => {
+      fxRateCacheMock.getCurrentRate.mockResolvedValueOnce({
+        from: 'USD',
+        to: 'PHP',
+        rate: 56.5,
+        timestamp: new Date(Date.now() - 7200 * 1000),
+        provider: 'last_known',
+        cached: true,
+        fx_rate_source: 'last_known',
+        stale: true,
+        stalenessSeconds: 7200,
+      });
+
+      const response = await request(app)
+        .post('/api/remittance')
+        .set('x-user-id', 'user-1')
+        .send({
+          sender: 'alice',
+          agent: 'agent-1',
+          amount: '100',
+          fromCurrency: 'USD',
+          toCurrency: 'PHP',
+          fxRateMaxStalenessSeconds: 3600,
+        });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error).toMatch(/stale/i);
     });
   });
 

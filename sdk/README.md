@@ -120,6 +120,209 @@ toStroops(100);      // 100 USDC → 1_000_000_000n stroops
 fromStroops(1_000_000_000n); // → 100 USDC
 ```
 
+## Retry Behaviour
+
+### Global configuration
+
+Retry settings are configured once in the client constructor and apply to all read operations (simulation calls):
+
+```typescript
+const client = new SwiftRemitClient({
+  contractId: "CXXX",
+  networkPassphrase: Networks.TESTNET,
+  rpcUrl: RpcUrls.TESTNET,
+  retries: 3,           // max retry attempts on transient RPC errors (default: 3)
+  retryDelayMs: 1000,   // initial delay before first retry in ms (default: 1000)
+  retryBackoffFactor: 2 // multiplier applied after each retry (default: 2 → 1s, 2s, 4s)
+});
+```
+
+Only transient errors trigger a retry: HTTP 429, 503, `ECONNRESET`, `ECONNREFUSED`, `ETIMEDOUT`, network errors, and RPC timeouts. Non-transient errors (simulation failures, invalid signatures, auth errors) fail immediately.
+
+### Per-operation retry policy
+
+Write operations (those that call `submitTransaction`) default to **no retries** because most are non-idempotent. You can override this globally or per-call:
+
+```typescript
+import { RetryPolicies } from "@swiftremit/sdk";
+import type { RetryPolicy } from "@swiftremit/sdk";
+
+// ── Global write default ───────────────────────────────────────────────────
+// Default: no retries for writes
+const client = new SwiftRemitClient({
+  contractId: "CXXX",
+  networkPassphrase: Networks.TESTNET,
+  rpcUrl: RpcUrls.TESTNET,
+  writeRetryPolicy: { retries: 0 }, // default — explicit for clarity
+});
+
+// ── Per-call override ──────────────────────────────────────────────────────
+const createTx = await client.createRemittance({
+  sender: senderKeypair.publicKey(),
+  agent: agentAddress,
+  amount: toStroops(100),
+  idempotencyKey: "order-abc-123", // idempotency key makes this safe to retry
+});
+
+// Supply an idempotency key → safe to retry the submit
+const result = await client.submitTransaction(createTx, senderKeypair, {
+  retryPolicy: RetryPolicies.AGGRESSIVE, // { retries: 5, delayMs: 500, backoffFactor: 1.5 }
+});
+
+// Non-idempotent operations — rely on the default (no retries)
+const cancelTx = await client.cancelRemittance(senderKeypair.publicKey(), 1n);
+await client.submitTransaction(cancelTx, senderKeypair); // 0 retries by default
+```
+
+### Custom retry policy
+
+```typescript
+import type { RetryPolicy } from "@swiftremit/sdk";
+
+const myPolicy: RetryPolicy = { retries: 2, delayMs: 300, backoffFactor: 2 };
+await client.submitTransaction(tx, keypair, { retryPolicy: myPolicy });
+```
+
+| Operation category | Default retry behaviour |
+|---|---|
+| Read (simulation) | Global `retries` (default 3), exponential backoff |
+| Write submit (`sendTransaction`) | `writeRetryPolicy` (default: 0 retries) |
+| Write confirmation polling (`getTransaction`) | Global `retries` — always safe because polling is idempotent |
+
+## Fee Estimation
+
+Estimate fees before committing a transaction. Results are cached for 30 seconds per unique (sender, amount, corridor) combination:
+
+```typescript
+import { toStroops, fromStroops } from "@swiftremit/sdk";
+import type { Corridor, FeeEstimate } from "@swiftremit/sdk";
+
+const amount = toStroops(100); // 100 USDC in stroops
+const corridor: Corridor = { currency: "USDC", country: "NG" };
+
+const estimate: FeeEstimate = await client.estimateFee(
+  amount,
+  corridor,
+  senderAddress
+);
+
+console.log(`Send:          ${fromStroops(estimate.amount)} USDC`);
+console.log(`Platform fee:  ${fromStroops(estimate.platformFee)} USDC`);
+console.log(`Protocol fee:  ${fromStroops(estimate.protocolFee)} USDC`);
+console.log(`Recipient gets: ${fromStroops(estimate.netAmount)} USDC`);
+console.log(`Cached:        ${estimate.fromCache}`);
+```
+
+### With a custom retry policy
+
+```typescript
+const estimate = await client.estimateFee(amount, corridor, senderAddress, {
+  retries: 2, delayMs: 200,
+});
+```
+
+### `FeeEstimate` type
+
+```typescript
+interface FeeEstimate {
+  amount: bigint;      // Requested send amount
+  platformFee: bigint; // SwiftRemit platform fee
+  protocolFee: bigint; // Stellar protocol fee
+  netAmount: bigint;   // Recipient receives (amount − totalFee)
+  totalFee: bigint;    // platformFee + protocolFee
+  estimatedAt: Date;
+  fromCache: boolean;  // true when served from the 30-second cache
+}
+```
+
+## Testing with SwiftRemitMockClient
+
+SDK consumers can write integration tests without a live Stellar network by using `SwiftRemitMockClient` from the separate `@swiftremit/sdk/testing` entry point:
+
+```bash
+npm install @swiftremit/sdk
+```
+
+```typescript
+import { SwiftRemitMockClient } from "@swiftremit/sdk/testing";
+import type { MockTxResult } from "@swiftremit/sdk/testing";
+
+const AGENT = "GAGENT...";
+const SENDER = "GSENDER...";
+
+describe("payment service", () => {
+  let client: SwiftRemitMockClient;
+
+  beforeEach(() => {
+    client = new SwiftRemitMockClient({ feeBps: 100 }); // 1% platform fee
+    client.seedAgent(AGENT);
+  });
+
+  it("creates a pending remittance", async () => {
+    const result: MockTxResult = await client.createRemittance({
+      sender: SENDER,
+      agent: AGENT,
+      amount: 100_000_000n, // 10 USDC
+    });
+
+    expect(result.id).toBeDefined();
+
+    const r = await client.getRemittance(SENDER, result.id!);
+    expect(r.status).toBe("Pending");
+  });
+
+  it("confirms payout and accumulates fees", async () => {
+    const { id } = await client.createRemittance({
+      sender: SENDER, agent: AGENT, amount: 100_000_000n,
+    });
+    await client.confirmPayout(AGENT, id!);
+
+    const r = await client.getRemittance(SENDER, id!);
+    expect(r.status).toBe("Completed");
+    expect(await client.getAccumulatedFees(SENDER)).toBeGreaterThan(0n);
+  });
+});
+```
+
+### Seed helpers (chainable)
+
+```typescript
+const client = new SwiftRemitMockClient()
+  .seedAgent("GAGENT...")      // pre-register an agent
+  .seedToken("GUSDC...")       // whitelist a token
+  .seedAdmin("GADMIN...")      // add an admin
+  .seedRemittance(existingR)   // inject an existing remittance
+  .setFeeBps(200);             // 2% platform fee
+```
+
+### Write operation results
+
+Unlike the real client (which returns a Stellar `Transaction` to be signed and submitted), the mock write methods apply state immediately and return a `MockTxResult`:
+
+```typescript
+interface MockTxResult {
+  txHash: string;  // fake transaction hash (e.g. "MOCK_TX_00000001")
+  id?: bigint;     // remittance ID, present for createRemittance
+}
+```
+
+### Dependency injection
+
+Use TypeScript structural typing to inject the mock wherever your production code uses the real client:
+
+```typescript
+// Production service accepts any compatible shape
+type RemittanceReader = Pick<SwiftRemitClient, "getRemittance" | "getRemittancesBySender">;
+
+function createDashboard(client: RemittanceReader) { /* ... */ }
+
+// In tests
+createDashboard(new SwiftRemitMockClient());
+
+// In production
+createDashboard(new SwiftRemitClient(opts));
+```
+
 ## Governance
 
 The SDK exposes four methods for interacting with the on-chain governance module.
