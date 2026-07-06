@@ -57,7 +57,7 @@ jobs:
 
       - name: Install pnpm
         if: steps.check-lock.outputs.exists == 'pnpm'
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
