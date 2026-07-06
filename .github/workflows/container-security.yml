@@ -59,7 +59,7 @@ jobs:
 
       # ── Vulnerability scan – fail on CRITICAL or HIGH CVEs ────────────────
       - name: Scan ${{ matrix.service }} for CVEs
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "${{ matrix.image }}:scan"
           format: "sarif"
@@ -78,7 +78,7 @@ jobs:
 
       # ── SBOM generation ───────────────────────────────────────────────────
       - name: Generate SBOM for ${{ matrix.service }}
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "${{ matrix.image }}:scan"
           format: "cyclonedx"
