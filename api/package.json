@@ -20,7 +20,7 @@
     "xss": "^1.0.15"
   },
   "devDependencies": {
-    "@pact-foundation/pact": "^13.1.0",
+    "@pact-foundation/pact": "^17.0.1",
     "@apidevtools/swagger-cli": "^4.0.4",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
