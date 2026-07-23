@@ -10,3 +10,12 @@ export type { TransactionHistoryItem } from './TransactionHistory';
 export { KycStatusBadge } from './KycStatusBadge';
 export { ToastContainer, useToast } from './Toast';
 export type { ToastMessage, ToastType, UseToastReturn } from './Toast';
+export { AgentAnalytics } from './AgentAnalytics';
+export type {
+  AgentAnalyticsProps,
+  AgentAnalyticsSummary,
+  AgentAnalyticsTimeSeries,
+  AgentAnalyticsData,
+  AnalyticsRange,
+  AnalyticsGranularity,
+} from './AgentAnalytics';

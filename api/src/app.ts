@@ -183,8 +183,11 @@ export function createApp(options: AppOptions = {}): Application {
   // Auth — JWT login / refresh / logout (Issue #883)
   app.use('/api/auth', createAuthRouter());
 
-  // Agents — registration and management (Issue #880)
-  app.use('/api/agents', createAgentsRouter());
+  // Agents — registration, management, and payout analytics (Issues #880, #947)
+  const agentsPool = process.env.DATABASE_URL
+    ? new Pool({ connectionString: process.env.DATABASE_URL, max: 3 })
+    : undefined;
+  app.use('/api/agents', createAgentsRouter(agentsPool));
 
   // WebSocket health endpoint (development only — guarded inside the router)
   if (options.io) {
