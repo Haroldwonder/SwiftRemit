@@ -1,8 +1,12 @@
 /**
  * Remittance Events
- * 
+ *
  * Event emitter for remittance status changes.
  * Integrates with webhook system to notify subscribers.
+ *
+ * This is a derived-status emitter (pending/processing/completed/failed/cancelled), not a
+ * raw on-chain topic listener. For the full catalogue of contract events — topics, payload
+ * shapes, and schema version — see ../../../docs/EVENTS.md.
  */
 
 import { EventEmitter } from 'events';

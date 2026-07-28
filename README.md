@@ -495,64 +495,94 @@ Terminal states (`Completed`, `Cancelled`) cannot transition further. `Failed` a
 
 ## Error Codes
 
-| Code | Error | Description |
-|------|-------|-------------|
-| 1 | AlreadyInitialized | Contract already initialized |
-| 2 | NotInitialized | Contract not initialized |
-| 3 | InvalidAmount | Amount must be greater than 0 |
-| 4 | InvalidFeeBps | Fee must be between 0-10000 bps |
-| 5 | AgentNotRegistered | Agent not in approved list |
-| 6 | RemittanceNotFound | Remittance ID does not exist |
-| 7 | InvalidStatus | Operation not allowed in current status |
-| 8 | InvalidStateTransition | Invalid state transition attempted |
-| 9 | NoFeesToWithdraw | No accumulated fees available |
-| 10 | InvalidAddress | Invalid address format or validation failed |
-| 11 | SettlementExpired | Settlement window has expired |
-| 12 | DuplicateSettlement | Settlement already executed |
-| 13 | ContractPaused | Contract is paused; settlements temporarily disabled |
-| 14 | AssetNotFound | Asset verification record not found |
-| 15 | UserBlacklisted | User is blacklisted and cannot perform transactions |
-| 16 | InvalidReputationScore | Reputation score must be between 0 and 100 |
-| 17 | KycNotApproved | User KYC is not approved |
-| 18 | SuspiciousAsset | Asset has been flagged as suspicious |
-| 19 | AnchorTransactionFailed | Anchor withdrawal/deposit operation failed |
-| 20 | Unauthorized | Caller is not authorized to perform this operation |
-| 21 | DailySendLimitExceeded | User's daily send limit exceeded |
-| 22 | TokenAlreadyWhitelisted | Token is already whitelisted |
-| 23 | KycExpired | User KYC has expired and needs renewal |
-| 24 | TransactionNotFound | Transaction record not found |
-| 25 | RateLimitExceeded | Rate limit exceeded |
-| 26 | AdminAlreadyExists | Admin address already registered |
-| 27 | AdminNotFound | Admin address not found |
-| 28 | CannotRemoveLastAdmin | Cannot remove the last admin |
-| 29 | TokenNotWhitelisted | Token is not whitelisted |
-| 30 | InvalidMigrationHash | Migration hash verification failed |
-| 31 | MigrationInProgress | Migration already in progress or completed |
-| 32 | InvalidMigrationBatch | Migration batch out of order or invalid |
-| 33 | CooldownActive | Cooldown period is still active |
-| 34 | SuspiciousActivity | Suspicious activity detected |
-| 35 | ActionBlocked | Action temporarily blocked due to abuse protection |
-| 36 | Overflow | Arithmetic overflow detected |
-| 37 | NetSettlementValidationFailed | Net settlement validation failed |
-| 38 | EscrowNotFound | Escrow record not found |
-| 39 | InvalidEscrowStatus | Invalid escrow status for this operation |
-| 40 | SettlementCounterOverflow | Settlement counter overflow |
-| 41 | InvalidBatchSize | Invalid batch size for batch operations |
-| 42 | DataCorruption | Data corruption detected in stored values |
-| 43 | IndexOutOfBounds | Index out of bounds |
-| 44 | EmptyCollection | Collection is empty |
-| 45 | KeyNotFound | Key not found in map |
-| 46 | StringConversionFailed | String conversion failed |
-| 47 | InvalidSymbol | Invalid or malformed symbol string |
-| 48 | Underflow | Arithmetic underflow occurred |
-| 49 | IdempotencyConflict | Idempotency key conflict with different payload |
-| 50 | InvalidProof | Proof validation failed |
-| 51 | MissingProof | Proof is required but not provided |
-| 52 | InvalidOracleAddress | Oracle address is invalid or not configured |
+Every error the contract can return, generated from the `ContractError` enum in
+[`src/errors.rs`](src/errors.rs). Row count always equals the number of variants in that
+enum — regenerate with `node scripts/generate-error-table.js --write` whenever the enum
+changes (CI can run it with no `--write` and diff the output to catch drift).
+
+<!-- ERROR_TABLE:START -->
+
+| Code | Name | Description | Common Cause | Resolution |
+| :--- | :--- | :--- | :--- | :--- |
+| **1** | AlreadyInitialized | Contract already initialized | Attempting to call initialize() on an active contract. | No action required. If re-configuration is needed, check whether an admin update function exists. |
+| **2** | NotInitialized | Contract not initialized | Operations attempted before the contract setup is complete. | The administrator must call initialize() with valid parameters before other functions. |
+| **3** | InvalidAmount | Amount must be greater than 0 | Providing zero or negative values for a remittance. | Ensure the transfer amount is a positive integer greater than 0. |
+| **4** | InvalidFeeBps | Fee must be between 0-10000 bps | Fee percentage set outside the 0-100% (0-10000 bps) range. | Adjust the basis points to fall within the valid range (e.g., 2.5% = 250 bps). |
+| **5** | AgentNotRegistered | Agent not in approved list | Using an address that hasn't been added to the agent whitelist. | Register the agent address first using the register_agent function. |
+| **6** | RemittanceNotFound | Remittance ID does not exist | Querying an ID that does not exist on the ledger. | Verify the remittance ID from your transaction history or event logs. |
+| **7** | InvalidStatus | Operation not allowed in current status | Operation attempted while the remittance is in an incompatible state (e.g. cancelling a settled payment). | Check the current status via get_remittance before retrying. |
+| **8** | InvalidStateTransition | Invalid state transition attempted | Requesting a status change that isn't reachable from the remittance's current state. | Consult the state machine diagram and only request valid transitions. |
+| **9** | NoFeesToWithdraw | No accumulated fees available | Calling withdraw_fees when accumulated fees is zero. | Wait until fees accrue from settled remittances before withdrawing. |
+| **10** | InvalidAddress | Invalid address format or validation failed | Address does not meet validation requirements. | Confirm the address is a valid Stellar/Soroban address before submitting. |
+| **11** | SettlementExpired | Settlement window has expired | The time-lock deadline for the remittance has passed. | Cancel and recreate the remittance with a new deadline. |
+| **12** | DuplicateSettlement | Settlement already executed | The payment was already claimed or processed. | Check the transaction ledger; the funds have likely already been disbursed. |
+| **13** | ContractPaused | Contract is paused; settlements temporarily disabled | Circuit breaker active due to maintenance or emergency. | Monitor the project's status channels and wait for an admin to unpause. |
+| **14** | AssetNotFound | Asset verification record not found | Querying verification data for an asset that hasn't been submitted for verification. | Submit the asset for verification before querying its status. |
+| **15** | UserBlacklisted | User is blacklisted and cannot perform transactions | The user's address is on the blacklist. | Contact an administrator to review and potentially remove the blacklist entry. |
+| **16** | InvalidReputationScore | Reputation score must be between 0 and 100 | Supplying a reputation score outside the 0-100 range. | Pass a value between 0 and 100 inclusive. |
+| **17** | KycNotApproved | User KYC is not approved | User has not completed KYC verification. | Complete the KYC flow with an approved provider before transacting. |
+| **18** | SuspiciousAsset | Asset has been flagged as suspicious | The asset failed one or more verification/reputation checks. | Review the asset's verification report; do not proceed without an admin override. |
+| **19** | AnchorTransactionFailed | Anchor withdrawal/deposit operation failed | The SEP-24 anchor rejected or failed to process the operation. | Check the anchor's status and retry, or contact anchor support. |
+| **20** | Unauthorized | Caller is not authorized to perform this operation | Non-admin or non-owner attempting an admin/owner-only operation. | Call the function using an authorized admin or owner address. |
+| **21** | DailySendLimitExceeded | User's daily send limit exceeded | User's total transfers in the last 24 hours exceed the configured limit. | Wait for the rolling 24-hour window to reset or request a limit increase. |
+| **22** | TokenAlreadyWhitelisted | Token is already whitelisted | Attempting to add a token that is already whitelisted. | No action required; verify with get_whitelisted_tokens. |
+| **23** | KycExpired | User KYC has expired and needs renewal | The user's KYC verification has passed its expiry timestamp. | Re-submit KYC verification with the provider. |
+| **24** | TransactionNotFound | Transaction record not found | Querying a transaction ID that doesn't exist. | Verify the transaction ID from event logs or the indexer. |
+| **25** | RateLimitExceeded | Rate limit exceeded | Caller exceeded the configured number of operations in the current window. | Wait for the rate-limit window to reset before retrying. |
+| **26** | AdminAlreadyExists | Admin address already registered | Attempting to add an admin that is already registered. | No action required; verify with get_admins. |
+| **27** | AdminNotFound | Admin address not found | Attempting to remove or reference an admin that isn't registered. | Verify the admin address with get_admins before retrying. |
+| **28** | CannotRemoveLastAdmin | Cannot remove the last admin | Attempting to remove the only remaining admin, which would leave the contract without governance. | Add a new admin before removing the existing one. |
+| **29** | TokenNotWhitelisted | Token is not whitelisted | Attempting to initialize or transact with a non-whitelisted token. | Whitelist the token first or use an already-approved token. |
+| **30** | InvalidMigrationHash | Migration hash verification failed | Snapshot hash doesn't match the computed hash (data tampering or corruption). | Re-export the migration snapshot and verify its integrity before retrying. |
+| **31** | MigrationInProgress | Migration already in progress or completed | Attempting to start a migration when one is already active. | Wait for the current migration to finish, or check migration status. |
+| **32** | InvalidMigrationBatch | Migration batch out of order or invalid | Importing batches in the wrong order or with an invalid batch number. | Import migration batches sequentially, starting from batch 0. |
+| **33** | CooldownActive | Cooldown period is still active | Attempting an action before its cooldown period has elapsed. | Wait for the cooldown timer to expire before retrying. |
+| **34** | SuspiciousActivity | Suspicious activity detected | Pattern matching known abuse behaviors (rapid retries, unusual patterns). | Reduce request frequency; contact support if this persists unexpectedly. |
+| **35** | ActionBlocked | Action temporarily blocked due to abuse protection | Multiple violations or severe abuse detected from the caller. | Wait for the block to lift or contact an administrator to review the flag. |
+| **36** | Overflow | Arithmetic overflow detected | Result of an arithmetic operation exceeds the maximum representable value. | Reduce the input amount(s); check for unreasonably large values. |
+| **37** | NetSettlementValidationFailed | Net settlement validation failed | Net settlement calculations don't match expected values. | Recompute the netting batch inputs and resubmit. |
+| **38** | EscrowNotFound | Escrow record not found | Querying an escrow ID that doesn't exist. | Verify the escrow ID from creation events before retrying. |
+| **39** | InvalidEscrowStatus | Invalid escrow status for this operation | Attempting an operation on an escrow in an incompatible status. | Check the escrow's current status via get_escrow before retrying. |
+| **40** | SettlementCounterOverflow | Settlement counter overflow | The global settlement counter would exceed u64::MAX. | Contact the maintainers; this indicates the contract needs a counter migration. |
+| **41** | InvalidBatchSize | Invalid batch size for batch operations | Provided batch size is zero or exceeds the configured maximum. | Split the request into batches within the allowed size limit. |
+| **42** | DataCorruption | Data corruption detected in stored values | Integrity checks failed on stored contract data. | Contact the maintainers; do not retry writes until the root cause is investigated. |
+| **43** | IndexOutOfBounds | Index out of bounds | Accessing a collection with an index outside its valid range. | Verify the collection length before indexing into it. |
+| **44** | EmptyCollection | Collection is empty | The requested operation requires at least one element but the collection is empty. | Ensure the collection is populated before calling this operation. |
+| **45** | KeyNotFound | Key not found in map | Lookup failed for a required key in a storage map. | Verify the key exists via the corresponding getter before use. |
+| **46** | StringConversionFailed | String conversion failed | Invalid or malformed input during string conversion. | Check the input encoding and length before submitting. |
+| **47** | InvalidSymbol | Invalid or malformed symbol string | Symbol exceeds length limits or contains invalid characters. | Use a short, alphanumeric symbol consistent with Soroban's Symbol type. |
+| **48** | Underflow | Arithmetic underflow occurred | Result of an arithmetic operation is below the minimum representable value (e.g., subtracting more than available). | Verify balances/amounts before performing the subtraction. |
+| **49** | NoPendingAdminTransfer | No pending admin transfer to accept | accept_admin() called when no propose_admin() has been issued. | Have the current admin call propose_admin() first. |
+| **50** | IdempotencyConflict | Idempotency key conflict with different payload | The same idempotency key was reused with a different request payload. | Use a new idempotency key for a differing request, or resend the exact original payload. |
+| **51** | InvalidProof | Proof validation failed | The submitted proof does not match the expected commitment. | Regenerate the proof from the correct source data and resubmit. |
+| **52** | MissingProof | Proof is required but not provided | Calling a function that requires a proof without supplying one. | Include the required proof parameter in the call. |
+| **53** | InvalidOracleAddress | Oracle address is invalid or not configured | The configured oracle address is unset or fails validation. | Configure a valid oracle address via the admin function before use. |
+| **54** | AlreadyPaused | Contract is already paused | Calling emergency_pause when the contract is already in a paused state. | No action required; verify with is_paused before pausing again. |
+| **55** | NotPaused | Contract is not currently paused | Calling an unpause or paused-only function while the contract is active. | Verify the contract's paused state with is_paused before calling. |
+| **56** | OperationNotFound | Pending admin operation not found | Referencing a multi-sig operation ID that doesn't exist or already executed. | Verify the operation ID from the proposal event before approving. |
+| **57** | AlreadyApproved | Caller has already approved this pending operation | The same admin calling approve_operation twice for the same operation. | No action required; wait for other admins to approve. |
+| **58** | OperationExpired | Pending operation has exceeded its time-to-live | The operation's TTL elapsed before reaching the required approval threshold. | Re-propose the operation to restart the approval window. |
+| **59** | InvalidMultiSigThreshold | Multi-sig threshold must be at least 1 and no greater than the admin count | Setting a threshold of 0 or greater than the current admin count. | Choose a threshold between 1 and the current number of admins. |
+| **60** | AlreadyAdmin | Address is already in the admin set | Attempting to add an address that is already an admin. | No action required; verify with get_admins. |
+| **61** | InsufficientAdmins | Removing this admin would drop the admin count below quorum or below 1 | The remaining admin count after removal would violate the quorum requirement. | Add another admin or lower the quorum before removing this one. |
+| **62** | InvalidQuorum | Quorum must be >= 1 and <= current admin count | Setting a quorum of 0 or greater than the current admin count. | Choose a quorum value within the valid range for the current admin set. |
+| **63** | AlreadyVoted | Admin has already cast a vote on this proposal | The same admin calling vote() twice on the same proposal. | No action required; wait for other admins to vote. |
+| **64** | InvalidProposalState | Proposal is not in the required state for this operation | Attempting to vote on, execute, or cancel a proposal that isn't in the expected lifecycle state. | Check the proposal's current state via get_proposal before retrying. |
+| **65** | ProposalAlreadyPending | A fee-update proposal is already pending or approved | Attempting to create a new fee-update proposal while one is still active. | Wait for the pending proposal to execute or be cancelled first. |
+| **66** | TimelockActive | Proposal timelock has not elapsed | Attempting to execute a proposal before its timelock period has passed. | Wait until the timelock expires before executing the proposal. |
+| **67** | GovernanceAlreadyInitialized | Governance has already been initialized | Calling migrate_to_governance more than once. | No action required; governance is already active. |
+| **68** | ProposalNotFound | Proposal with the given ID does not exist | Querying or voting on a proposal ID that was never created. | Verify the proposal ID from the creation event before retrying. |
+| **69** | AgentAlreadyRegistered | Agent is already registered in the system | Attempting to register an agent address that's already on the whitelist. | No action required; verify with get_agent. |
+| **71** | NotDisputed | This operation requires the remittance to be in a Disputed state | Calling a dispute-resolution function on a remittance that hasn't been disputed. | Call raise_dispute first, or verify the remittance status. |
+| **83** | MalformedEvidenceHash | Evidence hash for a dispute is not a valid 32-byte SHA-256 commitment | Supplying an evidence hash that isn't exactly 32 bytes. | Compute a SHA-256 hash of the evidence and pass the raw 32-byte digest. |
+
+<!-- ERROR_TABLE:END -->
 
 ## Events
 
-The contract emits events for monitoring:
+The contract emits events for monitoring. See [`docs/EVENTS.md`](docs/EVENTS.md) for the
+full catalogue — every emit function in `src/events.rs`, its topics, payload shape, and
+schema version. A few of the most common:
 
 - `created` - New remittance created
 - `completed` - Payout confirmed and settled
@@ -626,27 +656,6 @@ import { VerificationBadge } from './components/VerificationBadge';
 
 ## Roadmap
 
-- [x] Asset verification system
-- [x] Integration with fiat on/off ramps (via SEP-24)
-- [ ] Multi-currency support
-- [ ] Batch remittance processing
-- [ ] Agent reputation system
-- [ ] Dispute resolution mechanism
-- [ ] Time-locked escrow options
-
-## Error Codes & Troubleshooting
-
-| Code | Error Name | Common Cause | Resolution Steps |
-| :--- | :--- | :--- | :--- |
-| **1** | AlreadyInitialized | Attempting to call initialize() on an active contract. | No action required. If re-configuration is needed, check if an update function exists. |
-| **2** | NotInitialized | Operations attempted before the contract setup is complete. | The administrator must call the initialize() function with valid parameters. |
-| **3** | InvalidAmount | Providing zero or negative values for remittance. | Ensure the transfer amount is a positive integer greater than 0. |
-| **4** | InvalidFeeBps | Fee percentage is set outside the 0-100% (0-10000 bps) range. | Adjust the basis points to fall within the valid range (e.g., 2.5% = 250 bps). |
-| **5** | AgentNotRegistered | Using an address that hasn't been added to the whitelist. | Register the agent address first using the 
-egister_agent function. |
-| **6** | RemittanceNotFound | Querying an ID that does not exist on the ledger. | Verify the Remittance ID from your transaction history or event logs. |
-| **7** | InvalidStatus | Operation not allowed in current state (e.g. canceling a settled payment). | Check the current status of the remittance via get_remittance before retrying. |
-| **11** | SettlementExpired | The time-lock for the remittance has passed. | The sender may need to cancel and recreate the remittance with a new deadline. |
-| **12** | DuplicateSettlement | The payment was already claimed or processed. | Check the transaction ledger; the funds have likely already been disbursed. |
-| **13** | ContractPaused | Circuit breaker active due to maintenance or emergency. | Monitor the project's official status channels; wait for the admin to unpause. |
+See [ROADMAP.md](ROADMAP.md) for shipped features (with links to the implementing code)
+and genuinely pending work.
 
