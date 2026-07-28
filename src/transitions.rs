@@ -123,7 +123,10 @@ pub fn get_valid_next_states(status: &RemittanceStatus) -> soroban_sdk::Vec<Remi
         }
         RemittanceStatus::Completed | RemittanceStatus::Cancelled => {}
         RemittanceStatus::Failed => { result.push_back(RemittanceStatus::Disputed); }
-        RemittanceStatus::Disputed => {}
+        RemittanceStatus::Disputed => {
+            result.push_back(RemittanceStatus::Cancelled);
+            result.push_back(RemittanceStatus::Completed);
+        }
     }
 
     result
