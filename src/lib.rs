@@ -80,6 +80,7 @@ mod types;
 mod validation;
 mod verification;
 mod recipient_verification;
+mod oracle;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_recipient_verification;
 mod governance;
@@ -99,6 +100,8 @@ mod test_state_machine_property;
 mod test_contract_upgrade;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_circuit_breaker;
+#[cfg(test)]
+mod test_fee_differential;
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, String, Vec};
 
@@ -119,6 +122,10 @@ pub use rate_limit::*;
 pub use storage::*;
 pub use transaction_controller::*;
 pub use transitions::*;
+pub use oracle::{
+    configure_oracle, get_fx_rate_guarded, get_oracle_address, set_oracle_address,
+    validate_rate, FxRate, ORACLE_STALENESS_LEDGERS, ORACLE_RATE_MIN_BPS, ORACLE_RATE_MAX_BPS,
+};
 pub use recipient_verification::{
     RecipientDetails, WalletRecipient, BankRecipient, RecipientHashRecord,
     RecipientHashMigrationEntry, VerificationOutcome,
@@ -402,6 +409,73 @@ impl SwiftRemitContract {
         log_update_fee(&env, fee_bps);
 
         Ok(())
+    }
+
+    // ─── Oracle functions (SR-022) ───────────────────────────────────────────
+
+    /// Configures the on-chain FX rate oracle address.
+    ///
+    /// The oracle contract must expose a `rate() -> (u32, u32)` function returning
+    /// `(rate_bps, published_ledger)`. Once set, callers can read the current FX rate
+    /// via `get_oracle_rate()` and the rate is logged alongside new remittances when
+    /// the `oracle` feature flag is enabled.
+    ///
+    /// Passing a staleness window of `0` retains the current window (or the default
+    /// of `ORACLE_STALENESS_LEDGERS` if not previously set).
+    ///
+    /// # Authorization
+    ///
+    /// Requires authentication from a registered admin.
+    ///
+    /// # Errors
+    ///
+    /// * `ContractError::InvalidOracleAddress` — the oracle address is the contract
+    ///   itself or is otherwise invalid.
+    /// * `ContractError::Unauthorized` — caller is not an admin.
+    pub fn set_oracle(
+        env: Env,
+        caller: Address,
+        oracle: Address,
+        staleness_window_ledgers: Option<u32>,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        require_admin(&env, &caller)?;
+
+        // Validate and store oracle address.
+        oracle::configure_oracle(&env, &oracle)?;
+
+        // Update staleness window if explicitly provided.
+        if let Some(window) = staleness_window_ledgers {
+            if window > 0 {
+                oracle::set_staleness_window(&env, window);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Returns the currently configured oracle address, if any.
+    ///
+    /// Returns `Ok(None)` when no oracle has been configured (the default state).
+    /// When the oracle is not configured, all remittance operations continue to use
+    /// off-chain FX rates from the backend service — existing behaviour is unchanged.
+    pub fn get_oracle(env: Env) -> Result<Option<Address>, ContractError> {
+        Ok(oracle::get_oracle_address(&env))
+    }
+
+    /// Reads the current FX rate from the configured oracle.
+    ///
+    /// Returns `Ok(None)` when no oracle is configured.
+    /// Returns `Err(ContractError::InvalidOracleAddress)` when the oracle is
+    /// configured but the rate is stale (older than the staleness window) or
+    /// out of the acceptable bounds `[ORACLE_RATE_MIN_BPS, ORACLE_RATE_MAX_BPS]`.
+    ///
+    /// This function is read-only and does not modify contract state.
+    pub fn get_oracle_rate(env: Env) -> Result<Option<u32>, ContractError> {
+        match oracle::get_fx_rate_guarded(&env)? {
+            Some(rate) => Ok(Some(rate.rate_bps)),
+            None => Ok(None),
+        }
     }
 
     /// Creates a new remittance transaction.

@@ -51,6 +51,11 @@ name = "abuse_protection"
 harness = false
 required-features = ["benchmarks"]
 
+[[bench]]
+name = "core_flow"
+harness = false
+required-features = ["benchmarks"]
+
 [profile.release]
 opt-level = "z"
 overflow-checks = true

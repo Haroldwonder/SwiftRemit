@@ -1,0 +1,521 @@
+{
+  "schema_version": "1.0.0",
+  "contract_name": "swiftremit",
+  "contract_version": "0.1.0",
+  "soroban_sdk_version": "26.1.0",
+  "generated_at": "2026-07-28T21:00:00Z",
+  "source": "src/lib.rs",
+  "functions": [
+    {
+      "name": "initialize",
+      "doc": "Initializes the contract with admin, token, and fee configuration. Can only be called once.",
+      "inputs": [
+        { "name": "admin",             "type": "Address" },
+        { "name": "usdc_token",        "type": "Address" },
+        { "name": "fee_bps",           "type": "u32" },
+        { "name": "rate_limit_cooldown","type": "u64" },
+        { "name": "protocol_fee_bps",  "type": "u32" },
+        { "name": "treasury",          "type": "Address" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "open"
+    },
+    {
+      "name": "register_agent",
+      "doc": "Registers a new agent authorized to receive remittance payouts. Admin only.",
+      "inputs": [
+        { "name": "agent",    "type": "Address" },
+        { "name": "kyc_hash", "type": "Option<BytesN<32>>" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "remove_agent",
+      "doc": "Removes an agent's authorization to receive remittance payouts. Admin only.",
+      "inputs": [
+        { "name": "agent", "type": "Address" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "update_fee",
+      "doc": "Updates the platform fee rate in basis points. Admin only.",
+      "inputs": [
+        { "name": "fee_bps", "type": "u32" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "set_daily_limit",
+      "doc": "Configures the 24-hour rolling send limit for a currency/country corridor. Admin only.",
+      "inputs": [
+        { "name": "currency", "type": "String" },
+        { "name": "country",  "type": "String" },
+        { "name": "limit",    "type": "i128" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "withdraw_fees",
+      "doc": "Withdraws accumulated platform fees to a specified address. Admin only.",
+      "inputs": [
+        { "name": "to", "type": "Address" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "withdraw_integrator_fees",
+      "doc": "Withdraws accumulated integrator fees. Requires integrator authorization.",
+      "inputs": [
+        { "name": "integrator", "type": "Address" },
+        { "name": "to",         "type": "Address" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "integrator"
+    },
+    {
+      "name": "create_remittance",
+      "doc": "Creates a new remittance transaction, transferring USDC from sender to escrow.",
+      "inputs": [
+        { "name": "sender",           "type": "Address" },
+        { "name": "agent",            "type": "Address" },
+        { "name": "amount",           "type": "i128" },
+        { "name": "expiry",           "type": "Option<u64>" },
+        { "name": "token",            "type": "Option<Address>" },
+        { "name": "idempotency_key",  "type": "Option<String>" },
+        { "name": "settlement_config","type": "Option<SettlementConfig>" },
+        { "name": "recipient_hash",   "type": "Option<BytesN<32>>" }
+      ],
+      "outputs": [{ "type": "Result<u64, ContractError>" }],
+      "access": "sender_auth"
+    },
+    {
+      "name": "create_remittance_with_corridor",
+      "doc": "Creates a remittance using corridor-specific fees when a matching corridor is configured.",
+      "inputs": [
+        { "name": "sender",       "type": "Address" },
+        { "name": "agent",        "type": "Address" },
+        { "name": "amount",       "type": "i128" },
+        { "name": "expiry",       "type": "Option<u64>" },
+        { "name": "from_country", "type": "Option<String>" },
+        { "name": "to_country",   "type": "Option<String>" }
+      ],
+      "outputs": [{ "type": "Result<u64, ContractError>" }],
+      "access": "sender_auth"
+    },
+    {
+      "name": "batch_create_remittances",
+      "doc": "Creates multiple remittances in a single atomic batch. Max batch size: 100.",
+      "inputs": [
+        { "name": "sender",  "type": "Address" },
+        { "name": "entries", "type": "Vec<BatchCreateEntry>" }
+      ],
+      "outputs": [{ "type": "Result<Vec<u64>, ContractError>" }],
+      "access": "sender_auth"
+    },
+    {
+      "name": "start_processing",
+      "doc": "Transitions a remittance from Pending to Processing state. Agent only.",
+      "inputs": [
+        { "name": "remittance_id", "type": "u64" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "agent_auth"
+    },
+    {
+      "name": "confirm_payout",
+      "doc": "Confirms fiat payout and releases USDC minus fees to the agent.",
+      "inputs": [
+        { "name": "remittance_id", "type": "u64" },
+        { "name": "proof",         "type": "Option<BytesN<32>>" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "agent_auth"
+    },
+    {
+      "name": "confirm_partial_payout",
+      "doc": "Disburses a partial amount; auto-completes when total disbursed reaches net payout.",
+      "inputs": [
+        { "name": "remittance_id", "type": "u64" },
+        { "name": "amount",        "type": "i128" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "agent_auth"
+    },
+    {
+      "name": "mark_failed",
+      "doc": "Marks payout as failed and auto-refunds escrow to sender. Agent only.",
+      "inputs": [
+        { "name": "remittance_id", "type": "u64" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "agent_auth"
+    },
+    {
+      "name": "cancel_remittance",
+      "doc": "Cancels a pending remittance with full refund to sender. Sender only.",
+      "inputs": [
+        { "name": "remittance_id", "type": "u64" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "sender_auth"
+    },
+    {
+      "name": "process_expired_remittances",
+      "doc": "Auto-refunds expired pending remittances in batches (max 50 IDs). Permissionless.",
+      "inputs": [
+        { "name": "remittance_ids", "type": "Vec<u64>" }
+      ],
+      "outputs": [{ "type": "Result<Vec<u64>, ContractError>" }],
+      "access": "open"
+    },
+    {
+      "name": "raise_dispute",
+      "doc": "Sender raises a dispute on a failed remittance within the dispute window.",
+      "inputs": [
+        { "name": "remittance_id",  "type": "u64" },
+        { "name": "evidence_hash",  "type": "BytesN<32>" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "sender_auth"
+    },
+    {
+      "name": "resolve_dispute",
+      "doc": "Admin resolves a disputed remittance in favour of sender or agent.",
+      "inputs": [
+        { "name": "remittance_id",      "type": "u64" },
+        { "name": "in_favour_of_sender","type": "bool" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "set_oracle",
+      "doc": "Configures the on-chain FX rate oracle address. Admin only.",
+      "inputs": [
+        { "name": "caller",  "type": "Address" },
+        { "name": "oracle",  "type": "Address" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "get_oracle",
+      "doc": "Returns the currently configured oracle address, if any.",
+      "inputs": [],
+      "outputs": [{ "type": "Result<Option<Address>, ContractError>" }],
+      "access": "readonly"
+    },
+    {
+      "name": "get_remittance",
+      "doc": "Retrieves full remittance details by ID.",
+      "inputs": [
+        { "name": "remittance_id", "type": "u64" }
+      ],
+      "outputs": [{ "type": "Result<Remittance, ContractError>" }],
+      "access": "readonly"
+    },
+    {
+      "name": "get_accumulated_fees",
+      "doc": "Returns total accumulated platform fees not yet withdrawn.",
+      "inputs": [],
+      "outputs": [{ "type": "Result<i128, ContractError>" }],
+      "access": "readonly"
+    },
+    {
+      "name": "is_agent_registered",
+      "doc": "Returns whether the given address is a registered agent.",
+      "inputs": [
+        { "name": "agent", "type": "Address" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "access": "readonly"
+    },
+    {
+      "name": "is_token_whitelisted",
+      "doc": "Returns whether the given token is currently whitelisted.",
+      "inputs": [
+        { "name": "token", "type": "Address" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "access": "readonly"
+    },
+    {
+      "name": "get_admin_count",
+      "doc": "Returns the number of registered admins.",
+      "inputs": [],
+      "outputs": [{ "type": "u32" }],
+      "access": "readonly"
+    },
+    {
+      "name": "get_platform_fee_bps",
+      "doc": "Returns the current platform fee in basis points.",
+      "inputs": [],
+      "outputs": [{ "type": "Result<u32, ContractError>" }],
+      "access": "readonly"
+    },
+    {
+      "name": "get_rate_limit_status",
+      "doc": "Returns the current rate-limit usage for a given address.",
+      "inputs": [
+        { "name": "address", "type": "Address" }
+      ],
+      "outputs": [{ "type": "RateLimitStatus" }],
+      "access": "readonly"
+    },
+    {
+      "name": "get_daily_limit",
+      "doc": "Returns the configured daily send limit for a currency/country corridor.",
+      "inputs": [
+        { "name": "currency", "type": "String" },
+        { "name": "country",  "type": "String" }
+      ],
+      "outputs": [{ "type": "Option<DailyLimitConfig>" }],
+      "access": "readonly"
+    },
+    {
+      "name": "get_remittance_count",
+      "doc": "Returns the total number of remittances ever created.",
+      "inputs": [],
+      "outputs": [{ "type": "u64" }],
+      "access": "readonly"
+    },
+    {
+      "name": "get_total_volume",
+      "doc": "Returns the cumulative volume of all completed remittances (original amounts).",
+      "inputs": [],
+      "outputs": [{ "type": "i128" }],
+      "access": "readonly"
+    },
+    {
+      "name": "health",
+      "doc": "On-chain health check: initialized, paused, admin_count, total_remittances, accumulated_fees.",
+      "inputs": [],
+      "outputs": [{ "type": "HealthStatus" }],
+      "access": "readonly"
+    },
+    {
+      "name": "calculate_fee_breakdown",
+      "doc": "Returns a detailed fee breakdown for a given amount without modifying state.",
+      "inputs": [
+        { "name": "amount", "type": "i128" }
+      ],
+      "outputs": [{ "type": "Result<FeeBreakdown, ContractError>" }],
+      "access": "readonly"
+    },
+    {
+      "name": "set_fee_corridor",
+      "doc": "Configures a corridor-specific fee strategy for a country pair. Admin only.",
+      "inputs": [
+        { "name": "caller",   "type": "Address" },
+        { "name": "corridor", "type": "FeeCorridor" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "get_fee_corridor",
+      "doc": "Returns the fee corridor configuration for a country pair, if configured.",
+      "inputs": [
+        { "name": "from_country", "type": "String" },
+        { "name": "to_country",   "type": "String" }
+      ],
+      "outputs": [{ "type": "Option<FeeCorridor>" }],
+      "access": "readonly"
+    },
+    {
+      "name": "emergency_pause",
+      "doc": "Pauses the contract, disabling all settlement operations. Admin only.",
+      "inputs": [],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "unpause",
+      "doc": "Unpauses the contract, re-enabling settlement operations. Admin only.",
+      "inputs": [],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    }
+  ],
+  "types": {
+    "Remittance": {
+      "kind": "struct",
+      "fields": [
+        { "name": "id",               "type": "u64" },
+        { "name": "sender",           "type": "Address" },
+        { "name": "agent",            "type": "Address" },
+        { "name": "amount",           "type": "i128" },
+        { "name": "fee",              "type": "i128" },
+        { "name": "status",           "type": "RemittanceStatus" },
+        { "name": "expiry",           "type": "Option<u64>" },
+        { "name": "settlement_config","type": "MaybeSettlementConfig" },
+        { "name": "token",            "type": "Address" },
+        { "name": "created_at",       "type": "u64" },
+        { "name": "failed_at",        "type": "Option<u64>" },
+        { "name": "dispute_evidence", "type": "Option<BytesN<32>>" },
+        { "name": "expires_at",       "type": "Option<u64>" }
+      ]
+    },
+    "RemittanceStatus": {
+      "kind": "enum",
+      "variants": [
+        { "name": "Pending",    "value": 0 },
+        { "name": "Processing", "value": 1 },
+        { "name": "Completed",  "value": 2 },
+        { "name": "Cancelled",  "value": 3 },
+        { "name": "Failed",     "value": 4 },
+        { "name": "Disputed",   "value": 5 }
+      ]
+    },
+    "FeeBreakdown": {
+      "kind": "struct",
+      "fields": [
+        { "name": "amount",         "type": "i128" },
+        { "name": "platform_fee",   "type": "i128" },
+        { "name": "protocol_fee",   "type": "i128" },
+        { "name": "integrator_fee", "type": "i128" },
+        { "name": "net_amount",     "type": "i128" },
+        { "name": "corridor",       "type": "Option<String>" }
+      ]
+    },
+    "FeeCorridor": {
+      "kind": "struct",
+      "fields": [
+        { "name": "from_country",     "type": "String" },
+        { "name": "to_country",       "type": "String" },
+        { "name": "strategy",         "type": "FeeStrategy" },
+        { "name": "protocol_fee_bps", "type": "Option<u32>" }
+      ]
+    },
+    "FeeStrategy": {
+      "kind": "enum",
+      "variants": [
+        { "name": "Percentage", "type": "u32",  "doc": "Percentage-based fee in basis points" },
+        { "name": "Flat",       "type": "i128", "doc": "Flat fee amount in token stroops" },
+        { "name": "Dynamic",    "type": "u32",  "doc": "Dynamic tiered fee, base rate in bps" },
+        { "name": "Corridor",   "type": null,   "doc": "Delegates to per-corridor FeeCorridor config" }
+      ]
+    },
+    "SettlementConfig": {
+      "kind": "struct",
+      "fields": [
+        { "name": "require_proof",    "type": "bool" },
+        { "name": "oracle_address",   "type": "Option<Address>" },
+        { "name": "min_rate_bps",     "type": "Option<u32>" },
+        { "name": "max_rate_bps",     "type": "Option<u32>" }
+      ]
+    },
+    "BatchCreateEntry": {
+      "kind": "struct",
+      "fields": [
+        { "name": "agent",  "type": "Address" },
+        { "name": "amount", "type": "i128" },
+        { "name": "expiry", "type": "Option<u64>" }
+      ]
+    },
+    "HealthStatus": {
+      "kind": "struct",
+      "fields": [
+        { "name": "initialized",       "type": "bool" },
+        { "name": "paused",            "type": "bool" },
+        { "name": "admin_count",       "type": "u32" },
+        { "name": "total_remittances", "type": "u64" },
+        { "name": "accumulated_fees",  "type": "i128" }
+      ]
+    },
+    "ContractError": {
+      "kind": "enum",
+      "variants": [
+        { "code": 1,  "name": "AlreadyInitialized" },
+        { "code": 2,  "name": "NotInitialized" },
+        { "code": 3,  "name": "InvalidAmount" },
+        { "code": 4,  "name": "InvalidFeeBps" },
+        { "code": 5,  "name": "AgentNotRegistered" },
+        { "code": 6,  "name": "RemittanceNotFound" },
+        { "code": 7,  "name": "InvalidStatus" },
+        { "code": 8,  "name": "InvalidStateTransition" },
+        { "code": 9,  "name": "NoFeesToWithdraw" },
+        { "code": 10, "name": "InvalidAddress" },
+        { "code": 11, "name": "SettlementExpired" },
+        { "code": 12, "name": "DuplicateSettlement" },
+        { "code": 13, "name": "ContractPaused" },
+        { "code": 14, "name": "AssetNotFound" },
+        { "code": 15, "name": "UserBlacklisted" },
+        { "code": 16, "name": "InvalidReputationScore" },
+        { "code": 17, "name": "KycNotApproved" },
+        { "code": 18, "name": "SuspiciousAsset" },
+        { "code": 19, "name": "AnchorTransactionFailed" },
+        { "code": 20, "name": "Unauthorized" },
+        { "code": 21, "name": "DailySendLimitExceeded" },
+        { "code": 22, "name": "TokenAlreadyWhitelisted" },
+        { "code": 23, "name": "KycExpired" },
+        { "code": 24, "name": "TransactionNotFound" },
+        { "code": 25, "name": "RateLimitExceeded" },
+        { "code": 26, "name": "AdminAlreadyExists" },
+        { "code": 27, "name": "AdminNotFound" },
+        { "code": 28, "name": "CannotRemoveLastAdmin" },
+        { "code": 29, "name": "TokenNotWhitelisted" },
+        { "code": 30, "name": "InvalidMigrationHash" },
+        { "code": 31, "name": "MigrationInProgress" },
+        { "code": 32, "name": "InvalidMigrationBatch" },
+        { "code": 33, "name": "CooldownActive" },
+        { "code": 34, "name": "SuspiciousActivity" },
+        { "code": 35, "name": "ActionBlocked" },
+        { "code": 36, "name": "Overflow" },
+        { "code": 37, "name": "NetSettlementValidationFailed" },
+        { "code": 38, "name": "EscrowNotFound" },
+        { "code": 39, "name": "InvalidEscrowStatus" },
+        { "code": 40, "name": "SettlementCounterOverflow" },
+        { "code": 41, "name": "InvalidBatchSize" },
+        { "code": 42, "name": "DataCorruption" },
+        { "code": 43, "name": "IndexOutOfBounds" },
+        { "code": 44, "name": "EmptyCollection" },
+        { "code": 45, "name": "KeyNotFound" },
+        { "code": 46, "name": "StringConversionFailed" },
+        { "code": 47, "name": "InvalidSymbol" },
+        { "code": 48, "name": "Underflow" },
+        { "code": 49, "name": "NoPendingAdminTransfer" },
+        { "code": 50, "name": "IdempotencyConflict" },
+        { "code": 51, "name": "InvalidProof" },
+        { "code": 52, "name": "MissingProof" },
+        { "code": 53, "name": "InvalidOracleAddress" },
+        { "code": 54, "name": "AlreadyPaused" },
+        { "code": 55, "name": "NotPaused" },
+        { "code": 56, "name": "OperationNotFound" },
+        { "code": 57, "name": "AlreadyApproved" },
+        { "code": 58, "name": "OperationExpired" },
+        { "code": 59, "name": "InvalidMultiSigThreshold" },
+        { "code": 60, "name": "AlreadyAdmin" },
+        { "code": 61, "name": "InsufficientAdmins" },
+        { "code": 62, "name": "InvalidQuorum" },
+        { "code": 63, "name": "AlreadyVoted" },
+        { "code": 64, "name": "InvalidProposalState" },
+        { "code": 65, "name": "ProposalAlreadyPending" },
+        { "code": 66, "name": "TimelockActive" },
+        { "code": 67, "name": "GovernanceAlreadyInitialized" },
+        { "code": 68, "name": "ProposalNotFound" },
+        { "code": 69, "name": "AgentAlreadyRegistered" },
+        { "code": 71, "name": "NotDisputed" },
+        { "code": 83, "name": "MalformedEvidenceHash" }
+      ]
+    }
+  },
+  "events": [
+    { "name": "created",    "doc": "New remittance created" },
+    { "name": "completed",  "doc": "Payout confirmed and settled" },
+    { "name": "cancelled",  "doc": "Remittance cancelled by sender" },
+    { "name": "agent_reg",  "doc": "Agent registered" },
+    { "name": "agent_rem",  "doc": "Agent removed" },
+    { "name": "fee_upd",    "doc": "Platform fee updated" },
+    { "name": "fees_with",  "doc": "Fees withdrawn by admin" },
+    { "name": "fees_flush", "doc": "Automatic fee flush triggered" },
+    { "name": "disputed",   "doc": "Dispute raised on remittance" },
+    { "name": "resolved",   "doc": "Dispute resolved by admin" }
+  ]
+}

@@ -268,6 +268,21 @@ enum DataKey {
 
     /// Ordered list of all current admin addresses (instance storage).
     GovernanceAdminList,
+
+    // === Oracle (SR-022) ===
+    /// Address of the on-chain FX-rate oracle contract (instance storage).
+    /// Absent when the oracle integration is not configured.
+    OracleAddress,
+
+    /// Number of ledgers after which an oracle rate is considered stale (instance storage).
+    /// Defaults to `oracle::ORACLE_STALENESS_LEDGERS` when absent.
+    OracleStalenessWindow,
+
+    /// Corridor volume cap configuration, indexed by (currency, country) (persistent storage).
+    CorridorVolumeCap(String, String),
+
+    /// Accumulated corridor volume within the current window, indexed by (currency, country).
+    CorridorVolumeAccumulated(String, String),
 }
 
 /// Checks if the contract has an admin configured.
@@ -1804,4 +1819,129 @@ pub fn remove_admin_from_list(env: &Env, admin: &Address) {
     env.storage()
         .instance()
         .set(&DataKey::GovernanceAdminList, &new_list);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Oracle Storage Functions (SR-022)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Stores the oracle contract address in instance storage.
+pub fn set_oracle_address(env: &Env, oracle: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::OracleAddress, oracle);
+}
+
+/// Retrieves the oracle contract address, returning `None` if not configured.
+pub fn get_oracle_address(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::OracleAddress)
+}
+
+/// Removes the oracle address (disables oracle integration).
+pub fn clear_oracle_address(env: &Env) {
+    env.storage().instance().remove(&DataKey::OracleAddress);
+}
+
+/// Stores the oracle staleness window (in ledgers) in instance storage.
+pub fn set_oracle_staleness_window(env: &Env, ledgers: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::OracleStalenessWindow, &ledgers);
+}
+
+/// Retrieves the oracle staleness window; returns `None` if not explicitly configured.
+pub fn get_oracle_staleness_window(env: &Env) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&DataKey::OracleStalenessWindow)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Corridor Volume Cap Storage Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Configuration for a corridor volume cap.
+#[derive(Clone)]
+#[soroban_sdk::contracttype]
+pub struct CorridorVolumeCap {
+    pub max_volume: i128,
+    pub window_seconds: u64,
+    pub window_start: u64,
+}
+
+/// Stores the corridor volume cap configuration.
+pub fn set_corridor_volume_cap(
+    env: &Env,
+    currency: &String,
+    country: &String,
+    cap: &CorridorVolumeCap,
+) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::CorridorVolumeCap(currency.clone(), country.clone()), cap);
+}
+
+/// Retrieves the corridor volume cap, if configured.
+pub fn get_corridor_volume_cap(
+    env: &Env,
+    currency: &String,
+    country: &String,
+) -> Option<CorridorVolumeCap> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CorridorVolumeCap(currency.clone(), country.clone()))
+}
+
+/// Returns accumulated corridor volume within the current window.
+pub fn get_corridor_volume_accumulated(
+    env: &Env,
+    currency: &String,
+    country: &String,
+) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CorridorVolumeAccumulated(currency.clone(), country.clone()))
+        .unwrap_or(0)
+}
+
+/// Increments corridor volume and resets if the window has elapsed.
+///
+/// Returns `Err(ContractError::DailySendLimitExceeded)` if the cap would be exceeded.
+pub fn check_and_increment_corridor_volume(
+    env: &Env,
+    currency: &String,
+    country: &String,
+    amount: i128,
+) -> Result<(), ContractError> {
+    let cap = match get_corridor_volume_cap(env, currency, country) {
+        Some(c) => c,
+        None => return Ok(()), // No cap configured for this corridor.
+    };
+
+    let now = env.ledger().timestamp();
+    let window_end = cap.window_start.saturating_add(cap.window_seconds);
+
+    let current_volume = if now >= window_end {
+        // Window has elapsed — reset the accumulator.
+        0i128
+    } else {
+        get_corridor_volume_accumulated(env, currency, country)
+    };
+
+    let new_volume = current_volume
+        .checked_add(amount)
+        .ok_or(ContractError::Overflow)?;
+
+    if new_volume > cap.max_volume {
+        return Err(ContractError::DailySendLimitExceeded);
+    }
+
+    env.storage()
+        .persistent()
+        .set(
+            &DataKey::CorridorVolumeAccumulated(currency.clone(), country.clone()),
+            &new_volume,
+        );
+
+    Ok(())
 }
