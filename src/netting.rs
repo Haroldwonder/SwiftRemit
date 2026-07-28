@@ -68,6 +68,7 @@ struct DirectionalFlow {
 ///
 /// # Errors
 /// Returns `ContractError::InvalidBatchSize` if remittances.len() > MAX_NETTING_BATCH_SIZE
+/// Returns `ContractError::Overflow` if arithmetic operations overflow
 pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Result<NettingResult, ContractError> {
     // Validate batch size to prevent DoS via large remittance batches
     if remittances.len() > MAX_NETTING_BATCH_SIZE {
@@ -115,8 +116,15 @@ pub fn compute_net_settlements(env: &Env, remittances: &Vec<Remittance>) -> Resu
         // Apply the flow in the normalized direction
         // direction = 1 means flow is A -> B (add to net)
         // direction = -1 means flow is B -> A (subtract from net)
-        let new_net = current_net + (flow.amount * direction);
-        let new_fees = current_fees + flow.fee;
+        let flow_contribution = flow.amount
+            .checked_mul(direction)
+            .ok_or(ContractError::Overflow)?;
+        let new_net = current_net
+            .checked_add(flow_contribution)
+            .ok_or(ContractError::Overflow)?;
+        let new_fees = current_fees
+            .checked_add(flow.fee)
+            .ok_or(ContractError::Overflow)?;
 
         net_map.set(key, (new_net, new_fees));
     }
