@@ -14,11 +14,21 @@
 //! 3. **Authorization Enforcement**: Only authorized parties can change state. Senders
 //!    can only cancel their own remittances; only registered agents can confirm payouts;
 //!    only the admin can register agents or update fees.
+//!
+//! 4. **Escrow Solvency** (SR-008): The contract's USDC balance must always be greater
+//!    than or equal to the sum of every outstanding obligation — pending/processing
+//!    remittances net of partial disbursements, open standalone escrows, and
+//!    accumulated platform + integrator fees — across long randomized sequences of
+//!    create/cancel/confirm/partial-confirm/mark-failed/dispute/resolve/expire/withdraw
+//!    operations. Also asserts that remittance count and total volume are monotonic,
+//!    and that accumulated fees never decrease except via `withdraw_fees`.
 #![cfg(test)]
 extern crate std;
 
 use crate::{RemittanceStatus, SwiftRemitContract, SwiftRemitContractClient};
+use proptest::collection::vec as prop_vec;
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
 use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
 // ============================================================================
@@ -130,7 +140,7 @@ proptest! {
             + token.balance(&agent)
             + token.balance(&admin); // admin doubles as treasury
 
-        contract.confirm_payout(&id, &None, &None);
+        contract.confirm_payout(&agent, &id, &None, &None);
 
         let total_after = token.balance(&sender)
             + token.balance(&contract.address)
@@ -252,13 +262,13 @@ proptest! {
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
-        contract.confirm_payout(&id, &None, &None);
+        contract.confirm_payout(&agent, &id, &None, &None);
 
         prop_assert_eq!(contract.get_remittance(&id).status, RemittanceStatus::Completed);
 
         // A second confirm_payout on a Completed remittance must fail
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            contract.confirm_payout(&id, &None, &None);
+            contract.confirm_payout(&agent, &id, &None, &None);
         }));
         prop_assert!(
             result.is_err(),
@@ -401,5 +411,325 @@ proptest! {
             r.fee,
             "Fee must equal amount * fee_bps / 10000"
         );
+    }
+}
+
+// ============================================================================
+// Invariant 4: Escrow Solvency (SR-008)
+//
+// The contract's token balance must always be >= the sum of all outstanding
+// obligations:
+//
+//   token_balance(contract) >= Σ(pending+processing amounts - disbursed)
+//                             + Σ(open escrows)
+//                             + accumulated_fees
+//                             + accumulated_integrator_fees
+//
+// A generated sequence of operations is applied to a single contract
+// instance. Each operation is wrapped in `catch_unwind` so that an expected
+// precondition failure (e.g. confirming an already-settled remittance, or
+// picking an index into an empty pool) simply skips that step rather than
+// aborting the case — the invariant is checked after *every* step regardless
+// of which operations actually succeeded on-chain.
+//
+// A lightweight local model tracks only what the test itself caused to
+// happen (successful creates/disbursements/closures); it is intentionally
+// derived from confirmed on-chain call outcomes rather than mirrored
+// business logic, so it cannot drift into falsely proving solvency.
+// ============================================================================
+
+#[derive(Clone, Debug)]
+enum Op {
+    CreateRemittance { amount_seed: u32 },
+    Cancel { pick: u32 },
+    Confirm { pick: u32 },
+    PartialConfirm { pick: u32, amount_seed: u32 },
+    MarkFailed { pick: u32 },
+    RaiseDispute { pick: u32 },
+    ResolveDispute { pick: u32, favor_sender: bool },
+    Expire { pick: u32 },
+    WithdrawFees,
+    CreateEscrow { amount_seed: u32 },
+    ReleaseEscrow { pick: u32 },
+    RefundEscrow { pick: u32 },
+}
+
+fn op_strategy() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        3 => (1u32..=500_000u32).prop_map(|amount_seed| Op::CreateRemittance { amount_seed }),
+        2 => any::<u32>().prop_map(|pick| Op::Cancel { pick }),
+        3 => any::<u32>().prop_map(|pick| Op::Confirm { pick }),
+        2 => (any::<u32>(), 1u32..=500_000u32)
+            .prop_map(|(pick, amount_seed)| Op::PartialConfirm { pick, amount_seed }),
+        1 => any::<u32>().prop_map(|pick| Op::MarkFailed { pick }),
+        1 => any::<u32>().prop_map(|pick| Op::RaiseDispute { pick }),
+        1 => (any::<u32>(), any::<bool>())
+            .prop_map(|(pick, favor_sender)| Op::ResolveDispute { pick, favor_sender }),
+        1 => any::<u32>().prop_map(|pick| Op::Expire { pick }),
+        1 => Just(Op::WithdrawFees),
+        2 => (1u32..=500_000u32).prop_map(|amount_seed| Op::CreateEscrow { amount_seed }),
+        1 => any::<u32>().prop_map(|pick| Op::ReleaseEscrow { pick }),
+        1 => any::<u32>().prop_map(|pick| Op::RefundEscrow { pick }),
+    ]
+}
+
+/// Local bookkeeping for a remittance created during the run.
+struct RemModel {
+    id: u64,
+    amount: i128,
+    disbursed: i128,
+    open: bool,
+}
+
+/// Local bookkeeping for a standalone escrow created during the run.
+struct EscrowModel {
+    id: u64,
+    amount: i128,
+    open: bool,
+}
+
+fn pick_index(pick: u32, len: usize) -> Option<usize> {
+    if len == 0 {
+        None
+    } else {
+        Some((pick as usize) % len)
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+    /// Applies a random sequence of operations across remittances and escrows,
+    /// asserting solvency plus the monotonicity invariants after every step.
+    #[test]
+    fn prop_solvency_invariant_holds_across_random_op_sequences(
+        fee_bps in valid_fee_bps(),
+        ops in prop_vec(op_strategy(), 1..=20),
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let agent = Address::generate(&env);
+
+        let (token, token_sa) = make_token(&env, &token_admin);
+        token_sa.mint(&sender, &1_000_000_000_000i128);
+
+        let contract = make_contract(&env);
+        contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
+        contract.register_agent(&agent, &None);
+        contract.assign_role(&admin, &agent, &crate::Role::Settler);
+
+        let mut rems: std::vec::Vec<RemModel> = std::vec::Vec::new();
+        let mut escrows: std::vec::Vec<EscrowModel> = std::vec::Vec::new();
+
+        let mut prev_remittance_count = contract.get_remittance_count();
+        let mut prev_total_volume = contract.get_total_volume();
+        let mut prev_accumulated_fees = contract.get_accumulated_fees();
+
+        // Captures `contract` and `token` by shared reference; mutates the
+        // `prev_*` locals across calls, so it must be an `FnMut`.
+        let mut check_invariants = |rems: &std::vec::Vec<RemModel>,
+                                     escrows: &std::vec::Vec<EscrowModel>,
+                                     just_withdrew_fees: bool|
+         -> Result<(), TestCaseError> {
+            let pending_processing: i128 = rems
+                .iter()
+                .filter(|r| r.open)
+                .map(|r| r.amount - r.disbursed)
+                .sum();
+            let open_escrows: i128 = escrows.iter().filter(|e| e.open).map(|e| e.amount).sum();
+            let accumulated_fees = contract.get_accumulated_fees();
+            let integrator_fees = contract.get_accumulated_integrator_fees();
+            let obligations = pending_processing + open_escrows + accumulated_fees + integrator_fees;
+            let balance = token.balance(&contract.address);
+
+            prop_assert!(
+                balance >= obligations,
+                "Solvency violated: balance {} < obligations {} \
+                 (pending/processing {}, open escrows {}, fees {}, integrator fees {})",
+                balance, obligations, pending_processing, open_escrows, accumulated_fees, integrator_fees
+            );
+
+            let count = contract.get_remittance_count();
+            prop_assert!(
+                count >= prev_remittance_count,
+                "Remittance count is not monotonic: {} < {}",
+                count, prev_remittance_count
+            );
+            prev_remittance_count = count;
+
+            let volume = contract.get_total_volume();
+            prop_assert!(
+                volume >= prev_total_volume,
+                "Total volume decreased: {} < {}",
+                volume, prev_total_volume
+            );
+            prev_total_volume = volume;
+
+            if !just_withdrew_fees {
+                prop_assert!(
+                    accumulated_fees >= prev_accumulated_fees,
+                    "Accumulated fees decreased without a withdrawal: {} < {}",
+                    accumulated_fees, prev_accumulated_fees
+                );
+            }
+            prev_accumulated_fees = accumulated_fees;
+
+            Ok(())
+        };
+
+        check_invariants(&rems, &escrows, false)?;
+
+        for op in ops {
+            let mut just_withdrew_fees = false;
+
+            match op {
+                Op::CreateRemittance { amount_seed } => {
+                    let amount = 1i128 + (amount_seed as i128 % 500_000);
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None)
+                    }));
+                    if let Ok(id) = result {
+                        rems.push(RemModel { id, amount, disbursed: 0, open: true });
+                    }
+                }
+
+                Op::Cancel { pick } => {
+                    if let Some(idx) = pick_index(pick, rems.len()) {
+                        let id = rems[idx].id;
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            contract.cancel_remittance(&id)
+                        }));
+                        if result.is_ok() {
+                            rems[idx].open = false;
+                        }
+                    }
+                }
+
+                Op::Confirm { pick } => {
+                    if let Some(idx) = pick_index(pick, rems.len()) {
+                        let id = rems[idx].id;
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            contract.confirm_payout(&agent, &id, &None, &None)
+                        }));
+                        if result.is_ok() {
+                            rems[idx].open = false;
+                        }
+                    }
+                }
+
+                Op::PartialConfirm { pick, amount_seed } => {
+                    if let Some(idx) = pick_index(pick, rems.len()) {
+                        let id = rems[idx].id;
+                        let remaining = rems[idx].amount - rems[idx].disbursed;
+                        if remaining > 0 {
+                            let amount = (1i128 + (amount_seed as i128 % remaining)).min(remaining);
+                            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                contract.confirm_partial_payout(&id, &amount)
+                            }));
+                            if result.is_ok() {
+                                rems[idx].disbursed += amount;
+                            }
+                        }
+                    }
+                }
+
+                Op::MarkFailed { pick } => {
+                    if let Some(idx) = pick_index(pick, rems.len()) {
+                        let id = rems[idx].id;
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            contract.mark_failed(&id)
+                        }));
+                        if result.is_ok() {
+                            rems[idx].open = false;
+                        }
+                    }
+                }
+
+                Op::RaiseDispute { pick } => {
+                    if let Some(idx) = pick_index(pick, rems.len()) {
+                        let id = rems[idx].id;
+                        let hash = soroban_sdk::BytesN::from_array(&env, &[7u8; 32]);
+                        // Disputed remittances stay escrowed either way, so no model change is needed.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            contract.raise_dispute(&id, &hash)
+                        }));
+                    }
+                }
+
+                Op::ResolveDispute { pick, favor_sender } => {
+                    if let Some(idx) = pick_index(pick, rems.len()) {
+                        let id = rems[idx].id;
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            contract.resolve_dispute(&id, &favor_sender)
+                        }));
+                        if result.is_ok() {
+                            rems[idx].open = false;
+                        }
+                    }
+                }
+
+                Op::Expire { pick } => {
+                    if let Some(idx) = pick_index(pick, rems.len()) {
+                        let id = rems[idx].id;
+                        let ids = soroban_sdk::vec![&env, id];
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            contract.process_expired_remittances(&ids)
+                        }));
+                        if let Ok(processed) = result {
+                            if processed.iter().any(|pid| pid == id) {
+                                rems[idx].open = false;
+                            }
+                        }
+                    }
+                }
+
+                Op::WithdrawFees => {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        contract.withdraw_fees(&admin)
+                    }));
+                    just_withdrew_fees = result.is_ok();
+                }
+
+                Op::CreateEscrow { amount_seed } => {
+                    let amount = 1i128 + (amount_seed as i128 % 500_000);
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        contract.create_escrow(&sender, &agent, &amount)
+                    }));
+                    if let Ok(id) = result {
+                        escrows.push(EscrowModel { id, amount, open: true });
+                    }
+                }
+
+                Op::ReleaseEscrow { pick } => {
+                    if let Some(idx) = pick_index(pick, escrows.len()) {
+                        let id = escrows[idx].id;
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            contract.release_escrow(&id)
+                        }));
+                        if result.is_ok() {
+                            escrows[idx].open = false;
+                        }
+                    }
+                }
+
+                Op::RefundEscrow { pick } => {
+                    if let Some(idx) = pick_index(pick, escrows.len()) {
+                        let id = escrows[idx].id;
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            contract.refund_escrow(&id)
+                        }));
+                        if result.is_ok() {
+                            escrows[idx].open = false;
+                        }
+                    }
+                }
+            }
+
+            check_invariants(&rems, &escrows, just_withdrew_fees)?;
+        }
     }
 }

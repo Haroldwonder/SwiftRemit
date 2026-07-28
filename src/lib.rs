@@ -97,6 +97,8 @@ mod test_features_589_592;
 mod test_state_machine_property;
 #[cfg(test)]
 mod test_contract_upgrade;
+#[cfg(test)]
+mod test_invariants;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_circuit_breaker;
 
