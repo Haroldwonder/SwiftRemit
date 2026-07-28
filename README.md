@@ -127,39 +127,219 @@ Fees are calculated in basis points (bps):
 
 ## Contract Functions
 
-### Administrative Functions
+The contract exposes 134 public functions from a single `#[contractimpl] impl SwiftRemitContract` block in [`src/lib.rs`](src/lib.rs). This list is generated from `grep -n "pub fn " src/lib.rs` and is grouped by domain below. "Auth" describes what `require_auth()` / role check (if any) gates the call.
 
-- `initialize(admin, usdc_token, fee_bps)` - One-time contract initialization
-- `register_agent(agent)` - Add agent to approved list (admin only)
-- `remove_agent(agent)` - Remove agent from approved list (admin only)
-- `update_fee(fee_bps)` - Update platform fee percentage (admin only)
-- `set_daily_limit(currency, country, limit)` - Configure sender limits by corridor (admin only)
-- `withdraw_fees(to)` - Withdraw accumulated platform fees (admin only)
-- `withdraw_integrator_fees(integrator, to)` - Withdraw accumulated integrator fees (integrator auth required)
+> This table is the source of truth for the deployed ABI. A CI check (`scripts/check_readme_functions.sh`, wired into `contract-ci.yml`) fails the build if a `pub fn` is added to the `impl` block without a matching entry here — see [Keeping this list in sync](#keeping-this-list-in-sync) below.
 
-### User Functions
+### Administrative / Setup
 
-- `create_remittance(sender, agent, amount)` - Create new remittance (sender auth required)
-- `start_processing(remittance_id)` - Mark remittance as being processed (agent auth required)
-- `confirm_payout(remittance_id, proof)` - Confirm fiat payout with optional commitment proof
-- `confirm_partial_payout(remittance_id, amount)` - Disburse a partial amount to the agent; automatically marks the remittance Completed when the total disbursed reaches the net payout (agent auth required)
-- `mark_failed(remittance_id)` - Mark payout as failed and auto-refund escrow to sender (agent auth required)
-- `cancel_remittance(remittance_id)` - Cancel pending remittance (sender auth required)
-- `process_expired_remittances(remittance_ids)` - Auto-refund expired pending remittances in batches (max 50 IDs)
+| Function | Description | Auth |
+|---|---|---|
+| `initialize(admin, usdc_token, fee_bps, rate_limit_cooldown, protocol_fee_bps, treasury)` | One-time contract setup: sets admin, USDC token, platform fee, rate-limit cooldown, protocol fee, and treasury; initializes counters | Callable once only (fails with `AlreadyInitialized` afterward) |
+| `register_agent(agent, kyc_hash?)` | Registers an address as an authorized payout agent and grants the `Settler` role, optionally storing a KYC hash | admin only |
+| `remove_agent(agent)` | Revokes an agent's authorization and `Settler` role | admin only |
+| `update_fee(fee_bps)` | Updates the global platform fee (bps) | admin only |
+| `add_admin(caller, new_admin)` | Grants admin role to a new address | admin only |
+| `remove_admin(caller, admin_to_remove)` | Revokes admin role (blocks removing the last admin) | admin only |
+| `is_admin(address)` | Checks whether an address currently has admin privileges | none (public query) |
+| `get_admin_count()` | Returns the number of registered admins | none (public query) |
+| `propose_admin(new_admin)` | Step 1 of a 2-step admin handover — proposes a successor | admin only |
+| `accept_admin()` | Step 2 of a 2-step admin handover — proposed address accepts | proposed-admin auth required |
+| `extend_storage_ttl(caller, extend_by_ledgers)` | Bumps TTL on instance/persistent storage to prevent expiry | admin only |
 
-### Query Functions
+### Agent Management & Reputation
 
-- `get_remittance(remittance_id)` - Retrieve remittance details
-- `get_accumulated_fees()` - Check total platform fees collected
-- `is_agent_registered(agent)` - Verify agent registration status
-- `is_token_whitelisted(token)` - Check whether a token is currently accepted
-- `get_admin_count()` - Read the number of registered admins
-- `get_platform_fee_bps()` - Get current fee percentage
-- `get_rate_limit_status(address)` - Read current rate-limit usage for an address
-- `get_daily_limit(currency, country)` - Read configured daily send limit for a corridor
-- `get_remittance_count()` - Total number of remittances ever created
-- `get_total_volume()` - Cumulative volume of all completed remittances (original amounts)
-- `health()` - On-chain health check: initialized, paused, admin_count, total_remittances, accumulated_fees
+| Function | Description | Auth |
+|---|---|---|
+| `is_agent_registered(agent)` | Checks if an address is a registered agent | none (public query) |
+| `get_agent_kyc_hash(agent)` | Returns the stored KYC metadata hash for an agent, if any | none (public query) |
+| `get_agent_stats(agent)` | Returns full agent stats (settlements, failures, disputes, success rate) | none (public query) |
+| `get_agent_reputation(agent)` | Computes a reputation score from an agent's stats | none (public query) |
+| `set_agent_daily_cap(agent, cap)` | Sets a rolling 24h payout cap for an agent (0 = no cap) | admin only |
+| `get_agent_daily_cap(agent)` | Returns an agent's daily payout cap | none (public query) |
+| `set_min_agent_reputation(threshold)` | Sets the minimum reputation (0–100) an agent needs to receive new remittances | admin only |
+| `get_min_agent_reputation()` | Returns the current minimum reputation threshold | none (public query) |
+
+### Remittance Lifecycle
+
+| Function | Description | Auth |
+|---|---|---|
+| `create_remittance(sender, agent, amount, expiry?, token?, idempotency_key?, settlement_config?, recipient_hash?)` | Creates a pending remittance: validates agent/reputation/token whitelist, enforces daily send limit and corridor caps, checks idempotency, and moves funds into escrow | sender auth required |
+| `create_remittance_with_corridor(sender, agent, amount, expiry?, from_country?, to_country?)` | Like `create_remittance`, but applies a country-pair fee corridor if one is configured | sender auth required |
+| `confirm_payout(agent, remittance_id, proof?, recipient_details_hash?)` | Agent confirms payout: transitions Pending → Processing → Completed, pays the agent (minus fees), pays the treasury protocol fee, and locks the settlement hash against double payout | agent auth required (must be the remittance's assigned, registered agent) |
+| `mark_failed(remittance_id)` | Refunds the escrow to the sender and sets the remittance status to `Cancelled` (despite the name, it does not set a `Failed` status — see note below) | agent auth required (assigned agent) |
+| `raise_dispute(remittance_id, evidence_hash)` | Sender disputes a remittance in the `Failed` status, within the dispute window | sender auth required |
+| `resolve_dispute(remittance_id, in_favour_of_sender)` | Admin resolves a disputed remittance — refunds the sender or pays the agent | admin only |
+| `set_dispute_window(seconds)` | Sets how long after failure a sender may raise a dispute | admin only |
+| `get_dispute_window()` | Returns the current dispute window in seconds | none (public query) |
+| `confirm_partial_payout(remittance_id, amount)` | Disburses a partial amount toward a remittance; auto-completes once fully disbursed | agent auth required (assigned agent) |
+| `finalize_remittance(caller, remittance_id)` | Verifies a remittance is in the `Completed` status | admin only |
+| `cancel_remittance(remittance_id)` | Sender cancels a pending remittance and receives a full refund | sender auth required |
+| `process_expired_remittances(remittance_ids)` | Batch-refunds expired pending remittances from the given ID list (max batch size configurable, see `set_max_expired_batch_size`) | none (callable by anyone) |
+| `get_remittance(remittance_id)` | Fetches a remittance record | none (public query) |
+| `get_remittances_by_sender(sender, offset, limit)` | Paginated list of a sender's remittance IDs (max page 100) | none (public query) |
+| `get_remittances_by_agent(agent, offset, limit)` | Paginated list of an agent's remittance IDs (max page 100) | none (public query) |
+| `get_remittance_count()` | Total number of remittances ever created | none (public query) |
+| `get_total_volume()` | Cumulative volume of completed remittances | none (public query) |
+| `get_in_flight_volume()` | Total amount currently in the `Processing` status | none (public query) |
+| `get_transfer_state(transfer_id)` | Returns a remittance's current status | none (public query) |
+| `compute_settlement_hash(remittance_id)` | Computes the deterministic settlement hash for a remittance | none (public query) |
+| `get_settlement_hash(remittance_id)` | Returns the stored settlement hash once settled | none (public query) |
+
+> **Note:** there is no separate `start_processing` function — the `Pending → Processing` transition happens as an internal step inside `confirm_payout`, not as its own callable entry point.
+
+### Escrow
+
+| Function | Description | Auth |
+|---|---|---|
+| `create_escrow(sender, recipient, amount)` | Creates a standalone escrow (separate from remittances), pulling funds into the contract | sender auth required |
+| `release_escrow(transfer_id)` | Releases escrowed funds to the recipient | admin only |
+| `refund_escrow(transfer_id)` | Refunds escrowed funds back to the original sender | escrow's sender auth required |
+| `get_escrow(transfer_id)` | Fetches an escrow record | none (public query) |
+| `get_escrow_ttl()` | Returns the configured escrow TTL (seconds) | none (public query) |
+| `update_escrow_ttl(ttl)` | Updates the escrow TTL | admin only |
+| `process_expired_escrows(transfer_ids)` | Batch-refunds expired pending escrows from the given ID list | none (callable by anyone) |
+
+### Batch / Netting
+
+| Function | Description | Auth |
+|---|---|---|
+| `batch_create_remittances(sender, entries)` | Creates multiple remittances atomically with a single token transfer for the total | sender auth required |
+| `create_batch_remittance(sender, entries)` | Wrapper around `batch_create_remittances` that also emits a batch-created event | sender auth required |
+| `confirm_batch_payout(agent, remittance_ids)` | Confirms payout for multiple remittances in one call | agent auth required |
+| `batch_settle_with_netting(entries)` | Nets opposing transfers between parties in a batch and settles only the net difference | **no `require_auth` in this function** — only blocked while the contract is paused; treat as a known gap if you're reviewing security posture |
+
+### Fee Management, Corridors & Token Whitelist
+
+| Function | Description | Auth |
+|---|---|---|
+| `get_platform_fee_bps()` | Returns the current global platform fee (bps) | none (public query) |
+| `get_fee_breakdown(amount, from_country?, to_country?)` | Previews the fee split for an amount, using a corridor if a country pair is given | none (public query) |
+| `update_protocol_fee(caller, fee_bps)` | Updates the protocol/treasury fee (max 200 bps) | admin only |
+| `update_token_fee(caller, token, fee_bps)` | Sets the platform fee for a specific whitelisted token | admin only |
+| `get_token_fee_bps(token)` | Returns the configured fee for a token | none (public query) |
+| `update_treasury(caller, treasury)` | Updates the protocol-fee treasury address | admin only |
+| `get_protocol_fee_bps()` | Returns the current protocol fee (bps) | none (public query) |
+| `get_treasury()` | Returns the treasury address | none (public query) |
+| `update_fee_strategy(caller, strategy)` | Switches the fee model between Percentage / Flat / Dynamic | admin only |
+| `get_fee_strategy()` | Returns the current fee strategy | none (public query) |
+| `calculate_fee_breakdown(amount)` | Computes the fee breakdown for an amount under the global strategy | none (public query) |
+| `fee_breakdown_corridor(amount, corridor)` | Computes the fee breakdown for an amount under a given corridor config | none (public query) |
+| `set_fee_corridor(caller, corridor)` | Configures corridor-specific fee rules for a country pair | admin only |
+| `get_fee_corridor(from_country, to_country)` | Returns a corridor's fee config, if set | none (public query) |
+| `remove_fee_corridor(caller, from_country, to_country)` | Deletes a corridor's fee config | admin only |
+| `withdraw_fees(to)` | Withdraws all accumulated platform fees to `to` | admin only |
+| `withdraw_integrator_fees(integrator, to)` | Withdraws accumulated integrator fees to `to` | integrator auth required |
+| `get_accumulated_fees()` | Returns accumulated (unwithdrawn) platform fees | none (public query) |
+| `get_accumulated_integrator_fees()` | Returns accumulated (unwithdrawn) integrator fees | none (public query) |
+| `add_whitelisted_token(token)` | Adds a token to the whitelist | admin only |
+| `remove_whitelisted_token(token)` | Removes a token from the whitelist | admin only |
+| `is_token_whitelisted(token)` | Checks whitelist status | none (public query) |
+| `get_whitelisted_tokens()` | Lists all whitelisted tokens | none (public query) |
+
+### Rate Limits & Daily Limits
+
+| Function | Description | Auth |
+|---|---|---|
+| `update_rate_limit(cooldown_seconds)` | Sets the settlement rate-limit cooldown (legacy single-value control) | admin only |
+| `get_rate_limit_cooldown()` | Returns the settlement rate-limit cooldown | none (public query) |
+| `get_last_settlement_time(sender)` | Returns the sender's last settlement timestamp, if any | none (public query) |
+| `set_daily_limit(currency, country, limit)` | Sets a daily send limit for a currency/country corridor | admin only |
+| `get_daily_limit(currency, country)` | Returns the configured daily limit for a corridor | none (public query) |
+| `get_daily_limit_status(sender, currency, country)` | Returns `(limit, used, remaining, resets_at)` for a sender's rolling 24h window | none (public query) |
+| `set_max_expired_batch_size(size)` | Sets the max batch size (1–200) for `process_expired_remittances` / `process_expired_escrows` | admin only |
+| `update_rate_limit_config(caller, max_requests, window_seconds, enabled)` | Configures the general request rate limiter | admin only |
+| `get_rate_limit_config()` | Returns `(max_requests, window_seconds, enabled)` | none (public query) |
+| `get_rate_limit_status(address)` | Returns `(current_requests, max_requests, window_seconds)` for an address | none (public query) |
+
+### Roles, Governance & Multisig
+
+| Function | Description | Auth |
+|---|---|---|
+| `assign_role(caller, address, role)` | Grants a role (e.g. Admin, Settler) to an address | admin (`Admin` role) required |
+| `remove_role(caller, address, role)` | Revokes a role from an address | admin (`Admin` role) required |
+| `has_role(address, role)` | Checks if an address holds a role | none (public query) |
+| `set_multisig_config(caller, threshold, ttl_seconds)` | Configures M-of-N threshold and TTL for admin multisig operations | admin only |
+| `propose_operation(proposer, operation_type, fee_bps, withdraw_to?)` | Proposes a high-impact admin operation (auto-executes if threshold is 1) | admin only |
+| `approve_operation(approver, operation_id)` | Approves a pending multisig operation; auto-executes at threshold | admin only |
+| `expire_operation(operation_id)` | Cleans up a TTL-expired pending operation | none (callable by anyone) |
+| `get_pending_operation(operation_id)` | Fetches a pending multisig operation | none (public query) |
+| `migrate_to_governance(caller, quorum, timelock_seconds, proposal_ttl_seconds)` | One-time migration from single-admin to DAO governance | must be the legacy single admin |
+| `propose(proposer, action)` | Creates a governance proposal | admin (`Admin` role) required |
+| `vote(voter, proposal_id)` | Casts an approval vote on a proposal | admin (`Admin` role) required |
+| `execute(executor, proposal_id)` | Executes an approved proposal after its timelock | admin (`Admin` role) required |
+| `expire_proposal(proposal_id)` | Transitions a TTL-expired proposal to `Expired` | none (callable by anyone) |
+| `cleanup_expired_proposals(caller, proposal_ids)` | Deletes executed/expired proposals to reclaim storage | admin (`Admin` role) required |
+| `get_proposal(proposal_id)` | Fetches a proposal record | none (public query) |
+| `get_quorum()` | Returns the governance quorum threshold | none (public query) |
+| `get_timelock_seconds()` | Returns the governance timelock duration | none (public query) |
+| `get_admin_list()` | Returns the list of current admin addresses | none (public query) |
+| `get_governance_config()` | Returns `{quorum, timelock_seconds, proposal_ttl_seconds}` | none (public query) |
+
+### Circuit Breaker / Pause
+
+| Function | Description | Auth |
+|---|---|---|
+| `pause()` | Legacy wrapper: pauses the contract, bypassing quorum/timelock checks | admin only |
+| `unpause()` | Legacy wrapper: unpauses the contract, bypassing quorum/timelock checks | admin only |
+| `emergency_pause(caller, reason)` | Pauses the contract with a structured pause reason | admin (`Admin` role) required |
+| `emergency_unpause(caller)` | Unpauses, enforcing the configured timelock and quorum | admin (`Admin` role) required |
+| `vote_unpause(caller)` | Casts an admin vote to unpause; auto-unpauses at quorum | admin (`Admin` role) required |
+| `set_pause_timelock(caller, seconds)` | Sets the required delay before unpause (max 7 days) | admin (`Admin` role) required |
+| `set_unpause_quorum(caller, quorum)` | Sets the number of admin votes needed to unpause | admin (`Admin` role) required |
+| `set_cooldown_period(caller, seconds)` | Sets the post-unpause cooldown during which rate limits are halved (max 7 days) | admin (`Admin` role) required |
+| `get_cooldown_period()` | Returns the current post-unpause cooldown | none (public query) |
+| `get_circuit_breaker_status()` | Full snapshot of circuit-breaker state | none (public query) |
+| `get_pause_record(seq)` | Returns a specific historical pause record | none (public query) |
+| `get_current_pause_record()` | Returns the active pause record, if paused | none (public query) |
+| `get_pause_history_count()` | Returns the total number of pause events recorded | none (public query) |
+| `is_paused()` | Checks if the contract is currently paused | none (public query) |
+
+### Asset Verification
+
+| Function | Description | Auth |
+|---|---|---|
+| `set_asset_verification(asset_code, issuer, status, reputation_score, trustline_count, has_toml)` | Stores off-chain-computed asset verification data (Stellar Expert / `stellar.toml` checks) | admin only |
+| `get_asset_verification(asset_code, issuer)` | Fetches stored verification data for an asset | none (public query) |
+| `has_asset_verification(asset_code, issuer)` | Checks if verification data exists for an asset | none (public query) |
+| `validate_asset_safety(asset_code, issuer)` | Errors if the asset is flagged `Suspicious` | none (public query, errors on suspicious asset) |
+
+### Blacklist / KYC / Compliance
+
+| Function | Description | Auth |
+|---|---|---|
+| `blacklist_user(user)` | Adds a user to the blacklist | admin only |
+| `remove_from_blacklist(user)` | Removes a user from the blacklist | admin only |
+| `set_user_blacklisted(user, blacklisted)` | Directly sets a user's blacklist flag | admin only |
+| `is_user_blacklisted(user)` | Checks blacklist status | none (public query) |
+| `set_kyc_approved(user, approved, expiry)` | Sets a user's KYC approval status and expiry | admin only |
+| `is_kyc_approved(user)` | Checks KYC approval (and that it hasn't expired) | none (public query) |
+
+### Migration
+
+| Function | Description | Auth |
+|---|---|---|
+| `export_migration_snapshot(caller)` | Exports a full contract state snapshot and sets a migration-in-progress lock (blocks `create_remittance` / `confirm_payout`) | admin only |
+| `import_migration_batch(caller, batch)` | Imports one hash-verified batch of migrated state; clears the lock after the final batch | admin only |
+
+### Transaction Controller
+
+| Function | Description | Auth |
+|---|---|---|
+| `execute_transaction(user, agent, amount, expiry?)` | Runs a validate → KYC-check → create-remittance pipeline with retry logic | no explicit `require_auth`; enforced implicitly by the token contract requiring `user` to authorize the transfer |
+| `get_transaction_status(remittance_id)` | Fetches the transaction record for a controller-managed transaction | none (public query) |
+| `retry_transaction(remittance_id)` | Retries a transaction that rolled back (only valid from the `RolledBack` state) | same implicit auth as `execute_transaction` |
+
+### General / System Queries
+
+| Function | Description | Auth |
+|---|---|---|
+| `get_version()` | Returns the contract's package version string | none (public query) |
+| `health()` | Returns init state, pause status, admin count, remittance count, accumulated fees | none (public query) |
+
+### Keeping this list in sync
+
+This list must contain one entry per `pub fn` inside the `#[contractimpl] impl SwiftRemitContract` block in `src/lib.rs`. `scripts/check_readme_functions.sh` enforces this in CI: it greps `src/lib.rs` for `pub fn` names inside that block and fails if any name isn't present in this file.
 
 ## Security Features
 
@@ -192,6 +372,13 @@ cargo test
 ```
 
 ## Quick Start
+
+### Prerequisites
+
+- Rust toolchain as pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (currently `stable`, installed automatically by `rustup` when you build in this repo)
+- `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
+- Soroban CLI (`soroban`)
+- See [`Cargo.toml`](Cargo.toml) for the exact `soroban-sdk` version this contract is built against
 
 ### 🚀 Complete Testnet Setup (Recommended)
 
@@ -487,7 +674,7 @@ Terminal states (`Completed`, `Cancelled`) cannot transition further. `Failed` a
 
 4. **Alternative Flows**
    - **Early Cancellation**: Sender calls `cancel_remittance` while Pending
-   - There is no separate public `start_processing` or `mark_failed` function in the current contract API
+   - **Agent-Reported Failure**: Agent calls `mark_failed`, which refunds the escrow to the sender and sets status to `Cancelled` (see [Contract Functions](#contract-functions))
 
 5. **Fee Management**
    - Admin monitors accumulated fees
@@ -564,7 +751,7 @@ The contract emits events for monitoring:
 
 ## Dependencies
 
-- `soroban-sdk = "25.3.1"` - Latest Soroban SDK
+- `soroban-sdk = "26.1.0"` - pinned in [`Cargo.toml`](Cargo.toml), which is the source of truth if this drifts
 
 ## License
 
