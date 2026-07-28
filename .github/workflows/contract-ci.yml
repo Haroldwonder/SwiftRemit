@@ -123,16 +123,25 @@ jobs:
           path: target/wasm32-unknown-unknown/release/swiftremit.wasm
           retention-days: 7
 
+  readme-functions:
+    name: README function coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check README documents every pub fn
+        run: ./scripts/check_readme_functions.sh
+
   # Gate job — required status check. Passes only when all jobs above pass.
   contract-ci:
     name: Contract CI
     runs-on: ubuntu-latest
-    needs: [fmt, clippy, test, build-wasm]
+    needs: [fmt, clippy, test, build-wasm, readme-functions]
     if: always()
     steps:
       - name: Assert all jobs passed
         run: |
-          results=("${{ needs.fmt.result }}" "${{ needs.clippy.result }}" "${{ needs.test.result }}" "${{ needs.build-wasm.result }}")
+          results=("${{ needs.fmt.result }}" "${{ needs.clippy.result }}" "${{ needs.test.result }}" "${{ needs.build-wasm.result }}" "${{ needs.readme-functions.result }}")
           for r in "${results[@]}"; do
             if [[ "$r" != "success" ]]; then
               echo "❌ One or more contract CI jobs failed."
