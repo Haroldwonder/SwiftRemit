@@ -80,6 +80,9 @@ impl RemittanceStatus {
             (RemittanceStatus::Pending, RemittanceStatus::Failed) => true,
             (RemittanceStatus::Processing, RemittanceStatus::Failed) => true,
             (RemittanceStatus::Failed, RemittanceStatus::Disputed) => true,
+            // From Disputed (resolved by admin via resolve_dispute)
+            (RemittanceStatus::Disputed, RemittanceStatus::Cancelled) => true,
+            (RemittanceStatus::Disputed, RemittanceStatus::Completed) => true,
             // Terminal states cannot transition
             (RemittanceStatus::Completed, _) => false,
             (RemittanceStatus::Cancelled, _) => false,
