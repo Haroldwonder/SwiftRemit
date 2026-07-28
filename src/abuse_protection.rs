@@ -89,7 +89,7 @@ pub fn check_rate_limit(
         return Err(ContractError::RateLimitExceeded);
     }
     entry.timestamps.push_back(current_time);
-    entry.request_count += 1;
+    entry.request_count = entry.request_count.checked_add(1).ok_or(ContractError::Overflow)?;
     save_sliding_window_entry(env, &entry, RATE_LIMIT_WINDOW_SECONDS);
     Ok(())
 }

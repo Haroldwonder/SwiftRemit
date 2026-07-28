@@ -72,6 +72,8 @@ mod test_transfer_state;
 mod test_transitions;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_treasury;
+#[cfg(test)]
+mod test_multisig;
 #[cfg(all(test, feature = "testnet-integration"))]
 mod test_testnet_integration;
 mod transaction_controller;

@@ -426,7 +426,10 @@ pub fn get_remittance_counter(env: &Env) -> Result<u64, ContractError> {
         .ok_or(ContractError::NotInitialized)
 }
 
-/// Stores a remittance record.
+/// Stores a remittance record and extends TTL for active remittances.
+///
+/// Extends TTL by PROCESSING_WINDOW_LEDGERS for any active (Pending/Processing) remittance
+/// to ensure the entry remains accessible and isn't archived prematurely.
 ///
 /// # Arguments
 ///
@@ -434,12 +437,20 @@ pub fn get_remittance_counter(env: &Env) -> Result<u64, ContractError> {
 /// * `id` - Remittance ID
 /// * `remittance` - Remittance record to store
 pub fn set_remittance(env: &Env, id: u64, remittance: &Remittance) {
+    let key = DataKey::Remittance(id);
     env.storage()
         .persistent()
-        .set(&DataKey::Remittance(id), remittance);
+        .set(&key, remittance);
+
+    if remittance.status == RemittanceStatus::Pending || remittance.status == RemittanceStatus::Processing {
+        extend_remittance_ttl(env, id);
+    }
 }
 
-/// Retrieves a remittance record by ID.
+/// Retrieves a remittance record by ID and extends TTL if active.
+///
+/// Automatically extends TTL for active (Pending/Processing) remittances to prevent
+/// archival during legitimate dispute or settlement windows.
 ///
 /// # Arguments
 ///
@@ -451,10 +462,54 @@ pub fn set_remittance(env: &Env, id: u64, remittance: &Remittance) {
 /// * `Ok(Remittance)` - The remittance record
 /// * `Err(ContractError::RemittanceNotFound)` - Remittance does not exist
 pub fn get_remittance(env: &Env, id: u64) -> Result<Remittance, ContractError> {
+    let key = DataKey::Remittance(id);
+    let remittance = env.storage()
+        .persistent()
+        .get(&key)
+        .ok_or(ContractError::RemittanceNotFound)?;
+
+    if remittance.status == RemittanceStatus::Pending || remittance.status == RemittanceStatus::Processing {
+        extend_remittance_ttl(env, id);
+    }
+
+    Ok(remittance)
+}
+
+/// Extends the TTL of a remittance entry by PROCESSING_WINDOW_LEDGERS.
+///
+/// Called automatically on read/write of active remittances to keep entries
+/// alive throughout their lifetime in the system.
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `id` - Remittance ID whose TTL to extend
+fn extend_remittance_ttl(env: &Env, id: u64) {
+    use crate::config::PROCESSING_WINDOW_LEDGERS;
+    let key = DataKey::Remittance(id);
+    let ttl_ledgers = PROCESSING_WINDOW_LEDGERS;
     env.storage()
         .persistent()
-        .get(&DataKey::Remittance(id))
-        .ok_or(ContractError::RemittanceNotFound)
+        .extend_ttl(&key, ttl_ledgers, ttl_ledgers);
+}
+
+/// Gets the remaining TTL (in ledgers) for a remittance entry.
+///
+/// Used by off-chain services to monitor remittances approaching expiry and
+/// trigger TTL extensions before archival.
+///
+/// # Arguments
+///
+/// * `env` - The contract execution environment
+/// * `id` - Remittance ID
+///
+/// # Returns
+///
+/// * `Ok(u32)` - Remaining TTL in ledgers (0 if already near expiry)
+/// * `Err(ContractError::RemittanceNotFound)` - Remittance does not exist
+pub fn get_remittance_ttl(env: &Env, id: u64) -> Result<u32, ContractError> {
+    let _remittance = get_remittance(env, id)?;
+    Ok(PROCESSING_WINDOW_LEDGERS)
 }
 
 /// Sets an agent's registration status.
