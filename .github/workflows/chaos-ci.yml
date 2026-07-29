@@ -1,0 +1,290 @@
+name: Chaos Tests — RPC, Database, Anchor, WebSocket (SR-061)
+
+on:
+  schedule:
+    # Run nightly at 02:00 UTC — offset from the webhook chaos suite at 03:00
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Which chaos suite to run (all | rpc | database | anchor | websocket)"
+        required: false
+        default: "all"
+
+defaults:
+  run:
+    working-directory: api
+
+env:
+  TOXIPROXY_URL:        http://localhost:8474
+  WEBHOOK_PROXY_PORT:   "9090"
+  RPC_PROXY_PORT:       "9091"
+  RPC_TARGET_URL:       http://localhost:3002
+  ANCHOR_PROXY_PORT:    "9093"
+  ANCHOR_TARGET_URL:    http://localhost:3003
+  WS_PROXY_PORT:        "9094"
+  PG_PROXY_PORT:        "9432"
+  PG_TARGET_HOST:       "localhost:5433"
+  DATABASE_URL:         postgresql://chaos:chaos@localhost:9432/swiftremit_chaos
+  ANCHOR_TOML_VALIDATION_DISABLED: "false"
+
+jobs:
+  # ── RPC chaos ───────────────────────────────────────────────────────────────
+  rpc-chaos:
+    name: "Chaos — Soroban RPC unavailability"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: >
+      github.event_name == 'schedule' ||
+      github.event.inputs.suite == 'all' ||
+      github.event.inputs.suite == 'rpc'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start infrastructure
+        working-directory: tests/docker
+        run: |
+          docker compose -f chaos-docker-compose.yml up -d toxiproxy rpc-mock
+          echo "Waiting for Toxiproxy..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8474/proxies; do sleep 2; done'
+          echo "Waiting for RPC mock..."
+          timeout 30 bash -c 'until curl -sf http://localhost:3002/health; do sleep 2; done'
+
+      - name: Create Toxiproxy RPC proxy
+        working-directory: api
+        run: |
+          curl -sf -X POST http://localhost:8474/proxies \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "rpc-target",
+              "listen": "0.0.0.0:9091",
+              "upstream": "localhost:3002",
+              "enabled": true
+            }'
+
+      - name: Run RPC chaos tests
+        run: npx vitest run --config vitest.chaos.config.ts src/__tests__/rpc-chaos.chaos.test.ts
+
+      - name: Collect logs on failure
+        if: failure()
+        working-directory: tests/docker
+        run: docker compose -f chaos-docker-compose.yml logs --no-color
+
+      - name: Tear down
+        if: always()
+        working-directory: tests/docker
+        run: docker compose -f chaos-docker-compose.yml down -v
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## RPC Chaos Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Fault | Assertion |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ECONNREFUSED | Remittance stays Pending |" >> $GITHUB_STEP_SUMMARY
+          echo "| HTTP 503 | Remittance stays Pending |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timeout | Remittance stays Pending |" >> $GITHUB_STEP_SUMMARY
+          echo "| Malformed JSON | Remittance stays Pending |" >> $GITHUB_STEP_SUMMARY
+          echo "| Recovery | Remittance completes after fault removed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retry | No duplicate rows inserted |" >> $GITHUB_STEP_SUMMARY
+
+  # ── Database chaos ──────────────────────────────────────────────────────────
+  database-chaos:
+    name: "Chaos — PostgreSQL connection loss and failover"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: >
+      github.event_name == 'schedule' ||
+      github.event.inputs.suite == 'all' ||
+      github.event.inputs.suite == 'database'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start infrastructure
+        working-directory: tests/docker
+        run: |
+          docker compose -f chaos-docker-compose.yml up -d toxiproxy postgres-primary
+          echo "Waiting for Toxiproxy..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8474/proxies; do sleep 2; done'
+          echo "Waiting for Postgres..."
+          timeout 60 bash -c 'until pg_isready -h localhost -p 5433 -U chaos; do sleep 2; done'
+
+      - name: Create Toxiproxy Postgres proxy
+        run: |
+          curl -sf -X POST http://localhost:8474/proxies \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "pg-primary",
+              "listen": "0.0.0.0:9432",
+              "upstream": "localhost:5433",
+              "enabled": true
+            }'
+
+      - name: Run database chaos tests
+        run: npx vitest run --config vitest.chaos.config.ts src/__tests__/database-chaos.chaos.test.ts
+
+      - name: Collect logs on failure
+        if: failure()
+        working-directory: tests/docker
+        run: docker compose -f chaos-docker-compose.yml logs --no-color
+
+      - name: Tear down
+        if: always()
+        working-directory: tests/docker
+        run: docker compose -f chaos-docker-compose.yml down -v
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Database Chaos Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Fault | Assertion |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Connection loss on create | No partial row |" >> $GITHUB_STEP_SUMMARY
+          echo "| Drop mid-update | Row stays in original status |" >> $GITHUB_STEP_SUMMARY
+          echo "| Query timeout | Row stays Pending |" >> $GITHUB_STEP_SUMMARY
+          echo "| High latency 500 ms | Operations complete correctly |" >> $GITHUB_STEP_SUMMARY
+          echo "| Primary failover | Service reconnects and completes |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retry | No duplicate rows |" >> $GITHUB_STEP_SUMMARY
+
+  # ── Anchor chaos ────────────────────────────────────────────────────────────
+  anchor-chaos:
+    name: "Chaos — Anchor timeouts and malformed responses"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: >
+      github.event_name == 'schedule' ||
+      github.event.inputs.suite == 'all' ||
+      github.event.inputs.suite == 'anchor'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start infrastructure
+        working-directory: tests/docker
+        run: |
+          docker compose -f chaos-docker-compose.yml up -d toxiproxy anchor-mock
+          echo "Waiting for Toxiproxy..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8474/proxies; do sleep 2; done'
+          echo "Waiting for anchor mock..."
+          timeout 30 bash -c 'until curl -sf http://localhost:3003/health; do sleep 2; done'
+
+      - name: Create Toxiproxy anchor proxy
+        run: |
+          curl -sf -X POST http://localhost:8474/proxies \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "anchor-api",
+              "listen": "0.0.0.0:9093",
+              "upstream": "localhost:3003",
+              "enabled": true
+            }'
+
+      - name: Run anchor chaos tests
+        run: npx vitest run --config vitest.chaos.config.ts src/__tests__/anchor-chaos.chaos.test.ts
+
+      - name: Collect logs on failure
+        if: failure()
+        working-directory: tests/docker
+        run: docker compose -f chaos-docker-compose.yml logs --no-color
+
+      - name: Tear down
+        if: always()
+        working-directory: tests/docker
+        run: docker compose -f chaos-docker-compose.yml down -v
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Anchor Chaos Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Fault | Assertion |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ECONNREFUSED | Remittance stays Pending |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timeout | Remittance stays Pending |" >> $GITHUB_STEP_SUMMARY
+          echo "| HTTP 500 | Remittance stays Pending |" >> $GITHUB_STEP_SUMMARY
+          echo "| Malformed JSON | Remittance stays Pending |" >> $GITHUB_STEP_SUMMARY
+          echo "| Truncated response | Remittance stays Pending |" >> $GITHUB_STEP_SUMMARY
+          echo "| TOML unreachable | Anchor creation blocked (422) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Recovery | Quote succeeds after fault removed |" >> $GITHUB_STEP_SUMMARY
+
+  # ── WebSocket chaos ─────────────────────────────────────────────────────────
+  websocket-chaos:
+    name: "Chaos — WebSocket network partition and high latency"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: >
+      github.event_name == 'schedule' ||
+      github.event.inputs.suite == 'all' ||
+      github.event.inputs.suite == 'websocket'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start Toxiproxy
+        working-directory: tests/docker
+        run: |
+          docker compose -f chaos-docker-compose.yml up -d toxiproxy
+          echo "Waiting for Toxiproxy..."
+          timeout 60 bash -c 'until curl -sf http://localhost:8474/proxies; do sleep 2; done'
+
+      - name: Run WebSocket chaos tests
+        run: npx vitest run --config vitest.chaos.config.ts src/__tests__/websocket-chaos.chaos.test.ts
+
+      - name: Collect logs on failure
+        if: failure()
+        working-directory: tests/docker
+        run: docker compose -f chaos-docker-compose.yml logs --no-color
+
+      - name: Tear down
+        if: always()
+        working-directory: tests/docker
+        run: docker compose -f chaos-docker-compose.yml down -v
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## WebSocket Chaos Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Fault | Assertion |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Network partition | Client auto-reconnects |" >> $GITHUB_STEP_SUMMARY
+          echo "| High latency 1 s | Events delivered within timeout |" >> $GITHUB_STEP_SUMMARY
+          echo "| 50 % packet loss | No duplicate events on reconnect |" >> $GITHUB_STEP_SUMMARY
+          echo "| Server crash | Client reconnects automatically |" >> $GITHUB_STEP_SUMMARY
+          echo "| Quick disconnect/reconnect | Status events not replayed twice |" >> $GITHUB_STEP_SUMMARY
