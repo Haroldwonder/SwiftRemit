@@ -48,6 +48,7 @@
 .history-table-wrap {
   margin-top: 0.9rem;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch; /* momentum scrolling on iOS */
 }
 
 .history-table {
