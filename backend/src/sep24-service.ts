@@ -20,11 +20,6 @@ import { renderNotification, NotificationEventType } from './notification-templa
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Maximum refund retry attempts before escalating to manual-review queue. */
-const MAX_REFUND_RETRIES = 3;
-
-/** Idempotency key prefix stored in the DB to mark a refund as in-flight. */
-const REFUND_IDEMPOTENCY_PREFIX = 'refund:';
 
 /**
  * SEP-24 transaction types
