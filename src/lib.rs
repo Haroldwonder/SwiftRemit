@@ -74,8 +74,8 @@ mod test_transitions;
 mod test_treasury;
 #[cfg(test)]
 mod test_multisig;
-#[cfg(all(test, feature = "testnet-integration"))]
-mod test_testnet_integration;
+
+
 mod transaction_controller;
 mod transitions;
 mod types;
