@@ -10,6 +10,7 @@
 
 import { Router, Request, Response } from 'express';
 import { ErrorResponse } from '../types';
+import { requireAuth } from '../middleware/auth.js';
 
 const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{54}$/;
 const XLM_STROOPS_PER_XLM = 10_000_000;
@@ -74,7 +75,7 @@ export function createAccountsRouter(): Router {
    *       404:
    *         description: Account not found on the network
    */
-  router.get('/:address/stellar-fees', async (req: Request, res: Response) => {
+  router.get('/:address/stellar-fees', requireAuth, async (req: Request, res: Response) => {
     const { address } = req.params;
     const operationsStr = (req.query.operations as string | undefined) ?? '1';
 

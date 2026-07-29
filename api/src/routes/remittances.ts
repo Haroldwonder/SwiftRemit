@@ -20,6 +20,7 @@ import { ErrorResponse } from '../types';
 import { RemittanceStore } from '../db/remittanceStore';
 import { createRemittanceSchema, validateRequest } from '../schemas/requestValidation';
 import { generateReceiptPdf } from '../services/receiptGenerator';
+import { requireAuth } from '../middleware/auth.js';
 
 export type RemittanceStatus = 'Pending' | 'Processing' | 'Completed' | 'Cancelled' | 'Failed' | 'Disputed';
 
@@ -136,7 +137,7 @@ export function createRemittancesRouter(options: RemittancesRouterOptions = {}):
    *             schema:
    *               $ref: '#/components/schemas/ErrorResponse'
    */
-  router.get('/', async (req: Request, res: Response) => {
+  router.get('/', requireAuth, async (req: Request, res: Response) => {
     const {
       agent,
       status,
@@ -200,11 +201,18 @@ export function createRemittancesRouter(options: RemittancesRouterOptions = {}):
       return sendError(res, 503, 'Remittance store not configured', 'SERVICE_UNAVAILABLE');
     }
 
+    // SR-048: a non-admin caller may only see remittances they are the agent
+    // for. Honouring a client-supplied `agent` filter for such callers would let
+    // anyone enumerate another agent's financial history.
+    const auth = req.auth!;
+    const agentFilter =
+      auth.role === 'admin' ? agent?.trim() : auth.userId;
+
     try {
       const result = await remittanceStore.queryWithCursor(
         cursor || null,
         limit,
-        agent?.trim(),
+        agentFilter,
         status as RemittanceStatus | undefined,
         fromDate,
         toDate,
@@ -266,27 +274,18 @@ export function createRemittancesRouter(options: RemittancesRouterOptions = {}):
    *       503:
    *         description: Remittance store not configured
    */
-  router.get('/:id/receipt', async (req: Request, res: Response) => {
+  router.get('/:id/receipt', requireAuth, async (req: Request, res: Response) => {
     const { id } = req.params;
 
     if (!remittanceStore) {
       return sendError(res, 503, 'Remittance store not configured', 'SERVICE_UNAVAILABLE');
     }
 
-    // Authentication: admin API key or sender address
-    const adminKey = process.env.ADMIN_API_KEY;
-    const providedApiKey = req.headers['x-api-key'] as string | undefined;
-    const senderAddress = req.headers['x-sender-address'] as string | undefined;
-    const isAdmin = adminKey && providedApiKey === adminKey;
-
-    if (!isAdmin && !senderAddress) {
-      return sendError(
-        res,
-        401,
-        'Authentication required. Provide X-API-Key (admin) or X-Sender-Address header.',
-        'UNAUTHORIZED',
-      );
-    }
+    // SR-048: identity comes from the verified access token, never from a
+    // client-supplied header. The previous X-Sender-Address check was forgeable
+    // — any caller could name someone else's address and download their receipt.
+    const auth = req.auth!;
+    const isAdmin = auth.role === 'admin';
 
     const remittance = await remittanceStore.getById(id);
     if (!remittance) {
@@ -294,8 +293,8 @@ export function createRemittancesRouter(options: RemittancesRouterOptions = {}):
     }
 
     // Non-admin callers can only download their own receipts
-    if (!isAdmin && senderAddress !== remittance.sender_id) {
-      return sendError(res, 403, 'Sender address does not match remittance owner', 'FORBIDDEN');
+    if (!isAdmin && auth.userId !== remittance.sender_id) {
+      return sendError(res, 403, 'You do not have access to this receipt', 'FORBIDDEN');
     }
 
     const pdfBuffer = await generateReceiptPdf(remittance);
