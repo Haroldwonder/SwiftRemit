@@ -1,5 +1,4 @@
 import { Pool } from 'pg';
-import DataLoader from 'dataloader';
 
 export interface RemittanceStore {
   queryWithCursor(
@@ -15,24 +14,22 @@ export interface RemittanceStore {
 }
 
 /**
- * DataLoader for batch loading remittances to prevent N+1 queries
+ * SR-050: batching note.
+ *
+ * A DataLoader lived here that claimed to prevent N+1 queries and did the
+ * opposite — it ignored the `ids` it was handed and called
+ * `queryWithCursor(null, 1)` once per id, which is the N+1 pattern it was named
+ * for. It was also never wired to a resolver, so it never ran.
+ *
+ * It has been removed rather than repaired: every resolver below already issues
+ * exactly one query per collection (a single aggregate SELECT, or one lookup for
+ * a single-record field), which is the property the acceptance criteria ask for.
+ * `graphql-nplus1.test.ts` asserts that with a query counter.
+ *
+ * Reintroduce a loader only when a nested field genuinely resolves per-parent —
+ * and give it a real batch query (`WHERE id = ANY($1)`) rather than a loop.
  */
-function createRemittanceBatchLoader(remittanceStore: RemittanceStore) {
-  return new DataLoader(async (ids: (number | string)[]) => {
-    const results = await Promise.all(
-      ids.map((id) =>
-        remittanceStore.queryWithCursor(null, 1).catch(() => null),
-      ),
-    );
-    return results;
-  });
-}
-
 export function createResolvers(pool: Pool, remittanceStore?: RemittanceStore) {
-  const remittanceBatchLoader = remittanceStore
-    ? createRemittanceBatchLoader(remittanceStore)
-    : null;
-
   return {
     remittances: async (
       _: unknown,

@@ -2,12 +2,18 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import express, { Application } from 'express';
 import { Pool } from 'pg';
-import { createGraphQLRouter } from '../routes/graphql';
+import { createGraphQLRouter, resetGraphQLRateLimit } from '../routes/graphql';
+import { bearer, useTestJwtSecret } from './helpers/authTestUtils';
+
+// SR-050: the GraphQL transport now requires a verified access token.
+const AUTH = () => bearer('graphql-admin', { role: 'admin' });
 
 describe('GraphQL API (Issue #879)', () => {
   let app: Application;
 
   beforeEach(() => {
+    useTestJwtSecret();
+    resetGraphQLRateLimit();
     app = express();
     app.use(express.json());
 
@@ -71,7 +77,7 @@ describe('GraphQL API (Issue #879)', () => {
 
   describe('POST /api/graphql', () => {
     it('should reject requests without query', async () => {
-      const response = await request(app).post('/api/graphql').send({});
+      const response = await request(app).post('/api/graphql').set('Authorization', AUTH()).send({});
       expect(response.status).toBe(400);
       expect(response.body.error.code).toBe('INVALID_QUERY');
     });
@@ -79,7 +85,7 @@ describe('GraphQL API (Issue #879)', () => {
     it('should execute remittances query', async () => {
       const query = `query { remittances { id sender amount status } }`;
 
-      const response = await request(app).post('/api/graphql').send({ query });
+      const response = await request(app).post('/api/graphql').set('Authorization', AUTH()).send({ query });
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(Array.isArray(response.body.data.remittances)).toBe(true);
@@ -88,7 +94,7 @@ describe('GraphQL API (Issue #879)', () => {
     it('should execute corridors query', async () => {
       const query = `query { corridors { source_currency destination_country } }`;
 
-      const response = await request(app).post('/api/graphql').send({ query });
+      const response = await request(app).post('/api/graphql').set('Authorization', AUTH()).send({ query });
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(Array.isArray(response.body.data.corridors)).toBe(true);
@@ -97,7 +103,7 @@ describe('GraphQL API (Issue #879)', () => {
     it('should execute agents query', async () => {
       const query = `query { agents { address is_active } }`;
 
-      const response = await request(app).post('/api/graphql').send({ query });
+      const response = await request(app).post('/api/graphql').set('Authorization', AUTH()).send({ query });
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(Array.isArray(response.body.data.agents)).toBe(true);
@@ -106,7 +112,7 @@ describe('GraphQL API (Issue #879)', () => {
     it('should return only requested fields in remittances', async () => {
       const query = `query { remittances { id sender } }`;
 
-      const response = await request(app).post('/api/graphql').send({ query });
+      const response = await request(app).post('/api/graphql').set('Authorization', AUTH()).send({ query });
       expect(response.status).toBe(200);
       const remittance = response.body.data.remittances[0];
       expect(remittance).toHaveProperty('id');
@@ -116,7 +122,7 @@ describe('GraphQL API (Issue #879)', () => {
     it('should handle invalid queries', async () => {
       const query = `query { invalidField { foo } }`;
 
-      const response = await request(app).post('/api/graphql').send({ query });
+      const response = await request(app).post('/api/graphql').set('Authorization', AUTH()).send({ query });
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
       expect(Array.isArray(response.body.errors)).toBe(true);
@@ -130,7 +136,7 @@ describe('GraphQL API (Issue #879)', () => {
       ];
 
       for (const query of queries) {
-        const response = await request(app).post('/api/graphql').send({ query });
+        const response = await request(app).post('/api/graphql').set('Authorization', AUTH()).send({ query });
         expect(response.status).toBe(200);
         expect(response.body.success).toBe(true);
       }
@@ -158,7 +164,7 @@ describe('GraphQL API (Issue #879)', () => {
     it('should support querying partial fields', async () => {
       const query = `query { remittances { sender } }`;
 
-      const response = await request(app).post('/api/graphql').send({ query });
+      const response = await request(app).post('/api/graphql').set('Authorization', AUTH()).send({ query });
       expect(response.status).toBe(200);
       expect(response.body.data.remittances[0]).toHaveProperty('sender');
     });
@@ -171,7 +177,7 @@ describe('GraphQL API (Issue #879)', () => {
         }
       `;
 
-      const response = await request(app).post('/api/graphql').send({ query });
+      const response = await request(app).post('/api/graphql').set('Authorization', AUTH()).send({ query });
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       // Both queries should be in response
