@@ -11,7 +11,7 @@ import { WebhookHandler } from './webhook-handler';
 import { KycService } from './kyc-service';
 import { createWebhookVerificationMiddleware } from './webhook-middleware';
 import { patchConsoleForProduction } from './console-shim';
-import { getSecretsManager, getDatabaseUrl, getAdminSecretKey, getContractId, initializeSecretRotation } from './secrets-manager';
+import { getDatabaseUrl, getAdminSecretKey, getContractId, initializeSecretRotation } from './secrets-manager';
 
 dotenv.config();
 patchConsoleForProduction();
@@ -21,16 +21,48 @@ const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? '30000',
 
 let webhookHandler: WebhookHandler | null = null;
 
+/**
+ * Load every required secret before any service is initialised.
+ *
+ * In production this calls the real AWS Secrets Manager.  If a required
+ * secret resolves from a plaintext env var in production the shared
+ * SecretsManager throws a PRODUCTION SECURITY VIOLATION error and the
+ * process exits before accepting any traffic.
+ *
+ * Required secrets for this service:
+ *   JWT_SECRET        — JWT signing key
+ *   DATABASE_URL      — PostgreSQL connection string
+ *   ADMIN_SECRET_KEY  — internal admin operations key
+ *   CONTRACT_ID       — deployed Stellar contract address
+ */
 async function loadSecrets(): Promise<void> {
-  const sm = getSecretsManager();
+  const isProduction = process.env.NODE_ENV === 'production';
 
-  const databaseUrl = await getDatabaseUrl();
-  const adminSecretKey = await getAdminSecretKey();
-  const contractId = await getContractId();
+  if (isProduction && !process.env.AWS_REGION) {
+    console.error(
+      '[secrets] FATAL: NODE_ENV=production but AWS_REGION is not set. ' +
+        'The secrets manager cannot reach AWS Secrets Manager. ' +
+        'Set AWS_REGION (and optionally SECRETS_MANAGER_ENABLED=true) before starting.',
+    );
+    process.exit(1);
+  }
 
+  // Resolve all required secrets — throws immediately if any are missing or
+  // (in production) fall back to a plaintext environment variable.
+  const [databaseUrl, adminSecretKey, contractId] = await Promise.all([
+    getDatabaseUrl(),
+    getAdminSecretKey(),
+    getContractId(),
+  ]);
+
+  // Write resolved values back into process.env so legacy code that reads
+  // env vars directly still works.  These writes are safe because the values
+  // came from the secret store, not the raw environment.
   process.env.DATABASE_URL = databaseUrl;
   process.env.ADMIN_SECRET_KEY = adminSecretKey;
   process.env.CONTRACT_ID = contractId;
+
+  // JWT_SECRET is used via getJwtSecret() at call sites; no env write needed.
 
   console.log('[secrets] All required secrets loaded successfully');
 }

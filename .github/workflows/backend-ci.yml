@@ -31,7 +31,7 @@ jobs:
   test:
     name: Test & Coverage
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     services:
       postgres:
@@ -63,20 +63,62 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftremit_test
         run: psql $DATABASE_URL -f migrations/webhook_schema.sql
 
+      # ── Run tests + collect coverage ────────────────────────────────────────
+      # vitest.config.ts enforces the threshold values declared under
+      # coverage.thresholds — the command exits non-zero if any threshold
+      # is missed, which fails the job automatically.
       - name: Run tests with coverage
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftremit_test
           NODE_ENV: test
-        run: npx vitest run --coverage --reporter=verbose
+        run: npm run test:coverage -- --reporter=verbose
 
+      # ── Explicit threshold gate (belt-and-suspenders) ────────────────────────
+      # Parses the machine-readable json-summary produced by @vitest/coverage-v8
+      # and fails the job with a clear message if any metric is below threshold.
+      # This step runs even when the vitest command itself exits 0 (e.g. if a
+      # future config change accidentally disables threshold enforcement).
+      - name: Enforce coverage thresholds
+        if: always()
+        shell: bash
+        run: |
+          SUMMARY=coverage/coverage-summary.json
+          if [ ! -f "$SUMMARY" ]; then
+            echo "::error::Coverage summary not found at $SUMMARY — did the test step run?"
+            exit 1
+          fi
+
+          # Thresholds (must match vitest.config.ts)
+          LINE_THRESHOLD=60
+          FUNC_THRESHOLD=60
+          BRANCH_THRESHOLD=55
+          STMT_THRESHOLD=60
+
+          LINES=$(node -e "const s=require('./$SUMMARY').total; console.log(s.lines.pct)")
+          FUNCS=$(node -e "const s=require('./$SUMMARY').total; console.log(s.functions.pct)")
+          BRANCHES=$(node -e "const s=require('./$SUMMARY').total; console.log(s.branches.pct)")
+          STMTS=$(node -e "const s=require('./$SUMMARY').total; console.log(s.statements.pct)")
+
+          echo "Coverage → lines: ${LINES}%  functions: ${FUNCS}%  branches: ${BRANCHES}%  statements: ${STMTS}%"
+
+          FAIL=0
+          (( $(echo "$LINES < $LINE_THRESHOLD"   | bc -l) )) && echo "::error::Lines coverage ${LINES}% is below threshold ${LINE_THRESHOLD}%"     && FAIL=1
+          (( $(echo "$FUNCS < $FUNC_THRESHOLD"   | bc -l) )) && echo "::error::Functions coverage ${FUNCS}% is below threshold ${FUNC_THRESHOLD}%"  && FAIL=1
+          (( $(echo "$BRANCHES < $BRANCH_THRESHOLD" | bc -l) )) && echo "::error::Branches coverage ${BRANCHES}% is below threshold ${BRANCH_THRESHOLD}%" && FAIL=1
+          (( $(echo "$STMTS < $STMT_THRESHOLD"   | bc -l) )) && echo "::error::Statements coverage ${STMTS}% is below threshold ${STMT_THRESHOLD}%" && FAIL=1
+
+          exit $FAIL
+
+      # ── Artifacts ────────────────────────────────────────────────────────────
       - name: Upload coverage report artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: backend-coverage
           path: backend/coverage/
-          retention-days: 7
+          retention-days: 14
 
+      # ── PR comment with coverage summary ─────────────────────────────────────
       - name: Post coverage summary as PR comment
         if: always() && github.event_name == 'pull_request'
         uses: davelosert/vitest-coverage-report-action@v2

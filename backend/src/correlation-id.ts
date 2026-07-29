@@ -2,120 +2,97 @@ import { AsyncLocalStorage } from 'async_hooks';
 import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { trace } from '@opentelemetry/api';
+import { redact as sharedRedact, StructuredLogger as SharedLogger } from '../../shared/src/logger';
 
-// AsyncLocalStorage to maintain correlation ID across async operations
+// ── AsyncLocalStorage for correlation IDs ────────────────────────────────────
+
 const correlationStorage = new AsyncLocalStorage<string>();
 
-/**
- * Get the current correlation ID from AsyncLocalStorage
- */
 export function getCorrelationId(): string | undefined {
   return correlationStorage.getStore();
 }
 
-/**
- * Get correlation ID from Express request object
- */
 export function getCorrelationIdFromRequest(req: Request): string | undefined {
   return (req as any).correlationId;
 }
 
-/**
- * Set correlation ID in AsyncLocalStorage
- */
 export function setCorrelationId(id: string): void {
   correlationStorage.enterWith(id);
 }
 
 /**
- * Middleware to generate and propagate correlation ID
+ * Middleware to generate and propagate correlation IDs.
+ * Reads x-correlation-id from the request header; generates a UUID if absent.
  */
 export function correlationIdMiddleware(req: Request, res: Response, next: NextFunction): void {
-  // Check if correlation ID is provided in request header
-  const correlationId = req.headers['x-correlation-id'] as string || uuidv4();
-  
-  // Set correlation ID in AsyncLocalStorage
+  const correlationId = (req.headers['x-correlation-id'] as string) || uuidv4();
+
   correlationStorage.run(correlationId, () => {
-    // Add correlation ID to request object for easy access
     (req as any).correlationId = correlationId;
-    
-    // Set correlation ID in response header
     res.setHeader('X-Correlation-ID', correlationId);
-    
-    // Continue to next middleware
     next();
   });
 }
 
-/**
- * Enhanced logger with correlation ID support
- */
-const SENSITIVE_FIELDS = new Set([
-  'secret_key', 'private_key', 'password', 'kyc_fields',
-  'token', 'authorization', 'secret', 'api_key',
-]);
+// ── Re-export shared redact so tests can import from one place ───────────────
+export { sharedRedact as redact };
 
-function redact(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(redact);
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([k, v]) =>
-      [k, SENSITIVE_FIELDS.has(k) ? '[REDACTED]' : redact(v)]
-    )
-  );
-}
+// ── Backend StructuredLogger ─────────────────────────────────────────────────
+// Extends the shared logger with OpenTelemetry trace/span context and
+// AsyncLocalStorage correlation IDs.
 
-export class StructuredLogger {
-  private context: string;
+export class StructuredLogger extends SharedLogger {
+  // Override formatMessage to inject correlation + OTel context.
+  // We replicate the private method pattern here since TypeScript does not
+  // allow overriding private methods; instead we intercept at the public API.
 
-  constructor(context: string) {
-    this.context = context;
-  }
-
-  private formatMessage(level: string, message: string, data?: any): string {
+  private correlationAwareFormat(
+    level: string,
+    message: string,
+    data?: unknown,
+  ): string {
     const correlationId = getCorrelationId();
     const activeSpan = trace.getActiveSpan();
     const spanContext = activeSpan?.spanContext();
     const traceId = spanContext?.traceId;
     const spanId = spanContext?.spanId;
+
     const logEntry = {
       timestamp: new Date().toISOString(),
       level,
-      context: this.context,
+      context: (this as any).context as string,
       correlationId,
       ...(traceId && { traceId }),
       ...(spanId && { spanId }),
       message,
-      ...(data && { data: redact(data) }),
+      ...(data && { data: sharedRedact(data) }),
     };
     return JSON.stringify(logEntry);
   }
 
-  info(message: string, data?: any): void {
-    console.log(this.formatMessage('INFO', message, data));
+  override info(message: string, data?: unknown): void {
+    console.log(this.correlationAwareFormat('INFO', message, data));
   }
 
-  warn(message: string, data?: any): void {
-    console.warn(this.formatMessage('WARN', message, data));
+  override warn(message: string, data?: unknown): void {
+    console.warn(this.correlationAwareFormat('WARN', message, data));
   }
 
-  error(message: string, error?: Error | any, data?: any): void {
-    const errorData = error instanceof Error 
-      ? { name: error.name, message: error.message, stack: error.stack }
-      : error;
-    console.error(this.formatMessage('ERROR', message, { ...data, error: errorData }));
+  override error(message: string, error?: Error | unknown, data?: unknown): void {
+    const errorData =
+      error instanceof Error
+        ? { name: error.name, message: error.message, stack: error.stack }
+        : error;
+    console.error(this.correlationAwareFormat('ERROR', message, { ...data, error: errorData }));
   }
 
-  debug(message: string, data?: any): void {
+  override debug(message: string, data?: unknown): void {
     if (process.env.NODE_ENV !== 'production') {
-      console.debug(this.formatMessage('DEBUG', message, data));
+      console.debug(this.correlationAwareFormat('DEBUG', message, data));
     }
   }
 }
 
-/**
- * Create a logger instance for a specific context
- */
 export function createLogger(context: string): StructuredLogger {
   return new StructuredLogger(context);
 }
