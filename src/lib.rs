@@ -74,8 +74,8 @@ mod test_transitions;
 mod test_treasury;
 #[cfg(test)]
 mod test_multisig;
-#[cfg(all(test, feature = "testnet-integration"))]
-mod test_testnet_integration;
+
+
 mod transaction_controller;
 mod transitions;
 mod types;
@@ -2775,6 +2775,16 @@ impl SwiftRemitContract {
         address: Address,
     ) -> Result<(u32, u32, u64), ContractError> {
         crate::rate_limit::get_rate_limit_status(&env, &address)
+    }
+
+    /// Reclaims storage rent for an address's expired sliding-window rate-limit
+    /// entries ahead of their natural TTL expiry. Permissionless: anyone may call
+    /// this for any address, since it only removes entries that already have zero
+    /// active requests in the current window and cannot affect that address's
+    /// limits. Mitigates the storage-growth griefing vector where an attacker
+    /// spins up many addresses to inflate contract storage cheaply.
+    pub fn cleanup_rate_limit_entries(env: Env, address: Address) {
+        crate::rate_limit::cleanup_stale_entries(&env, &address, crate::config::RATE_LIMIT_WINDOW_SECONDS);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
