@@ -6,12 +6,7 @@ import { trace } from '@opentelemetry/api';
 // AsyncLocalStorage to maintain correlation ID across async operations
 const correlationStorage = new AsyncLocalStorage<string>();
 
-/**
- * Get the current correlation ID from AsyncLocalStorage
- */
-export function getCorrelationId(): string | undefined {
-  return correlationStorage.getStore();
-}
+
 
 /**
  * Get correlation ID from Express request object
@@ -63,6 +58,13 @@ function redact(value: unknown): unknown {
       [k, SENSITIVE_FIELDS.has(k) ? '[REDACTED]' : redact(v)]
     )
   );
+}
+
+/**
+ * Get the current correlation ID from AsyncLocalStorage
+ */
+export function getCorrelationId(): string | undefined {
+  return correlationStorage.getStore();
 }
 
 export class StructuredLogger {
