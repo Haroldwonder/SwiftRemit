@@ -1,5 +1,9 @@
 # Anchor Selection Dropdown - Quick Start Guide
 
+> Looking to integrate SwiftRemit into your app (send money end-to-end)? See
+> [GETTING_STARTED.md](GETTING_STARTED.md). This page covers the frontend anchor-selection
+> dropdown feature specifically.
+
 ## Issue #166 Implementation
 
 This guide will help you get the anchor selection feature up and running.

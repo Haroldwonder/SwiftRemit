@@ -1,5 +1,8 @@
 # Asset Verification System - Setup Guide
 
+> Looking to integrate SwiftRemit into your app (send money end-to-end)? See
+> [GETTING_STARTED.md](GETTING_STARTED.md). This page covers the asset verification subsystem.
+
 Quick start guide for deploying and running the asset verification system.
 
 ## Docker Compose Quick-Start (Recommended)

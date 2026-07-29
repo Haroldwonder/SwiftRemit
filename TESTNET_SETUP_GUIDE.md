@@ -1,5 +1,9 @@
 # SwiftRemit Testnet Setup Guide
 
+> Already have a deployed contract and just want to integrate (send money end-to-end)? See
+> [GETTING_STARTED.md](GETTING_STARTED.md). This page covers standing up your own testnet
+> sandbox from scratch.
+
 Complete guide for getting testnet XLM and USDC, setting up a local sandbox, and running the full SwiftRemit remittance flow end-to-end.
 
 ## Quick Start Checklist

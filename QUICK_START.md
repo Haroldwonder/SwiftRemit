@@ -1,5 +1,9 @@
 # SwiftRemit Quick Start
 
+> Looking to integrate SwiftRemit into your app (send money end-to-end)? See
+> [GETTING_STARTED.md](GETTING_STARTED.md). This page covers deploying your own contract
+> instance to testnet.
+
 Get up and running with SwiftRemit on Stellar testnet in minutes.
 
 ## 🚀 One-Command Setup
