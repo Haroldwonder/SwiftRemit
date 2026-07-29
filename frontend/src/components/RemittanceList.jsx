@@ -6,6 +6,8 @@ import {
   TransactionBuilder,
   Networks,
   nativeToScVal,
+  scValToNative,
+  Address,
 } from '@stellar/stellar-sdk'
 import { SkeletonTable } from './SkeletonLoader'
 
@@ -13,6 +15,73 @@ const RPC_URL = import.meta.env.VITE_SOROBAN_RPC_URL || 'https://soroban-testnet
 const NETWORK_PASSPHRASE = import.meta.env.VITE_NETWORK === 'mainnet'
   ? Networks.PUBLIC
   : Networks.TESTNET
+
+const STROOPS_PER_USDC = 10_000_000
+
+function remittanceFromScVal(val) {
+  const native = val
+  const statusRaw = native.status
+  const statusKey = Object.keys(statusRaw)[0]
+  return {
+    id: Number(native.id),
+    sender: native.sender.toString(),
+    agent: native.agent.toString(),
+    amount: Number(BigInt(native.amount)) / STROOPS_PER_USDC,
+    fee: Number(BigInt(native.fee)) / STROOPS_PER_USDC,
+    status: statusKey,
+    memo: null,
+  }
+}
+
+async function fetchRemittancesFromContract(contractId, walletAddress) {
+  const server = new SorobanRpc.Server(RPC_URL)
+  const contract = new Contract(contractId)
+  const account = await server.getAccount(walletAddress)
+
+  const idsTx = new TransactionBuilder(account, {
+    fee: '1000',
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(
+      contract.call(
+        'get_remittances_by_sender',
+        nativeToScVal(Address.fromString(walletAddress), { type: 'address' }),
+        nativeToScVal(BigInt(0), { type: 'u64' }),
+        nativeToScVal(BigInt(50), { type: 'u64' }),
+      )
+    )
+    .setTimeout(30)
+    .build()
+
+  const idsSim = await server.simulateTransaction(idsTx)
+  if (SorobanRpc.Api.isSimulationError(idsSim)) {
+    throw new Error(`Simulation failed: ${idsSim.error}`)
+  }
+  const idsResult = (idsSim).result
+  if (!idsResult) throw new Error('No result from simulation')
+  const ids = scValToNative(idsResult.retval).map(n => BigInt(n))
+
+  if (ids.length === 0) return []
+
+  const remittances = []
+  for (const id of ids) {
+    const tx = new TransactionBuilder(account, {
+      fee: '1000',
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(contract.call('get_remittance', nativeToScVal(id, { type: 'u64' })))
+      .setTimeout(30)
+      .build()
+
+    const sim = await server.simulateTransaction(tx)
+    if (SorobanRpc.Api.isSimulationError(sim)) continue
+    const result = sim.result
+    if (!result) continue
+    remittances.push(remittanceFromScVal(scValToNative(result.retval)))
+  }
+
+  return remittances.sort((a, b) => b.id - a.id)
+}
 
 async function cancelRemittance(contractId, remittanceId, senderPublicKey) {
   const server = new SorobanRpc.Server(RPC_URL)
@@ -48,26 +117,34 @@ async function cancelRemittance(contractId, remittanceId, senderPublicKey) {
 export default function RemittanceList({ walletAddress, contractId }) {
   const [remittances, setRemittances] = useState([])
   const [loading, setLoading] = useState(false)
+  const [fetchError, setFetchError] = useState(null)
   const [confirmDialog, setConfirmDialog] = useState(null) // { id, amount }
   const [cancelling, setCancelling] = useState(false)
   const [cancelResults, setCancelResults] = useState({}) // { [id]: txHash }
   const [cancelErrors, setCancelErrors] = useState({})   // { [id]: message }
 
   useEffect(() => {
-    if (contractId && walletAddress) {
-      // In production, fetch from contract
-      setRemittances([
-        {
-          id: 1,
-          sender: walletAddress,
-          agent: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-          amount: 100.00,
-          fee: 2.50,
-          status: 'Pending',
-          memo: null,
+    if (!contractId || !walletAddress) return
+
+    let cancelled = false
+    setLoading(true)
+    setFetchError(null)
+
+    fetchRemittancesFromContract(contractId, walletAddress)
+      .then(data => {
+        if (!cancelled) {
+          setRemittances(data)
+          setLoading(false)
         }
-      ])
-    }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setFetchError(err instanceof Error ? err.message : 'Failed to fetch remittances')
+          setLoading(false)
+        }
+      })
+
+    return () => { cancelled = true }
   }, [contractId, walletAddress])
 
   const getStatusColor = (status) => {
@@ -114,7 +191,13 @@ export default function RemittanceList({ walletAddress, contractId }) {
 
       {loading && <SkeletonTable count={3} />}
 
-      {!loading && remittances.length === 0 && (
+      {fetchError && (
+        <div className="error" style={{ marginBottom: 12 }}>
+          {fetchError}
+        </div>
+      )}
+
+      {!loading && !fetchError && remittances.length === 0 && (
         <p className="hint">No remittances found</p>
       )}
 

@@ -6,6 +6,8 @@ import {
   TransactionBuilder,
   Networks,
   nativeToScVal,
+  scValToNative,
+  Address,
 } from '@stellar/stellar-sdk'
 
 const RPC_URL = import.meta.env.VITE_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
@@ -13,19 +15,88 @@ const NETWORK_PASSPHRASE = import.meta.env.VITE_NETWORK === 'mainnet'
   ? Networks.PUBLIC
   : Networks.TESTNET
 
+const STROOPS_PER_USDC = 10_000_000
+
+type RemittanceStatus = 'Pending' | 'Processing' | 'Completed' | 'Cancelled' | 'Failed' | 'Disputed'
+
 interface Remittance {
   id: number
   sender: string
   agent: string
   amount: number
   fee: number
-  status: 'Pending' | 'Completed' | 'Cancelled'
+  status: RemittanceStatus
   memo: string | null
 }
 
 interface RemittanceListProps {
   walletAddress: string
   contractId: string
+}
+
+function remittanceFromScVal(val: unknown): Remittance {
+  const native = val as Record<string, unknown>
+  const statusRaw = native['status'] as Record<string, unknown>
+  const statusKey = Object.keys(statusRaw)[0] as RemittanceStatus
+  return {
+    id: Number(native['id'] as number),
+    sender: (native['sender'] as { toString(): string }).toString(),
+    agent: (native['agent'] as { toString(): string }).toString(),
+    amount: Number(BigInt(native['amount'] as number)) / STROOPS_PER_USDC,
+    fee: Number(BigInt(native['fee'] as number)) / STROOPS_PER_USDC,
+    status: statusKey,
+    memo: null,
+  }
+}
+
+async function fetchRemittancesFromContract(contractId: string, walletAddress: string): Promise<Remittance[]> {
+  const server = new SorobanRpc.Server(RPC_URL)
+  const contract = new Contract(contractId)
+  const account = await server.getAccount(walletAddress)
+
+  const idsTx = new TransactionBuilder(account, {
+    fee: '1000',
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(
+      contract.call(
+        'get_remittances_by_sender',
+        nativeToScVal(Address.fromString(walletAddress), { type: 'address' }),
+        nativeToScVal(BigInt(0), { type: 'u64' }),
+        nativeToScVal(BigInt(50), { type: 'u64' }),
+      )
+    )
+    .setTimeout(30)
+    .build()
+
+  const idsSim = await server.simulateTransaction(idsTx)
+  if (SorobanRpc.Api.isSimulationError(idsSim)) {
+    throw new Error(`Simulation failed: ${idsSim.error}`)
+  }
+  const idsResult = (idsSim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
+  if (!idsResult) throw new Error('No result from simulation')
+  const ids = (scValToNative(idsResult.retval) as number[]).map(BigInt)
+
+  if (ids.length === 0) return []
+
+  const remittances: Remittance[] = []
+  for (const id of ids) {
+    const tx = new TransactionBuilder(account, {
+      fee: '1000',
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(contract.call('get_remittance', nativeToScVal(id, { type: 'u64' })))
+      .setTimeout(30)
+      .build()
+
+    const sim = await server.simulateTransaction(tx)
+    if (SorobanRpc.Api.isSimulationError(sim)) continue
+    const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
+    if (!result) continue
+    remittances.push(remittanceFromScVal(scValToNative(result.retval)))
+  }
+
+  return remittances.sort((a, b) => b.id - a.id)
 }
 
 async function cancelRemittance(contractId: string, remittanceId: number, senderPublicKey: string): Promise<string> {
@@ -62,32 +133,44 @@ async function cancelRemittance(contractId: string, remittanceId: number, sender
 const RemittanceList: FC<RemittanceListProps> = ({ walletAddress, contractId }) => {
   const [remittances, setRemittances] = useState<Remittance[]>([])
   const [loading, setLoading] = useState(false)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const [confirmDialog, setConfirmDialog] = useState<{ id: number; amount: number } | null>(null)
   const [cancelling, setCancelling] = useState(false)
   const [cancelResults, setCancelResults] = useState<Record<number, string>>({})
   const [cancelErrors, setCancelErrors] = useState<Record<number, string>>({})
 
   useEffect(() => {
-    if (contractId && walletAddress) {
-      setRemittances([
-        {
-          id: 1,
-          sender: walletAddress,
-          agent: 'GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-          amount: 100.00,
-          fee: 2.50,
-          status: 'Pending',
-          memo: null,
+    if (!contractId || !walletAddress) return
+
+    let cancelled = false
+    setLoading(true)
+    setFetchError(null)
+
+    fetchRemittancesFromContract(contractId, walletAddress)
+      .then(data => {
+        if (!cancelled) {
+          setRemittances(data)
+          setLoading(false)
         }
-      ])
-    }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setFetchError(err instanceof Error ? err.message : 'Failed to fetch remittances')
+          setLoading(false)
+        }
+      })
+
+    return () => { cancelled = true }
   }, [contractId, walletAddress])
 
   const getStatusColor = (status: Remittance['status']): string => {
     switch (status) {
       case 'Pending': return '#ffa500'
+      case 'Processing': return '#2196f3'
       case 'Completed': return '#4caf50'
       case 'Cancelled': return '#f44336'
+      case 'Failed': return '#e91e63'
+      case 'Disputed': return '#ff5722'
       default: return '#666'
     }
   }
@@ -127,7 +210,13 @@ const RemittanceList: FC<RemittanceListProps> = ({ walletAddress, contractId }) 
 
       {loading && <p>Loading...</p>}
 
-      {!loading && remittances.length === 0 && (
+      {fetchError && (
+        <div className="error" style={{ marginBottom: 12 }}>
+          {fetchError}
+        </div>
+      )}
+
+      {!loading && !fetchError && remittances.length === 0 && (
         <p className="hint">No remittances found</p>
       )}
 
