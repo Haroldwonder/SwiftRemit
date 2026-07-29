@@ -1,0 +1,19 @@
+{
+  "name": "SwiftRemit",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-bullseye",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "rustup target add wasm32-unknown-unknown && cargo install --locked soroban-cli --features opt || true",
+  "forwardPorts": [3000, 3001, 5173, 5432, 16686, 9090, 3003],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  }
+}

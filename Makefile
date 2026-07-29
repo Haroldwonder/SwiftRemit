@@ -1,4 +1,4 @@
-.PHONY: build test clean deploy install optimize check fmt
+.PHONY: build test clean deploy install optimize check fmt dev dev-down verify
 
 # Default target
 all: build test
@@ -140,6 +140,46 @@ size: optimize
 	@echo "Contract size:"
 	@ls -lh target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm | awk '{print $$5}'
 
+# Bring up the full local stack (postgres, jaeger, backend, api, frontend, prometheus, grafana).
+# Backend/api containers auto-run migrations on boot (see backend/src/index.ts), and read
+# their config from the workspace .env.example files via docker-compose's env_file, so no
+# manual .env setup is required for a first run.
+dev:
+	@echo "🚀 Starting SwiftRemit local stack..."
+	docker compose up --build -d
+	@echo ""
+	@echo "✅ Stack is up:"
+	@echo "  frontend:   http://localhost:5173"
+	@echo "  api:        http://localhost:3000"
+	@echo "  backend:    http://localhost:3001"
+	@echo "  jaeger:     http://localhost:16686"
+	@echo "  prometheus: http://localhost:9090"
+	@echo "  grafana:    http://localhost:3003 (admin/admin)"
+	@echo ""
+	@echo "Run 'docker compose logs -f' to follow logs, 'make dev-down' to stop."
+
+# Stop and remove the local stack (data volumes are preserved).
+dev-down:
+	docker compose down
+
+# Run the same checks CI runs, across every workspace. Requires a reachable Postgres for
+# the backend test suite — run 'make dev' first, or set DATABASE_URL yourself.
+verify:
+	@echo "▶ Rust: fmt, clippy, test"
+	cargo fmt --check
+	cargo clippy -- -D warnings
+	cargo test --verbose
+	@echo "▶ backend: lint, typecheck, test"
+	cd backend && npm run lint && npx tsc --noEmit
+	cd backend && DATABASE_URL="$${DATABASE_URL:-postgres://swiftremit:swiftremit@localhost:5432/swiftremit}" npm test
+	@echo "▶ api: lint, typecheck, test"
+	cd api && npm run lint && npx tsc --noEmit && npm test
+	@echo "▶ frontend: lint, typecheck"
+	cd frontend && npm run lint && npx tsc --noEmit
+	@echo "▶ sdk: lint, test"
+	cd sdk && npm run lint && npm test
+	@echo "✅ verify complete"
+
 # Help
 help:
 	@echo "SwiftRemit Makefile Commands:"
@@ -158,6 +198,11 @@ help:
 	@echo "  make docs           - Generate documentation"
 	@echo "  make audit          - Run security audit"
 	@echo "  make size           - Show contract size"
+	@echo ""
+	@echo "Local stack:"
+	@echo "  make dev            - Start the full local stack (docker compose)"
+	@echo "  make dev-down       - Stop the local stack"
+	@echo "  make verify         - Run lint, typecheck, and tests across every workspace"
 	@echo ""
 	@echo "Deployment:"
 	@echo "  make setup-testnet  - Configure testnet"
