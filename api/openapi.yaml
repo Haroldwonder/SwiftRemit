@@ -503,6 +503,113 @@ paths:
                   timestamp:
                     type: string
 
+  /api/admin/simulate-upgrade:
+    post:
+      tags:
+        - Admin
+      summary: Simulate a contract upgrade (strictly read-only)
+      description: >
+        Returns a structured preview of the storage migrations, CPU/ledger resource estimates,
+        and operator warnings that would arise if the supplied WASM hash were used in a real
+        upgrade proposal. No on-chain state, no database state, and no transaction is ever
+        modified or submitted (simulation_only is always true in the response).
+
+        Requires both an admin API key (x-api-key header) and a valid second-admin
+        confirmation token obtained via POST /api/admin/actions followed by
+        POST /api/admin/actions/{id}/confirm.
+
+        Rate-limited to 5 requests per 15 minutes per IP. Every invocation —
+        including rejected ones — is written to the admin_audit_log table.
+        Resolves issue SR-059.
+      operationId: simulateUpgrade
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SimulateUpgradeRequest'
+            examples:
+              valid:
+                summary: Typical valid request
+                value:
+                  wasm_hash: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+                  confirmation_token: "3f6e2a1b-0000-4abc-8def-1234567890ab"
+      responses:
+        '200':
+          description: Read-only simulation report
+          headers:
+            X-Simulation-Only:
+              description: Always "true" — confirms no state was mutated
+              schema:
+                type: string
+                example: "true"
+            Cache-Control:
+              description: no-store — response must not be cached
+              schema:
+                type: string
+                example: "no-store"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimulateUpgradeResponse'
+        '400':
+          description: >
+            Invalid wasm_hash format, hash not on allowlist, extra fields present,
+            missing confirmation_token, or payload exceeds 1 KB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidHash:
+                  value:
+                    success: false
+                    error:
+                      message: "wasm_hash must be a 64-character hex string (32 bytes)"
+                      code: "INVALID_WASM_HASH"
+                    timestamp: "2026-07-29T12:00:00.000Z"
+                notAllowlisted:
+                  value:
+                    success: false
+                    error:
+                      message: "wasm_hash is not in the permitted allowlist"
+                      code: "WASM_HASH_NOT_ALLOWLISTED"
+                    timestamp: "2026-07-29T12:00:00.000Z"
+                extraFields:
+                  value:
+                    success: false
+                    error:
+                      message: "Unexpected field(s): evil_field"
+                      code: "EXTRA_FIELDS"
+                    timestamp: "2026-07-29T12:00:00.000Z"
+                payloadTooLarge:
+                  value:
+                    success: false
+                    error:
+                      message: "Request body must not exceed 1024 bytes"
+                      code: "PAYLOAD_TOO_LARGE"
+                    timestamp: "2026-07-29T12:00:00.000Z"
+        '401':
+          description: Admin API key missing/invalid or confirmation token invalid/expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded — 5 requests per 15 minutes per IP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Database not configured (required for confirmation token verification)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/admin/fees:
     get:
       tags:
@@ -1041,6 +1148,110 @@ components:
           nullable: true
         has_more:
           type: boolean
+        timestamp:
+          type: string
+          format: date-time
+
+    SimulateUpgradeRequest:
+      type: object
+      required:
+        - wasm_hash
+        - confirmation_token
+      additionalProperties: false
+      properties:
+        wasm_hash:
+          type: string
+          description: >
+            64-character lowercase hex-encoded SHA-256 hash of the candidate WASM blob (32 bytes).
+            Must match a value in WASM_HASH_ALLOWLIST when that environment variable is configured.
+          pattern: '^[0-9a-fA-F]{64}$'
+          minLength: 64
+          maxLength: 64
+          example: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+        confirmation_token:
+          type: string
+          description: >
+            UUID token issued by a second admin via POST /api/admin/actions/{id}/confirm.
+            The token must be confirmed and not expired.
+          example: "3f6e2a1b-0000-4abc-8def-1234567890ab"
+
+    SimulateUpgradeReport:
+      type: object
+      required:
+        - current_schema_version
+        - new_schema_version
+        - schema_version_delta
+        - estimated_migration_steps
+        - affected_storage_keys
+        - requires_migration
+        - estimated_cpu_instructions
+        - estimated_ledger_bytes
+        - warnings
+        - input_hash_fingerprint
+        - simulation_only
+      properties:
+        current_schema_version:
+          type: integer
+          description: Schema version currently deployed on-chain
+          example: 2
+        new_schema_version:
+          type: integer
+          description: Projected schema version if this WASM were applied
+          example: 4
+        schema_version_delta:
+          type: integer
+          description: Signed delta (new − current)
+          example: 2
+        estimated_migration_steps:
+          type: integer
+          description: Number of discrete migration steps estimated
+          example: 2
+        affected_storage_keys:
+          type: array
+          items:
+            type: string
+          description: Ledger storage keys that would be touched during migration
+          example: ["schema_v", "UpgradeKey::NextId"]
+        requires_migration:
+          type: boolean
+          description: Whether any migration work would be required
+          example: true
+        estimated_cpu_instructions:
+          type: integer
+          description: Conservative upper-bound CPU instruction budget estimate
+          example: 700000
+        estimated_ledger_bytes:
+          type: integer
+          description: Conservative upper-bound ledger-entry bytes written estimate
+          example: 256
+        warnings:
+          type: array
+          items:
+            type: string
+          description: Human-readable operator warnings (e.g. large version jump, budget pressure)
+          example: ["Large schema version jump detected. Verify migration scripts cover all intermediate versions."]
+        input_hash_fingerprint:
+          type: string
+          description: First 16 hex chars of SHA-256(wasm_hash) — for audit-trail correlation
+          example: "d4e8f1a2b3c09571"
+        simulation_only:
+          type: boolean
+          enum: [true]
+          description: Always true — confirms no on-chain or database state was mutated
+          example: true
+
+    SimulateUpgradeResponse:
+      type: object
+      required:
+        - success
+        - data
+        - timestamp
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/SimulateUpgradeReport'
         timestamp:
           type: string
           format: date-time
