@@ -357,6 +357,62 @@ These limitations are inherent to the smart contract environment and are address
 7. ⏳ Create branch and push
 8. ⏳ Create PR for issue #172
 
+## Storage Cost & Griefing Analysis (SR-018)
+
+Two storage-growth vectors were reviewed: (a) an attacker creating many addresses to
+bypass per-address limits, and (b) per-address rate-limit state as a cheap griefing
+target for inflating contract storage.
+
+### Per-entry footprint (logical fields, before XDR/`LedgerEntry` envelope overhead)
+
+| Entry (key) | Fields | Approx. size | TTL |
+|---|---|---|---|
+| `RateLimitEntry` (`RateLimitKey::Entry(Address)`) | `request_count: u32`, `window_start: u64` | ~12 bytes | `window_seconds + 3600` |
+| `SlidingWindowEntry` (`RateLimitKey::Sliding(Address, action_tag)`) | `address`, `action_tag: u32`, `timestamps: Vec<u64>`, `window_start: u64`, `request_count: u32` | ~44 bytes + 8 bytes × active timestamps (bounded by that action's `max_requests`, e.g. 10 for Transfer, 100 for Query; hard cap `MAX_VEC_SIZE` = 1000) | `2 × window_seconds` (60s default → 120s) |
+| `CooldownEntry` (`(Address, ActionType, 1)`) | `address`, `action_type`, `last_action_time: u64`, `last_violation_at: Option<u64>` | ~50 bytes | `2 × cooldown_period` |
+| `SuspiciousActivityLog` (`(Address, timestamp)`) | `address`, `activity_type`, `timestamp: u64`, `details: u32` | ~45 bytes | 24 hours (fixed) |
+
+Every `SlidingWindowEntry` and `CooldownEntry` reuses a fixed key per
+`(address, action_type)`, so repeated activity from one address overwrites the same
+ledger entry rather than creating new ones — bounded storage per address regardless of
+request volume.
+
+`SuspiciousActivityLog` is the one exception: its key includes `timestamp`, so every
+distinct violation (rate-limit exceeded, cooldown violation, rapid retry) writes a
+**new** entry rather than overwriting. An attacker who repeatedly trips a limit from one
+address can accumulate one ~45-byte log entry per violation for up to 24h before TTL
+reclaims them. This is the primary residual griefing surface in this module.
+
+### Griefing cost estimate
+
+Creating a new address is free off-chain, but every on-chain call that touches this
+module (`check_rate_limit`, `check_cooldown`) requires a signed Soroban transaction,
+which costs a transaction fee and resource fee proportional to the ledger entries
+written. Per new address, one worst-case call footprint is:
+
+- 1× `SlidingWindowEntry` write (~44–850 bytes depending on action type)
+- 1× `CooldownEntry` write (~50 bytes, only for Transfer/Settlement)
+- 1× `SuspiciousActivityLog` write only if the call trips a violation (~45 bytes)
+
+So the cheapest sustained griefing pattern is spamming violations (to hit the
+per-violation log) rather than spinning up addresses (each address's steady-state
+entries are capped, not cumulative) — but both are rent-bounded by the transaction fee
+required to write them, and both self-clean via TTL without any admin action.
+
+### Mitigations in place
+
+1. **TTL-based auto-expiry (already present)** — every entry type above carries an
+   explicit TTL; Soroban reclaims the underlying `LedgerEntry` once it lapses, so
+   storage bloat is bounded even with zero cleanup calls.
+2. **Fixed keys for hot-path entries** — `SlidingWindowEntry`/`CooldownEntry` never
+   grow per-request; they're overwritten in place.
+3. **`cleanup_rate_limit_entries(env, address)`** (new, permissionless contract
+   function in `lib.rs`) — wires the previously-unused `rate_limit::cleanup_stale_entries`
+   into a callable entry point so anyone can proactively reclaim an inactive address's
+   expired `SlidingWindowEntry` storage ahead of natural TTL expiry, without needing
+   admin auth (it only removes entries that already have zero active requests, so it
+   cannot affect any address's limits).
+
 ## Notes
 
 The implementation is complete and provides robust abuse protection adapted for the smart contract environment. Integration into existing contract functions (create_remittance, confirm_payout, etc.) is straightforward and follows the usage examples provided.
