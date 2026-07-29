@@ -841,6 +841,17 @@ export async function rotateWebhookSecret(id: string): Promise<{ newSecret: stri
   return { newSecret, rotatedAt: result.rows[0].secret_rotated_at as Date };
 }
 
+export async function retireExpiredWebhookSecrets(): Promise<string[]> {
+  const result = await getPool().query(
+    `UPDATE webhook_subscribers
+     SET previous_secret = NULL
+     WHERE previous_secret IS NOT NULL
+       AND secret_rotated_at < NOW() - INTERVAL '24 hours'
+     RETURNING id`
+  );
+  return result.rows.map(row => String(row.id));
+}
+
 export async function enqueueWebhookDelivery(
   eventType: string,
   eventKey: string,

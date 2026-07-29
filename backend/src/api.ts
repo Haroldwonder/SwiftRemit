@@ -187,6 +187,30 @@ app.get('/health/db', async (req: Request, res: Response) => {
   }
 });
 
+// Get all webhook subscribers (Admin view)
+app.get('/api/webhooks', adminLimiter, async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, url, secret, previous_secret, secret_rotated_at, active, created_at, updated_at
+       FROM webhook_subscribers
+       ORDER BY created_at DESC`
+    );
+    // map DB rows to frontend interface
+    const subscriptions = result.rows.map(row => ({
+      id: row.id,
+      url: row.url,
+      events: [], // this mock app doesn't have events in DB schema it seems!
+      secret: row.secret,
+      secret_rotated_at: row.secret_rotated_at,
+      has_previous_secret: !!row.previous_secret,
+    }));
+    res.status(200).json(subscriptions);
+  } catch (error) {
+    logger.error('Failed to get webhook subscribers', { error });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Rotate webhook subscriber secret
 app.post('/api/webhooks/:id/rotate-secret', adminLimiter, async (req: Request, res: Response) => {
   const id = req.params.id as string;

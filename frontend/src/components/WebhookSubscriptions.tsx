@@ -10,6 +10,8 @@ interface WebhookForm {
 
 interface WebhookSubscription extends WebhookForm {
   id: string
+  secret_rotated_at?: string | null
+  has_previous_secret?: boolean
 }
 
 const EMPTY_FORM: WebhookForm = { url: '', events: [], secret: '' }
@@ -127,8 +129,24 @@ const WebhookSubscriptions: FC = () => {
                 <div>
                   <code>{sub.url}</code>
                   <p style={{ margin: '4px 0', fontSize: '0.9em', color: '#666' }}>{sub.events.join(', ')}</p>
+                  {sub.has_previous_secret && sub.secret_rotated_at && (
+                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fff3cd', border: '1px solid #ffeeba', borderRadius: '4px', fontSize: '0.9em' }}>
+                      <strong>Rotation Overlap Active</strong><br/>
+                      Rotated at: {new Date(sub.secret_rotated_at).toLocaleString()}<br/>
+                      Expires: {new Date(new Date(sub.secret_rotated_at).getTime() + 24 * 60 * 60 * 1000).toLocaleString()}
+                    </div>
+                  )}
                 </div>
-                <button onClick={() => handleEdit(sub)}>Edit</button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={async () => {
+                    if (confirm('Rotate secret? This will invalidate the previous secret after 24 hours.')) {
+                      setLoading(true);
+                      await fetch(`${API_URL}/api/webhooks/${sub.id}/rotate-secret`, { method: 'POST' });
+                      await fetchSubscriptions();
+                    }
+                  }}>Rotate Secret</button>
+                  <button onClick={() => handleEdit(sub)}>Edit</button>
+                </div>
               </div>
             </li>
           ))}

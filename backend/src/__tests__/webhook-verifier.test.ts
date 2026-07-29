@@ -46,6 +46,25 @@ describe('WebhookVerifier', () => {
       const result = verifier.verifyHMAC(payload, 'invalid-signature', 'test-secret');
       expect(result).toBe(false);
     });
+
+    it('should simulate client falling back to previous secret during rotation overlap', () => {
+      const payload = 'test payload';
+      const currentSecret = 'new-secret';
+      const previousSecret = 'old-secret';
+      const crypto = require('crypto');
+      
+      // The dispatcher sends two headers during overlap:
+      // x-webhook-signature (signed with currentSecret)
+      // x-webhook-signature-prev (signed with previousSecret)
+      const sigPrev = crypto.createHmac('sha256', previousSecret).update(payload).digest('hex');
+      
+      // Simulate client logic: check current first, if fails, check previous
+      const checkCurrent = verifier.verifyHMAC(payload, sigPrev, currentSecret);
+      expect(checkCurrent).toBe(false);
+      
+      const checkPrevious = verifier.verifyHMAC(payload, sigPrev, previousSecret);
+      expect(checkPrevious).toBe(true);
+    });
   });
 
   describe('validateTimestamp', () => {
