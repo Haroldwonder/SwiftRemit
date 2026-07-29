@@ -380,3 +380,21 @@
     margin-top: 0.6rem;
   }
 }
+
+/* ── Polling / optimistic UI states ────────────────────────────────────────── */
+.flow-polling-status {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.flow-polling-status::before {
+  content: '⏳';
+}

@@ -25,6 +25,21 @@ interface TransactionHistoryProps {
   onPageChange?: (page: number) => void;
   onLoadMore?: () => void;
   isLoading?: boolean;
+  /**
+   * Optimistic entries added immediately on submission (before confirmation).
+   * These are shown at the top of the list with an "unconfirmed" badge.
+   */
+  optimisticItems?: OptimisticItem[];
+}
+
+/** Shape of an in-flight optimistic row. */
+export interface OptimisticItem {
+  idempotencyKey: string;
+  amount: number;
+  asset: string;
+  recipient: string;
+  memo?: string;
+  submittedAt: string;
 }
 
 // ── URL param helpers ────────────────────────────────────────────────────────
@@ -153,6 +168,7 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   onPageChange,
   onLoadMore,
   isLoading = false,
+  optimisticItems = [],
 }) => {
   // Initialise filter state from URL params
   const initialParams = getSearchParams();
@@ -405,6 +421,22 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
                   </tr>
                 </thead>
                 <tbody>
+                  {/* ── Optimistic (unconfirmed) rows ── */}
+                  {optimisticItems.map((opt) => (
+                    <tr key={opt.idempotencyKey} className="optimistic-row" aria-label="Pending unconfirmed transaction">
+                      <td>{formatAmount(opt.amount, opt.asset)}</td>
+                      <td>{opt.asset}</td>
+                      <td className="history-recipient">{opt.recipient}</td>
+                      <td>
+                        <span className="history-status status-unconfirmed" aria-live="polite">
+                          ⏳ unconfirmed
+                        </span>
+                      </td>
+                      <td>{formatTimestamp(opt.submittedAt)}</td>
+                      <td />
+                      <td />
+                    </tr>
+                  ))}
                   {paginationData.items.map((transaction) => {
                     const isExpanded = expandedId === transaction.id;
                     return (
@@ -465,6 +497,22 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
 
           {view === 'card' && (
             <div className="history-cards">
+              {/* ── Optimistic (unconfirmed) cards ── */}
+              {optimisticItems.map((opt) => (
+                <article key={opt.idempotencyKey} className="history-card optimistic-row" aria-label="Pending unconfirmed transaction">
+                  <div className="history-card-top">
+                    <p>{formatAmount(opt.amount, opt.asset)}</p>
+                    <span className="history-status status-unconfirmed" aria-live="polite">
+                      ⏳ unconfirmed
+                    </span>
+                  </div>
+                  <dl className="history-card-grid">
+                    <div><dt>Asset</dt><dd>{opt.asset}</dd></div>
+                    <div><dt>Recipient</dt><dd className="history-recipient">{opt.recipient}</dd></div>
+                    <div><dt>Submitted</dt><dd>{formatTimestamp(opt.submittedAt)}</dd></div>
+                  </dl>
+                </article>
+              ))}
               {paginationData.items.map((transaction) => {
                 const isExpanded = expandedId === transaction.id;
                 return (

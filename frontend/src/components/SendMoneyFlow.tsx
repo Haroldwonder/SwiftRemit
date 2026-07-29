@@ -1,9 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './SendMoneyFlow.css';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { signTransaction } from '@stellar/freighter-api';
 import { useTranslation } from 'react-i18next';
 import type { DailyLimitStatus } from '../../../sdk/src/types.js';
+import { useIdempotency } from '../utils/useIdempotency';
+import { useTxPolling } from '../utils/useTxPolling';
+import type { PollResult } from '../utils/useTxPolling';
 
 type FlowStep = 1 | 2 | 3 | 4 | 5;
 
@@ -12,6 +15,16 @@ interface ConfirmPayload {
   asset: string;
   recipient: string;
   memo?: string;
+}
+
+/** Represents an optimistic pending row to show in TransactionHistory. */
+export interface OptimisticEntry {
+  idempotencyKey: string;
+  amount: number;
+  asset: string;
+  recipient: string;
+  memo?: string;
+  submittedAt: string;
 }
 
 interface CorridorLimits {
@@ -29,11 +42,26 @@ interface SendMoneyFlowProps {
   senderPublicKey?: string;
   /** Network to use for on-chain tx submission */
   network?: 'TESTNET' | 'PUBLIC';
-  onConfirm?: (payload: ConfirmPayload) => Promise<void>;
+  onConfirm?: (payload: ConfirmPayload, idempotencyKey: string) => Promise<void>;
   /** Optional: fetch daily limit status for the sender/currency/country corridor */
   getDailyLimitStatus?: (currency: string, country: string) => Promise<DailyLimitStatus>;
   /** ISO 3166-1 alpha-2 destination country (e.g. "NG") */
   destinationCountry?: string;
+  /**
+   * Called right after the optimistic row is inserted.  Parent can push the
+   * entry into its transactions list to show an unconfirmed row immediately.
+   */
+  onOptimisticAdd?: (entry: OptimisticEntry) => void;
+  /**
+   * Called when the optimistic entry should be rolled back (on failure).
+   * Receives the idempotencyKey that was passed to onOptimisticAdd.
+   */
+  onOptimisticRollback?: (idempotencyKey: string) => void;
+  /**
+   * Optional polling function; if provided it will be called after submission
+   * to resolve the final status instead of showing an error on timeout.
+   */
+  pollTxStatus?: (txId: string) => Promise<PollResult>;
 }
 
 const STEP_SEQUENCE: FlowStep[] = [1, 2, 3, 4, 5];
@@ -142,6 +170,9 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   onConfirm,
   getDailyLimitStatus,
   destinationCountry = 'NG',
+  onOptimisticAdd,
+  onOptimisticRollback,
+  pollTxStatus,
 }) => {
   const { t } = useTranslation();
   const [step, setStep] = useState<FlowStep>(1);
@@ -160,6 +191,41 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   const [fxFetchedAt, setFxFetchedAt] = useState<number | null>(null);
   const [fxSecondsLeft, setFxSecondsLeft] = useState<number | null>(null);
   const [fxExpired, setFxExpired] = useState(false);
+  /** Status message shown during post-submission polling. */
+  const [pollingStatus, setPollingStatus] = useState<string | null>(null);
+
+  // Idempotency key for the current pending submission
+  const currentIdempotencyKey = useRef<string | null>(null);
+  const { nextKey, isDuplicate, markSubmitted, clearKey } = useIdempotency();
+
+  const { startPolling, stopPolling } = useTxPolling({
+    initialDelayMs: 2_000,
+    backoffFactor: 2,
+    maxAttempts: 8,
+    onUpdate: (result) => {
+      if (result.status === 'confirmed') {
+        setPollingStatus(null);
+        setIsComplete(true);
+        setIsSubmitting(false);
+        if (result.txHash) setTxHash(result.txHash);
+      } else if (result.status === 'failed' || result.status === 'cancelled') {
+        setPollingStatus(null);
+        setIsSubmitting(false);
+        // Rollback optimistic entry
+        if (currentIdempotencyKey.current) {
+          onOptimisticRollback?.(currentIdempotencyKey.current);
+          clearKey(currentIdempotencyKey.current);
+          currentIdempotencyKey.current = null;
+        }
+        setError(t('sendMoney.errors.failed'));
+      }
+    },
+    onTimeout: () => {
+      // Never show a false failure for a pending tx – just inform the user.
+      setPollingStatus(t('sendMoney.polling.stillPending'));
+      setIsSubmitting(false);
+    },
+  });
 
   const parsedAmount = useMemo(() => Number(amount), [amount]);
 
@@ -241,29 +307,70 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
       return;
     }
 
+    // ── Idempotency dedup ───────────────────────────────────────────────────
+    // If a key is already in-flight (e.g. double-click), bail out silently.
+    if (currentIdempotencyKey.current && isDuplicate(currentIdempotencyKey.current)) {
+      return;
+    }
+
+    const idempotencyKey = nextKey();
+    currentIdempotencyKey.current = idempotencyKey;
+    markSubmitted(idempotencyKey);
+
     setError(null);
+    setPollingStatus(null);
     setIsSubmitting(true);
 
+    const payload: ConfirmPayload = {
+      amount: parsedAmount,
+      asset,
+      recipient: recipient.trim(),
+      ...(memo.trim() ? { memo: memo.trim() } : {}),
+    };
+
+    // ── Optimistic pending row ──────────────────────────────────────────────
+    const optimisticEntry: OptimisticEntry = {
+      idempotencyKey,
+      amount: parsedAmount,
+      asset,
+      recipient: recipient.trim(),
+      ...(memo.trim() ? { memo: memo.trim() } : {}),
+      submittedAt: new Date().toISOString(),
+    };
+    onOptimisticAdd?.(optimisticEntry);
+
     try {
-      const payload: ConfirmPayload = {
-        amount: parsedAmount,
-        asset,
-        recipient: recipient.trim(),
-        ...(memo.trim() ? { memo: memo.trim() } : {}),
-      };
+      let resolvedTxHash: string | null = null;
 
       if (onConfirm) {
-        await onConfirm(payload);
+        await onConfirm(payload, idempotencyKey);
         setIsComplete(true);
+        clearKey(idempotencyKey);
       } else if (senderPublicKey) {
-        const hash = await buildAndSubmitTransaction(payload, senderPublicKey, network);
-        setTxHash(hash);
+        resolvedTxHash = await buildAndSubmitTransaction(payload, senderPublicKey, network);
+        setTxHash(resolvedTxHash);
         setIsComplete(true);
+        clearKey(idempotencyKey);
       } else {
         await new Promise((resolve) => setTimeout(resolve, 700));
         setIsComplete(true);
+        clearKey(idempotencyKey);
+      }
+
+      // ── Kick off polling if pollTxStatus is provided ────────────────────
+      if (pollTxStatus && resolvedTxHash) {
+        setIsComplete(false); // wait for poll to confirm
+        setPollingStatus(t('sendMoney.polling.checking'));
+        startPolling(resolvedTxHash, pollTxStatus);
+        return; // polling callbacks handle setIsSubmitting(false)
       }
     } catch (confirmError) {
+      // ── Rollback optimistic entry ─────────────────────────────────────────
+      onOptimisticRollback?.(idempotencyKey);
+      clearKey(idempotencyKey);
+      currentIdempotencyKey.current = null;
+      stopPolling();
+
       const msg = confirmError instanceof Error ? confirmError.message : '';
       if (msg.toLowerCase().includes('issuer not configured')) {
         setError(t('sendMoney.errors.assetIssuerNotConfigured', { asset }));
@@ -476,7 +583,12 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
         <>
           <div className="send-flow-body">{renderStepContent()}</div>
 
-          {error && <p className="flow-error">{error}</p>}
+          {error && <p className="flow-error" role="alert">{error}</p>}
+          {pollingStatus && (
+            <p className="flow-polling-status" role="status" aria-live="polite">
+              {pollingStatus}
+            </p>
+          )}
 
           <div className="send-flow-actions">
             <button

@@ -76,6 +76,10 @@
       "approachingLimit": "Warning: You are approaching your daily limit.",
       "loading": "Loading limits...",
       "error": "Could not load limits."
+    },
+    "polling": {
+      "checking": "Verifying transaction on-chain…",
+      "stillPending": "Transaction is still pending on the network. It has not failed — please check your history shortly."
     }
   },
   "language": {
