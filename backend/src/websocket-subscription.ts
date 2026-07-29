@@ -1,4 +1,5 @@
 import { Socket, Server } from 'socket.io';
+import { Keypair } from '@stellar/stellar-sdk';
 import { createLogger } from './correlation-id';
 
 const logger = createLogger('websocket-subscription');
@@ -22,29 +23,113 @@ export function getSenderRoom(senderAddress: string): string {
   return `sender:${senderAddress}`;
 }
 
+// ---------------------------------------------------------------------------
+// Nonce store — prevents replay attacks on the subscription handshake.
+// Each nonce is keyed by `address:timestamp` and stored with its expiry time.
+// A periodic cleanup job removes expired entries so the map stays bounded.
+// ---------------------------------------------------------------------------
+
+/** TTL for used nonces: 5 minutes (matches the timestamp tolerance window). */
+const NONCE_TTL_MS = 300_000;
+
+/** Cleanup interval — run every 5 minutes. */
+const CLEANUP_INTERVAL_MS = 300_000;
+
+interface NonceEntry {
+  expiresAt: number;
+}
+
+/** Module-level singleton nonce store. */
+let nonceStore: Map<string, NonceEntry> = new Map();
+
+/** Periodic cleanup — removes entries whose TTL has elapsed. */
+let cleanupTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of nonceStore) {
+    if (now >= entry.expiresAt) {
+      nonceStore.delete(key);
+    }
+  }
+}, CLEANUP_INTERVAL_MS);
+
+// Allow the timer reference to be unref'd in environments that support it
+// (prevents the interval from keeping a Node.js process alive in tests).
+if (cleanupTimer && typeof (cleanupTimer as any).unref === 'function') {
+  (cleanupTimer as any).unref();
+}
+
 /**
- * Validates signature proof for sender subscription
- * In production, verify cryptographic signature of address + timestamp
+ * Resets the nonce store to a clean state.
+ * Exported for use in tests so each test case starts with a fresh store.
+ */
+export function resetNonceStore(): void {
+  nonceStore = new Map();
+}
+
+// ---------------------------------------------------------------------------
+// Signature verification
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates the ed25519 signature proof for a sender subscription.
+ *
+ * The client must sign the message `${address}:${timestamp}` with the Stellar
+ * secret key that corresponds to `address`, then base64-encode the signature.
+ *
+ * Verification steps:
+ *   1. Timestamp is within `tolerance` ms of now (replay prevention).
+ *   2. The nonce `address:timestamp` has not been used before (single-use).
+ *   3. The ed25519 signature is valid for the message under `address`.
+ *   4. The nonce is recorded to block future replays.
+ *
+ * @param address   - Stellar public key (StrKey G… format)
+ * @param signature - Base64-encoded ed25519 signature of `${address}:${timestamp}`
+ * @param timestamp - Unix timestamp in milliseconds (serves as the nonce)
+ * @param tolerance - Acceptable clock skew window in ms (default: 5 minutes)
  */
 export function validateSignatureProof(
   address: string,
   signature: string,
   timestamp: number,
-  tolerance: number = 300000 // 5 minutes in ms
+  tolerance: number = NONCE_TTL_MS
 ): boolean {
-  // Basic validation: timestamp should be recent
+  // 1. Timestamp window check — prevents replay of old proofs.
   const now = Date.now();
   if (Math.abs(now - timestamp) > tolerance) {
-    logger.warn('Signature proof timestamp out of tolerance', { address, diff: Math.abs(now - timestamp), tolerance });
+    logger.warn('Signature proof timestamp out of tolerance', {
+      address,
+      diff: Math.abs(now - timestamp),
+      tolerance,
+    });
     return false;
   }
 
-  // TODO: Verify cryptographic signature in production
-  // For now, just validate format
-  if (!signature || signature.length < 10) {
-    logger.warn('Invalid signature format', { address });
+  // 2. Single-use nonce check.
+  const nonce = `${address}:${timestamp}`;
+  if (nonceStore.has(nonce)) {
+    logger.warn('Replayed subscription nonce rejected', { address, timestamp });
     return false;
   }
+
+  // 3. Cryptographic ed25519 verification.
+  try {
+    const keypair = Keypair.fromPublicKey(address); // throws on invalid address
+    const messageBytes = Buffer.from(`${address}:${timestamp}`);
+    const signatureBytes = Buffer.from(signature, 'base64');
+
+    if (!keypair.verify(messageBytes, signatureBytes)) {
+      logger.warn('ed25519 signature verification failed', { address });
+      return false;
+    }
+  } catch (err) {
+    // Keypair.fromPublicKey threw → address is not a valid Stellar public key,
+    // or the signature buffer was malformed.
+    logger.warn('Signature verification error', { address, error: String(err) });
+    return false;
+  }
+
+  // 4. Record the nonce so it cannot be replayed.
+  nonceStore.set(nonce, { expiresAt: now + NONCE_TTL_MS });
 
   return true;
 }

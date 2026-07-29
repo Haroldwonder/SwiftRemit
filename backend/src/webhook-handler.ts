@@ -5,7 +5,8 @@ import { WebhookLogger } from './webhook-logger';
 import { TransactionStateManager, TransactionUpdate, KYCUpdate } from './transaction-state';
 import { KycUpsertService } from './kyc-upsert-service';
 import { Sep24Service } from './sep24-service';
-import { WebhookDispatcher } from './webhook-dispatcher';
+import { WebhookDispatcher } from './webhooks/dispatcher';
+import { PostgresWebhookStore } from './webhooks/store';
 import type { RemittanceCreatedWebhookPayload } from './types';
 import { validateAnchorToml } from './anchor-toml-validator';
 import { recordWebhookNonce } from './database';
@@ -33,7 +34,7 @@ export class WebhookHandler {
     this.stateManager = new TransactionStateManager(pool);
     this.kycUpsertService = new KycUpsertService(pool);
     this.sep24Service = new Sep24Service(pool);
-    this.dispatcher = new WebhookDispatcher();
+    this.dispatcher = new WebhookDispatcher(new PostgresWebhookStore(pool));
   }
 
   /**
@@ -236,7 +237,11 @@ export class WebhookHandler {
       ]
     );
 
-    await this.dispatcher.dispatchRemittanceCreated(remittancePayload);
+    await this.dispatcher.dispatch('remittance.created', {
+      event: 'remittance.created',
+      timestamp: new Date().toISOString(),
+      data: remittancePayload,
+    }, remittancePayload.remittance_id);
   }
 
   /**

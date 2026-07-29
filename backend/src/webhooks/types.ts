@@ -10,7 +10,8 @@ export type EventType =
   | 'remittance.completed'
   | 'remittance.failed'
   | 'remittance.cancelled'
-  | 'kyc.expiry_warning';
+  | 'kyc.expiry_warning'
+  | 'sep24.expired_refund';
 
 export interface WebhookSubscriber {
   id: string;
@@ -20,6 +21,19 @@ export interface WebhookSubscriber {
   active: boolean;
   /** Content-Type to use when delivering payloads. Defaults to 'application/json'. */
   content_type?: 'application/json' | 'application/x-www-form-urlencoded';
+  /**
+   * Previous HMAC secret, set during a key rotation.
+   * While `secret_rotated_at` is within the 24-hour grace period both the
+   * current and the previous secret are used to sign outbound deliveries so
+   * that receivers can verify against either key without downtime.
+   */
+  previous_secret?: string;
+  /**
+   * ISO-8601 timestamp (or Date) at which the most recent secret rotation
+   * occurred.  Used together with `previous_secret` to enforce the 24-hour
+   * rotation grace period.
+   */
+  secret_rotated_at?: string | Date;
   createdAt?: Date;
   updatedAt?: Date;
 }
