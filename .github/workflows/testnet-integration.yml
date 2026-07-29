@@ -43,6 +43,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Stellar CLI
+        uses: stellar/actions/setup-stellar-cli@main
+        with:
+          version: latest
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
