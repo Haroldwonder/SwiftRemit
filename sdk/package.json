@@ -26,6 +26,7 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
+    "test:pact": "vitest run src/pact",
     "lint": "tsc --noEmit",
     "changeset": "changeset",
     "version-packages": "changeset version",

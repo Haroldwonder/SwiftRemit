@@ -1,13 +1,17 @@
 /**
- * Pact provider verification for the SwiftRemit API.
+ * Pact provider verification — SwiftRemit API (SR-062)
  *
- * Verifies that the real API implementation satisfies the contracts generated
- * by the SwiftRemitFrontend consumer test suite.
+ * Verifies the real API against contracts from ALL three consumers:
+ *   1. SwiftRemitFrontend   pacts/SwiftRemitFrontend-SwiftRemitAPI.json
+ *   2. SwiftRemitSDK        pacts/SwiftRemitSDK-SwiftRemitAPI.json
+ *   3. SwiftRemitMobile     pacts/SwiftRemitMobile-SwiftRemitAPI.json
  *
- * Consumer tests live at:  frontend/src/pact/swiftremit-api.consumer.pact.test.ts
- * Generated pact files at: pacts/SwiftRemitFrontend-SwiftRemitAPI.json
+ * Any breaking API change will fail this job before it reaches main.
  *
- * Issue #934: Add API endpoint contract tests with Pact.
+ * Consumer tests:
+ *   frontend/src/pact/swiftremit-api.consumer.pact.test.ts
+ *   sdk/src/pact/swiftremit-api.sdk.consumer.pact.test.ts
+ *   mobile/src/pact/swiftremit-api.mobile.consumer.pact.test.ts
  */
 
 import { Verifier } from '@pact-foundation/pact';
@@ -16,60 +20,101 @@ import { describe, it, beforeAll, afterAll } from 'vitest';
 import { createApp } from '../../app';
 import { initializeCurrencyConfig } from '../../config';
 import http from 'http';
+import { newDb } from 'pg-mem';
+import { PostgresAnchorStore } from '../../db/anchorStore';
+import { DEFAULT_ANCHORS } from '../../data/defaultAnchors';
 
-// ── Start the real API on an ephemeral port ──────────────────────────────────
+// ── Start the real API ────────────────────────────────────────────────────────
 
 let server: http.Server;
 let serverPort: number;
 
 async function startProvider(): Promise<number> {
   process.env.CURRENCY_CONFIG_PATH = './config/currencies.json';
-  process.env.JWT_SECRET = 'test-secret-for-pact-provider-verification';
+  process.env.JWT_SECRET = 'pact-provider-verification-secret-ci';
+  process.env.ADMIN_API_KEY = 'pact-admin-key';
+  process.env.ANCHOR_TOML_VALIDATION_DISABLED = 'true';
+
   initializeCurrencyConfig();
 
-  const app = createApp();
+  // Build an in-memory anchor store and pre-seed it so anchor-related
+  // pact states pass without a real database.
+  const db = newDb();
+  const pg = db.adapters.createPg();
+  const pool = new pg.Pool();
+  const anchorStore = new PostgresAnchorStore(pool);
+  await anchorStore.initializeSchema();
+  await anchorStore.seed(DEFAULT_ANCHORS);
+
+  const app = createApp({
+    anchorStore,
+    anchorAdminApiKey: process.env.ADMIN_API_KEY,
+  });
+
   return new Promise((resolve) => {
     server = http.createServer(app);
     server.listen(0, () => {
       const addr = server.address();
-      const port = typeof addr === 'object' && addr ? addr.port : 0;
-      resolve(port);
+      resolve(typeof addr === 'object' && addr ? addr.port : 0);
     });
   });
 }
 
 // ── State handlers ────────────────────────────────────────────────────────────
-// These set up the preconditions that each consumer interaction requires.
-// In a real deployment these would seed a test database; here we rely on the
-// API's in-memory / config-file state.
 
 const stateHandlers: Record<string, () => Promise<void>> = {
-  'currencies exist': async () => {
-    // The currency config is loaded from file in beforeAll; no extra setup needed.
-  },
-  'USD currency exists': async () => {
-    // USD is always in the bundled currencies config.
-  },
-  'XYZ currency does not exist': async () => {
-    // The bundled config has no XYZ entry; nothing to set up.
-  },
-  'admin user exists': async () => {
-    // Auth is stateless JWT — any userId is accepted when JWT_SECRET is set.
-  },
-  'anchors exist': async () => {
-    // The in-memory anchor store is pre-seeded when createApp() is called.
-  },
-  'user has remittances': async () => {
-    // The test uses a mock bearer token; the route either returns data or 200.
-  },
-  'no auth token provided': async () => {
-    // No setup needed; the route checks for Authorization header absence.
-  },
+  // ── Shared ──────────────────────────────────────────────────────────────
+  'currencies exist':              async () => { /* seeded via config file */ },
+  'USD currency exists':           async () => { /* always in bundled config */ },
+  'XYZ currency does not exist':   async () => { /* not in bundled config */ },
+  'admin user exists':             async () => { /* JWT is stateless */ },
+  'valid refresh token exists':    async () => { /* stateless; any cookie accepted in test */ },
+  'no auth token provided':        async () => { /* nothing to set up */ },
+  'mobile login missing walletAddress': async () => { /* validation is always active */ },
+  'mobile user exists':            async () => { /* JWT is stateless */ },
+  'mobile user authenticated':     async () => { /* JWT is stateless */ },
+
+  // ── Anchors ──────────────────────────────────────────────────────────────
+  'anchors exist':                        async () => { /* pre-seeded in beforeAll */ },
+  'anchor anchor-1 exists':               async () => { /* pre-seeded */ },
+  'anchor unknown-anchor does not exist': async () => { /* not in seed data */ },
+
+  // ── Remittances ──────────────────────────────────────────────────────────
+  'user has remittances':              async () => { /* route returns 200 for any token */ },
+  'mobile user has remittances':       async () => { /* same */ },
+  'mobile user has no remittances':    async () => { /* empty store */ },
+  'remittance rem-001 exists':         async () => { /* test uses in-memory response */ },
+  'remittance rem-unknown does not exist': async () => { /* returns 404 */ },
+
+  // ── Agents ───────────────────────────────────────────────────────────────
+  'agent exists':                      async () => { /* agent routes are DB-optional */ },
+
+  // ── KYC ──────────────────────────────────────────────────────────────────
+  'KYC record exists for user user-1 at anchor anchor-1': async () => { /* stub response */ },
+  'KYC registration is open':          async () => { /* always open in test */ },
+
+  // ── FX ───────────────────────────────────────────────────────────────────
+  'FX rates are available':            async () => { /* in-memory stub */ },
+  'FX rates exist but XYZ is unsupported': async () => { /* route validates pair */ },
+
+  // ── Misc ─────────────────────────────────────────────────────────────────
+  'service is running':          async () => { /* health endpoint needs no setup */ },
+  'limits are configured':       async () => { /* limits route has default config */ },
+  'settlements data exists':     async () => { /* read-only settlement stub */ },
+  'Stellar account exists':      async () => { /* accounts route uses RPC stub */ },
 };
 
-// ── Provider verification ─────────────────────────────────────────────────────
+// ── Pact file paths ───────────────────────────────────────────────────────────
 
-describe('SwiftRemit API — Pact provider verification', () => {
+const PACT_DIR = path.resolve(__dirname, '../../../../../pacts');
+
+function pactFile(consumer: string): string {
+  return path.join(PACT_DIR, `${consumer}-SwiftRemitAPI.json`);
+}
+
+// ── Verification ──────────────────────────────────────────────────────────────
+
+describe('SwiftRemit API — Pact provider verification (all consumers)', () => {
   beforeAll(async () => {
     serverPort = await startProvider();
   });
@@ -78,23 +123,45 @@ describe('SwiftRemit API — Pact provider verification', () => {
     if (server) server.close();
   });
 
-  it('satisfies all contracts from SwiftRemitFrontend', async () => {
-    const pactDir = path.resolve(__dirname, '../../../../../pacts');
-
+  // Verify the Frontend pact — original contract from issue #934.
+  it('satisfies the SwiftRemitFrontend contract', async () => {
     const verifier = new Verifier({
       provider: 'SwiftRemitAPI',
       providerBaseUrl: `http://localhost:${serverPort}`,
-      pactUrls: [
-        path.join(pactDir, 'SwiftRemitFrontend-SwiftRemitAPI.json'),
-      ],
+      pactUrls: [pactFile('SwiftRemitFrontend')],
       stateHandlers,
-      // Fail the CI job if the pact file is missing, which means the consumer
-      // tests were not run first in the pipeline.
       failIfNoPactsFound: true,
       publishVerificationResult: false,
       logLevel: 'warn',
     });
+    await verifier.verifyProvider();
+  });
 
+  // Verify the SDK pact (SR-062).
+  it('satisfies the SwiftRemitSDK contract', async () => {
+    const verifier = new Verifier({
+      provider: 'SwiftRemitAPI',
+      providerBaseUrl: `http://localhost:${serverPort}`,
+      pactUrls: [pactFile('SwiftRemitSDK')],
+      stateHandlers,
+      failIfNoPactsFound: true,
+      publishVerificationResult: false,
+      logLevel: 'warn',
+    });
+    await verifier.verifyProvider();
+  });
+
+  // Verify the Mobile pact (SR-062).
+  it('satisfies the SwiftRemitMobile contract', async () => {
+    const verifier = new Verifier({
+      provider: 'SwiftRemitAPI',
+      providerBaseUrl: `http://localhost:${serverPort}`,
+      pactUrls: [pactFile('SwiftRemitMobile')],
+      stateHandlers,
+      failIfNoPactsFound: true,
+      publishVerificationResult: false,
+      logLevel: 'warn',
+    });
     await verifier.verifyProvider();
   });
 });
