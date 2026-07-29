@@ -1,24 +1,38 @@
 /**
  * Webhook Dispatcher
- * 
+ *
  * Handles the delivery of webhook payloads with:
- * - Automatic retries with exponential backoff
+ * - Automatic retries with exponential backoff + configurable ±jitter
  * - HMAC-SHA256 signature generation and verification
- * - Timeout handling
+ * - Secret rotation grace period (dual-signature for 24 h after rotation)
+ * - Timeout handling (axios)
+ * - Dead-letter queue for permanently-failed deliveries
+ * - drain() for graceful shutdown
  * - Comprehensive logging and error tracking
+ *
+ * Retry parameters are read from environment variables so they can be tuned
+ * without redeploying:
+ *   WEBHOOK_MAX_RETRIES        (default 5)
+ *   WEBHOOK_RETRY_BASE_MS      (default 1000)
+ *   WEBHOOK_RETRY_MAX_MS       (default 300000)
+ *   WEBHOOK_RETRY_JITTER_PERCENT (default 20)
+ *   WEBHOOK_TIMEOUT_MS         (default 30000)
  */
 
-import axios, { AxiosError } from 'axios';
+import axios from 'axios';
 import crypto from 'crypto';
-import { EventType, WebhookPayload, WebhookDeliveryRecord, WebhookDeliveryOptions, WebhookSignatureHeaders } from './types';
+import { EventType, WebhookPayload, WebhookDeliveryRecord, WebhookDeliveryOptions, WebhookSignatureHeaders, WebhookSubscriber } from './types';
 import { IWebhookStore } from './store';
 
+/** 24-hour grace window for secret rotation (milliseconds). */
+const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
+
 const DEFAULT_OPTIONS: WebhookDeliveryOptions = {
-  maxRetries: 3,
-  initialDelayMs: 1000,
+  maxRetries: parseInt(process.env.WEBHOOK_MAX_RETRIES || '5', 10),
+  initialDelayMs: parseInt(process.env.WEBHOOK_RETRY_BASE_MS || '1000', 10),
   backoffMultiplier: 2,
-  maxDelayMs: 60000,
-  timeoutMs: 30000,
+  maxDelayMs: parseInt(process.env.WEBHOOK_RETRY_MAX_MS || '300000', 10),
+  timeoutMs: parseInt(process.env.WEBHOOK_TIMEOUT_MS || '30000', 10),
 };
 
 export class WebhookDispatcher {
@@ -45,31 +59,69 @@ export class WebhookDispatcher {
   }
 
   /**
-   * Generate webhook headers including signature
+   * Generate webhook headers including HMAC-SHA256 signature.
+   *
+   * If `subscriber` has a `previous_secret` and `secret_rotated_at` value
+   * that falls within the 24-hour rotation grace period an additional
+   * `x-webhook-signature-prev` header is emitted so that receivers can
+   * verify against either the old or the new secret without downtime.
    */
-  private generateHeaders(payload: string, secret: string, contentType = 'application/json'): Record<string, string> {
+  private generateHeaders(
+    payload: string,
+    secret: string,
+    contentType = 'application/json',
+    subscriber?: WebhookSubscriber
+  ): Record<string, string> {
     const timestamp = Date.now().toString();
     const webhookId = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const signature = this.generateSignature(
-      `${timestamp}.${payload}`,
-      secret
-    );
+    const msg = `${timestamp}.${payload}`;
+    const signature = this.generateSignature(msg, secret);
 
-    return {
+    const headers: Record<string, string> = {
       'Content-Type': contentType,
       'x-webhook-signature': signature,
       'x-webhook-timestamp': timestamp,
       'x-webhook-id': webhookId,
       'User-Agent': 'SwiftRemit-Webhook/1.0',
     };
+
+    // Dual-signature during secret rotation grace period
+    if (subscriber?.previous_secret && subscriber.secret_rotated_at) {
+      const rotatedAt = typeof subscriber.secret_rotated_at === 'string'
+        ? new Date(subscriber.secret_rotated_at).getTime()
+        : subscriber.secret_rotated_at.getTime();
+      const age = Date.now() - rotatedAt;
+      if (age < ROTATION_GRACE_MS) {
+        headers['x-webhook-signature-prev'] = this.generateSignature(msg, subscriber.previous_secret);
+      }
+    }
+
+    return headers;
   }
 
   /**
-   * Calculate exponential backoff delay
+   * Calculate exponential backoff delay with configurable ±jitter.
+   *
+   * Formula:
+   *   base = initialDelayMs * backoffMultiplier^(attempt-1)
+   *   capped = min(base, maxDelayMs)
+   *   jitter = random in [-jitterRange, +jitterRange]
+   *   final = max(0, capped + jitter)
+   *
+   * WEBHOOK_RETRY_JITTER_PERCENT (env, default 20) controls the jitter width
+   * as a percentage of the capped delay.
    */
   private getBackoffDelay(attempt: number): number {
-    const delay = this.options.initialDelayMs! * Math.pow(this.options.backoffMultiplier!, attempt - 1);
-    return Math.min(delay, this.options.maxDelayMs!);
+    const jitterPercent = parseInt(process.env.WEBHOOK_RETRY_JITTER_PERCENT || '20', 10);
+    const exponentialDelay = this.options.initialDelayMs! * Math.pow(this.options.backoffMultiplier!, attempt - 1);
+    const capped = Math.min(exponentialDelay, this.options.maxDelayMs!);
+    const jitterRange = (capped * jitterPercent) / 100;
+    const jitter = (Math.random() - 0.5) * 2 * jitterRange;
+    const finalDelay = Math.max(0, capped + jitter);
+    this.logger.debug(
+      `Webhook retry attempt ${attempt}: exponential=${exponentialDelay}ms, capped=${capped}ms, jitter=${jitter.toFixed(0)}ms, final=${finalDelay.toFixed(0)}ms`
+    );
+    return finalDelay;
   }
 
   /**
@@ -110,7 +162,7 @@ export class WebhookDispatcher {
             attempt: 0,
           } as WebhookDeliveryRecord);
 
-          const success = await this.attemptDelivery(deliveryId, subscriber.url, subscriber.secret, enrichedPayload, 1, deliveryRecord, subscriber.content_type);
+          const success = await this.attemptDelivery(deliveryId, subscriber.url, subscriber.secret, enrichedPayload, 1, deliveryRecord, subscriber.content_type, subscriber);
 
           if (success) {
             successCount++;
@@ -143,7 +195,8 @@ export class WebhookDispatcher {
     payload: WebhookPayload,
     attempt: number = 1,
     deliveryRecord?: Partial<WebhookDeliveryRecord>,
-    contentType: string = 'application/json'
+    contentType: string = 'application/json',
+    subscriber?: WebhookSubscriber
   ): Promise<boolean> {
     if (!url.startsWith('https://')) {
       const msg = `Webhook delivery rejected: URL must use HTTPS (received: ${url})`;
@@ -166,7 +219,7 @@ export class WebhookDispatcher {
           ).toString()
         : JSON.stringify(payload);
 
-      const headers = this.generateHeaders(serialized, secret, contentType);
+      const headers = this.generateHeaders(serialized, secret, contentType, subscriber);
 
       this.logger.debug(`Attempting delivery ${attempt}/${this.options.maxRetries} to ${url}`);
 
@@ -197,7 +250,7 @@ export class WebhookDispatcher {
         await this.store.updateDeliveryStatus(deliveryId, 'pending', attempt, errorMessage);
         await new Promise(resolve => setTimeout(resolve, delay));
 
-        return this.attemptDelivery(deliveryId, url, secret, payload, attempt + 1, deliveryRecord, contentType);
+        return this.attemptDelivery(deliveryId, url, secret, payload, attempt + 1, deliveryRecord, contentType, subscriber);
       } else {
         await this.store.updateDeliveryStatus(deliveryId, 'failed', attempt, errorMessage);
         this.logger.error(`Delivery ${deliveryId} failed after ${attempt} attempts: ${errorMessage}`);
@@ -279,7 +332,8 @@ export class WebhookDispatcher {
           delivery.payload,
           delivery.attempt + 1,
           delivery,
-          subscriber.content_type
+          subscriber.content_type,
+          subscriber
         );
       }
     } catch (error) {
