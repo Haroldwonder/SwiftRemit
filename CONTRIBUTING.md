@@ -452,33 +452,8 @@ troubleshooting section.
 
 ### PR Template
 
-```markdown
-## Description
-Brief description of changes
-
-## Related Issues
-Closes #123
-
-## Type of Change
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Breaking change
-- [ ] Documentation update
-
-## Testing
-- [ ] All tests pass locally
-- [ ] Added new tests for changes
-- [ ] Manual testing completed
-
-## Checklist
-- [ ] Code follows project style guidelines
-- [ ] Self-review completed
-- [ ] Comments added for complex code
-- [ ] Documentation updated
-- [ ] No new warnings generated
-- [ ] Tests added/updated
-- [ ] All CI checks pass
-```
+GitHub automatically populates new PRs from [`.github/pull_request_template.md`](.github/pull_request_template.md).
+Fill out every section — summary, linked issue, type of change, and the checklist — before requesting review.
 
 ### Review Process
 

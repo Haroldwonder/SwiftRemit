@@ -1,0 +1,19 @@
+# Default owner for anything not matched below.
+# Replace with real team handles as ownership solidifies.
+*                       @Haroldwonder
+
+# Smart contract (Soroban/Rust)
+/src/                   @Haroldwonder
+/tests/                 @Haroldwonder
+/fuzz/                  @Haroldwonder
+/benches/               @Haroldwonder
+
+/api/                   @Haroldwonder
+/backend/               @Haroldwonder
+/frontend/              @Haroldwonder
+/mobile/                @Haroldwonder
+/sdk/                   @Haroldwonder
+
+/.github/               @Haroldwonder
+/scripts/               @Haroldwonder
+/docs/                  @Haroldwonder
