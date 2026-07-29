@@ -45,6 +45,11 @@ async function start() {
     // Build the Express app with the io instance so /ws/health is mounted.
     const app = createApp({ io });
 
+    // Wait for the anchor catalogue to be seeded into the DB before we
+    // accept traffic (SR-060).  In dev/test without DATABASE_URL this is a
+    // no-op Promise that resolves immediately.
+    await (app as any).__anchorBootstrap;
+
     // Wire the Express app as the HTTP request handler.
     httpServer.on('request', app);
 
