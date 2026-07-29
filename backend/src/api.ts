@@ -26,6 +26,7 @@ import { KycUpsertService } from './kyc-upsert-service';
 import { createTransferGuard, AuthenticatedRequest } from './transfer-guard';
 import { AgentKycService } from './agent-kyc-service';
 import { getFxRateCache } from './fx-rate-cache';
+import { getFailoverFxService } from './fx-provider';
 import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
 import { sanitizeInput } from './sanitizer';
@@ -47,6 +48,11 @@ const pool = getPool();
 const metricsService = getMetricsService(pool);
 fxRateCache.setMetricsObserver((from, to, stalenessSeconds) => {
   metricsService.setFxRateStalenessMetric(from, to, stalenessSeconds);
+});
+getFailoverFxService().setMetricsObserver({
+  onProviderFailure: provider => metricsService.recordFxProviderFailure(provider),
+  onFailover: () => metricsService.recordFxProviderFailover(),
+  onRateRejected: (_pair, reason) => metricsService.recordFxRateRejected(reason),
 });
 
 // Security middleware

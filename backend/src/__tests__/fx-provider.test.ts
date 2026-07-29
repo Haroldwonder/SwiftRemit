@@ -76,6 +76,49 @@ describe('FailoverFxService', () => {
     await expect(svc.getRate('USD', 'EUR')).rejects.toThrow('no rate available');
   });
 
+  it('rejects a stale cached rate beyond the max staleness threshold', async () => {
+    let callCount = 0;
+    const primary = makeProvider('primary', async () => {
+      callCount++;
+      if (callCount === 1) return 1.25; // first call succeeds → populates stale cache
+      throw new Error('primary down');
+    });
+    const secondary = makeProvider('secondary', async () => { throw new Error('secondary down'); });
+    const svc = new FailoverFxService(primary, secondary, 0, -1); // maxStalenessSeconds = -1 → always exceeded
+
+    await svc.getRate('USD', 'EUR'); // success → stale cache set
+    await expect(svc.getRate('USD', 'EUR')).rejects.toThrow('exceeds max staleness');
+  });
+
+  it('rejects a rate deviating beyond the sanity bound and fails over', async () => {
+    const primary = makeProvider('primary', async () => 1.25);
+    const secondary = makeProvider('secondary', async () => 1.30);
+    const svc = new FailoverFxService(primary, secondary, 60_000, 300, 10); // max 10% deviation
+
+    expect(await svc.getRate('USD', 'EUR')).toBe(1.25); // seeds last-known-good
+
+    (primary.getRate as ReturnType<typeof vi.fn>).mockImplementation(async () => 5.0); // >>10% deviation
+    const rate = await svc.getRate('USD', 'EUR');
+    expect(rate).toBe(1.30); // fell through to secondary since primary rate was rejected
+  });
+
+  it('invokes the metrics observer on provider failure, failover, and rejection', async () => {
+    const observer = {
+      onProviderFailure: vi.fn(),
+      onFailover: vi.fn(),
+      onRateRejected: vi.fn(),
+    };
+    const primary = makeProvider('primary', async () => { throw new Error('down'); });
+    const secondary = makeProvider('secondary', async () => 1.30);
+    const svc = new FailoverFxService(primary, secondary);
+    svc.setMetricsObserver(observer);
+
+    await svc.getRate('USD', 'EUR');
+
+    expect(observer.onProviderFailure).toHaveBeenCalledWith('primary', 'USD/EUR');
+    expect(observer.onFailover).toHaveBeenCalledWith('primary', 'secondary', 'USD/EUR');
+  });
+
   it('logs fx_provider_switch alert JSON on primary failure', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const primary = makeProvider('primary', async () => { throw new Error('timeout'); });

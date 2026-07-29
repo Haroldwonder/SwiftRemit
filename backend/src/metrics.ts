@@ -37,6 +37,11 @@ export class MetricsService {
   private jobLastRunTimestamp: Map<string, number> = new Map();
   private jobFailureTotal: Map<string, number> = new Map();
 
+  // FX provider resilience metrics (SR-029)
+  private fxProviderFailuresTotal: Map<string, number> = new Map();
+  private fxProviderFailoversTotal = 0;
+  private fxRateRejectedTotal: Map<string, number> = new Map();
+
   constructor(pool: Pool, fxRateCache?: FxRateCache) {
     this.pool = pool;
     this.fxRateCache = fxRateCache;
@@ -224,6 +229,21 @@ export class MetricsService {
     this.jobFailureTotal.set(jobName, (this.jobFailureTotal.get(jobName) ?? 0) + 1);
   }
 
+  /** Record an FX provider call failure (e.g. timeout, 5xx, malformed response). */
+  recordFxProviderFailure(provider: string): void {
+    this.fxProviderFailuresTotal.set(provider, (this.fxProviderFailuresTotal.get(provider) ?? 0) + 1);
+  }
+
+  /** Record a failover from the primary to the secondary FX provider. */
+  recordFxProviderFailover(): void {
+    this.fxProviderFailoversTotal += 1;
+  }
+
+  /** Record a rejected FX rate (stale-beyond-threshold or failed sanity check). */
+  recordFxRateRejected(reason: 'stale' | 'sanity'): void {
+    this.fxRateRejectedTotal.set(reason, (this.fxRateRejectedTotal.get(reason) ?? 0) + 1);
+  }
+
   /**
    * Update the contract event indexer lag (ledgers behind the chain tip).
    * Call this from the Stellar event listener after each poll.
@@ -370,6 +390,23 @@ export class MetricsService {
     lines.push('# TYPE swiftremit_job_failure_total counter');
     this.jobFailureTotal.forEach((count, jobName) => {
       lines.push(`swiftremit_job_failure_total{job_name="${this.sanitizeLabelValue(jobName)}"} ${count}`);
+    });
+
+    // FX provider resilience metrics (SR-029)
+    lines.push('# HELP fx_provider_failures_total Total number of FX provider call failures by provider');
+    lines.push('# TYPE fx_provider_failures_total counter');
+    this.fxProviderFailuresTotal.forEach((count, provider) => {
+      lines.push(`fx_provider_failures_total{provider="${this.sanitizeLabelValue(provider)}"} ${count}`);
+    });
+
+    lines.push('# HELP fx_provider_failovers_total Total number of failovers from primary to secondary FX provider');
+    lines.push('# TYPE fx_provider_failovers_total counter');
+    lines.push(`fx_provider_failovers_total ${this.fxProviderFailoversTotal}`);
+
+    lines.push('# HELP fx_rate_rejected_total Total number of FX rates rejected by reason (stale, sanity)');
+    lines.push('# TYPE fx_rate_rejected_total counter');
+    this.fxRateRejectedTotal.forEach((count, reason) => {
+      lines.push(`fx_rate_rejected_total{reason="${this.sanitizeLabelValue(reason)}"} ${count}`);
     });
 
     return lines.join('\n') + '\n';
