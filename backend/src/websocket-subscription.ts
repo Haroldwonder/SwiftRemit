@@ -188,7 +188,11 @@ export function registerSenderSubscriptionHandlers(io: Server, socket: Socket): 
 }
 
 /**
- * Emit remittance status update to specific sender room
+ * Emit remittance status update to specific sender room.
+ *
+ * SR-035: correlationId is included in the payload so browser clients and
+ * server-side receivers can correlate WebSocket pushes with the originating
+ * API request / contract event.
  */
 export function emitToSenderRoom(
   io: Server,
@@ -199,6 +203,8 @@ export function emitToSenderRoom(
     amount?: string;
     timestamp: Date;
     metadata?: Record<string, any>;
+    /** Originating correlation ID — forwarded from the event emitter. */
+    correlationId?: string;
   }
 ): void {
   const room = getSenderRoom(senderAddress);
@@ -206,12 +212,16 @@ export function emitToSenderRoom(
   io.to(room).emit(SocketEvents.REMITTANCE_STATUS_UPDATE, {
     ...statusUpdate,
     timestamp: statusUpdate.timestamp.toISOString(),
+    // Always include the field; undefined becomes absent in JSON serialisation,
+    // which is fine — receivers should treat a missing field as "unknown".
+    ...(statusUpdate.correlationId && { correlationId: statusUpdate.correlationId }),
   });
 
   logger.info('Emitted status update to sender room', {
     room,
     remittanceId: statusUpdate.remittanceId,
     status: statusUpdate.status,
+    correlationId: statusUpdate.correlationId,
   });
 }
 

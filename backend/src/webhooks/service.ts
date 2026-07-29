@@ -127,12 +127,17 @@ export class WebhookService {
   }
 
   /**
-   * Trigger remittance event
+   * Trigger remittance event.
+   *
+   * @param correlationId – originating correlation ID forwarded from the emitter.
+   *   Appears as `correlation_id` in the webhook payload and as the
+   *   `X-Correlation-ID` HTTP header on every outbound delivery attempt.
    */
   async onRemittanceStatusChange(
     remittanceId: string,
     status: RemittanceData['status'],
-    remittanceData: Omit<RemittanceData, 'id' | 'status'>
+    remittanceData: Omit<RemittanceData, 'id' | 'status'>,
+    correlationId?: string,
   ): Promise<{ success: number; failed: number }> {
     // Determine event type based on status
     let eventType: EventType;
@@ -167,7 +172,7 @@ export class WebhookService {
       },
     };
 
-    return this.dispatcher.dispatch(eventType, payload);
+    return this.dispatcher.dispatch(eventType, payload, correlationId);
   }
 
   /**

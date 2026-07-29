@@ -7,12 +7,20 @@
  * This is a derived-status emitter (pending/processing/completed/failed/cancelled), not a
  * raw on-chain topic listener. For the full catalogue of contract events — topics, payload
  * shapes, and schema version — see ../../../docs/EVENTS.md.
+ *
+ * SR-035: The originating correlation ID is threaded from every emitStatusChange call
+ * through to webhook delivery, contract-event DB writes, and WebSocket pushes.
+ * Callers that already hold a correlation ID in AsyncLocalStorage can omit the
+ * explicit parameter; getCorrelationId() is used as the automatic fallback.
  */
 
 import { EventEmitter } from 'events';
 import { RemittanceData } from '../webhooks/types';
 import { WebhookService } from '../webhooks/service';
 import { AdminAuditLogService } from '../admin-audit-log';
+import { getCorrelationId, createLogger } from '../correlation-id';
+
+const logger = createLogger('remittance-events');
 
 export interface RemittanceStatusChangeEvent {
   remittanceId: string;
@@ -25,6 +33,8 @@ export interface RemittanceStatusChangeEvent {
   reason?: string;
   metadata?: Record<string, any>;
   timestamp: Date;
+  /** Originating correlation ID — propagated to webhooks, DB writes, and WS pushes. */
+  correlationId?: string;
 }
 
 /** Admin actions that should be written to the audit log. */
@@ -38,8 +48,8 @@ export interface AdminActionEvent {
 
 /**
  * Remittance Event Emitter
- * 
- * Handles remittance status changes and triggers webhooks
+ *
+ * Handles remittance status changes and triggers webhooks.
  */
 export class RemittanceEventEmitter extends EventEmitter {
   private webhookService?: WebhookService;
@@ -67,18 +77,38 @@ export class RemittanceEventEmitter extends EventEmitter {
           ip_address: null,
         });
       } catch (err) {
-        console.error('Failed to write admin audit log entry:', err);
+        logger.error('Failed to write admin audit log entry', err instanceof Error ? err : new Error(String(err)));
       }
     }
   }
 
   /**
-   * Emit remittance status change event
+   * Emit remittance status change event.
+   *
+   * The correlation ID is resolved in priority order:
+   *   1. event.correlationId   (explicitly supplied by the caller)
+   *   2. getCorrelationId()     (ambient ALS value — set by HTTP middleware or job-tracker)
+   *
+   * The resolved ID is forwarded to:
+   *   - the webhook dispatcher (appears in payload + X-Correlation-ID header)
+   *   - every listener of 'status-changed' via the event object
    */
   async emitStatusChange(event: RemittanceStatusChangeEvent): Promise<void> {
+    // Resolve the correlation ID for this hop
+    const correlationId = event.correlationId ?? getCorrelationId();
+
+    // Propagate resolved ID back into the event so downstream listeners have it
+    const enrichedEvent: RemittanceStatusChangeEvent = { ...event, correlationId };
+
+    logger.info('Remittance status changed', {
+      remittanceId: event.remittanceId,
+      status: event.status,
+      correlationId,
+    });
+
     // Emit local event for any local listeners
-    this.emit('status-changed', event);
-    this.emit(`status-${event.status}`, event);
+    this.emit('status-changed', enrichedEvent);
+    this.emit(`status-${event.status}`, enrichedEvent);
 
     // Trigger webhooks if service is configured
     if (this.webhookService) {
@@ -95,63 +125,61 @@ export class RemittanceEventEmitter extends EventEmitter {
             metadata: event.metadata,
             createdAt: event.timestamp.toISOString(),
             updatedAt: event.timestamp.toISOString(),
-          }
+          },
+          correlationId,
         );
 
         if (result.failed > 0) {
-          console.warn(
-            `Webhook delivery: ${result.success} succeeded, ${result.failed} failed for remittance ${event.remittanceId}`
-          );
+          logger.warn(`Webhook delivery partial failure`, {
+            remittanceId: event.remittanceId,
+            success: result.success,
+            failed: result.failed,
+            correlationId,
+          });
         } else {
-          console.info(
-            `Webhooks triggered for remittance ${event.remittanceId}: ${result.success} subscribers notified`
-          );
+          logger.info(`Webhooks delivered`, {
+            remittanceId: event.remittanceId,
+            subscribers: result.success,
+            correlationId,
+          });
         }
       } catch (error) {
-        console.error(`Failed to trigger webhooks for remittance ${event.remittanceId}:`, error);
-        // Don't throw - webhook delivery is best-effort
+        logger.error(
+          `Failed to trigger webhooks for remittance ${event.remittanceId}`,
+          error instanceof Error ? error : new Error(String(error)),
+          { correlationId },
+        );
+        // Don't throw — webhook delivery is best-effort
       }
     }
   }
 
-  /**
-   * Listen for remittance created events
-   */
+  /** Listen for remittance created events */
   onRemittanceCreated(callback: (event: RemittanceStatusChangeEvent) => void): void {
     this.on('status-pending', callback);
   }
 
-  /**
-   * Listen for remittance processing events
-   */
+  /** Listen for remittance processing events */
   onRemittanceProcessing(callback: (event: RemittanceStatusChangeEvent) => void): void {
     this.on('status-processing', callback);
   }
 
-  /**
-   * Listen for remittance completed events
-   */
+  /** Listen for remittance completed events */
   onRemittanceCompleted(callback: (event: RemittanceStatusChangeEvent) => void): void {
     this.on('status-completed', callback);
   }
 
-  /**
-   * Listen for remittance failed events
-   */
+  /** Listen for remittance failed events */
   onRemittanceFailed(callback: (event: RemittanceStatusChangeEvent) => void): void {
     this.on('status-failed', callback);
   }
 
-  /**
-   * Listen for remittance cancelled events
-   */
+  /** Listen for remittance cancelled events */
   onRemittanceCancelled(callback: (event: RemittanceStatusChangeEvent) => void): void {
     this.on('status-cancelled', callback);
   }
 
-  /**
-   * Listen for any status change
-   */
+  /** Listen for any status change */
   onStatusChange(callback: (event: RemittanceStatusChangeEvent) => void): void {
     this.on('status-changed', callback);
   }
@@ -161,12 +189,13 @@ export class RemittanceEventEmitter extends EventEmitter {
 export const remittanceEventEmitter = new RemittanceEventEmitter();
 
 /**
- * Helper function to update remittance status
+ * Helper function to update remittance status.
+ * Pass correlationId explicitly when calling from outside an ALS context.
  */
 export async function updateRemittanceStatus(
   remittanceId: string,
   status: RemittanceData['status'],
-  remittanceData: Omit<RemittanceStatusChangeEvent, 'remittanceId' | 'status' | 'timestamp'>
+  remittanceData: Omit<RemittanceStatusChangeEvent, 'remittanceId' | 'status' | 'timestamp'>,
 ): Promise<void> {
   await remittanceEventEmitter.emitStatusChange({
     remittanceId,

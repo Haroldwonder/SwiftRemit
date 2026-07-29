@@ -45,9 +45,14 @@ export class WebhookDispatcher {
   }
 
   /**
-   * Generate webhook headers including signature
+   * Generate webhook headers including signature and optional correlation ID.
    */
-  private generateHeaders(payload: string, secret: string, contentType = 'application/json'): Record<string, string> {
+  private generateHeaders(
+    payload: string,
+    secret: string,
+    contentType = 'application/json',
+    correlationId?: string,
+  ): Record<string, string> {
     const timestamp = Date.now().toString();
     const webhookId = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const signature = this.generateSignature(
@@ -55,13 +60,21 @@ export class WebhookDispatcher {
       secret
     );
 
-    return {
+    const headers: Record<string, string> = {
       'Content-Type': contentType,
       'x-webhook-signature': signature,
       'x-webhook-timestamp': timestamp,
       'x-webhook-id': webhookId,
       'User-Agent': 'SwiftRemit-Webhook/1.0',
     };
+
+    // SR-035: propagate the originating correlation ID so receivers can join
+    // traces across the API → contract-event → webhook delivery chain.
+    if (correlationId) {
+      headers['X-Correlation-ID'] = correlationId;
+    }
+
+    return headers;
   }
 
   /**
@@ -110,7 +123,16 @@ export class WebhookDispatcher {
             attempt: 0,
           } as WebhookDeliveryRecord);
 
-          const success = await this.attemptDelivery(deliveryId, subscriber.url, subscriber.secret, enrichedPayload, 1, deliveryRecord, subscriber.content_type);
+          const success = await this.attemptDelivery(
+            deliveryId,
+            subscriber.url,
+            subscriber.secret,
+            enrichedPayload,
+            1,
+            deliveryRecord,
+            subscriber.content_type,
+            correlationId,
+          );
 
           if (success) {
             successCount++;
@@ -143,7 +165,8 @@ export class WebhookDispatcher {
     payload: WebhookPayload,
     attempt: number = 1,
     deliveryRecord?: Partial<WebhookDeliveryRecord>,
-    contentType: string = 'application/json'
+    contentType: string = 'application/json',
+    correlationId?: string,
   ): Promise<boolean> {
     if (!url.startsWith('https://')) {
       const msg = `Webhook delivery rejected: URL must use HTTPS (received: ${url})`;
@@ -166,7 +189,7 @@ export class WebhookDispatcher {
           ).toString()
         : JSON.stringify(payload);
 
-      const headers = this.generateHeaders(serialized, secret, contentType);
+      const headers = this.generateHeaders(serialized, secret, contentType, correlationId);
 
       this.logger.debug(`Attempting delivery ${attempt}/${this.options.maxRetries} to ${url}`);
 
@@ -197,7 +220,7 @@ export class WebhookDispatcher {
         await this.store.updateDeliveryStatus(deliveryId, 'pending', attempt, errorMessage);
         await new Promise(resolve => setTimeout(resolve, delay));
 
-        return this.attemptDelivery(deliveryId, url, secret, payload, attempt + 1, deliveryRecord, contentType);
+        return this.attemptDelivery(deliveryId, url, secret, payload, attempt + 1, deliveryRecord, contentType, correlationId);
       } else {
         await this.store.updateDeliveryStatus(deliveryId, 'failed', attempt, errorMessage);
         this.logger.error(`Delivery ${deliveryId} failed after ${attempt} attempts: ${errorMessage}`);

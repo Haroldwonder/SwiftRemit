@@ -3,8 +3,11 @@ import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { trace } from '@opentelemetry/api';
 
-// AsyncLocalStorage to maintain correlation ID across async operations
-const correlationStorage = new AsyncLocalStorage<string>();
+// AsyncLocalStorage to maintain correlation ID across async operations.
+// Exported so job-tracker (and any other non-Express entry point) can call
+// correlationStorage.run(id, fn) to establish a correlation context without
+// going through HTTP middleware.
+export const correlationStorage = new AsyncLocalStorage<string>();
 
 /**
  * Get the current correlation ID from AsyncLocalStorage

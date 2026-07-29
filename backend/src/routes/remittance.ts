@@ -1,0 +1,178 @@
+import { Router, Request, Response, NextFunction } from 'express';
+import { Pool } from 'pg';
+import { getFxRateCache } from '../fx-rate-cache';
+import { simulateSettlement } from '../stellar';
+import { saveContractEvent, queryContractEvents } from '../database';
+import { remittanceEventEmitter } from '../remittance/events';
+import { AuthenticatedRequest } from '../transfer-guard';
+import { createLogger } from '../correlation-id';
+import { sanitizeInput } from '../sanitizer';
+
+const logger = createLogger('routes/remittance');
+
+function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const userId = (req.headers['x-user-id'] as string) || '';
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  req.user = { id: userId };
+  next();
+}
+
+export function createRemittanceRouter(pool: Pool): Router {
+  const router = Router();
+  const fxRateCache = getFxRateCache();
+
+  // Register the contract-event persistence listener once at router creation time.
+  // The listener is idempotent because it only writes; registering it here keeps
+  // the side-effect co-located with the remittance domain.
+  remittanceEventEmitter.onStatusChange(async (event) => {
+    try {
+      await saveContractEvent({
+        event_type: event.status,
+        remittance_id: event.remittanceId ? parseInt(event.remittanceId, 10) : null,
+        actor: event.recipientId || null,
+        amount: event.amount?.toString() ?? null,
+        fee: null,
+        tx_hash: (event.metadata?.txHash as string) ?? null,
+        ledger_sequence: (event.metadata?.ledgerSequence as number) ?? null,
+        timestamp: event.timestamp,
+        raw_data: event.metadata ?? null,
+      });
+    } catch (err) {
+      logger.error('Failed to persist contract event', err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+
+  // POST /api/remittance
+  router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { sender, agent, amount, fee, expiry, memo } = req.body;
+      const fromCurrency = typeof req.body.fromCurrency === 'string' ? req.body.fromCurrency : req.body.from_currency;
+      const toCurrency = typeof req.body.toCurrency === 'string' ? req.body.toCurrency : req.body.to_currency;
+      const maxStalenessSeconds = Number.parseInt(
+        String(req.body.fxRateMaxStalenessSeconds ?? req.body.fx_rate_max_staleness_seconds ?? process.env.FX_RATE_MAX_STALENESS_SECONDS ?? '3600'),
+        10,
+      );
+
+      if (!sender || typeof sender !== 'string') return res.status(400).json({ error: 'Invalid or missing sender' });
+      if (!agent || typeof agent !== 'string') return res.status(400).json({ error: 'Invalid or missing agent' });
+      if (!amount || typeof amount !== 'string' || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) return res.status(400).json({ error: 'Invalid or missing amount' });
+
+      let sanitizedMemo: string | undefined;
+      if (memo !== undefined && memo !== null && memo !== '') {
+        if (typeof memo !== 'string') return res.status(400).json({ error: 'memo must be a string' });
+        if (memo.length > 100) return res.status(400).json({ error: 'memo must not exceed 100 characters' });
+        sanitizedMemo = sanitizeInput(memo);
+      }
+
+      if (typeof fromCurrency === 'string' && fromCurrency && typeof toCurrency === 'string' && toCurrency) {
+        try {
+          const fxRate = await fxRateCache.getCurrentRate(fromCurrency.toUpperCase(), toCurrency.toUpperCase());
+          if (fxRate.stale && typeof fxRate.stalenessSeconds === 'number' && fxRate.stalenessSeconds > (Number.isFinite(maxStalenessSeconds) ? maxStalenessSeconds : 3600)) {
+            return res.status(409).json({
+              error: `FX rate is stale beyond the allowed maximum (${Number.isFinite(maxStalenessSeconds) ? maxStalenessSeconds : 3600}s)`,
+              fx_rate_source: fxRate.fx_rate_source || fxRate.provider,
+              fx_rate_staleness_seconds: fxRate.stalenessSeconds,
+            });
+          }
+        } catch (error) {
+          logger.error('Failed to resolve FX rate for remittance', error instanceof Error ? error : new Error(String(error)));
+          return res.status(503).json({ error: 'Unable to obtain a valid FX rate' });
+        }
+      }
+
+      const remittanceId = `rem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await pool.query(
+        `INSERT INTO transactions (transaction_id, anchor_id, kind, status, amount_in, memo, created_at, updated_at)
+         VALUES ($1, $2, 'withdrawal', 'pending_user_transfer_start', $3, $4, NOW(), NOW())`,
+        [remittanceId, agent, amount, sanitizedMemo ?? null],
+      );
+
+      try {
+        const { autoFlagIfAboveThreshold } = await import('./compliance');
+        await autoFlagIfAboveThreshold(pool, remittanceId, parseFloat(amount), 'USD');
+      } catch { /* compliance tables may not exist in all environments */ }
+
+      return res.status(201).json({
+        success: true,
+        remittance: {
+          remittance_id: remittanceId,
+          sender,
+          agent,
+          amount,
+          fee: fee ?? null,
+          expiry: expiry ?? null,
+          memo: sanitizedMemo ?? null,
+          status: 'pending_user_transfer_start',
+        },
+      });
+    } catch (error) {
+      logger.error('Error creating remittance', error instanceof Error ? error : new Error(String(error)));
+      return res.status(500).json({ error: 'Failed to create remittance' });
+    }
+  });
+
+  // GET /api/remittance/:remittanceId
+  router.get('/:remittanceId', async (req: Request, res: Response) => {
+    try {
+      const { remittanceId } = req.params;
+      const result = await pool.query(
+        `SELECT transaction_id, anchor_id, status, amount_in, memo, created_at, updated_at
+         FROM transactions WHERE transaction_id = $1`,
+        [remittanceId],
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: 'Remittance not found' });
+      const row = result.rows[0];
+      return res.json({
+        remittance_id: row.transaction_id,
+        agent: row.anchor_id,
+        status: row.status,
+        amount: row.amount_in,
+        memo: row.memo ?? null,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      });
+    } catch (error) {
+      logger.error('Error fetching remittance', error instanceof Error ? error : new Error(String(error)));
+      return res.status(500).json({ error: 'Failed to fetch remittance' });
+    }
+  });
+
+  // POST /api/simulate-settlement — kept in remittance router; mounted at /api/simulate-settlement
+  router.post('/', async (req: Request, res: Response) => {
+    try {
+      const { remittanceId } = req.body;
+      if (remittanceId === undefined || remittanceId === null || !Number.isInteger(remittanceId) || remittanceId <= 0) {
+        return res.status(400).json({ error: 'remittanceId must be a positive integer' });
+      }
+      const simulation = await simulateSettlement(remittanceId);
+      res.json(simulation);
+    } catch (error) {
+      console.error('Error simulating settlement:', error);
+      res.status(500).json({ error: 'Failed to simulate settlement' });
+    }
+  });
+
+  // GET /api/events — mounted at /api/events
+  router.get('/', async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+      const offset = parseInt(req.query.offset as string) || 0;
+      const filter = {
+        event_type: req.query.event_type as string | undefined,
+        actor: req.query.actor as string | undefined,
+        remittance_id: req.query.remittance_id ? parseInt(req.query.remittance_id as string, 10) : undefined,
+        from: req.query.from ? new Date(req.query.from as string) : undefined,
+        to: req.query.to ? new Date(req.query.to as string) : undefined,
+        limit,
+        offset,
+      };
+      const { events, total } = await queryContractEvents(filter);
+      res.json({ total, limit, offset, events });
+    } catch (error) {
+      logger.error('Error fetching contract events', error instanceof Error ? error : new Error(String(error)));
+      res.status(500).json({ error: 'Failed to fetch contract events' });
+    }
+  });
+
+  return router;
+}
