@@ -325,5 +325,5 @@ For issues or questions about the implementation:
 
 1. Review the inline documentation in `src/lib.rs`
 2. Check test cases in `src/test_fee_breakdown.rs` for usage examples
-3. Refer to [FEE_SERVICE_API.md](../FEE_SERVICE_API.md) for architecture details
-4. Check [DEPLOYMENT.md](../DEPLOYMENT.md) for testnet deployment instructions
+3. Refer to [FEE_SERVICE_API.md](FEE_SERVICE_API.md) for architecture details
+4. Check [DEPLOYMENT.md](DEPLOYMENT.md) for testnet deployment instructions

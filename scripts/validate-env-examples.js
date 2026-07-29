@@ -142,6 +142,12 @@ function scanExampleForSecrets(envExamplePath) {
   return warnings;
 }
 
+// Reverse direction: vars documented in .env.example but never read anywhere in source.
+// These are stale/aspirational entries that mislead integrators about what's actually used.
+const REVERSE_IGNORE = new Set([
+  'NODE_ENV', 'PORT', 'DATABASE_URL', 'HOST',
+]);
+
 let failed = false;
 
 for (const check of CHECKS) {
@@ -156,6 +162,13 @@ for (const check of CHECKS) {
     failed = true;
   } else {
     console.log(`✅ [${check.name}] ${check.envExample} is in sync`);
+  }
+
+  const unused = [...defined].filter(v => !REVERSE_IGNORE.has(v) && !used.has(v));
+  if (unused.length > 0) {
+    console.error(`\n❌ [${check.name}] Documented in ${check.envExample} but unused in source:`);
+    unused.forEach(v => console.error(`   - ${v}`));
+    failed = true;
   }
 
   const secretWarnings = scanExampleForSecrets(check.envExample);

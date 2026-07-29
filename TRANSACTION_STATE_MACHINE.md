@@ -407,7 +407,7 @@ Potential improvements:
 
 ## Related Documentation
 
-- [Error Handling](ERROR_HANDLING.md) - Error codes and handling
+- [Error Handling](src/errors.rs) - Error codes and handling
 - [API Reference](API.md) - Complete API documentation
 - [Types](src/types.rs) - Type definitions
 - [Transitions](src/transitions.rs) - Transition logic
