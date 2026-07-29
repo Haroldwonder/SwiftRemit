@@ -11,7 +11,8 @@ import {
 } from './database';
 import { AnchorKycConfig } from './types';
 import { cancelRemittanceOnChain } from './stellar';
-import { WebhookDispatcher } from './webhook-dispatcher';
+import { WebhookDispatcher } from './webhooks/dispatcher';
+import { PostgresWebhookStore } from './webhooks/store';
 import { validateAnchorToml } from './anchor-toml-validator';
 import { renderNotification, NotificationEventType } from './notification-templates';
 
@@ -187,7 +188,7 @@ export class Sep24Service {
     this.httpClient = axios.create({
       timeout: httpTimeoutMs,
     });
-    this.dispatcher = new WebhookDispatcher();
+    this.dispatcher = new WebhookDispatcher(new PostgresWebhookStore(pool));
   }
 
   /** Return the current stalled_transactions_total counter value (for Prometheus scraping). */
@@ -583,6 +584,17 @@ export class Sep24Service {
         asset_code:  transaction.asset_code,
         amount:      actualAmount,
         refunded_at: new Date().toISOString(),
+      await this.dispatcher.dispatch('sep24.expired_refund', {
+        event: 'sep24.expired_refund',
+        timestamp: new Date().toISOString(),
+        data: {
+          transaction_id,
+          anchor_id: transaction.anchor_id,
+          user_id: transaction.user_id,
+          asset_code: transaction.asset_code,
+          amount: transaction.amount ?? transaction.amount_in,
+          refunded_at: new Date().toISOString(),
+        },
       });
     } catch (err) {
       console.error(`Failed to dispatch sep24.expired_refund webhook for ${transaction_id}:`, err);

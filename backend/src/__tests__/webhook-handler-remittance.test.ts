@@ -2,14 +2,18 @@ import crypto from 'crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
 
-const { dispatchRemittanceCreated } = vi.hoisted(() => ({
-  dispatchRemittanceCreated: vi.fn(),
+const { dispatch } = vi.hoisted(() => ({
+  dispatch: vi.fn().mockResolvedValue({ success: 1, failed: 0 }),
 }));
 
-vi.mock('../webhook-dispatcher', () => ({
+vi.mock('../webhooks/dispatcher', () => ({
   WebhookDispatcher: vi.fn().mockImplementation(() => ({
-    dispatchRemittanceCreated,
+    dispatch,
   })),
+}));
+
+vi.mock('../webhooks/store', () => ({
+  PostgresWebhookStore: vi.fn().mockImplementation(() => ({})),
 }));
 
 vi.mock('../database', () => ({
@@ -62,7 +66,8 @@ function buildRequest(body: Record<string, unknown>, secret: string) {
 
 describe('WebhookHandler remittance created flow', () => {
   it('dispatches remittance.created payload with required fields', async () => {
-    dispatchRemittanceCreated.mockReset();
+    dispatch.mockReset();
+    dispatch.mockResolvedValue({ success: 1, failed: 0 });
 
     const secret = 'handler-remittance-secret';
     const body = {
@@ -79,22 +84,23 @@ describe('WebhookHandler remittance created flow', () => {
     const handler = new WebhookHandler(buildMockPool(secret));
     await handler.handleWebhook(req, res);
 
-    expect(dispatchRemittanceCreated).toHaveBeenCalledTimes(1);
-    expect(dispatchRemittanceCreated).toHaveBeenCalledWith(
-      expect.objectContaining({
-        remittance_id: '99',
-        sender: 'GSENDERADDRESS',
-        agent: 'GAGENTADDRESS',
-        amount: '10000000',
-        fee: '100000',
-        expiry: '1777777777',
-      })
-    );
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const [eventType, payload] = dispatch.mock.calls[0];
+    expect(eventType).toBe('remittance.created');
+    expect(payload.data).toMatchObject({
+      remittance_id: '99',
+      sender: 'GSENDERADDRESS',
+      agent: 'GAGENTADDRESS',
+      amount: '10000000',
+      fee: '100000',
+      expiry: '1777777777',
+    });
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it('includes fee breakdown fields when present in the event', async () => {
-    dispatchRemittanceCreated.mockReset();
+    dispatch.mockReset();
+    dispatch.mockResolvedValue({ success: 1, failed: 0 });
 
     const secret = 'handler-remittance-secret-breakdown';
     const body = {
@@ -115,19 +121,19 @@ describe('WebhookHandler remittance created flow', () => {
     const handler = new WebhookHandler(pool);
     await handler.handleWebhook(req, res);
 
-    expect(dispatchRemittanceCreated).toHaveBeenCalledWith(
-      expect.objectContaining({
-        remittance_id: '42',
-        platform_fee: '50000',
-        protocol_fee: '5000',
-        net_amount: '4945000',
-      })
-    );
+    const [, payload] = dispatch.mock.calls[0];
+    expect(payload.data).toMatchObject({
+      remittance_id: '42',
+      platform_fee: '50000',
+      protocol_fee: '5000',
+      net_amount: '4945000',
+    });
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it('persists fee breakdown to contract_events table', async () => {
-    dispatchRemittanceCreated.mockReset();
+    dispatch.mockReset();
+    dispatch.mockResolvedValue({ success: 1, failed: 0 });
 
     const secret = 'handler-persist-secret';
     const body = {
@@ -165,7 +171,8 @@ describe('WebhookHandler remittance created flow', () => {
   });
 
   it('omits breakdown fields from contract_events when not present in event', async () => {
-    dispatchRemittanceCreated.mockReset();
+    dispatch.mockReset();
+    dispatch.mockResolvedValue({ success: 1, failed: 0 });
 
     const secret = 'handler-no-breakdown-secret';
     const body = {
