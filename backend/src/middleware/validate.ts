@@ -61,3 +61,28 @@ export function validateQuery(schema: ZodSchema) {
     }
   };
 }
+
+/**
+ * Middleware to validate request route parameters against a Zod schema.
+ * Use this for URL path parameters like :id, :userId, etc.
+ */
+export function validateParams(schema: ZodSchema) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const validated = schema.parse(req.params);
+      req.params = validated as any;
+      next();
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({
+          error: 'Invalid route parameters',
+          details: error.issues.map((e) => ({
+            field: e.path.join('.'),
+            message: e.message,
+          })),
+        });
+      }
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  };
+}

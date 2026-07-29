@@ -372,6 +372,14 @@ export class MetricsService {
       lines.push(`swiftremit_job_failure_total{job_name="${this.sanitizeLabelValue(jobName)}"} ${count}`);
     });
 
+    // On-chain reconciler metrics (Feature C)
+    try {
+      const { reconcilerMetricsText } = require('./reconciler');
+      lines.push(reconcilerMetricsText());
+    } catch {
+      // reconciler not loaded yet — safe to skip
+    }
+
     return lines.join('\n') + '\n';
   }
 

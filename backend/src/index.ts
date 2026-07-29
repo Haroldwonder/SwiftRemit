@@ -79,6 +79,11 @@ async function start() {
     // Start background jobs
     startBackgroundJobs();
 
+    // Start on-chain reconciler (Feature C) — compares DB state to contract every 5 min
+    const { startReconcilerSchedule } = await import('./reconciler');
+    startReconcilerSchedule(pool);
+    console.log('On-chain reconciler scheduled');
+
     // Start API server via http.Server so we can call server.close()
     const server = http.createServer(app);
 
@@ -107,6 +112,13 @@ async function start() {
       }
 
       fxRateWss.close();
+
+      // Stop reconciler schedule cleanly
+      try {
+        const { stopReconcilerSchedule } = await import('./reconciler');
+        stopReconcilerSchedule();
+        console.log('On-chain reconciler stopped');
+      } catch { /* non-fatal */ }
 
       try {
         await closePool();
