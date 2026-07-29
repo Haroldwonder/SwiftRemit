@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { AssetVerifier } from './verifier';
-import { getStaleAssets, saveAssetVerification, getPool } from './database';
+import { getStaleAssets, saveAssetVerification, getPool, retireExpiredWebhookSecrets, getWebhookSubscriberById } from './database';
 import { storeVerificationOnChain } from './stellar';
 import { KycService } from './kyc-service';
 import { Sep24Service } from './sep24-service';
@@ -12,6 +12,8 @@ import { withAdvisoryLock } from './distributed-lock';
 import { AnchorHealthChecker } from './anchor-health-checker';
 import { getMetricsService } from './metrics';
 import { runTracked } from './job-tracker';
+import { AdminAuditLogService } from './audit-service';
+import crypto from 'crypto';
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
@@ -73,6 +75,14 @@ export async function startBackgroundJobs() {
       await runTracked(pool, 'check-anchor-health', checkAnchorHealth);
     });
     if (!ran) console.log('check-anchor-health: skipped (another instance holds the lock)');
+  });
+
+  // Retire expired webhook secrets hourly
+  cron.schedule('0 * * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'retire-webhook-secrets', async () => {
+      await runTracked(pool, 'retire-webhook-secrets', retireWebhookSecrets);
+    });
+    if (!ran) console.log('retire-webhook-secrets: skipped (another instance holds the lock)');
   });
 
   console.log('Background jobs scheduled');
@@ -207,3 +217,56 @@ async function checkAnchorHealth() {
     console.error('Error in anchor health check job:', error);
   }
 }
+
+async function retireWebhookSecrets() {
+  try {
+    const retiredIds = await retireExpiredWebhookSecrets();
+    if (retiredIds.length > 0) {
+      console.log(`Retired expired webhook secrets for ${retiredIds.length} subscribers`);
+      const auditService = new AdminAuditLogService(pool);
+      for (const id of retiredIds) {
+        await auditService.log({
+          admin_address: 'system',
+          action: 'retire_webhook_secret',
+          target: id,
+          params_json: null,
+          tx_hash: null,
+          ip_address: '127.0.0.1',
+        });
+        
+        // Notify subscriber via webhook delivery best-effort
+        const subscriber = await getWebhookSubscriberById(id);
+        if (subscriber?.url && subscriber.secret) {
+          try {
+            const timestamp = Date.now().toString();
+            const notificationBody = JSON.stringify({
+              event: 'webhook.secret_retired',
+              subscriber_id: id,
+              retired_at: new Date().toISOString(),
+            });
+            const signature = crypto
+              .createHmac('sha256', subscriber.secret)
+              .update(`${timestamp}.${notificationBody}`)
+              .digest('hex');
+
+            await fetch(subscriber.url, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'x-event-type': 'webhook.secret_retired',
+                'x-webhook-timestamp': timestamp,
+                'x-webhook-signature': signature,
+              },
+              body: notificationBody,
+            }).catch(() => {});
+          } catch (e) {
+            console.warn('Failed to notify subscriber of secret retirement', e);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error in retire webhook secrets job:', error);
+  }
+}
+
