@@ -19,6 +19,8 @@ import {
   saveAssetReport,
   getWebhookSubscriberById,
   rotateWebhookSecret,
+  getEnabledAnchors,
+  getLatestAnchorHealth,
 } from './database';
 import { storeVerificationOnChain, simulateSettlement } from './stellar';
 import { VerificationStatus, AnchorKycConfig } from './types';
@@ -26,6 +28,7 @@ import { KycUpsertService } from './kyc-upsert-service';
 import { createTransferGuard, AuthenticatedRequest } from './transfer-guard';
 import { AgentKycService } from './agent-kyc-service';
 import { getFxRateCache } from './fx-rate-cache';
+import { getAnchorCircuitBreaker } from './anchor-circuit-breaker';
 import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
 import { sanitizeInput } from './sanitizer';
@@ -915,6 +918,26 @@ app.get('/api/admin/jobs', adminLimiter, async (req: Request, res: Response) => 
   } catch (error) {
     logger.error('Error fetching job summaries', error);
     res.status(500).json({ error: 'Failed to fetch job summaries' });
+  }
+});
+
+// Per-anchor circuit breaker state, gating anchor calls (SR-031)
+app.get('/api/admin/anchors/health', adminLimiter, async (req: Request, res: Response) => {
+  try {
+    const anchors = await getEnabledAnchors();
+    const circuitBreaker = getAnchorCircuitBreaker();
+    const health = await Promise.all(
+      anchors.map(async anchor => ({
+        anchor_id: anchor.id,
+        name: anchor.name,
+        circuit_state: circuitBreaker.getState(anchor.id),
+        latest_health: await getLatestAnchorHealth(anchor.id),
+      }))
+    );
+    res.json({ anchors: health });
+  } catch (error) {
+    logger.error('Error fetching anchor health', error);
+    res.status(500).json({ error: 'Failed to fetch anchor health' });
   }
 });
 

@@ -5,6 +5,7 @@ import { URL } from 'url';
 import { getEnabledAnchors, saveAnchorHealthCheck, getLatestAnchorHealth } from './database';
 import { createLogger } from './correlation-id';
 import { MetricsService } from './metrics';
+import { AnchorCircuitBreaker, getAnchorCircuitBreaker } from './anchor-circuit-breaker';
 
 const logger = createLogger('AnchorHealthChecker');
 
@@ -78,10 +79,12 @@ function classifyHealth(probeResult: { ok: boolean; status: number; durationMs: 
 export class AnchorHealthChecker {
   private pool: Pool;
   private metricsService?: MetricsService;
+  private circuitBreaker: AnchorCircuitBreaker;
 
-  constructor(pool: Pool, metricsService?: MetricsService) {
+  constructor(pool: Pool, metricsService?: MetricsService, circuitBreaker: AnchorCircuitBreaker = getAnchorCircuitBreaker()) {
     this.pool = pool;
     this.metricsService = metricsService;
+    this.circuitBreaker = circuitBreaker;
   }
 
   async checkAllAnchors(): Promise<AnchorHealthResult[]> {
@@ -92,9 +95,21 @@ export class AnchorHealthChecker {
       const results: AnchorHealthResult[] = [];
 
       for (const anchor of anchors) {
+        if (this.circuitBreaker.shouldSkip(anchor.id)) {
+          logger.info(`Skipping anchor ${anchor.id}: circuit open`);
+          this.metricsService?.recordAnchorAvailability(anchor.id, 'circuit_open');
+          continue;
+        }
+
         try {
           const result = await this.checkSingleAnchor(anchor.id, anchor.domain);
           results.push(result);
+
+          if (result.status === 'offline') {
+            this.circuitBreaker.recordFailure(anchor.id);
+          } else {
+            this.circuitBreaker.recordSuccess(anchor.id);
+          }
 
           await saveAnchorHealthCheck({
             anchor_id: result.anchor_id,
@@ -119,6 +134,10 @@ export class AnchorHealthChecker {
       logger.error('Failed to check all anchors', error);
       return [];
     }
+  }
+
+  getCircuitState(anchorId: string) {
+    return this.circuitBreaker.getState(anchorId);
   }
 
   async checkSingleAnchor(anchorId: string, domain: string): Promise<AnchorHealthResult> {

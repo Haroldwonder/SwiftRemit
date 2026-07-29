@@ -3,6 +3,7 @@ import { KycStatus, DbUserKycStatus, AnchorKycConfig } from './types';
 import { getAnchorKycConfigs, getUsersNeedingKycCheck, saveUserKycStatus, getApprovedUsers, getPool, saveAnchorPollFailure } from './database';
 import { getMetricsService } from './metrics';
 import { updateKycStatusOnChain } from './stellar';
+import { getAnchorCircuitBreaker } from './anchor-circuit-breaker';
 
 interface Sep12KycResponse {
   id: string;
@@ -37,6 +38,7 @@ function calcBackoff(attempt: number, baseDelayMs: number): number {
 export class KycService {
   private configs: Map<string, AnchorKycConfig> = new Map();
   private metricsService = getMetricsService(getPool());
+  private circuitBreaker = getAnchorCircuitBreaker();
 
   async initialize(): Promise<void> {
     const configs = await getAnchorKycConfigs();
@@ -48,9 +50,16 @@ export class KycService {
     this.metricsService.recordKycPollerRun();
 
     for (const [anchorId, config] of this.configs) {
+      if (this.circuitBreaker.shouldSkip(anchorId)) {
+        console.log(`Skipping KYC poll for anchor ${anchorId}: circuit open`);
+        continue;
+      }
+
       try {
         await this.pollAnchorKycStatus(anchorId, config);
+        this.circuitBreaker.recordSuccess(anchorId);
       } catch (error) {
+        this.circuitBreaker.recordFailure(anchorId);
         this.metricsService.recordKycPollFailure();
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`Failed to poll KYC status for anchor ${anchorId}:`, error);
