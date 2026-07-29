@@ -25,6 +25,14 @@ export class MetricsService {
     db_pool_waiting_connections: 0,
   };
 
+  // Per-subscription DLQ depth gauge (SR-027)
+  // Maps subscription_id → pending (not yet replayed/expired) entry count
+  private dlqDepthPerSubscription: Map<string, number> = new Map();
+
+  // Per-subscription oldest unresolved DLQ entry Unix timestamp (SR-027)
+  // Used by the stale-entries alert: (time() - metric) > threshold
+  private dlqOldestEntryTimestamp: Map<string, number> = new Map();
+
   // Anchor availability metrics
   private anchorAvailability: Map<string, string> = new Map();
 
@@ -200,6 +208,40 @@ export class MetricsService {
   }
 
   /**
+   * Update per-subscription DLQ depth gauge (SR-027).
+   * Queries webhook_dead_letters grouped by subscription_id for entries that
+   * have not been replayed or expired yet.
+   * Also records the oldest unresolved entry timestamp per subscription for
+   * the stale-entries alert.
+   */
+  async updateDlqDepthPerSubscription(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT COALESCE(subscription_id::text, webhook_id::text) AS sub_id,
+                COUNT(*) AS depth,
+                EXTRACT(EPOCH FROM MIN(created_at))::bigint AS oldest_ts
+         FROM webhook_dead_letters
+         WHERE replayed_at IS NULL
+           AND expired_at IS NULL
+         GROUP BY sub_id`
+      );
+
+      this.dlqDepthPerSubscription.clear();
+      this.dlqOldestEntryTimestamp.clear();
+      for (const row of result.rows) {
+        this.dlqDepthPerSubscription.set(row.sub_id, parseInt(row.depth, 10));
+        this.dlqOldestEntryTimestamp.set(row.sub_id, parseInt(row.oldest_ts, 10));
+      }
+
+      this.logger.debug('DLQ depth per subscription updated', {
+        subscriptions: this.dlqDepthPerSubscription.size,
+      });
+    } catch (error) {
+      this.logger.error('Failed to update DLQ depth per subscription', error);
+    }
+  }
+
+  /**
    * Record that the KYC poller completed a run (call at the end of each poll cycle).
    */
   recordKycPollerRun(): void {
@@ -247,6 +289,7 @@ export class MetricsService {
       this.updateActiveRemittances(),
       this.updateAccumulatedFees(),
       this.updateDeadLetterCount(),
+      this.updateDlqDepthPerSubscription(),
     ]);
   }
 
@@ -351,6 +394,21 @@ export class MetricsService {
     lines.push('# HELP swiftremit_webhook_dead_letter_count Total number of webhook deliveries in the dead-letter queue');
     lines.push('# TYPE swiftremit_webhook_dead_letter_count gauge');
     lines.push(`swiftremit_webhook_dead_letter_count ${this.metrics.swiftremit_webhook_dead_letter_count}`);
+
+    // Per-subscription DLQ depth gauge (SR-027)
+    lines.push('# HELP swiftremit_webhook_dlq_depth Number of pending dead-letter entries per webhook subscription');
+    lines.push('# TYPE swiftremit_webhook_dlq_depth gauge');
+    this.dlqDepthPerSubscription.forEach((depth, subscriptionId) => {
+      lines.push(`swiftremit_webhook_dlq_depth{subscription_id="${this.sanitizeLabelValue(subscriptionId)}"} ${depth}`);
+    });
+
+    // Per-subscription oldest unresolved DLQ entry timestamp (SR-027)
+    // Used by stale-entry alerts: (time() - metric) > threshold
+    lines.push('# HELP swiftremit_webhook_dlq_oldest_entry_timestamp_seconds Unix timestamp of the oldest unresolved DLQ entry per subscription');
+    lines.push('# TYPE swiftremit_webhook_dlq_oldest_entry_timestamp_seconds gauge');
+    this.dlqOldestEntryTimestamp.forEach((ts, subscriptionId) => {
+      lines.push(`swiftremit_webhook_dlq_oldest_entry_timestamp_seconds{subscription_id="${this.sanitizeLabelValue(subscriptionId)}"} ${ts}`);
+    });
 
     // Rate limit exceeded counter
     lines.push('# HELP swiftremit_rate_limit_exceeded_total Total number of rate limit exceeded events by path');

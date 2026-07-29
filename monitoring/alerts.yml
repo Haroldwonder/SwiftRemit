@@ -49,3 +49,49 @@ groups:
         annotations:
           summary: "SwiftRemit accumulated fees exceed threshold"
           description: "Accumulated completed transaction fees have exceeded the configured safe threshold. Review fee calculations, completed transaction volume, and potential accounting issues."
+
+      # SR-027 — DLQ depth per subscription
+      # Fires within 5 minutes of any subscription exceeding 10 pending DLQ entries.
+      - alert: SwiftRemitDlqDepthHigh
+        expr: swiftremit_webhook_dlq_depth > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Webhook DLQ depth is high for subscription {{ $labels.subscription_id }}"
+          description: >
+            Subscription {{ $labels.subscription_id }} has {{ $value }} pending dead-letter
+            entries. The subscriber endpoint may be unreachable or returning non-2xx responses.
+            Check the admin DLQ endpoint and consider replaying or disabling the subscription.
+
+      # SR-027 — DLQ depth critical (50+)
+      - alert: SwiftRemitDlqDepthCritical
+        expr: swiftremit_webhook_dlq_depth > 50
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Webhook DLQ critically high for subscription {{ $labels.subscription_id }}"
+          description: >
+            Subscription {{ $labels.subscription_id }} has {{ $value }} dead-letter entries.
+            Immediate investigation required. The subscription may need to be disabled.
+
+      # SR-027 — Stale DLQ entries older than 24 hours still pending
+      # Uses the age of the oldest non-replayed, non-expired entry.
+      # This alert is evaluated by the backend alert_rules.yml where the metric is exposed;
+      # the project-level file references the same metric for cross-team visibility.
+      - alert: SwiftRemitDlqStaleEntries
+        expr: >
+          (time() - swiftremit_webhook_dlq_oldest_entry_timestamp_seconds) > 86400
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "DLQ has entries older than 24 hours for subscription {{ $labels.subscription_id }}"
+          description: >
+            Subscription {{ $labels.subscription_id }} has at least one dead-letter entry
+            older than 24 hours that has not been replayed or expired. Investigate the
+            subscriber endpoint or trigger a bulk replay via the admin endpoint.

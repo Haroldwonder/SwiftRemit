@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import cron from 'node-cron';
 import { AssetVerifier } from './verifier';
 import { getStaleAssets, saveAssetVerification, getPool } from './database';
 import { storeVerificationOnChain } from './stellar';
@@ -12,6 +13,7 @@ import { withAdvisoryLock } from './distributed-lock';
 import { AnchorHealthChecker } from './anchor-health-checker';
 import { getMetricsService } from './metrics';
 import { runTracked } from './job-tracker';
+import { WebhookDlqProcessor } from './webhook-dlq-processor';
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
@@ -19,6 +21,7 @@ const pool = getPool();
 const sep24Service = new Sep24Service(pool);
 const metricsService = getMetricsService(pool);
 const anchorHealthChecker = new AnchorHealthChecker(pool, metricsService);
+const dlqProcessor = new WebhookDlqProcessor(pool);
 
 export async function startBackgroundJobs() {
   // Initialize KYC service
@@ -73,6 +76,15 @@ export async function startBackgroundJobs() {
       await runTracked(pool, 'check-anchor-health', checkAnchorHealth);
     });
     if (!ran) console.log('check-anchor-health: skipped (another instance holds the lock)');
+  });
+
+  // SR-027: Process DLQ entries every 5 minutes
+  // — retries with exponential backoff, expires stale entries, auto-disables on K failures
+  cron.schedule('*/5 * * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'process-webhook-dlq', async () => {
+      await runTracked(pool, 'process-webhook-dlq', processDlq);
+    });
+    if (!ran) console.log('process-webhook-dlq: skipped (another instance holds the lock)');
   });
 
   console.log('Background jobs scheduled');
@@ -205,5 +217,15 @@ async function checkAnchorHealth() {
     }
   } catch (error) {
     console.error('Error in anchor health check job:', error);
+  }
+}
+
+// SR-027: DLQ retry / expiry / auto-disable
+async function processDlq() {
+  try {
+    await dlqProcessor.run();
+    console.log('DLQ processing completed');
+  } catch (error) {
+    console.error('Error in DLQ processing job:', error);
   }
 }
