@@ -5,14 +5,7 @@ import './KycStatusBadge.css';
 type KycStatus = 'pending' | 'approved' | 'rejected' | 'expired';
 type KycLevel = 'basic' | 'intermediate' | 'advanced';
 
-interface AnchorKycRecord {
-  anchor_id: string;
-  kyc_status: KycStatus;
-  kyc_level?: KycLevel;
-  verified_at: string;
-  expires_at?: string;
-  rejection_reason?: string;
-}
+
 
 interface UserKycStatusResponse {
   overall_status: KycStatus;
@@ -41,6 +34,15 @@ interface KycGuidance {
   estimatedReviewTime: string;
   actionUrl?: string;
   actionLabel?: string;
+}
+
+interface AnchorKycRecord {
+  anchor_id: string;
+  kyc_status: KycStatus;
+  kyc_level?: KycLevel;
+  verified_at: string;
+  expires_at?: string;
+  rejection_reason?: string;
 }
 
 const KYC_GUIDANCE_MAP: Record<KycStatus, KycGuidance> = {

@@ -5,23 +5,7 @@ interface Props {
   children: ReactNode
 }
 
-interface State {
-  hasError: boolean
-  error: Error | null
-  errorInfo: React.ErrorInfo | null
-  errorId: string | null
-  reportedToBackend: boolean
-}
 
-interface ErrorReport {
-  id: string
-  message: string
-  stack: string
-  componentStack: string
-  timestamp: string
-  userAgent: string
-  url: string
-}
 
 class ErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
