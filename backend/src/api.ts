@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -38,6 +39,32 @@ import { remittanceEventEmitter } from './remittance/events';
 import { handleKycWebhook } from './kyc-webhook-handler';
 import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
 import { createComplianceRouter } from './routes/compliance';
+import { validateRequest, validateQuery, validateParams } from './middleware/validate';
+import {
+  RemittanceCreateSchema,
+  RemittanceIdParamSchema,
+  VerificationRequestSchema,
+  VerificationAssetParamSchema,
+  VerificationListQuerySchema,
+  ReportAssetSchema,
+  BatchVerificationSchema,
+  SimulateSettlementBodySchema,
+  FxRateStoreSchema,
+  FxRateTransactionParamSchema,
+  FxRateCurrentQuerySchema,
+  KycConfigSchema,
+  KycStatusParamSchema,
+  KycUserParamSchema,
+  KycRegisterSchema,
+  Sep24InitiateSchema,
+  Sep24TransactionParamSchema,
+  WebhookSubscriberParamSchema,
+  AuditLogListQuerySchema,
+  AuditLogExportQuerySchema,
+  ContractEventsQuerySchema,
+  AUDIT_LOG_EXPORT_MAX_DAYS,
+  AUDIT_LOG_EXPORT_ROW_CAP,
+} from './schemas/zod';
 
 const app = express();
 const fxRateCache = getFxRateCache();
@@ -117,24 +144,6 @@ app.get('/metrics', async (req: Request, res: Response) => {
 app.use('/api/docs', docsRouter);
 app.use('/api/compliance', createComplianceRouter(pool));
 
-// Input validation middleware
-function validateAssetParams(req: Request, res: Response, next: Function) {
-  const { assetCode, issuer } = req.body;
-
-  if (!assetCode || typeof assetCode !== 'string' || assetCode.length > 12) {
-    return res.status(400).json({ error: 'Invalid asset code' });
-  }
-
-  if (!issuer || typeof issuer !== 'string' || issuer.length !== 56) {
-    return res.status(400).json({ error: 'Invalid issuer address' });
-  }
-
-  req.body.assetCode = sanitizeInput(assetCode);
-  req.body.issuer = sanitizeInput(issuer);
-
-  next();
-}
-
 function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const userId = (req.headers['x-user-id'] as string) || '';
 
@@ -212,12 +221,8 @@ app.get('/api/webhooks', adminLimiter, async (req: Request, res: Response) => {
 });
 
 // Rotate webhook subscriber secret
-app.post('/api/webhooks/:id/rotate-secret', adminLimiter, async (req: Request, res: Response) => {
+app.post('/api/webhooks/:id/rotate-secret', adminLimiter, validateParams(WebhookSubscriberParamSchema), async (req: Request, res: Response) => {
   const id = req.params.id as string;
-
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
-    return res.status(400).json({ error: 'Invalid subscriber ID' });
-  }
 
   try {
     const { newSecret, rotatedAt } = await rotateWebhookSecret(id);
@@ -280,19 +285,11 @@ app.post('/api/webhooks/:id/rotate-secret', adminLimiter, async (req: Request, r
 });
 
 // Get asset verification status
-app.get('/api/verification/:assetCode/:issuer', async (req: Request, res: Response) => {
+app.get('/api/verification/:assetCode/:issuer', validateParams(VerificationAssetParamSchema), async (req: Request, res: Response) => {
   try {
     const assetCode = req.params.assetCode as string;
     const issuer = req.params.issuer as string;
-
-    // Input validation
-    if (!assetCode || assetCode.length > 12) {
-      return res.status(400).json({ error: 'Invalid asset code' });
-    }
-
-    if (!issuer || issuer.length !== 56) {
-      return res.status(400).json({ error: 'Invalid issuer address' });
-    }
+    // Params already validated by middleware above
 
     const verification = await getAssetVerification(assetCode, issuer);
 
@@ -308,7 +305,7 @@ app.get('/api/verification/:assetCode/:issuer', async (req: Request, res: Respon
 });
 
 // Verify asset (trigger new verification)
-app.post('/api/verification/verify', validateAssetParams, async (req: Request, res: Response) => {
+app.post('/api/verification/verify', validateRequest(VerificationRequestSchema), async (req: Request, res: Response) => {
   try {
     const { assetCode, issuer } = req.body;
 
@@ -350,13 +347,10 @@ app.post('/api/verification/verify', validateAssetParams, async (req: Request, r
 });
 
 // Report suspicious asset
-app.post('/api/verification/report', validateAssetParams, async (req: Request, res: Response) => {
+app.post('/api/verification/report', validateRequest(ReportAssetSchema), async (req: Request, res: Response) => {
   try {
     const { assetCode, issuer, reason } = req.body;
-
-    if (!reason || typeof reason !== 'string' || reason.length > 500) {
-      return res.status(400).json({ error: 'Invalid or missing reason' });
-    }
+    // All fields validated and present via Zod schema
 
     // Sanitize input to prevent XSS attacks
     const sanitizedReason = sanitizeInput(reason);
@@ -399,9 +393,9 @@ app.post('/api/verification/report', validateAssetParams, async (req: Request, r
 });
 
 // List verified assets
-app.get('/api/verification/verified', async (req: Request, res: Response) => {
+app.get('/api/verification/verified', validateQuery(VerificationListQuerySchema), async (req: Request, res: Response) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+    const limit = Math.min((req.query.limit as unknown as number) || 100, 500);
     const assets = await getVerifiedAssets(limit);
 
     res.json({
@@ -415,13 +409,10 @@ app.get('/api/verification/verified', async (req: Request, res: Response) => {
 });
 
 // Batch verification status
-app.post('/api/verification/batch', async (req: Request, res: Response) => {
+app.post('/api/verification/batch', validateRequest(BatchVerificationSchema), async (req: Request, res: Response) => {
   try {
     const { assets } = req.body;
-
-    if (!Array.isArray(assets) || assets.length === 0 || assets.length > 50) {
-      return res.status(400).json({ error: 'Invalid assets array (max 50)' });
-    }
+    // assets already validated: array of {assetCode, issuer}, 1–50 items
 
     const results = await Promise.all(
       assets.map(async ({ assetCode, issuer }) => {
@@ -472,25 +463,10 @@ app.post('/api/transfer', authMiddleware, transferGuard, async (req: Request, re
 });
 
 // Store FX rate for transaction
-app.post('/api/fx-rate', async (req: Request, res: Response) => {
+app.post('/api/fx-rate', validateRequest(FxRateStoreSchema), async (req: Request, res: Response) => {
   try {
     const { transactionId, rate, provider, fromCurrency, toCurrency } = req.body;
-
-    if (!transactionId || typeof transactionId !== 'string') {
-      return res.status(400).json({ error: 'Invalid transaction ID' });
-    }
-
-    if (!rate || typeof rate !== 'number' || rate <= 0) {
-      return res.status(400).json({ error: 'Invalid rate' });
-    }
-
-    if (!provider || typeof provider !== 'string') {
-      return res.status(400).json({ error: 'Invalid provider' });
-    }
-
-    if (!fromCurrency || !toCurrency) {
-      return res.status(400).json({ error: 'Invalid currencies' });
-    }
+    // All fields validated by Zod schema above
 
     await saveFxRate({
       transaction_id: sanitizeInput(transactionId),
@@ -509,13 +485,10 @@ app.post('/api/fx-rate', async (req: Request, res: Response) => {
 });
 
 // Get FX rate for transaction
-app.get('/api/fx-rate/:transactionId', async (req: Request, res: Response) => {
+app.get('/api/fx-rate/:transactionId', validateParams(FxRateTransactionParamSchema), async (req: Request, res: Response) => {
   try {
     const transactionId = req.params.transactionId as string;
-
-    if (!transactionId) {
-      return res.status(400).json({ error: 'Invalid transaction ID' });
-    }
+    // param validated above
 
     const fxRate = await getFxRate(transactionId);
 
@@ -534,19 +507,13 @@ app.get('/api/fx-rate/:transactionId', async (req: Request, res: Response) => {
 });
 
 // Get current FX rate (cached)
-app.get('/api/fx-rate/current', async (req: Request, res: Response) => {
+app.get('/api/fx-rate/current', validateQuery(FxRateCurrentQuerySchema), async (req: Request, res: Response) => {
   try {
-    const { from, to } = req.query;
+    const from = (req.query.from as string).toUpperCase();
+    const to = (req.query.to as string).toUpperCase();
+    // from and to validated by schema (min 1, max 10)
 
-    if (!from || typeof from !== 'string' || from.length > 10) {
-      return res.status(400).json({ error: 'Invalid from currency' });
-    }
-
-    if (!to || typeof to !== 'string' || to.length > 10) {
-      return res.status(400).json({ error: 'Invalid to currency' });
-    }
-
-    const rate = await fxRateCache.getCurrentRate(from.toUpperCase(), to.toUpperCase());
+    const rate = await fxRateCache.getCurrentRate(from, to);
 
     res.json(rate);
   } catch (error) {
@@ -558,13 +525,10 @@ app.get('/api/fx-rate/current', async (req: Request, res: Response) => {
 // KYC-related endpoints
 
 // Configure anchor KYC settings (admin only)
-app.post('/api/kyc/config', async (req: Request, res: Response) => {
+app.post('/api/kyc/config', adminLimiter, validateRequest(KycConfigSchema), async (req: Request, res: Response) => {
   try {
     const { anchorId, kycServerUrl, authToken, pollingIntervalMinutes, enabled } = req.body;
-
-    if (!anchorId || !kycServerUrl || !authToken) {
-      return res.status(400).json({ error: 'Missing required fields: anchorId, kycServerUrl, authToken' });
-    }
+    // All fields validated above
 
     const config: AnchorKycConfig = {
       anchor_id: sanitizeInput(anchorId),
@@ -594,14 +558,11 @@ app.post('/api/kyc/config', async (req: Request, res: Response) => {
 });
 
 // Get user KYC status
-app.get('/api/kyc/status/:userId/:anchorId', async (req: Request, res: Response) => {
+app.get('/api/kyc/status/:userId/:anchorId', validateParams(KycStatusParamSchema), async (req: Request, res: Response) => {
   try {
     const userId = req.params.userId as string;
     const anchorId = req.params.anchorId as string;
-
-    if (!userId || !anchorId) {
-      return res.status(400).json({ error: 'Invalid user ID or anchor ID' });
-    }
+    // params validated above
 
     const kycStatus = await getUserKycStatus(userId, anchorId);
 
@@ -617,13 +578,10 @@ app.get('/api/kyc/status/:userId/:anchorId', async (req: Request, res: Response)
 });
 
 // Register user for KYC with anchor
-app.post('/api/kyc/register', async (req: Request, res: Response) => {
+app.post('/api/kyc/register', validateRequest(KycRegisterSchema), async (req: Request, res: Response) => {
   try {
     const { userId, anchorId } = req.body;
-
-    if (!userId || !anchorId) {
-      return res.status(400).json({ error: 'Missing required fields: userId, anchorId' });
-    }
+    // Both validated above
 
     const sanitizedUserId = sanitizeInput(userId);
     const sanitizedAnchorId = sanitizeInput(anchorId);
@@ -650,30 +608,10 @@ app.post('/api/kyc/register', async (req: Request, res: Response) => {
 });
 
 // SEP-24: Initiate deposit/withdrawal flow
-app.post('/api/anchor/initiate', async (req: Request, res: Response) => {
+app.post('/api/anchor/initiate', validateRequest(Sep24InitiateSchema), async (req: Request, res: Response) => {
   try {
     const { user_id, anchor_id, direction, asset_code, amount, user_address, user_email } = req.body;
-
-    // Validate required fields
-    if (!user_id || typeof user_id !== 'string') {
-      return res.status(400).json({ error: 'Invalid or missing user_id' });
-    }
-
-    if (!anchor_id || typeof anchor_id !== 'string') {
-      return res.status(400).json({ error: 'Invalid or missing anchor_id' });
-    }
-
-    if (!direction || (direction !== 'deposit' && direction !== 'withdrawal')) {
-      return res.status(400).json({ error: 'Invalid direction (must be deposit or withdrawal)' });
-    }
-
-    if (!asset_code || typeof asset_code !== 'string') {
-      return res.status(400).json({ error: 'Invalid or missing asset_code' });
-    }
-
-    if (!amount || typeof amount !== 'string' || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      return res.status(400).json({ error: 'Invalid or missing amount' });
-    }
+    // All fields validated above — including positiveIntegerAmount for amount
 
     const service = await getSep24ServiceInstance();
 
@@ -713,13 +651,10 @@ app.post('/api/anchor/initiate', async (req: Request, res: Response) => {
 });
 
 // SEP-24: Get transaction status
-app.get('/api/anchor/transaction/:transactionId', async (req: Request, res: Response) => {
+app.get('/api/anchor/transaction/:transactionId', validateParams(Sep24TransactionParamSchema), async (req: Request, res: Response) => {
   try {
     const transactionId = req.params.transactionId as string;
-
-    if (!transactionId) {
-      return res.status(400).json({ error: 'Invalid transaction ID' });
-    }
+    // param validated above
 
     const service = await getSep24ServiceInstance();
     const transaction = await service.getTransactionStatus(transactionId);
@@ -754,13 +689,10 @@ app.get('/api/anchor/transaction/:transactionId', async (req: Request, res: Resp
 });
 
 // Check if user is KYC approved (for transfer validation)
-app.get('/api/kyc/approved/:userId', async (req: Request, res: Response) => {
+app.get('/api/kyc/approved/:userId', validateParams(KycUserParamSchema), async (req: Request, res: Response) => {
   try {
     const userId = req.params.userId as string;
-
-    if (!userId) {
-      return res.status(400).json({ error: 'Invalid user ID' });
-    }
+    // param validated above
 
     const kycService = (await import('./kyc-service')).KycService;
     const service = new kycService();
@@ -774,37 +706,17 @@ app.get('/api/kyc/approved/:userId', async (req: Request, res: Response) => {
 });
 
 // Create remittance
-app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/remittance', authMiddleware, validateRequest(RemittanceCreateSchema), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { sender, agent, amount, fee, expiry, memo } = req.body;
+    // All fields validated by RemittanceCreateSchema — sender/agent are StrKey addresses,
+    // amount is a positive integer string (no floats/sci notation).
     const fromCurrency = typeof req.body.fromCurrency === 'string' ? req.body.fromCurrency : req.body.from_currency;
     const toCurrency = typeof req.body.toCurrency === 'string' ? req.body.toCurrency : req.body.to_currency;
     const maxStalenessSeconds = Number.parseInt(
       String(req.body.fxRateMaxStalenessSeconds ?? req.body.fx_rate_max_staleness_seconds ?? process.env.FX_RATE_MAX_STALENESS_SECONDS ?? '3600'),
       10
     );
-
-    if (!sender || typeof sender !== 'string') {
-      return res.status(400).json({ error: 'Invalid or missing sender' });
-    }
-    if (!agent || typeof agent !== 'string') {
-      return res.status(400).json({ error: 'Invalid or missing agent' });
-    }
-    if (!amount || typeof amount !== 'string' || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      return res.status(400).json({ error: 'Invalid or missing amount' });
-    }
-
-    // Validate memo — optional, max 100 chars, plain text only
-    let sanitizedMemo: string | undefined;
-    if (memo !== undefined && memo !== null && memo !== '') {
-      if (typeof memo !== 'string') {
-        return res.status(400).json({ error: 'memo must be a string' });
-      }
-      if (memo.length > 100) {
-        return res.status(400).json({ error: 'memo must not exceed 100 characters' });
-      }
-      sanitizedMemo = sanitizeInput(memo);
-    }
 
     if (typeof fromCurrency === 'string' && fromCurrency && typeof toCurrency === 'string' && toCurrency) {
       try {
@@ -824,11 +736,14 @@ app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, re
 
     const remittanceId = `rem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+    // Sanitize optional memo (Zod already capped at 100 chars)
+    const sanitizedMemo = memo ? sanitizeInput(memo) : null;
+
     await pool.query(
       `INSERT INTO transactions
          (transaction_id, anchor_id, kind, status, amount_in, memo, created_at, updated_at)
        VALUES ($1, $2, 'withdrawal', 'pending_user_transfer_start', $3, $4, NOW(), NOW())`,
-      [remittanceId, agent, amount, sanitizedMemo ?? null]
+      [remittanceId, agent, amount, sanitizedMemo]
     );
 
     // Auto-flag for compliance if amount exceeds any configured threshold
@@ -857,7 +772,7 @@ app.post('/api/remittance', authMiddleware, async (req: AuthenticatedRequest, re
 });
 
 // Get remittance by ID
-app.get('/api/remittance/:remittanceId', async (req: Request, res: Response) => {
+app.get('/api/remittance/:remittanceId', validateParams(RemittanceIdParamSchema), async (req: Request, res: Response) => {
   try {
     const { remittanceId } = req.params;
 
@@ -888,18 +803,10 @@ app.get('/api/remittance/:remittanceId', async (req: Request, res: Response) => 
 });
 
 // Simulate settlement — preview fees and payout before confirming
-app.post('/api/simulate-settlement', async (req: Request, res: Response) => {
+app.post('/api/simulate-settlement', validateRequest(SimulateSettlementBodySchema), async (req: Request, res: Response) => {
   try {
     const { remittanceId } = req.body;
-
-    if (
-      remittanceId === undefined ||
-      remittanceId === null ||
-      !Number.isInteger(remittanceId) ||
-      remittanceId <= 0
-    ) {
-      return res.status(400).json({ error: 'remittanceId must be a positive integer' });
-    }
+    // remittanceId is a positive integer, validated by Zod above
 
     const simulation = await simulateSettlement(remittanceId);
     res.json(simulation);
@@ -909,22 +816,52 @@ app.post('/api/simulate-settlement', async (req: Request, res: Response) => {
   }
 });
 
-// Admin audit log
-app.get('/api/admin/audit-log', async (req: Request, res: Response) => {
+// Admin audit log — cursor-based pagination
+app.get('/api/admin/audit-log', adminLimiter, validateQuery(AuditLogListQuerySchema), async (req: Request, res: Response) => {
   try {
     const auditService = new AdminAuditLogService(pool);
-    const limit  = Math.min(parseInt(req.query.limit  as string) || 50, 200);
-    const offset = parseInt(req.query.offset as string) || 0;
-    const filter = {
-      admin_address: req.query.admin_address as string | undefined,
-      action:        req.query.action        as string | undefined,
-      from:  req.query.from  ? new Date(req.query.from  as string) : undefined,
-      to:    req.query.to    ? new Date(req.query.to    as string) : undefined,
-      limit,
-      offset,
-    };
-    const { entries, total } = await auditService.query(filter);
-    res.json({ total, limit, offset, entries });
+    const q = req.query as any;
+    const limit = Math.min(Number(q.limit) || 50, 200);
+
+    // Decode opaque cursor (base64-encoded JSON {id, created_at})
+    let cursorCondition = '';
+    const params: unknown[] = [];
+    let idx = 1;
+
+    if (q.admin_address) { params.push(q.admin_address); cursorCondition += ` AND admin_address = $${idx++}`; }
+    if (q.action)        { params.push(q.action);        cursorCondition += ` AND action = $${idx++}`; }
+    if (q.from)          { params.push(new Date(q.from)); cursorCondition += ` AND created_at >= $${idx++}`; }
+    if (q.to)            { params.push(new Date(q.to));   cursorCondition += ` AND created_at <= $${idx++}`; }
+
+    if (q.cursor) {
+      try {
+        const decoded = JSON.parse(Buffer.from(q.cursor, 'base64').toString('utf8'));
+        params.push(decoded.created_at);
+        params.push(decoded.id);
+        cursorCondition += ` AND (created_at < $${idx} OR (created_at = $${idx} AND id < $${idx + 1}))`;
+        idx += 2;
+      } catch {
+        return res.status(400).json({ error: 'Invalid cursor' });
+      }
+    }
+
+    const where = cursorCondition ? `WHERE 1=1 ${cursorCondition}` : '';
+    params.push(limit + 1); // fetch one extra to detect next page
+    const rows = await pool.query(
+      `SELECT * FROM admin_audit_log ${where} ORDER BY created_at DESC, id DESC LIMIT $${idx}`,
+      params
+    );
+
+    const hasMore = rows.rows.length > limit;
+    const entries = hasMore ? rows.rows.slice(0, limit) : rows.rows;
+
+    let nextCursor: string | null = null;
+    if (hasMore) {
+      const last = entries[entries.length - 1];
+      nextCursor = Buffer.from(JSON.stringify({ id: last.id, created_at: last.created_at })).toString('base64');
+    }
+
+    res.json({ limit, cursor: q.cursor ?? null, next_cursor: nextCursor, entries });
   } catch (error) {
     logger.error('Error fetching audit log', error);
     res.status(500).json({ error: 'Failed to fetch audit log' });
@@ -942,33 +879,72 @@ app.get('/api/admin/jobs', adminLimiter, async (req: Request, res: Response) => 
   }
 });
 
-// Compliance export — streams all audit log entries as newline-delimited JSON
-app.get('/api/admin/audit-log/export', adminLimiter, async (req: Request, res: Response) => {
+// Compliance export — server-side cursor streaming with mandatory date range and row cap
+app.get('/api/admin/audit-log/export', adminLimiter, validateQuery(AuditLogExportQuerySchema), async (req: Request, res: Response) => {
   try {
-    const auditService = new AdminAuditLogService(pool);
-    const filter = {
-      admin_address: req.query.admin_address as string | undefined,
-      action:        req.query.action        as string | undefined,
-      from:  req.query.from ? new Date(req.query.from as string) : undefined,
-      to:    req.query.to   ? new Date(req.query.to   as string) : undefined,
-      limit: 200,
-      offset: 0,
-    };
+    const q = req.query as any;
+    const from  = new Date(q.from as string);
+    const to    = new Date(q.to   as string);
+    const adminAddress = q.admin_address as string | undefined;
+    const action       = q.action        as string | undefined;
+
+    // Build parameterised WHERE clause
+    const baseParams: unknown[] = [from, to];
+    let extraWhere = '';
+    if (adminAddress) { baseParams.push(adminAddress); extraWhere += ` AND admin_address = $${baseParams.length}`; }
+    if (action)       { baseParams.push(action);        extraWhere += ` AND action = $${baseParams.length}`; }
+
+    const baseWhere = `WHERE created_at >= $1 AND created_at <= $2${extraWhere}`;
+
+    // Check row count before streaming — hard cap at AUDIT_LOG_EXPORT_ROW_CAP
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM admin_audit_log ${baseWhere}`,
+      baseParams
+    );
+    const total = parseInt(countRes.rows[0].count, 10);
+    if (total > AUDIT_LOG_EXPORT_ROW_CAP) {
+      return res.status(413).json({
+        error: `Export exceeds the ${AUDIT_LOG_EXPORT_ROW_CAP.toLocaleString()} row cap (${total.toLocaleString()} rows matched). Narrow the date range or add filters.`,
+        matched: total,
+        cap: AUDIT_LOG_EXPORT_ROW_CAP,
+        max_date_range_days: AUDIT_LOG_EXPORT_MAX_DAYS,
+      });
+    }
 
     res.setHeader('Content-Type', 'application/x-ndjson');
     res.setHeader('Content-Disposition', 'attachment; filename="audit-log.ndjson"');
+    res.setHeader('X-Total-Rows', String(total));
 
-    let offset = 0;
-    while (true) {
-      filter.offset = offset;
-      const { entries } = await auditService.query(filter);
-      if (entries.length === 0) break;
-      for (const entry of entries) {
-        res.write(JSON.stringify(entry) + '\n');
+    // Stream via server-side cursor — never buffers the full result set in memory
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `DECLARE audit_export_cursor NO SCROLL CURSOR FOR
+           SELECT * FROM admin_audit_log ${baseWhere} ORDER BY created_at ASC, id ASC`,
+        baseParams
+      );
+
+      const PAGE = 500;
+      let done = false;
+      while (!done) {
+        const batch = await client.query(`FETCH ${PAGE} FROM audit_export_cursor`);
+        if (batch.rows.length === 0) { done = true; break; }
+        for (const row of batch.rows) {
+          res.write(JSON.stringify(row) + '\n');
+        }
+        if (batch.rows.length < PAGE) done = true;
       }
-      if (entries.length < filter.limit) break;
-      offset += filter.limit;
+
+      await client.query('CLOSE audit_export_cursor');
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
     }
+
     res.end();
   } catch (error) {
     logger.error('Error exporting audit log', error);
@@ -998,17 +974,18 @@ remittanceEventEmitter.onStatusChange(async (event) => {
 });
 
 // GET /api/events — query indexed contract events with filters and pagination
-app.get('/api/events', async (req: Request, res: Response) => {
+app.get('/api/events', validateQuery(ContractEventsQuerySchema), async (req: Request, res: Response) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit  as string) || 50, 200);
-    const offset = parseInt(req.query.offset as string) || 0;
+    const q = req.query as any;
+    const limit  = Number(q.limit)  || 50;
+    const offset = Number(q.offset) || 0;
 
     const filter = {
-      event_type:    req.query.event_type    as string | undefined,
-      actor:         req.query.actor         as string | undefined,
-      remittance_id: req.query.remittance_id ? parseInt(req.query.remittance_id as string, 10) : undefined,
-      from:          req.query.from          ? new Date(req.query.from as string) : undefined,
-      to:            req.query.to            ? new Date(req.query.to   as string) : undefined,
+      event_type:    q.event_type    as string | undefined,
+      actor:         q.actor         as string | undefined,
+      remittance_id: q.remittance_id ? Number(q.remittance_id) : undefined,
+      from:          q.from          ? new Date(q.from as string) : undefined,
+      to:            q.to            ? new Date(q.to   as string) : undefined,
       limit,
       offset,
     };
