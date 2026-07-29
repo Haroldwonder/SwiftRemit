@@ -31,6 +31,8 @@ export interface RampOrderEvent {
   walletAddress?: string;
   /** Populated when the order carries a SwiftRemit remittance reference. */
   remittanceId?: string;
+  /** Provider's event timestamp. */
+  timestamp?: Date;
   /** Original provider payload for audit. */
   raw: unknown;
 }
@@ -65,7 +67,10 @@ export class TransakProvider implements RampProvider {
 
   parseEvent(payload: unknown): RampOrderEvent {
     const p = payload as any;
-    const order = p?.data?.status ?? p?.data ?? p;
+    let order = p?.data ?? p;
+    if (typeof order.status === 'object' && order.status !== null) {
+      order = order.status;
+    }
 
     const statusMap: Record<string, RampOrderStatus> = {
       AWAITING_PAYMENT_FROM_USER: 'pending',
@@ -89,6 +94,7 @@ export class TransakProvider implements RampProvider {
       cryptoCurrency: order.cryptocurrency,
       walletAddress: order.walletAddress,
       remittanceId: order.partnerOrderId ?? order.externalId,
+      timestamp: order.createdAt ? new Date(order.createdAt) : undefined,
       raw: payload,
     };
   }
@@ -140,6 +146,7 @@ export class MoonPayProvider implements RampProvider {
       cryptoCurrency: tx.quoteCurrencyCode,
       walletAddress: tx.walletAddress,
       remittanceId: tx.externalTransactionId,
+      timestamp: tx.updatedAt ? new Date(tx.updatedAt) : undefined,
       raw: payload,
     };
   }
