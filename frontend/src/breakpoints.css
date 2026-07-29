@@ -1,0 +1,171 @@
+/**
+ * SwiftRemit – Global Breakpoint Definitions & Responsive Utilities
+ *
+ * Supported viewport widths:
+ *   320px  – smallest phones (iPhone SE 1st gen, budget Androids)
+ *   375px  – common phones  (iPhone SE 2nd/3rd gen, iPhone 12/13 mini)
+ *   768px  – tablets        (iPad portrait, Android tablets)
+ *   1024px – small desktops / tablets landscape
+ *   1440px – standard desktop monitors
+ *
+ * Usage in media queries:
+ *   @media (max-width: 374px)  { ... }  /* 320 mobile only *\/
+ *   @media (max-width: 479px)  { ... }  /* up to 375 mobile *\/
+ *   @media (max-width: 767px)  { ... }  /* mobile *\/
+ *   @media (min-width: 768px)  { ... }  /* tablet + *\/
+ *   @media (min-width: 1024px) { ... }  /* desktop + *\/
+ *   @media (min-width: 1440px) { ... }  /* wide desktop *\/
+ */
+
+/* ─────────────────────────────────────────────
+   CSS Custom Properties – breakpoint values
+   (exposed as numbers so calc() can consume them)
+───────────────────────────────────────────── */
+:root {
+  /* Breakpoint widths in px (numeric only, no unit — use in calc if needed) */
+  --bp-mobile-xs:  320;
+  --bp-mobile-sm:  375;
+  --bp-tablet:     768;
+  --bp-desktop-sm: 1024;
+  --bp-desktop-lg: 1440;
+
+  /* Convenience em equivalents (16px base) for use inside media queries */
+  --bp-mobile-xs-em:  20em;   /* 320 / 16 */
+  --bp-mobile-sm-em:  23.4375em; /* 375 / 16 */
+  --bp-tablet-em:     48em;   /* 768 / 16 */
+  --bp-desktop-sm-em: 64em;   /* 1024 / 16 */
+  --bp-desktop-lg-em: 90em;   /* 1440 / 16 */
+
+  /* Touch target minimum (WCAG 2.5.5 / Apple HIG) */
+  --touch-target-min: 44px;
+
+  /* Container max-widths at each tier */
+  --container-mobile:  100%;
+  --container-tablet:  760px;
+  --container-desktop: 1200px;
+  --container-wide:    1400px;
+
+  /* Fluid spacing scale */
+  --space-xs:  0.25rem;
+  --space-sm:  0.5rem;
+  --space-md:  1rem;
+  --space-lg:  1.5rem;
+  --space-xl:  2rem;
+  --space-2xl: 3rem;
+
+  /* Fluid typography scale
+     clamp(min, preferred, max) — scales between breakpoints */
+  --text-xs:   clamp(0.7rem,  1.8vw, 0.75rem);
+  --text-sm:   clamp(0.8rem,  2vw,   0.875rem);
+  --text-base: clamp(0.875rem, 2.2vw, 1rem);
+  --text-md:   clamp(0.95rem,  2.5vw, 1.1rem);
+  --text-lg:   clamp(1rem,     3vw,   1.25rem);
+  --text-xl:   clamp(1.1rem,   3.5vw, 1.5rem);
+  --text-2xl:  clamp(1.25rem,  4vw,   2rem);
+}
+
+/* ─────────────────────────────────────────────
+   .touch-target  – WCAG 2.5.5 minimum tap area
+   Apply to any interactive element that might
+   render smaller than 44 × 44 px visually.
+───────────────────────────────────────────── */
+.touch-target {
+  min-height: var(--touch-target-min);
+  min-width: var(--touch-target-min);
+  /* Keep intrinsic flex layout */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Icon-only buttons – hit area larger than visual */
+.touch-target-icon {
+  position: relative;
+  /* extend hit area without affecting layout */
+}
+.touch-target-icon::after {
+  content: '';
+  position: absolute;
+  inset: 50% 50%;
+  transform: translate(-50%, -50%);
+  min-height: var(--touch-target-min);
+  min-width: var(--touch-target-min);
+}
+
+/* ─────────────────────────────────────────────
+   Scrollable table wrapper
+   Use .scroll-table-wrap around any wide <table>
+───────────────────────────────────────────── */
+.scroll-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch; /* momentum scrolling on iOS */
+  /* Faint shadow hint that content scrolls horizontally */
+  background:
+    /* right shadow */
+    linear-gradient(to left,  rgba(0,0,0,0.08) 0%, transparent 20%) right,
+    /* left shadow */
+    linear-gradient(to right, rgba(0,0,0,0.08) 0%, transparent 20%) left;
+  background-repeat: no-repeat;
+  background-attachment: local, scroll;
+  border-radius: inherit;
+}
+
+/* ─────────────────────────────────────────────
+   Responsive container helper
+───────────────────────────────────────────── */
+.responsive-container {
+  width: 100%;
+  margin-inline: auto;
+  padding-inline: var(--space-md);
+  box-sizing: border-box;
+}
+
+@media (min-width: 768px) {
+  .responsive-container {
+    max-width: var(--container-tablet);
+  }
+}
+
+@media (min-width: 1024px) {
+  .responsive-container {
+    max-width: var(--container-desktop);
+    padding-inline: var(--space-lg);
+  }
+}
+
+@media (min-width: 1440px) {
+  .responsive-container {
+    max-width: var(--container-wide);
+  }
+}
+
+/* ─────────────────────────────────────────────
+   Utility: visually hidden but accessible
+───────────────────────────────────────────── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ─────────────────────────────────────────────
+   Reduced-motion: disable all transitions/
+   animations for users who prefer it
+───────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

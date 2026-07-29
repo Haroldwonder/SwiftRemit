@@ -12,7 +12,11 @@
     "test:pact": "vitest run src/pact",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
-    "e2e:debug": "playwright test --debug"
+    "e2e:debug": "playwright test --debug",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build -o storybook-static",
+    "knip": "knip",
+    "knip:fix": "knip --fix"
   },
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",
@@ -25,6 +29,13 @@
   "devDependencies": {
     "@pact-foundation/pact": "^13.1.0",
     "@playwright/test": "^1.48.0",
+    "@storybook/addon-a11y": "^8.6.12",
+    "@storybook/addon-essentials": "^8.6.12",
+    "@storybook/addon-interactions": "^8.6.12",
+    "@storybook/addon-links": "^8.6.12",
+    "@storybook/react": "^8.6.12",
+    "@storybook/react-vite": "^8.6.12",
+    "@storybook/test": "^8.6.12",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^14.1.2",
     "@testing-library/user-event": "^14.5.1",
@@ -35,9 +46,12 @@
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^3.1.1",
     "@vitest/ui": "^3.1.1",
+    "chromatic": "^11.0.0",
     "eslint": "^8.57.0",
     "jest-axe": "^9.0.0",
     "jsdom": "^29.1.1",
+    "knip": "^5.0.0",
+    "storybook": "^8.6.12",
     "typescript": "^6.0.3",
     "vite": "^6.4.2",
     "vitest": "^3.1.1"
