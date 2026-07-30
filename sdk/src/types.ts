@@ -316,3 +316,142 @@ export interface DailyLimitStatus {
 export function stroopsToUsdc(stroops: bigint): number {
   return Number(stroops) / 10_000_000;
 }
+
+// ─── Escrow ────────────────────────────────────────────────────────────────
+
+export interface Escrow {
+  transferId: bigint;
+  sender: string;
+  recipient: string;
+  /** Amount locked in stroops */
+  amount: bigint;
+  expiry: bigint | null;
+  status: EscrowStatus;
+}
+
+// ─── Asset verification ─────────────────────────────────────────────────────
+
+export type VerificationStatus = "Verified" | "Unverified" | "Suspicious";
+
+export interface AssetVerification {
+  assetCode: string;
+  issuer: string;
+  status: VerificationStatus;
+  /** Reputation score, 0-100 */
+  reputationScore: number;
+  lastVerified: bigint;
+  trustlineCount: bigint;
+  hasToml: boolean;
+}
+
+// ─── Circuit breaker pause records ──────────────────────────────────────────
+
+export interface PauseRecord {
+  seq: bigint;
+  caller: string;
+  timestamp: bigint;
+  reason: PauseReason;
+}
+
+// ─── Fee strategy / corridor ────────────────────────────────────────────────
+
+export type FeeStrategy =
+  | { Percentage: number }
+  | { Flat: bigint }
+  | { Dynamic: number }
+  | "Corridor";
+
+export interface FeeCorridor {
+  fromCountry: string;
+  toCountry: string;
+  strategy: FeeStrategy;
+  /** Overrides the global protocol fee for this corridor when set */
+  protocolFeeBps: number | null;
+}
+
+// ─── Rate limiting ───────────────────────────────────────────────────────────
+
+export interface RateLimitConfig {
+  maxRequests: number;
+  windowSeconds: bigint;
+  enabled: boolean;
+}
+
+export interface RateLimitStatus {
+  /** Requests made in the current window */
+  requestCount: number;
+  /** Requests remaining in the current window */
+  remaining: number;
+  /** Timestamp when the current window resets */
+  resetAt: bigint;
+}
+
+// ─── Transaction controller ─────────────────────────────────────────────────
+
+export type TransactionState =
+  | "Initial"
+  | "EligibilityValidated"
+  | "KycConfirmed"
+  | { ContractCalled: bigint }
+  | { AnchorInitiated: bigint }
+  | "RecordStored"
+  | "Completed"
+  | "RolledBack";
+
+export interface TransactionRecord {
+  user: string;
+  agent: string;
+  /** Amount in stroops */
+  amount: bigint;
+  remittanceId: bigint | null;
+  anchorTxId: bigint | null;
+  state: TransactionState;
+  retryCount: number;
+  timestamp: bigint;
+}
+
+// ─── Migration ───────────────────────────────────────────────────────────────
+
+/**
+ * Snapshot of all contract data for migration purposes. `instanceData` and
+ * `persistentData` are returned as raw decoded maps rather than fully typed
+ * structures, since their shape mirrors internal storage layout that may
+ * change between contract versions.
+ */
+export interface MigrationSnapshot {
+  version: number;
+  timestamp: bigint;
+  ledgerSequence: number;
+  instanceData: Record<string, unknown>;
+  persistentData: Record<string, unknown>;
+  /** Hex-encoded 32-byte integrity hash */
+  verificationHash: string;
+}
+
+// ─── Batch settlement / netting ─────────────────────────────────────────────
+
+export interface BatchSettlementEntry {
+  remittanceId: bigint;
+}
+
+export interface BatchSettlementResult {
+  settledIds: bigint[];
+}
+
+// ─── Multi-sig admin operations ─────────────────────────────────────────────
+
+export type AdminOperationType = "UpdateFee" | "WithdrawFees" | "Pause" | "Unpause";
+
+export interface PendingOperation {
+  id: bigint;
+  operationType: AdminOperationType;
+  proposer: string;
+  approvers: string[];
+  threshold: number;
+  proposedAt: bigint;
+  ttlSeconds: bigint;
+  /** Only meaningful for UpdateFee operations */
+  feeBps: number;
+  /** Only meaningful for WithdrawFees operations */
+  withdrawTo: string | null;
+}

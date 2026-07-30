@@ -1,0 +1,3 @@
+{
+  "import_migration_batch": "Requires encoding a full Vec<Remittance> (including the MaybeSettlementConfig/MaybeBytes32 wrapper enums) back into contract ScVal form for a write call. The SDK's Remittance type is currently read-only (parseRemittance does not round-trip settlement_config/dispute_evidence), so a correct write-side encoder needs its own design pass rather than a guess. Tracked as follow-up under SR-083."
+}

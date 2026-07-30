@@ -16,6 +16,23 @@ import type {
   Proposal,
   ProposalState,
   ProposalAction,
+  Escrow,
+  EscrowStatus,
+  AssetVerification,
+  VerificationStatus,
+  PauseRecord,
+  FeeStrategy,
+  FeeCorridor,
+  RateLimitConfig,
+  RateLimitStatus,
+  TransactionRecord,
+  TransactionState,
+  MigrationSnapshot,
+  BatchSettlementEntry,
+  BatchSettlementResult,
+  Role,
+  AdminOperationType,
+  PendingOperation,
 } from "./types.js";
 
 // ─── ScVal → Native ──────────────────────────────────────────────────────────
@@ -218,4 +235,234 @@ export function bytesNToScVal(buf: Buffer): xdr.ScVal {
 
 export function stringToScVal(value: string): xdr.ScVal {
   return nativeToScVal(value, { type: "string" });
+}
+
+export function u32ToScVal(value: number): xdr.ScVal {
+  return nativeToScVal(value, { type: "u32" });
+}
+
+export function boolToScVal(value: boolean): xdr.ScVal {
+  return xdr.ScVal.scvBool(value);
+}
+
+export function bytes32HexToScVal(hex: string): xdr.ScVal {
+  return xdr.ScVal.scvBytes(Buffer.from(hex.replace(/^0x/, ""), "hex"));
+}
+
+/**
+ * Encode a fieldless (unit) `#[contracttype] enum` variant as a Soroban
+ * ScVal: a single-entry map of `{ Symbol(variant): void }`, matching the
+ * wire format Soroban SDK generates for enums (see {@link parseUnitEnum}).
+ */
+export function unitEnumToScVal(variant: string): xdr.ScVal {
+  return xdr.ScVal.scvMap([
+    new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol(variant),
+      val: xdr.ScVal.scvVoid(),
+    }),
+  ]);
+}
+
+/** Encode an enum variant that carries a single associated value. */
+export function dataEnumToScVal(variant: string, value: xdr.ScVal): xdr.ScVal {
+  return xdr.ScVal.scvMap([
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(variant), val: value }),
+  ]);
+}
+
+/** Read the single variant name out of a decoded unit/data enum object. */
+function parseUnitEnum<T extends string>(raw: unknown, fieldName: string): T {
+  if (!raw || typeof raw !== "object") {
+    throw new SwiftRemitError(ErrorCode.DataCorruption, `${fieldName}: invalid enum value`);
+  }
+  const keys = Object.keys(raw as Record<string, unknown>);
+  if (keys.length !== 1) {
+    throw new SwiftRemitError(ErrorCode.DataCorruption, `${fieldName}: invalid enum value`);
+  }
+  return keys[0] as T;
+}
+
+export function roleToScVal(role: Role): xdr.ScVal {
+  return unitEnumToScVal(role);
+}
+
+export function verificationStatusToScVal(status: VerificationStatus): xdr.ScVal {
+  return unitEnumToScVal(status);
+}
+
+export function pauseReasonToScVal(reason: PauseReason): xdr.ScVal {
+  return unitEnumToScVal(reason);
+}
+
+export function feeStrategyToScVal(strategy: FeeStrategy): xdr.ScVal {
+  if (strategy === "Corridor") return unitEnumToScVal("Corridor");
+  if ("Percentage" in strategy) return dataEnumToScVal("Percentage", u32ToScVal(strategy.Percentage));
+  if ("Flat" in strategy) return dataEnumToScVal("Flat", i128ToScVal(strategy.Flat));
+  if ("Dynamic" in strategy) return dataEnumToScVal("Dynamic", u32ToScVal(strategy.Dynamic));
+  throw new SwiftRemitError(ErrorCode.DataCorruption, "feeStrategyToScVal: unknown strategy variant");
+}
+
+export function parseFeeStrategy(raw: unknown): FeeStrategy {
+  if (raw === null || typeof raw !== "object") {
+    throw new SwiftRemitError(ErrorCode.DataCorruption, "parseFeeStrategy: invalid value");
+  }
+  const map = raw as Record<string, unknown>;
+  const keys = Object.keys(map);
+  if (keys.length !== 1) {
+    throw new SwiftRemitError(ErrorCode.DataCorruption, "parseFeeStrategy: invalid value");
+  }
+  const key = keys[0];
+  if (key === "Corridor") return "Corridor";
+  if (key === "Percentage") return { Percentage: Number(map[key]) };
+  if (key === "Flat") return { Flat: BigInt(map[key] as number) };
+  if (key === "Dynamic") return { Dynamic: Number(map[key]) };
+  throw new SwiftRemitError(ErrorCode.DataCorruption, `parseFeeStrategy: unknown variant "${key}"`);
+}
+
+export function feeCorridorToScVal(corridor: FeeCorridor): xdr.ScVal {
+  return xdr.ScVal.scvMap([
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("from_country"), val: stringToScVal(corridor.fromCountry) }),
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("to_country"), val: stringToScVal(corridor.toCountry) }),
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("strategy"), val: feeStrategyToScVal(corridor.strategy) }),
+    new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("protocol_fee_bps"),
+      val: optionToScVal(corridor.protocolFeeBps != null ? u32ToScVal(corridor.protocolFeeBps) : undefined),
+    }),
+  ]);
+}
+
+export function parseFeeCorridor(val: xdr.ScVal): FeeCorridor {
+  const map = scValToNative(val) as Record<string, unknown>;
+  return {
+    fromCountry: String(map["from_country"]),
+    toCountry: String(map["to_country"]),
+    strategy: parseFeeStrategy(map["strategy"]),
+    protocolFeeBps: map["protocol_fee_bps"] != null ? Number(map["protocol_fee_bps"]) : null,
+  };
+}
+
+export function parseEscrow(val: xdr.ScVal): Escrow {
+  const map = scValToNative(val) as Record<string, unknown>;
+  return {
+    transferId: BigInt(map["transfer_id"] as number),
+    sender: String(map["sender"]),
+    recipient: String(map["recipient"]),
+    amount: BigInt(map["amount"] as number),
+    expiry: map["expiry"] != null ? BigInt(map["expiry"] as number) : null,
+    status: parseUnitEnum<EscrowStatus>(map["status"], "parseEscrow.status"),
+  };
+}
+
+export function parseAssetVerification(val: xdr.ScVal): AssetVerification {
+  const map = scValToNative(val) as Record<string, unknown>;
+  return {
+    assetCode: String(map["asset_code"]),
+    issuer: String(map["issuer"]),
+    status: parseUnitEnum<VerificationStatus>(map["status"], "parseAssetVerification.status"),
+    reputationScore: Number(map["reputation_score"]),
+    lastVerified: BigInt(map["last_verified"] as number),
+    trustlineCount: BigInt(map["trustline_count"] as number),
+    hasToml: Boolean(map["has_toml"]),
+  };
+}
+
+export function parsePauseRecord(val: xdr.ScVal): PauseRecord {
+  const map = scValToNative(val) as Record<string, unknown>;
+  return {
+    seq: BigInt(map["seq"] as number),
+    caller: String(map["caller"]),
+    timestamp: BigInt(map["timestamp"] as number),
+    reason: parseUnitEnum<PauseReason>(map["reason"], "parsePauseRecord.reason"),
+  };
+}
+
+export function parseRateLimitConfig(tuple: [number, bigint | number, boolean]): RateLimitConfig {
+  return {
+    maxRequests: Number(tuple[0]),
+    windowSeconds: BigInt(tuple[1] as number),
+    enabled: Boolean(tuple[2]),
+  };
+}
+
+export function parseRateLimitStatus(tuple: [number, number, bigint | number]): RateLimitStatus {
+  return {
+    requestCount: Number(tuple[0]),
+    remaining: Number(tuple[1]),
+    resetAt: BigInt(tuple[2] as number),
+  };
+}
+
+function parseTransactionState(raw: unknown): TransactionState {
+  if (!raw || typeof raw !== "object") {
+    throw new SwiftRemitError(ErrorCode.DataCorruption, "parseTransactionState: invalid value");
+  }
+  const map = raw as Record<string, unknown>;
+  const keys = Object.keys(map);
+  if (keys.length !== 1) {
+    throw new SwiftRemitError(ErrorCode.DataCorruption, "parseTransactionState: invalid value");
+  }
+  const key = keys[0];
+  if (key === "ContractCalled" || key === "AnchorInitiated") {
+    return { [key]: BigInt(map[key] as number) } as TransactionState;
+  }
+  return key as TransactionState;
+}
+
+export function parseTransactionRecord(val: xdr.ScVal): TransactionRecord {
+  const map = scValToNative(val) as Record<string, unknown>;
+  return {
+    user: String(map["user"]),
+    agent: String(map["agent"]),
+    amount: BigInt(map["amount"] as number),
+    remittanceId: map["remittance_id"] != null ? BigInt(map["remittance_id"] as number) : null,
+    anchorTxId: map["anchor_tx_id"] != null ? BigInt(map["anchor_tx_id"] as number) : null,
+    state: parseTransactionState(map["state"]),
+    retryCount: Number(map["retry_count"]),
+    timestamp: BigInt(map["timestamp"] as number),
+  };
+}
+
+export function parseMigrationSnapshot(val: xdr.ScVal): MigrationSnapshot {
+  const map = scValToNative(val) as Record<string, unknown>;
+  const hash = map["verification_hash"];
+  return {
+    version: Number(map["version"]),
+    timestamp: BigInt(map["timestamp"] as number),
+    ledgerSequence: Number(map["ledger_sequence"]),
+    instanceData: (map["instance_data"] as Record<string, unknown>) ?? {},
+    persistentData: (map["persistent_data"] as Record<string, unknown>) ?? {},
+    verificationHash: hash instanceof Uint8Array ? Buffer.from(hash).toString("hex") : String(hash),
+  };
+}
+
+export function batchSettlementEntryToScVal(entry: BatchSettlementEntry): xdr.ScVal {
+  return xdr.ScVal.scvMap([
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("remittance_id"), val: u64ToScVal(entry.remittanceId) }),
+  ]);
+}
+
+export function parseBatchSettlementResult(val: xdr.ScVal): BatchSettlementResult {
+  const map = scValToNative(val) as Record<string, unknown>;
+  const ids = (map["settled_ids"] as number[]) ?? [];
+  return { settledIds: ids.map((id) => BigInt(id)) };
+}
+
+export function adminOperationTypeToScVal(type: AdminOperationType): xdr.ScVal {
+  return unitEnumToScVal(type);
+}
+
+export function parsePendingOperation(val: xdr.ScVal): PendingOperation {
+  const map = scValToNative(val) as Record<string, unknown>;
+  const approvers = (map["approvers"] as { toString(): string }[]) ?? [];
+  return {
+    id: BigInt(map["id"] as number),
+    operationType: parseUnitEnum<AdminOperationType>(map["operation_type"], "parsePendingOperation.operationType"),
+    proposer: String(map["proposer"]),
+    approvers: approvers.map((a) => a.toString()),
+    threshold: Number(map["threshold"]),
+    proposedAt: BigInt(map["proposed_at"] as number),
+    ttlSeconds: BigInt(map["ttl_seconds"] as number),
+    feeBps: Number(map["fee_bps"]),
+    withdrawTo: map["withdraw_to"] != null ? String(map["withdraw_to"]) : null,
+  };
 }
