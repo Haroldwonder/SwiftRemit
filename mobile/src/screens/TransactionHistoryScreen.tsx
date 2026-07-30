@@ -11,6 +11,8 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import { remittanceService } from '../services/api';
+import { readThroughCache } from '../services/offlineCache';
+import OfflineBanner from '../components/OfflineBanner';
 import { Remittance, RemittanceStatus } from '../types';
 
 const STATUS_COLORS: Record<RemittanceStatus, string> = {
@@ -38,15 +40,17 @@ export default function TransactionHistoryScreen() {
   const [remittances, setRemittances] = useState<Remittance[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
       const wallet = await SecureStore.getItemAsync('wallet_address');
       if (!wallet) return;
-      const data = await remittanceService.getHistory(wallet);
-      setRemittances(data);
+      const result = await readThroughCache(`history:${wallet}`, () => remittanceService.getHistory(wallet));
+      setRemittances(result.data);
+      setCachedAt(result.fromCache ? result.cachedAt : null);
     } catch {
-      // keep stale data on error
+      // no live data and no cache available — keep whatever is on screen
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -71,6 +75,16 @@ export default function TransactionHistoryScreen() {
       data={remittances}
       keyExtractor={(item) => item.remittance_id}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      ListHeaderComponent={
+        <>
+          <OfflineBanner />
+          {cachedAt ? (
+            <Text style={styles.staleText}>
+              Showing cached data from {new Date(cachedAt).toLocaleString()}
+            </Text>
+          ) : null}
+        </>
+      }
       ListEmptyComponent={
         <View style={styles.empty}>
           <Text style={styles.emptyText}>No transfers yet.</Text>
@@ -124,4 +138,5 @@ const styles = StyleSheet.create({
   empty: { flex: 1, alignItems: 'center', paddingTop: 80 },
   emptyText: { fontSize: 18, fontWeight: '600', color: '#374151' },
   emptySubtext: { fontSize: 14, color: '#9CA3AF', marginTop: 8 },
+  staleText: { fontSize: 12, color: '#9CA3AF', textAlign: 'center', paddingVertical: 8 },
 });

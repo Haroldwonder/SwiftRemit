@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { kycService } from '../services/api';
+import { readThroughCache } from '../services/offlineCache';
+import OfflineBanner from '../components/OfflineBanner';
 import { KycStatus } from '../types';
 
 const DEFAULT_ANCHOR = 'testanchor.stellar.org';
@@ -46,14 +48,16 @@ export default function KycStatusScreen() {
   const [status, setStatus] = useState<KycStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
         const wallet = await SecureStore.getItemAsync('wallet_address');
         if (!wallet) { setError('Not logged in'); return; }
-        const data = await kycService.getStatus(wallet, DEFAULT_ANCHOR);
-        setStatus(data);
+        const result = await readThroughCache(`kyc:${wallet}`, () => kycService.getStatus(wallet, DEFAULT_ANCHOR));
+        setStatus(result.data);
+        setCachedAt(result.fromCache ? result.cachedAt : null);
       } catch {
         setError('Failed to load KYC status.');
       } finally {
@@ -78,6 +82,13 @@ export default function KycStatusScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <OfflineBanner />
+      {cachedAt ? (
+        <Text style={styles.staleText}>
+          Showing cached data from {new Date(cachedAt).toLocaleString()}
+        </Text>
+      ) : null}
+
       <View style={[styles.badge, { backgroundColor: `${info.color}22` }]}>
         <Text style={[styles.badgeText, { color: info.color }]}>{info.label}</Text>
       </View>
@@ -153,4 +164,5 @@ const styles = StyleSheet.create({
   btnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   updated: { color: '#9CA3AF', fontSize: 12, marginTop: 24, textAlign: 'center' },
   errorText: { color: '#EF4444', fontSize: 16 },
+  staleText: { fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginBottom: 12 },
 });
