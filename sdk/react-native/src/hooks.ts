@@ -5,7 +5,7 @@
  * state management for common operations.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { SwiftRemitRNClient } from './client.js';
 
 // ── useRemittance ─────────────────────────────────────────────────────────────
@@ -24,18 +24,26 @@ interface UseRemittanceState {
  */
 export function useCreateRemittance(client: SwiftRemitRNClient) {
   const [state, setState] = useState<UseRemittanceState>({ loading: false, error: null });
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const createRemittance = useCallback(
     async (params: Parameters<SwiftRemitRNClient['createRemittance']>[0]) => {
-      setState({ loading: true, error: null });
+      if (mountedRef.current) setState({ loading: true, error: null });
       try {
         const tx = await client.createRemittance(params);
         const result = await client.submitSigned(tx);
-        setState({ loading: false, error: null });
+        if (mountedRef.current) setState({ loading: false, error: null });
         return result;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        setState({ loading: false, error });
+        if (mountedRef.current) setState({ loading: false, error });
         throw error;
       }
     },

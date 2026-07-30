@@ -336,10 +336,26 @@ export class SwiftRemitClient {
     keypair: Keypair,
     options?: { retryPolicy?: RetryPolicy }
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
+    tx.sign(keypair);
+    return this.submitSignedTransaction(tx, options);
+  }
+
+  /**
+   * Submit a transaction that has already been signed (e.g. by an external
+   * wallet or a {@link SwiftRemitSigner}-style signer) and wait for confirmation.
+   * Unlike {@link submitTransaction}, this does not sign the transaction itself.
+   *
+   * @param tx - A transaction that already carries a valid signature
+   * @param options.retryPolicy - Per-call retry policy that overrides the client's
+   *   `writeRetryPolicy`. See {@link submitTransaction} for guidance on when to opt in.
+   */
+  async submitSignedTransaction(
+    tx: Transaction,
+    options?: { retryPolicy?: RetryPolicy }
+  ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     const writePolicy = this.resolveWriteRetryPolicy(options?.retryPolicy);
     const defaults = { delayMs: this.retryDelayMs, backoffFactor: this.retryBackoffFactor };
 
-    tx.sign(keypair);
     const sendResult = await withRetryPolicy(
       () => this.server.sendTransaction(tx),
       writePolicy,
