@@ -8,6 +8,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "prebuild": "expo prebuild",
+    "test:pact": "vitest run src/pact",
     "lint": "eslint src --ext .ts,.tsx"
   },
   "dependencies": {

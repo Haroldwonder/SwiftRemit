@@ -20,7 +20,7 @@ import { createAuthRouter } from './routes/auth';
 import { createAccountsRouter } from './routes/accounts';
 import { createGraphQLRouter } from './routes/graphql';
 import { ErrorResponse } from './types';
-import { AnchorStore } from './db/anchorStore';
+import { AnchorStore, PostgresAnchorStore, createAnchorPool } from './db/anchorStore';
 import { Server as SocketIOServer } from 'socket.io';
 import { createWsHealthRouter } from './websocket/health';
 import { createRateLimitMiddleware, addRateLimitHeaders } from './middleware/rateLimitHeaders';
@@ -152,10 +152,52 @@ export function createApp(options: AppOptions = {}): Application {
   // API routes
   app.use('/api/currencies', currenciesRouter);
   app.use('/api/limits', limitsRouter);
+  // ── Anchor catalogue bootstrap (SR-060) ─────────────────────────────────
+  // When no explicit store is injected (production path) and DATABASE_URL is
+  // set, spin up a PostgresAnchorStore, ensure the schema exists, and seed
+  // the default catalogue so the database is the single source of truth.
+  //
+  // We use a mutable container so the router's per-request getStore() call
+  // sees the resolved store even though the bootstrap completes asynchronously
+  // after createApp() returns.  Tests inject their own store via options and
+  // never set DATABASE_URL, so they skip this block entirely.
+  const storeContainer: { store: AnchorStore | undefined } = {
+    store: options.anchorStore,
+  };
+
+  const anchorBootstrapPromise: Promise<void> =
+    !storeContainer.store && process.env.DATABASE_URL
+      ? (async () => {
+          try {
+            const pool = createAnchorPool();
+            const pgStore = new PostgresAnchorStore(pool);
+            await pgStore.initializeSchema();
+            await pgStore.seedFromDefaults();
+            storeContainer.store = pgStore;
+          } catch (err) {
+            console.warn(
+              '[anchor-catalogue] Seed failed (falling back to default store):',
+              err,
+            );
+          }
+        })()
+      : Promise.resolve();
+
+  // Expose the bootstrap promise so index.ts can await it before accepting
+  // traffic.  Tests (no DATABASE_URL, injected store) get a no-op Promise.
+  (app as any).__anchorBootstrap = anchorBootstrapPromise;
+
   app.use(
     '/api/anchors',
     createAnchorsRouter({
-      store: options.anchorStore,
+      // Pass a getter so every request picks up storeContainer.store after
+      // the async bootstrap has populated it.
+      store: new Proxy({} as AnchorStore, {
+        get(_target, prop) {
+          const s = storeContainer.store ?? (() => { throw new Error('Anchor store not yet initialised'); })();
+          return (s as any)[prop];
+        },
+      }),
       adminApiKey: options.anchorAdminApiKey,
     }),
   );

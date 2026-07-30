@@ -1,3 +1,18 @@
+/**
+ * Default anchor catalogue — SEED DATA ONLY (SR-060).
+ *
+ * This array is the single TypeScript source for the initial anchor set.
+ * At runtime it is consumed exactly once: during PostgresAnchorStore.seedFromDefaults()
+ * which is called from app.ts on startup.  The resulting rows are written into
+ * the `anchors` table via an idempotent INSERT … ON CONFLICT DO UPDATE, after
+ * which ALL anchor reads go through the database.
+ *
+ * DO NOT import this array anywhere that serves live traffic.
+ * To add, update, or remove anchors in a running system use the admin API:
+ *   POST   /api/anchors/admin
+ *   PUT    /api/anchors/admin/:id
+ *   DELETE /api/anchors/admin/:id
+ */
 import { AnchorProvider } from '../types/anchor';
 
 export const DEFAULT_ANCHORS: AnchorProvider[] = [

@@ -1,25 +1,45 @@
 version: "3.9"
 
-# Toxiproxy + webhook echo server for chaos/webhook delivery tests.
+# Toxiproxy + all chaos mock services for SR-061 chaos test suite.
+#
+# Covers:
+#   - webhook-echo      (SR-057 / webhook chaos)
+#   - rpc-mock          (SR-061 / Soroban RPC chaos)
+#   - anchor-mock       (SR-061 / anchor chaos)
+#   - postgres-primary  (SR-061 / database chaos)
+#   - websocket target  is the API server itself (started separately)
+#
 # Usage:
-#   docker-compose -f tests/docker/chaos-docker-compose.yml up -d
-#   TOXIPROXY_URL=http://localhost:8474 \
-#   WEBHOOK_PROXY_PORT=9090 \
-#   WEBHOOK_TARGET_URL=http://webhook-echo:3001 \
-#   npm run test:chaos  (from api/)
+#   docker compose -f tests/docker/chaos-docker-compose.yml up -d
+#
+# Environment variables passed to test runner:
+#   TOXIPROXY_URL=http://localhost:8474
+#   WEBHOOK_PROXY_PORT=9090   WEBHOOK_TARGET_URL=http://webhook-echo:3001
+#   RPC_PROXY_PORT=9091       RPC_TARGET_URL=http://rpc-mock:3002
+#   PG_PROXY_PORT=9432        PG_TARGET_HOST=postgres-primary:5432
+#   ANCHOR_PROXY_PORT=9093    ANCHOR_TARGET_URL=http://anchor-mock:3003
+#   WS_PROXY_PORT=9094        (points at the API server port)
+#   DATABASE_URL=postgresql://chaos:chaos@localhost:9432/swiftremit_chaos
 
 services:
+
+  # ── Toxiproxy ───────────────────────────────────────────────────────────────
   toxiproxy:
     image: ghcr.io/shopify/toxiproxy:2.9.0
     ports:
-      - "8474:8474"   # Toxiproxy management API
-      - "9090:9090"   # Proxied webhook port (configured at runtime)
+      - "8474:8474"   # management API
+      - "9090:9090"   # webhook proxy
+      - "9091:9091"   # Soroban RPC proxy
+      - "9093:9093"   # anchor API proxy
+      - "9094:9094"   # WebSocket proxy
+      - "9432:9432"   # Postgres proxy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8474/proxies"]
       interval: 5s
       timeout: 3s
       retries: 10
 
+  # ── Webhook echo server (existing) ─────────────────────────────────────────
   webhook-echo:
     image: node:20-alpine
     working_dir: /app
@@ -35,3 +55,56 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # ── Soroban RPC mock ────────────────────────────────────────────────────────
+  # Lightweight Express server that mimics the Soroban RPC JSON-RPC interface.
+  rpc-mock:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./rpc-mock-server.js:/app/server.js:ro
+    command: node /app/server.js
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: "3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Anchor mock ─────────────────────────────────────────────────────────────
+  # Returns valid SEP-10/SEP-24 style JSON responses including stellar.toml.
+  anchor-mock:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./anchor-mock-server.js:/app/server.js:ro
+    command: node /app/server.js
+    ports:
+      - "3003:3003"
+    environment:
+      PORT: "3003"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── PostgreSQL primary ──────────────────────────────────────────────────────
+  postgres-primary:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER:     chaos
+      POSTGRES_PASSWORD: chaos
+      POSTGRES_DB:       swiftremit_chaos
+    ports:
+      - "5433:5432"   # exposed on 5433 to avoid colliding with local Postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chaos -d swiftremit_chaos"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    tmpfs:
+      - /var/lib/postgresql/data   # ephemeral — reset on every docker compose up

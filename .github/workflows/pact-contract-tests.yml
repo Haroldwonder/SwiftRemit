@@ -1,83 +1,214 @@
-name: Pact Contract Tests
+name: Pact Contract Tests (SR-062)
 
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "fix/**"]
     paths:
       - "frontend/src/**"
+      - "sdk/src/**"
+      - "mobile/src/**"
       - "api/src/**"
       - "frontend/package.json"
+      - "sdk/package.json"
+      - "mobile/package.json"
       - "api/package.json"
       - ".github/workflows/pact-contract-tests.yml"
   pull_request:
     branches: [main]
     paths:
       - "frontend/src/**"
+      - "sdk/src/**"
+      - "mobile/src/**"
       - "api/src/**"
       - "frontend/package.json"
+      - "sdk/package.json"
+      - "mobile/package.json"
       - "api/package.json"
       - ".github/workflows/pact-contract-tests.yml"
 
 jobs:
-  # ── Step 1: Consumer — generate pact files ────────────────────────────────
-  consumer-tests:
-    name: Frontend Consumer Tests (generate pacts)
+  # ── Step 1a: Frontend consumer pacts ───────────────────────────────────────
+  consumer-frontend:
+    name: "Pact consumer — Frontend"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
       - run: npm ci
-
-      - name: Run Pact consumer tests
+      - name: Generate Frontend pact
         run: npm run test:pact
-
-      - name: Upload pact files as workflow artifact
+      - name: Upload frontend pact
         uses: actions/upload-artifact@v4
         with:
-          name: pact-files
-          path: pacts/
+          name: pact-frontend
+          path: pacts/SwiftRemitFrontend-SwiftRemitAPI.json
           retention-days: 7
 
-  # ── Step 2: Provider — verify pact files against the real API ─────────────
-  provider-verification:
-    name: API Provider Verification
+  # ── Step 1b: SDK consumer pacts ────────────────────────────────────────────
+  consumer-sdk:
+    name: "Pact consumer — SDK"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: consumer-tests
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: sdk/package-lock.json
+      - run: npm ci
+      - name: Generate SDK pact
+        run: npm run test:pact
+      - name: Upload SDK pact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-sdk
+          path: pacts/SwiftRemitSDK-SwiftRemitAPI.json
+          retention-days: 7
+
+  # ── Step 1c: Mobile consumer pacts ─────────────────────────────────────────
+  consumer-mobile:
+    name: "Pact consumer — Mobile"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - name: Generate Mobile pact
+        run: npm run test:pact
+      - name: Upload mobile pact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-mobile
+          path: pacts/SwiftRemitMobile-SwiftRemitAPI.json
+          retention-days: 7
+
+  # ── Step 1d: API→Backend consumer pact ─────────────────────────────────────
+  consumer-api-backend:
+    name: "Pact consumer — API→Backend (internal)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: api
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: api/package-lock.json
+      - run: npm ci
+      - name: Generate API→Backend pact
+        env:
+          CURRENCY_CONFIG_PATH: ./config/currencies.json
+          JWT_SECRET: ci-pact-secret
+          ANCHOR_TOML_VALIDATION_DISABLED: "true"
+        run: npx vitest run src/__tests__/pact/backend-api.consumer.pact.test.ts
+      - name: Upload API→Backend pact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-api-backend
+          path: pacts/SwiftRemitAPI-SwiftRemitBackend.json
+          retention-days: 7
 
+  # ── Step 2: Provider verification — API satisfies all consumer pacts ────────
+  provider-verification:
+    name: "Pact provider verification — SwiftRemitAPI"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - consumer-frontend
+      - consumer-sdk
+      - consumer-mobile
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: api/package-lock.json
       - run: npm ci
 
-      - name: Download pact files from consumer job
+      - name: Download all consumer pacts
         uses: actions/download-artifact@v4
         with:
-          name: pact-files
+          pattern: pact-*
           path: pacts/
+          merge-multiple: true
 
-      - name: Run Pact provider verification
+      - name: Run provider verification (all consumers)
         env:
           JWT_SECRET: ci-pact-verification-secret
           CURRENCY_CONFIG_PATH: ./config/currencies.json
+          ADMIN_API_KEY: pact-admin-key
+          ANCHOR_TOML_VALIDATION_DISABLED: "true"
         run: npm run test:pact
+
+      - name: Publish step summary
+        if: always()
+        run: |
+          echo "## Pact Provider Verification Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Consumer | Contract file |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|---------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| SwiftRemitFrontend | SwiftRemitFrontend-SwiftRemitAPI.json |" >> $GITHUB_STEP_SUMMARY
+          echo "| SwiftRemitSDK      | SwiftRemitSDK-SwiftRemitAPI.json      |" >> $GITHUB_STEP_SUMMARY
+          echo "| SwiftRemitMobile   | SwiftRemitMobile-SwiftRemitAPI.json   |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "A failure here means a breaking API change was introduced." >> $GITHUB_STEP_SUMMARY
+
+  # ── Step 3: Commit generated pact files back to the repo ───────────────────
+  # This makes pacts available to both sides of a change without a broker.
+  # The commit is skipped on PRs to avoid polluting history with draft pacts.
+  publish-pacts:
+    name: "Commit pact files to pacts/ directory"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: provider-verification
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all consumer pacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pact-*
+          path: pacts/
+          merge-multiple: true
+
+      - name: Commit updated pact files
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pacts/
+          if git diff --cached --quiet; then
+            echo "No pact changes to commit."
+          else
+            git commit -m "chore(pacts): update generated pact files [skip ci]"
+            git push
+          fi
