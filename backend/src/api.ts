@@ -39,6 +39,7 @@ import { remittanceEventEmitter } from './remittance/events';
 import { handleKycWebhook } from './kyc-webhook-handler';
 import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
 import { createComplianceRouter } from './routes/compliance';
+import { privacyRouter } from './routes/privacy';
 import { validateRequest, validateQuery, validateParams } from './middleware/validate';
 import {
   RemittanceCreateSchema,
@@ -143,6 +144,8 @@ app.get('/metrics', async (req: Request, res: Response) => {
 // API documentation
 app.use('/api/docs', docsRouter);
 app.use('/api/compliance', createComplianceRouter(pool));
+app.use('/api/v1/privacy', privacyRouter);
+app.use('/api/privacy', privacyRouter);
 
 function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const userId = (req.headers['x-user-id'] as string) || '';

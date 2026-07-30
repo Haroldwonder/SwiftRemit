@@ -584,6 +584,7 @@ export class Sep24Service {
         asset_code:  transaction.asset_code,
         amount:      actualAmount,
         refunded_at: new Date().toISOString(),
+      });
       await this.dispatcher.dispatch('sep24.expired_refund', {
         event: 'sep24.expired_refund',
         timestamp: new Date().toISOString(),

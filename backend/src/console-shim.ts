@@ -1,3 +1,5 @@
+import { sanitizeLogArgs } from './privacy/log-sanitizer';
+
 function safeSerialize(value: unknown): unknown {
   if (value instanceof Error) {
     return {
@@ -20,7 +22,8 @@ function safeSerialize(value: unknown): unknown {
 
 function formatRecord(level: string, args: unknown[]): string {
   const timestamp = new Date().toISOString();
-  const message = args.map(arg => {
+  const sanitizedArgs = sanitizeLogArgs(args);
+  const message = sanitizedArgs.map(arg => {
     if (typeof arg === 'string') return arg;
     return safeSerialize(arg);
   });
