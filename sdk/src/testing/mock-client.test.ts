@@ -147,11 +147,11 @@ describe("SwiftRemitMockClient – state machine transitions", () => {
     expect((await client.getRemittance(SOURCE, id!)).status).toBe("Completed");
   });
 
-  it("cancelRemittance on a non-Pending remittance throws InvalidStatus", async () => {
+  it("cancelRemittance on a non-Pending remittance throws InvalidStateTransition", async () => {
     const { id } = await client.createRemittance({ sender: SENDER, agent: AGENT, amount: AMOUNT });
     await client.confirmPayout(AGENT, id!);
     await expect(client.cancelRemittance(SENDER, id!)).rejects.toMatchObject({
-      code: ErrorCode.InvalidStatus,
+      code: ErrorCode.InvalidStateTransition,
     });
   });
 });
