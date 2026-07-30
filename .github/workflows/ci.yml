@@ -335,6 +335,15 @@ jobs:
       - name: Lint chart (production values)
         run: helm lint charts/swiftremit -f charts/swiftremit/values.production.yaml
 
+  # ── SDK contract-surface coverage ──────────────────────────────────────────
+  sdk-contract-coverage:
+    name: SDK contract-surface coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on contract functions with no SDK binding or exclusion
+        run: node sdk/scripts/check-contract-coverage.mjs
+
   # ── Summary gate ───────────────────────────────────────────────────────────
   ci:
     name: CI
@@ -354,6 +363,7 @@ jobs:
       - frontend-coverage
       - mobile-test
       - sdk-bundle-size
+      - sdk-contract-coverage
       - helm-lint
     if: always()
     steps:

@@ -1,6 +1,9 @@
 import type { RetryPolicy } from "./types.js";
+import { SwiftRemitError } from "./errors.js";
 
 export function isTransientError(err: unknown): boolean {
+  if (err instanceof SwiftRemitError) return err.retryable;
+
   const msg = err instanceof Error ? err.message : String(err);
   return (
     msg.includes("429") ||

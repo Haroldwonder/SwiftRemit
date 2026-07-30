@@ -32,6 +32,23 @@ import type {
   Corridor,
   FeeEstimate,
   EventHandler,
+  Escrow,
+  AssetVerification,
+  VerificationStatus,
+  PauseRecord,
+  PauseReason,
+  FeeStrategy,
+  FeeCorridor,
+  RateLimitConfig,
+  RateLimitStatus,
+  TransactionRecord,
+  MigrationSnapshot,
+  BatchSettlementEntry,
+  Role,
+  RemittanceStatus,
+  FeeBreakdown,
+  AdminOperationType,
+  PendingOperation,
 } from "./types.js";
 import { parseContractError, SwiftRemitError, ErrorCode } from "./errors.js";
 import { withRetry, withRetryPolicy } from "./retry.js";
@@ -48,6 +65,25 @@ import {
   bytesNToScVal,
   stringToScVal,
   parseProposal,
+  parseEscrow,
+  parseAssetVerification,
+  parsePauseRecord,
+  parseFeeStrategy,
+  parseFeeCorridor,
+  parseRateLimitConfig,
+  parseRateLimitStatus,
+  parseTransactionRecord,
+  parseMigrationSnapshot,
+  parsePendingOperation,
+  adminOperationTypeToScVal,
+  roleToScVal,
+  verificationStatusToScVal,
+  pauseReasonToScVal,
+  feeStrategyToScVal,
+  feeCorridorToScVal,
+  batchSettlementEntryToScVal,
+  u32ToScVal,
+  boolToScVal,
 } from "./convert.js";
 
 /** Maximum number of entries allowed in a single batch remittance call. */
@@ -300,10 +336,26 @@ export class SwiftRemitClient {
     keypair: Keypair,
     options?: { retryPolicy?: RetryPolicy }
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
+    tx.sign(keypair);
+    return this.submitSignedTransaction(tx, options);
+  }
+
+  /**
+   * Submit a transaction that has already been signed (e.g. by an external
+   * wallet or a {@link SwiftRemitSigner}-style signer) and wait for confirmation.
+   * Unlike {@link submitTransaction}, this does not sign the transaction itself.
+   *
+   * @param tx - A transaction that already carries a valid signature
+   * @param options.retryPolicy - Per-call retry policy that overrides the client's
+   *   `writeRetryPolicy`. See {@link submitTransaction} for guidance on when to opt in.
+   */
+  async submitSignedTransaction(
+    tx: Transaction,
+    options?: { retryPolicy?: RetryPolicy }
+  ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     const writePolicy = this.resolveWriteRetryPolicy(options?.retryPolicy);
     const defaults = { delayMs: this.retryDelayMs, backoffFactor: this.retryBackoffFactor };
 
-    tx.sign(keypair);
     const sendResult = await withRetryPolicy(
       () => this.server.sendTransaction(tx),
       writePolicy,
@@ -1010,14 +1062,14 @@ export class SwiftRemitClient {
   async getGovernanceConfig(sourceAddress: string): Promise<GovernanceConfig> {
     const result = await this.simulateCall(
       sourceAddress,
-      "query_governance_config",
+      "get_governance_config",
       []
     );
-    const native = scValToNative(result);
+    const native = scValToNative(result) as Record<string, unknown>;
     return {
       quorum: Number(native.quorum),
-      timelockSeconds: BigInt(native.timelock_seconds),
-      proposalTtlSeconds: BigInt(native.proposal_ttl_seconds),
+      timelockSeconds: BigInt(native.timelock_seconds as number),
+      proposalTtlSeconds: BigInt(native.proposal_ttl_seconds as number),
     };
   }
 
@@ -1153,6 +1205,772 @@ export class SwiftRemitClient {
     return this.prepareTransaction(sourceAddress, "execute", [
       addressToScVal(sourceAddress),
       u64ToScVal(proposalId),
+    ]);
+  }
+
+  // ─── Admin transfer ──────────────────────────────────────────────────────────
+
+  /** Proposes a two-step admin transfer. Requires the current admin. Throws {@link ErrorCode.Unauthorized}. */
+  async proposeAdmin(admin: string, newAdmin: string): Promise<Transaction> {
+    return this.prepareTransaction(admin, "propose_admin", [addressToScVal(newAdmin)]);
+  }
+
+  /** Accepts a pending admin transfer. Requires the proposed new admin. Throws {@link ErrorCode.NoPendingAdminTransfer}. */
+  async acceptAdmin(newAdmin: string): Promise<Transaction> {
+    return this.prepareTransaction(newAdmin, "accept_admin", []);
+  }
+
+  /** Removes an admin. Requires an existing admin as caller. Throws {@link ErrorCode.CannotRemoveLastAdmin}. */
+  async removeAdmin(caller: string, adminToRemove: string): Promise<Transaction> {
+    return this.prepareTransaction(caller, "remove_admin", [
+      addressToScVal(caller),
+      addressToScVal(adminToRemove),
+    ]);
+  }
+
+  // ─── Role-based authorization ─────────────────────────────────────────────────
+
+  /** Grants a role to an address. Requires caller authorization. */
+  async assignRole(caller: string, address: string, role: Role): Promise<Transaction> {
+    return this.prepareTransaction(caller, "assign_role", [
+      addressToScVal(caller),
+      addressToScVal(address),
+      roleToScVal(role),
+    ]);
+  }
+
+  /** Revokes a role from an address. Requires caller authorization. */
+  async removeRole(caller: string, address: string, role: Role): Promise<Transaction> {
+    return this.prepareTransaction(caller, "remove_role", [
+      addressToScVal(caller),
+      addressToScVal(address),
+      roleToScVal(role),
+    ]);
+  }
+
+  /** Returns whether `address` currently holds `role`. */
+  async hasRole(sourceAddress: string, address: string, role: Role): Promise<boolean> {
+    const val = await this.simulateCall(sourceAddress, "has_role", [
+      addressToScVal(address),
+      roleToScVal(role),
+    ]);
+    return Boolean(scValToNative(val));
+  }
+
+  /** Returns whether `address` currently has admin privileges. */
+  async isAdmin(sourceAddress: string, address: string): Promise<boolean> {
+    const val = await this.simulateCall(sourceAddress, "is_admin", [addressToScVal(address)]);
+    return Boolean(scValToNative(val));
+  }
+
+  // ─── Token whitelist ───────────────────────────────────────────────────────────
+
+  /** Whitelists a token for use in the contract. Requires admin. Throws {@link ErrorCode.TokenAlreadyWhitelisted}. */
+  async addWhitelistedToken(admin: string, token: string): Promise<Transaction> {
+    return this.prepareTransaction(admin, "add_whitelisted_token", [addressToScVal(token)]);
+  }
+
+  /** Removes a token from the whitelist. Requires admin. Throws {@link ErrorCode.TokenNotWhitelisted}. */
+  async removeWhitelistedToken(admin: string, token: string): Promise<Transaction> {
+    return this.prepareTransaction(admin, "remove_whitelisted_token", [addressToScVal(token)]);
+  }
+
+  /** Returns all whitelisted token addresses. */
+  async getWhitelistedTokens(sourceAddress: string): Promise<string[]> {
+    const val = await this.simulateCall(sourceAddress, "get_whitelisted_tokens", []);
+    return (scValToNative(val) as { toString(): string }[]).map((a) => a.toString());
+  }
+
+  // ─── Blacklist ───────────────────────────────────────────────────────────────
+
+  /** Blacklists a user, preventing them from transacting. Requires admin. */
+  async blacklistUser(admin: string, user: string): Promise<Transaction> {
+    return this.prepareTransaction(admin, "blacklist_user", [addressToScVal(user)]);
+  }
+
+  /** Removes a user from the blacklist. Requires admin. */
+  async removeFromBlacklist(admin: string, user: string): Promise<Transaction> {
+    return this.prepareTransaction(admin, "remove_from_blacklist", [addressToScVal(user)]);
+  }
+
+  /** Sets a user's blacklist status directly. Requires admin. */
+  async setUserBlacklisted(admin: string, user: string, blacklisted: boolean): Promise<Transaction> {
+    return this.prepareTransaction(admin, "set_user_blacklisted", [
+      addressToScVal(user),
+      boolToScVal(blacklisted),
+    ]);
+  }
+
+  /** Returns whether `user` is currently blacklisted. */
+  async isUserBlacklisted(sourceAddress: string, user: string): Promise<boolean> {
+    const val = await this.simulateCall(sourceAddress, "is_user_blacklisted", [addressToScVal(user)]);
+    return Boolean(scValToNative(val));
+  }
+
+  // ─── KYC ─────────────────────────────────────────────────────────────────────
+
+  /** Sets a user's KYC approval status and expiry. Requires admin. */
+  async setKycApproved(admin: string, user: string, approved: boolean, expiry: bigint): Promise<Transaction> {
+    return this.prepareTransaction(admin, "set_kyc_approved", [
+      addressToScVal(user),
+      boolToScVal(approved),
+      u64ToScVal(expiry),
+    ]);
+  }
+
+  /** Returns whether `user` has non-expired KYC approval. */
+  async isKycApproved(sourceAddress: string, user: string): Promise<boolean> {
+    const val = await this.simulateCall(sourceAddress, "is_kyc_approved", [addressToScVal(user)]);
+    return Boolean(scValToNative(val));
+  }
+
+  /** Returns the agent's stored KYC document hash, or null if none is set. */
+  async getAgentKycHash(sourceAddress: string, agent: string): Promise<string | null> {
+    const val = await this.simulateCall(sourceAddress, "get_agent_kyc_hash", [addressToScVal(agent)]);
+    const native = scValToNative(val);
+    return native ? Buffer.from(native as Uint8Array).toString("hex") : null;
+  }
+
+  // ─── Circuit breaker / pause ─────────────────────────────────────────────────
+
+  /** Legacy pause wrapper (bypasses timelock/quorum checks). Requires admin. */
+  async pause(admin: string): Promise<Transaction> {
+    return this.prepareTransaction(admin, "pause", []);
+  }
+
+  /** Legacy unpause wrapper (bypasses timelock/quorum checks). Requires admin. */
+  async unpause(admin: string): Promise<Transaction> {
+    return this.prepareTransaction(admin, "unpause", []);
+  }
+
+  /** Pauses the contract with a structured reason and audit trail. Requires admin. Throws {@link ErrorCode.AlreadyPaused}. */
+  async emergencyPause(caller: string, reason: PauseReason): Promise<Transaction> {
+    return this.prepareTransaction(caller, "emergency_pause", [
+      addressToScVal(caller),
+      pauseReasonToScVal(reason),
+    ]);
+  }
+
+  /** Unpauses the contract, enforcing timelock/quorum unless bypassed. Requires admin. Throws {@link ErrorCode.TimelockActive}. */
+  async emergencyUnpause(caller: string): Promise<Transaction> {
+    return this.prepareTransaction(caller, "emergency_unpause", [addressToScVal(caller)]);
+  }
+
+  /** Casts an admin vote to unpause; auto-unpauses when quorum is reached. */
+  async voteUnpause(caller: string): Promise<Transaction> {
+    return this.prepareTransaction(caller, "vote_unpause", [addressToScVal(caller)]);
+  }
+
+  /** Returns whether the contract is currently paused. */
+  async isPaused(sourceAddress: string): Promise<boolean> {
+    const val = await this.simulateCall(sourceAddress, "is_paused", []);
+    return Boolean(scValToNative(val));
+  }
+
+  /** Sets the emergency-unpause timelock duration in seconds (max 604800). Requires admin. */
+  async setPauseTimelock(caller: string, seconds: bigint): Promise<Transaction> {
+    return this.prepareTransaction(caller, "set_pause_timelock", [
+      addressToScVal(caller),
+      u64ToScVal(seconds),
+    ]);
+  }
+
+  /** Sets the number of admin votes required to unpause. Requires admin. Throws {@link ErrorCode.InvalidQuorum}. */
+  async setUnpauseQuorum(caller: string, quorum: number): Promise<Transaction> {
+    return this.prepareTransaction(caller, "set_unpause_quorum", [
+      addressToScVal(caller),
+      u32ToScVal(quorum),
+    ]);
+  }
+
+  /** Returns the configured post-unpause rate-limit cooldown window, in seconds. */
+  async getCooldownPeriod(sourceAddress: string): Promise<bigint> {
+    const val = await this.simulateCall(sourceAddress, "get_cooldown_period", []);
+    return BigInt(scValToNative(val) as number);
+  }
+
+  /** Returns the active pause record, or null when the contract is not paused. */
+  async getCurrentPauseRecord(sourceAddress: string): Promise<PauseRecord | null> {
+    const val = await this.simulateCall(sourceAddress, "get_current_pause_record", []);
+    const native = scValToNative(val);
+    return native ? parsePauseRecord(val) : null;
+  }
+
+  /** Returns the pause record for a given sequence number. Throws when not found. */
+  async getPauseRecord(sourceAddress: string, seq: bigint): Promise<PauseRecord> {
+    const val = await this.simulateCall(sourceAddress, "get_pause_record", [u64ToScVal(seq)]);
+    return parsePauseRecord(val);
+  }
+
+  /** Returns the total number of pause events ever recorded. */
+  async getPauseHistoryCount(sourceAddress: string): Promise<bigint> {
+    const val = await this.simulateCall(sourceAddress, "get_pause_history_count", []);
+    return BigInt(scValToNative(val) as number);
+  }
+
+  // ─── Escrow ──────────────────────────────────────────────────────────────────
+
+  /** Locks funds in escrow for `recipient`. Requires sender authorization. */
+  async createEscrow(sender: string, recipient: string, amount: bigint): Promise<Transaction> {
+    return this.prepareTransaction(sender, "create_escrow", [
+      addressToScVal(sender),
+      addressToScVal(recipient),
+      i128ToScVal(amount),
+    ]);
+  }
+
+  /** Releases escrowed funds to the recipient. Requires admin. Throws {@link ErrorCode.InvalidEscrowStatus}. */
+  async releaseEscrow(admin: string, transferId: bigint): Promise<Transaction> {
+    return this.prepareTransaction(admin, "release_escrow", [u64ToScVal(transferId)]);
+  }
+
+  /** Refunds escrowed funds back to the sender. Requires the escrow's original sender. */
+  async refundEscrow(sender: string, transferId: bigint): Promise<Transaction> {
+    return this.prepareTransaction(sender, "refund_escrow", [u64ToScVal(transferId)]);
+  }
+
+  /** Returns the escrow record for `transferId`. Throws {@link ErrorCode.EscrowNotFound}. */
+  async getEscrow(sourceAddress: string, transferId: bigint): Promise<Escrow> {
+    const val = await this.simulateCall(sourceAddress, "get_escrow", [u64ToScVal(transferId)]);
+    return parseEscrow(val);
+  }
+
+  /** Returns the configured escrow storage TTL in ledgers. */
+  async getEscrowTtl(sourceAddress: string): Promise<bigint> {
+    const val = await this.simulateCall(sourceAddress, "get_escrow_ttl", []);
+    return BigInt(scValToNative(val) as number);
+  }
+
+  /** Updates the escrow storage TTL. Requires admin. */
+  async updateEscrowTtl(admin: string, ttl: bigint): Promise<Transaction> {
+    return this.prepareTransaction(admin, "update_escrow_ttl", [u64ToScVal(ttl)]);
+  }
+
+  /** Processes a batch of expired escrows, refunding senders. Returns the IDs successfully processed. */
+  async processExpiredEscrows(caller: string, transferIds: bigint[]): Promise<Transaction> {
+    return this.prepareTransaction(caller, "process_expired_escrows", [
+      xdr.ScVal.scvVec(transferIds.map((id) => u64ToScVal(id))),
+    ]);
+  }
+
+  /** Returns the remittance status for a transfer, or null if not found. */
+  async getTransferState(sourceAddress: string, transferId: bigint): Promise<RemittanceStatus | null> {
+    const val = await this.simulateCall(sourceAddress, "get_transfer_state", [u64ToScVal(transferId)]);
+    const native = scValToNative(val);
+    if (!native) return null;
+    return Object.keys(native as Record<string, unknown>)[0] as RemittanceStatus;
+  }
+
+  // ─── Asset verification ──────────────────────────────────────────────────────
+
+  /** Stores or updates an asset's verification record. Requires admin. Throws {@link ErrorCode.InvalidReputationScore}. */
+  async setAssetVerification(
+    admin: string,
+    assetCode: string,
+    issuer: string,
+    status: VerificationStatus,
+    reputationScore: number,
+    trustlineCount: bigint,
+    hasToml: boolean
+  ): Promise<Transaction> {
+    return this.prepareTransaction(admin, "set_asset_verification", [
+      stringToScVal(assetCode),
+      addressToScVal(issuer),
+      verificationStatusToScVal(status),
+      u32ToScVal(reputationScore),
+      u64ToScVal(trustlineCount),
+      boolToScVal(hasToml),
+    ]);
+  }
+
+  /** Returns the verification record for an asset. Throws {@link ErrorCode.AssetNotFound}. */
+  async getAssetVerification(sourceAddress: string, assetCode: string, issuer: string): Promise<AssetVerification> {
+    const val = await this.simulateCall(sourceAddress, "get_asset_verification", [
+      stringToScVal(assetCode),
+      addressToScVal(issuer),
+    ]);
+    return parseAssetVerification(val);
+  }
+
+  /** Returns whether a verification record exists for the given asset. */
+  async hasAssetVerification(sourceAddress: string, assetCode: string, issuer: string): Promise<boolean> {
+    const val = await this.simulateCall(sourceAddress, "has_asset_verification", [
+      stringToScVal(assetCode),
+      addressToScVal(issuer),
+    ]);
+    return Boolean(scValToNative(val));
+  }
+
+  /** Validates that an asset is safe to use. Throws {@link ErrorCode.SuspiciousAsset} if flagged. */
+  async validateAssetSafety(caller: string, assetCode: string, issuer: string): Promise<Transaction> {
+    return this.prepareTransaction(caller, "validate_asset_safety", [
+      stringToScVal(assetCode),
+      addressToScVal(issuer),
+    ]);
+  }
+
+  // ─── Fee corridors / strategy ─────────────────────────────────────────────────
+
+  /** Sets a per-corridor fee configuration. Requires admin. */
+  async setFeeCorridor(caller: string, corridor: FeeCorridor): Promise<Transaction> {
+    return this.prepareTransaction(caller, "set_fee_corridor", [
+      addressToScVal(caller),
+      feeCorridorToScVal(corridor),
+    ]);
+  }
+
+  /** Removes a corridor's fee configuration, reverting to the global default. Requires admin. */
+  async removeFeeCorridor(caller: string, fromCountry: string, toCountry: string): Promise<Transaction> {
+    return this.prepareTransaction(caller, "remove_fee_corridor", [
+      addressToScVal(caller),
+      stringToScVal(fromCountry),
+      stringToScVal(toCountry),
+    ]);
+  }
+
+  /** Returns the fee corridor configuration for a country pair, or null if unset. */
+  async getFeeCorridor(sourceAddress: string, fromCountry: string, toCountry: string): Promise<FeeCorridor | null> {
+    const val = await this.simulateCall(sourceAddress, "get_fee_corridor", [
+      stringToScVal(fromCountry),
+      stringToScVal(toCountry),
+    ]);
+    const native = scValToNative(val);
+    return native ? parseFeeCorridor(val) : null;
+  }
+
+  /** Updates the globally active fee strategy. Requires admin. */
+  async updateFeeStrategy(caller: string, strategy: FeeStrategy): Promise<Transaction> {
+    return this.prepareTransaction(caller, "update_fee_strategy", [
+      addressToScVal(caller),
+      feeStrategyToScVal(strategy),
+    ]);
+  }
+
+  /** Returns the currently active fee strategy. */
+  async getFeeStrategy(sourceAddress: string): Promise<FeeStrategy> {
+    const val = await this.simulateCall(sourceAddress, "get_fee_strategy", []);
+    return parseFeeStrategy(scValToNative(val));
+  }
+
+  /** Calculates the fee breakdown for `amount` using the active global strategy. */
+  async calculateFeeBreakdown(sourceAddress: string, amount: bigint): Promise<FeeBreakdown> {
+    const val = await this.simulateCall(sourceAddress, "calculate_fee_breakdown", [i128ToScVal(amount)]);
+    return parseFeeBreakdown(val);
+  }
+
+  /** Calculates the fee breakdown for `amount` under a specific corridor's configuration. */
+  async feeBreakdownCorridor(sourceAddress: string, amount: bigint, corridor: FeeCorridor): Promise<FeeBreakdown> {
+    const val = await this.simulateCall(sourceAddress, "fee_breakdown_corridor", [
+      i128ToScVal(amount),
+      feeCorridorToScVal(corridor),
+    ]);
+    return parseFeeBreakdown(val);
+  }
+
+  /** Returns the global protocol fee in basis points. */
+  async getProtocolFeeBps(sourceAddress: string): Promise<number> {
+    const val = await this.simulateCall(sourceAddress, "get_protocol_fee_bps", []);
+    return Number(scValToNative(val));
+  }
+
+  /** Updates the global protocol fee in basis points. Requires admin. Throws {@link ErrorCode.InvalidFeeBps}. */
+  async updateProtocolFee(caller: string, feeBps: number): Promise<Transaction> {
+    return this.prepareTransaction(caller, "update_protocol_fee", [
+      addressToScVal(caller),
+      u32ToScVal(feeBps),
+    ]);
+  }
+
+  /** Returns a token-specific fee override in basis points, or null if unset. */
+  async getTokenFeeBps(sourceAddress: string, token: string): Promise<number | null> {
+    const val = await this.simulateCall(sourceAddress, "get_token_fee_bps", [addressToScVal(token)]);
+    const native = scValToNative(val);
+    return native != null ? Number(native) : null;
+  }
+
+  /** Sets a token-specific fee override in basis points. Requires admin. */
+  async updateTokenFee(caller: string, token: string, feeBps: number): Promise<Transaction> {
+    return this.prepareTransaction(caller, "update_token_fee", [
+      addressToScVal(caller),
+      addressToScVal(token),
+      u32ToScVal(feeBps),
+    ]);
+  }
+
+  // ─── Treasury ────────────────────────────────────────────────────────────────
+
+  /** Returns the configured treasury address. Throws {@link ErrorCode.NotInitialized}. */
+  async getTreasury(sourceAddress: string): Promise<string> {
+    const val = await this.simulateCall(sourceAddress, "get_treasury", []);
+    return String(scValToNative(val));
+  }
+
+  /** Updates the treasury address. Requires admin. */
+  async updateTreasury(caller: string, treasury: string): Promise<Transaction> {
+    return this.prepareTransaction(caller, "update_treasury", [
+      addressToScVal(caller),
+      addressToScVal(treasury),
+    ]);
+  }
+
+  // ─── Oracle ──────────────────────────────────────────────────────────────────
+
+  /** Configures the FX-rate oracle address and optional staleness window (in ledgers). Requires caller authorization. */
+  async setOracle(caller: string, oracle: string, stalenessWindowLedgers?: number): Promise<Transaction> {
+    return this.prepareTransaction(caller, "set_oracle", [
+      addressToScVal(caller),
+      addressToScVal(oracle),
+      optionToScVal(stalenessWindowLedgers !== undefined ? u32ToScVal(stalenessWindowLedgers) : undefined),
+    ]);
+  }
+
+  /** Returns the configured oracle address, or null if unconfigured. */
+  async getOracle(sourceAddress: string): Promise<string | null> {
+    const val = await this.simulateCall(sourceAddress, "get_oracle", []);
+    const native = scValToNative(val);
+    return native ? (native as { toString(): string }).toString() : null;
+  }
+
+  /** Returns the current FX rate in basis points from the configured oracle, or null if unavailable. */
+  async getOracleRate(sourceAddress: string): Promise<number | null> {
+    const val = await this.simulateCall(sourceAddress, "get_oracle_rate", []);
+    const native = scValToNative(val);
+    return native != null ? Number(native) : null;
+  }
+
+  // ─── Rate limiting ───────────────────────────────────────────────────────────
+
+  /** Returns the global rate-limit configuration: max requests, window (seconds), enabled. */
+  async getRateLimitConfig(sourceAddress: string): Promise<RateLimitConfig> {
+    const val = await this.simulateCall(sourceAddress, "get_rate_limit_config", []);
+    return parseRateLimitConfig(scValToNative(val) as [number, bigint | number, boolean]);
+  }
+
+  /** Updates the global rate-limit configuration. Requires admin. */
+  async updateRateLimitConfig(
+    caller: string,
+    maxRequests: number,
+    windowSeconds: bigint,
+    enabled: boolean
+  ): Promise<Transaction> {
+    return this.prepareTransaction(caller, "update_rate_limit_config", [
+      addressToScVal(caller),
+      u32ToScVal(maxRequests),
+      u64ToScVal(windowSeconds),
+      boolToScVal(enabled),
+    ]);
+  }
+
+  /** Returns the rate-limit status for a specific address. */
+  async getRateLimitStatus(sourceAddress: string, address: string): Promise<RateLimitStatus> {
+    const val = await this.simulateCall(sourceAddress, "get_rate_limit_status", [addressToScVal(address)]);
+    return parseRateLimitStatus(scValToNative(val) as [number, number, bigint | number]);
+  }
+
+  /** Returns the post-unpause rate-limit cooldown window, in seconds. */
+  async getRateLimitCooldown(sourceAddress: string): Promise<bigint> {
+    const val = await this.simulateCall(sourceAddress, "get_rate_limit_cooldown", []);
+    return BigInt(scValToNative(val) as number);
+  }
+
+  /** Sets the post-unpause rate-limit cooldown window, in seconds. Requires admin. */
+  async updateRateLimit(admin: string, cooldownSeconds: bigint): Promise<Transaction> {
+    return this.prepareTransaction(admin, "update_rate_limit", [u64ToScVal(cooldownSeconds)]);
+  }
+
+  /** Clears stale rate-limit tracking entries for an address, freeing storage. */
+  async cleanupRateLimitEntries(caller: string, address: string): Promise<Transaction> {
+    return this.prepareTransaction(caller, "cleanup_rate_limit_entries", [addressToScVal(address)]);
+  }
+
+  // ─── Remittance / agent extras ────────────────────────────────────────────────
+
+  /** Returns up to `limit` remittance IDs created by `agent`, starting at `offset`. */
+  async getRemittancesByAgent(
+    sourceAddress: string,
+    agent: string,
+    offset: bigint,
+    limit: bigint
+  ): Promise<bigint[]> {
+    const val = await this.simulateCall(sourceAddress, "get_remittances_by_agent", [
+      addressToScVal(agent),
+      u64ToScVal(offset),
+      u64ToScVal(limit),
+    ]);
+    return (scValToNative(val) as number[]).map((id) => BigInt(id));
+  }
+
+  /** Returns the minimum agent reputation score required for new agent registration. */
+  async getMinAgentReputation(sourceAddress: string): Promise<number> {
+    const val = await this.simulateCall(sourceAddress, "get_min_agent_reputation", []);
+    return Number(scValToNative(val));
+  }
+
+  /** Sets the minimum agent reputation threshold (0-100). Requires admin. Throws {@link ErrorCode.InvalidReputationScore}. */
+  async setMinAgentReputation(admin: string, threshold: number): Promise<Transaction> {
+    return this.prepareTransaction(admin, "set_min_agent_reputation", [u32ToScVal(threshold)]);
+  }
+
+  /** Returns the configured daily limit for a currency/country corridor, or null if unset. */
+  async getDailyLimit(sourceAddress: string, currency: string, country: string): Promise<bigint | null> {
+    const val = await this.simulateCall(sourceAddress, "get_daily_limit", [
+      stringToScVal(currency),
+      stringToScVal(country),
+    ]);
+    const native = scValToNative(val);
+    return native != null ? BigInt(native as number) : null;
+  }
+
+  /** Sets the dispute window in seconds. Requires admin. */
+  async setDisputeWindow(admin: string, seconds: bigint): Promise<Transaction> {
+    return this.prepareTransaction(admin, "set_dispute_window", [u64ToScVal(seconds)]);
+  }
+
+  /** Sets the maximum batch size for `process_expired_remittances` (1-200). Requires admin. Throws {@link ErrorCode.InvalidBatchSize}. */
+  async setMaxExpiredBatchSize(admin: string, size: number): Promise<Transaction> {
+    return this.prepareTransaction(admin, "set_max_expired_batch_size", [u32ToScVal(size)]);
+  }
+
+  /** Sets the abuse-protection cooldown period in seconds (max 604800). Requires admin. */
+  async setCooldownPeriod(caller: string, seconds: bigint): Promise<Transaction> {
+    return this.prepareTransaction(caller, "set_cooldown_period", [
+      addressToScVal(caller),
+      u64ToScVal(seconds),
+    ]);
+  }
+
+  /** Creates a remittance using corridor-specific fee rules for the given country pair. */
+  async createRemittanceWithCorridor(
+    sender: string,
+    agent: string,
+    amount: bigint,
+    expiry?: bigint,
+    fromCountry?: string,
+    toCountry?: string
+  ): Promise<Transaction> {
+    return this.prepareTransaction(sender, "create_remittance_with_corridor", [
+      addressToScVal(sender),
+      addressToScVal(agent),
+      i128ToScVal(amount),
+      optionToScVal(expiry !== undefined ? u64ToScVal(expiry) : undefined),
+      optionToScVal(fromCountry !== undefined ? stringToScVal(fromCountry) : undefined),
+      optionToScVal(toCountry !== undefined ? stringToScVal(toCountry) : undefined),
+    ]);
+  }
+
+  /** Creates multiple remittances atomically in a single call, emitting a batch-created event. */
+  async createBatchRemittance(sender: string, entries: BatchCreateEntry[]): Promise<Transaction> {
+    if (entries.length === 0) {
+      throw new SwiftRemitError(ErrorCode.InvalidBatchSize, "Batch must contain at least one entry");
+    }
+    if (entries.length > MAX_BATCH_SIZE) {
+      throw new SwiftRemitError(
+        ErrorCode.InvalidBatchSize,
+        `Batch size ${entries.length} exceeds MAX_BATCH_SIZE (${MAX_BATCH_SIZE})`
+      );
+    }
+    const entriesScVal = xdr.ScVal.scvVec(
+      entries.map((e) =>
+        xdr.ScVal.scvMap([
+          new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("agent"), val: addressToScVal(e.agent) }),
+          new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("amount"), val: i128ToScVal(e.amount) }),
+          new xdr.ScMapEntry({
+            key: xdr.ScVal.scvSymbol("expiry"),
+            val: optionToScVal(e.expiry !== undefined ? u64ToScVal(e.expiry) : undefined),
+          }),
+        ])
+      )
+    );
+    return this.prepareTransaction(sender, "create_batch_remittance", [
+      addressToScVal(sender),
+      entriesScVal,
+    ]);
+  }
+
+  /** Confirms payout for a batch of remittances in one call. Requires the assigned agent. */
+  async confirmBatchPayout(agent: string, remittanceIds: bigint[]): Promise<Transaction> {
+    return this.prepareTransaction(agent, "confirm_batch_payout", [
+      addressToScVal(agent),
+      xdr.ScVal.scvVec(remittanceIds.map((id) => u64ToScVal(id))),
+    ]);
+  }
+
+  /** Force-finalizes a remittance. Requires admin. */
+  async finalizeRemittance(caller: string, remittanceId: bigint): Promise<Transaction> {
+    return this.prepareTransaction(caller, "finalize_remittance", [
+      addressToScVal(caller),
+      u64ToScVal(remittanceId),
+    ]);
+  }
+
+  // ─── Transaction controller ──────────────────────────────────────────────────
+
+  /** Executes a full remittance + anchor transaction lifecycle. Requires user authorization. */
+  async executeTransaction(
+    user: string,
+    agent: string,
+    amount: bigint,
+    expiry?: bigint
+  ): Promise<Transaction> {
+    return this.prepareTransaction(user, "execute_transaction", [
+      addressToScVal(user),
+      addressToScVal(agent),
+      i128ToScVal(amount),
+      optionToScVal(expiry !== undefined ? u64ToScVal(expiry) : undefined),
+    ]);
+  }
+
+  /** Retries a previously failed transaction. */
+  async retryTransaction(caller: string, remittanceId: bigint): Promise<Transaction> {
+    return this.prepareTransaction(caller, "retry_transaction", [u64ToScVal(remittanceId)]);
+  }
+
+  /** Returns the transaction controller's audit record for a remittance. Throws {@link ErrorCode.TransactionNotFound}. */
+  async getTransactionStatus(sourceAddress: string, remittanceId: bigint): Promise<TransactionRecord> {
+    const val = await this.simulateCall(sourceAddress, "get_transaction_status", [u64ToScVal(remittanceId)]);
+    return parseTransactionRecord(val);
+  }
+
+  // ─── Settlement / netting ────────────────────────────────────────────────────
+
+  /** Settles a batch of remittances with net settlement optimization. */
+  async batchSettleWithNetting(caller: string, entries: BatchSettlementEntry[]): Promise<Transaction> {
+    return this.prepareTransaction(caller, "batch_settle_with_netting", [
+      xdr.ScVal.scvVec(entries.map(batchSettlementEntryToScVal)),
+    ]);
+  }
+
+  /** Computes the settlement hash that would be produced for a remittance. */
+  async computeSettlementHash(sourceAddress: string, remittanceId: bigint): Promise<string> {
+    const val = await this.simulateCall(sourceAddress, "compute_settlement_hash", [u64ToScVal(remittanceId)]);
+    return Buffer.from(scValToNative(val) as Uint8Array).toString("hex");
+  }
+
+  /** Returns the stored settlement hash for a completed remittance. */
+  async getSettlementHash(sourceAddress: string, remittanceId: bigint): Promise<string> {
+    const val = await this.simulateCall(sourceAddress, "get_settlement_hash", [u64ToScVal(remittanceId)]);
+    return Buffer.from(scValToNative(val) as Uint8Array).toString("hex");
+  }
+
+  /** Returns the timestamp of a sender's most recent settlement, or null if none. */
+  async getLastSettlementTime(sourceAddress: string, sender: string): Promise<bigint | null> {
+    const val = await this.simulateCall(sourceAddress, "get_last_settlement_time", [addressToScVal(sender)]);
+    const native = scValToNative(val);
+    return native != null ? BigInt(native as number) : null;
+  }
+
+  /** Returns the total volume currently in-flight (not yet settled), in stroops. */
+  async getInFlightVolume(sourceAddress: string): Promise<bigint> {
+    const val = await this.simulateCall(sourceAddress, "get_in_flight_volume", []);
+    return BigInt(scValToNative(val) as number);
+  }
+
+  // ─── Migration ───────────────────────────────────────────────────────────────
+
+  /** Exports a full contract-state snapshot for migration. Requires admin. */
+  async exportMigrationSnapshot(caller: string): Promise<MigrationSnapshot> {
+    const val = await this.simulateCall(caller, "export_migration_snapshot", [addressToScVal(caller)]);
+    return parseMigrationSnapshot(val);
+  }
+
+  // ─── Misc ────────────────────────────────────────────────────────────────────
+
+  /** Returns the deployed contract's semantic version string. */
+  async getVersion(sourceAddress: string): Promise<string> {
+    const val = await this.simulateCall(sourceAddress, "get_version", []);
+    return String(scValToNative(val));
+  }
+
+  // ─── DAO governance ──────────────────────────────────────────────────────────
+
+  /** One-time migration from single-admin to multi-admin DAO governance. Requires admin. Throws {@link ErrorCode.GovernanceAlreadyInitialized}. */
+  async migrateToGovernance(
+    caller: string,
+    quorum: number,
+    timelockSeconds: bigint,
+    proposalTtlSeconds: bigint
+  ): Promise<Transaction> {
+    return this.prepareTransaction(caller, "migrate_to_governance", [
+      addressToScVal(caller),
+      u32ToScVal(quorum),
+      u64ToScVal(timelockSeconds),
+      u64ToScVal(proposalTtlSeconds),
+    ]);
+  }
+
+  /** Expires a proposal whose TTL has elapsed. Anyone may call this. */
+  async expireProposal(caller: string, proposalId: bigint): Promise<Transaction> {
+    return this.prepareTransaction(caller, "expire_proposal", [u64ToScVal(proposalId)]);
+  }
+
+  /** Deletes already-executed or already-expired proposals to reclaim storage. */
+  async cleanupExpiredProposals(caller: string, proposalIds: bigint[]): Promise<Transaction> {
+    return this.prepareTransaction(caller, "cleanup_expired_proposals", [
+      addressToScVal(caller),
+      xdr.ScVal.scvVec(proposalIds.map((id) => u64ToScVal(id))),
+    ]);
+  }
+
+  /** Returns the list of current admin addresses. */
+  async getAdminList(sourceAddress: string): Promise<string[]> {
+    const val = await this.simulateCall(sourceAddress, "get_admin_list", []);
+    return (scValToNative(val) as { toString(): string }[]).map((a) => a.toString());
+  }
+
+  /** Returns the current governance quorum (number of approvals required). */
+  async getQuorum(sourceAddress: string): Promise<number> {
+    const val = await this.simulateCall(sourceAddress, "get_quorum", []);
+    return Number(scValToNative(val));
+  }
+
+  /** Returns the current governance timelock in seconds. */
+  async getTimelockSeconds(sourceAddress: string): Promise<bigint> {
+    const val = await this.simulateCall(sourceAddress, "get_timelock_seconds", []);
+    return BigInt(scValToNative(val) as number);
+  }
+
+  // ─── Multi-sig admin operations ─────────────────────────────────────────────
+
+  /** Proposes a high-impact admin operation (fee update, fee withdrawal, pause, unpause). */
+  async proposeOperation(
+    proposer: string,
+    operationType: AdminOperationType,
+    feeBps: number,
+    withdrawTo?: string
+  ): Promise<Transaction> {
+    return this.prepareTransaction(proposer, "propose_operation", [
+      addressToScVal(proposer),
+      adminOperationTypeToScVal(operationType),
+      u32ToScVal(feeBps),
+      optionToScVal(withdrawTo !== undefined ? addressToScVal(withdrawTo) : undefined),
+    ]);
+  }
+
+  /** Approves a pending multi-sig admin operation; auto-executes once the threshold is met. */
+  async approveOperation(approver: string, operationId: bigint): Promise<Transaction> {
+    return this.prepareTransaction(approver, "approve_operation", [
+      addressToScVal(approver),
+      u64ToScVal(operationId),
+    ]);
+  }
+
+  /** Expires a pending multi-sig operation whose TTL has elapsed. Anyone may call this. */
+  async expireOperation(caller: string, operationId: bigint): Promise<Transaction> {
+    return this.prepareTransaction(caller, "expire_operation", [u64ToScVal(operationId)]);
+  }
+
+  /** Returns a pending multi-sig admin operation by ID. Throws {@link ErrorCode.OperationNotFound}. */
+  async getPendingOperation(sourceAddress: string, operationId: bigint): Promise<PendingOperation> {
+    const val = await this.simulateCall(sourceAddress, "get_pending_operation", [u64ToScVal(operationId)]);
+    return parsePendingOperation(val);
+  }
+
+  /** Configures the multi-sig approval threshold and operation TTL. Requires admin. Throws {@link ErrorCode.InvalidMultiSigThreshold}. */
+  async setMultisigConfig(caller: string, threshold: number, ttlSeconds: bigint): Promise<Transaction> {
+    return this.prepareTransaction(caller, "set_multisig_config", [
+      addressToScVal(caller),
+      u32ToScVal(threshold),
+      u64ToScVal(ttlSeconds),
     ]);
   }
 

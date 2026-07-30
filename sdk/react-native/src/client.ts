@@ -52,10 +52,6 @@ export class SwiftRemitRNClient extends SwiftRemitClient {
     });
     const signedTx = TransactionBuilder.fromXDR(signedXdr, this._networkPassphrase);
     // Cast: fromXDR returns FeeBumpTransaction | Transaction; we know it's Transaction here
-    return this.submitTransaction(
-      signedTx as import('@stellar/stellar-sdk').Transaction,
-      // submitTransaction expects a Keypair but we've already signed — pass a no-op shim
-      { sign: () => {} } as any
-    );
+    return this.submitSignedTransaction(signedTx as import('@stellar/stellar-sdk').Transaction);
   }
 }
