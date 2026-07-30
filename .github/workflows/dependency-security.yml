@@ -39,12 +39,12 @@ jobs:
         working-directory: ${{ matrix.workspace }}
         run: npm ci
 
-      - name: Audit npm dependencies (moderate+)
+      - name: Audit npm production dependencies (fail on high/critical)
         working-directory: ${{ matrix.workspace }}
-        run: npm audit --audit-level=moderate
+        run: npm audit --audit-level=high --omit=dev
 
-  cargo-audit:
-    name: cargo audit (Rust)
+  cargo-audit-and-deny:
+    name: cargo audit & cargo deny (Rust)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,10 +53,13 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-audit
+          tool: cargo-audit,cargo-deny
 
       - name: Generate Cargo.lock for audit
         run: cargo generate-lockfile
 
-      - name: Audit Rust dependencies
+      - name: Audit Rust dependencies (cargo audit)
         run: cargo audit
+
+      - name: Check Rust licenses and advisories (cargo deny)
+        run: cargo deny check

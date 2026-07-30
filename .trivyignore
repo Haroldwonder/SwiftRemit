@@ -1,0 +1,3 @@
+# Trivy Vulnerability Exception Suppression List
+# All exceptions MUST comply with VULNERABILITY_EXCEPTIONS.md requirements.
+# Format: CVE-YYYY-NNNN (with mandatory justification and expiration date comments)
