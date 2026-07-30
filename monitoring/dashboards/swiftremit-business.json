@@ -146,6 +146,83 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 6,
+      "title": "DB Pool: Total, Idle, Waiting",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "db_pool_total_connections",
+          "legendFormat": "Total Connections",
+          "refId": "A"
+        },
+        {
+          "expr": "db_pool_idle_connections",
+          "legendFormat": "Idle Connections",
+          "refId": "B"
+        },
+        {
+          "expr": "db_pool_waiting_requests",
+          "legendFormat": "Waiting Requests",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 3 },
+              { "color": "red", "value": 8 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "DB Pool Acquire Latency (p50, p95, p99)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(db_pool_acquire_latency_ms_bucket[5m]))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(db_pool_acquire_latency_ms_bucket[5m]))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(db_pool_acquire_latency_ms_bucket[5m]))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "orange", "value": 500 },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        },
+        "overrides": []
+      }
     }
   ],
   "refresh": "30s",

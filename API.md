@@ -2,6 +2,84 @@
 
 Complete API documentation for the SwiftRemit smart contract.
 
+## Rate Limiting
+
+All API endpoints are subject to rate limiting to ensure fair usage and system stability. The API implements RFC 6585-compliant rate limiting with multiple tiers.
+
+### Rate Limit Tiers
+
+| Tier      | Limit                | Window    | Applies To                          |
+|-----------|----------------------|-----------|-------------------------------------|
+| **Global**   | 100 requests         | 15 minutes| All unauthenticated requests        |
+| **Per-Key**  | 200 requests         | 1 minute  | Authenticated API key requests      |
+| **Admin**    | 500 requests         | 1 minute  | Admin operations (x-api-key header) |
+| **Webhook**  | 1000 requests        | 1 minute  | Webhook endpoints                   |
+
+### Rate Limit Headers
+
+Every response includes the following RFC 6585-compliant headers:
+
+- `RateLimit-Limit`: Maximum number of requests allowed in the current window
+- `RateLimit-Remaining`: Number of requests remaining in the current window
+- `RateLimit-Reset`: ISO 8601 timestamp when the rate limit window resets
+
+### Rate Limit Exceeded Response
+
+When the rate limit is exceeded, the API returns:
+
+- HTTP Status: `429 Too Many Requests`
+- `Retry-After` header: Number of seconds to wait before retrying
+- Response body includes detailed error information
+
+**Example 429 Response:**
+
+```json
+{
+  "success": false,
+  "error": {
+    "message": "Too many requests from this IP, please try again later.",
+    "code": "RATE_LIMIT_EXCEEDED",
+    "retryAfter": 120,
+    "resetAt": "2026-07-30T12:30:00.000Z"
+  },
+  "timestamp": "2026-07-30T12:28:00.000Z"
+}
+```
+
+**Response Headers:**
+
+```
+HTTP/1.1 429 Too Many Requests
+RateLimit-Limit: 100
+RateLimit-Remaining: 0
+RateLimit-Reset: 2026-07-30T12:30:00.000Z
+Retry-After: 120
+```
+
+### Best Practices
+
+1. **Monitor Headers**: Check `RateLimit-Remaining` before making additional requests
+2. **Honor Retry-After**: When receiving a 429 response, wait at least `Retry-After` seconds before retrying
+3. **Implement Exponential Backoff**: For transient errors, use exponential backoff with jitter
+4. **Use API Keys**: Authenticate with `x-api-key` header for higher rate limits (per-key tier)
+5. **Cache Responses**: Cache responses when appropriate to reduce API calls
+6. **Batch Operations**: Use batch endpoints when available to reduce request count
+
+### Rate Limit Configuration
+
+Rate limits are configured via environment variables:
+
+- `RATE_LIMIT_WINDOW_MS`: Global rate limit window in milliseconds (default: 900000 = 15 minutes)
+- `RATE_LIMIT_MAX_REQUESTS`: Global rate limit max requests (default: 100)
+- `API_KEY_RATE_LIMIT_WINDOW_MS`: Per-key rate limit window in milliseconds (default: 60000 = 1 minute)
+- `API_KEY_RATE_LIMIT_MAX`: Per-key rate limit max requests (default: 200)
+- `ADMIN_RATE_LIMIT_WINDOW_MS`: Admin rate limit window in milliseconds (default: 60000 = 1 minute)
+- `ADMIN_RATE_LIMIT_MAX`: Admin rate limit max requests (default: 500)
+- `WEBHOOK_RATE_LIMIT_WINDOW_MS`: Webhook rate limit window in milliseconds (default: 60000 = 1 minute)
+- `WEBHOOK_RATE_LIMIT_MAX`: Webhook rate limit max requests (default: 1000)
+
+---
+
 ## REST API Endpoints
 
 ### POST /api/simulate-settlement

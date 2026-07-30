@@ -49,3 +49,74 @@ groups:
         annotations:
           summary: "SwiftRemit accumulated fees exceed threshold"
           description: "Accumulated completed transaction fees have exceeded the configured safe threshold. Review fee calculations, completed transaction volume, and potential accounting issues."
+
+  - name: swiftremit-db-pool-alerts
+    rules:
+      - alert: SwiftRemitDbPoolSaturated
+        # Fires when the number of waiting connection requests has been >= 3 for
+        # at least 1 minute.  This mirrors the server-side POOL_SATURATION_WAITING_THRESHOLD
+        # and POOL_SATURATION_DURATION_MS defaults, but evaluated at the scrape interval
+        # so alerting is not dependent on the process-level timer.
+        expr: db_pool_waiting_requests >= 3
+        for: 1m
+        labels:
+          severity: warning
+          team: backend
+          component: database
+        annotations:
+          summary: "SwiftRemit API database pool is saturated"
+          description: >
+            {{ $value }} connection requests have been waiting for a free pool slot for
+            more than 1 minute. Replicas with an exhausted pool will fail their /readyz
+            probe and be removed from the load-balancer. Check database load, slow queries,
+            and connection pool sizing (DB_POOL_MAX).
+
+      - alert: SwiftRemitDbPoolCritical
+        # Critical tier: waiting requests >= 8 sustained for 30 s.
+        # At this point the pool is almost certainly blocking all API traffic.
+        expr: db_pool_waiting_requests >= 8
+        for: 30s
+        labels:
+          severity: critical
+          team: backend
+          component: database
+        annotations:
+          summary: "SwiftRemit API database pool critically saturated"
+          description: >
+            {{ $value }} connection requests are waiting on a database pool slot. This is
+            likely causing widespread request timeouts. Immediately investigate database
+            health, long-running queries, and connection leaks. Consider scaling up replicas
+            or increasing DB_POOL_MAX.
+
+      - alert: SwiftRemitDbPoolAcquireLatencyHigh
+        # p95 acquire latency above 500 ms suggests pool exhaustion or slow queries
+        expr: |
+          histogram_quantile(0.95,
+            rate(db_pool_acquire_latency_ms_bucket[5m])
+          ) > 500
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+          component: database
+        annotations:
+          summary: "SwiftRemit DB pool acquire latency p95 is above 500 ms"
+          description: >
+            The 95th-percentile time to acquire a database connection has exceeded 500 ms
+            over the last 5 minutes. This indicates pool saturation or slow query load.
+            Current p95: {{ $value | humanizeDuration }}
+
+      - alert: SwiftRemitDbPoolIdleConnectionsZero
+        # No idle connections and non-zero waiting requests means the pool is full
+        expr: db_pool_idle_connections == 0 and db_pool_waiting_requests > 0
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+          component: database
+        annotations:
+          summary: "SwiftRemit DB pool has no idle connections"
+          description: >
+            The database pool has no idle connections and {{ $value }} requests are waiting.
+            All {{ $labels.instance }} pool slots are in use. Consider increasing DB_POOL_MAX
+            or optimizing query performance to reduce connection hold time.

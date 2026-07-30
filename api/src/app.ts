@@ -18,6 +18,8 @@ import { createAnalyticsRouter } from './routes/analytics';
 import { createAgentsRouter } from './routes/agents';
 import { createAuthRouter } from './routes/auth';
 import { createAccountsRouter } from './routes/accounts';
+import { createLivenessRouter, createReadinessRouter } from './routes/health';
+import { initPool, getPool } from './db/pool';
 import { ErrorResponse } from './types';
 import { AnchorStore } from './db/anchorStore';
 import { Server as SocketIOServer } from 'socket.io';
@@ -29,6 +31,8 @@ type AppOptions = {
   anchorAdminApiKey?: string;
   /** Socket.IO instance — when provided, mounts the /ws/health route */
   io?: SocketIOServer;
+  /** Instrumented database pool — when provided, mounts readiness checks */
+  pool?: Pool;
 } & RemittancesRouterOptions;
 
 async function probeUrl(urlString: string, timeoutMs = 2000): Promise<{ status: number; ok: boolean; message?: string }> {
@@ -111,9 +115,9 @@ async function checkContractReachability() {
 
 export function createApp(options: AppOptions = {}): Application {
   const app = express();
-  const healthDbPool = process.env.DATABASE_URL
-    ? new Pool({ connectionString: process.env.DATABASE_URL, max: 1 })
-    : undefined;
+
+  // Initialize instrumented pool if DATABASE_URL is configured
+  const pool = options.pool ?? (process.env.DATABASE_URL ? initPool() : null);
 
   // Security middleware
   app.use(helmet());
@@ -126,10 +130,16 @@ export function createApp(options: AppOptions = {}): Application {
   app.use('/api/', limiter);
   app.use(addRateLimitHeaders);
 
-  // Health check endpoint
+  // ─── Health probes (Issue #1134) ────────────────────────────────────────────
+  // Liveness: process is alive
+  app.use('/healthz', createLivenessRouter());
+  // Readiness: DB reachable, migrations applied, pool not saturated
+  app.use('/readyz', createReadinessRouter(pool));
+
+  // ─── Legacy /health endpoint (deprecated; kept for backward compat) ─────────
   app.get('/health', async (req: Request, res: Response) => {
     const [dbResult, contractResult] = await Promise.all([
-      checkDatabaseConnectivity(healthDbPool),
+      checkDatabaseConnectivity(pool ?? undefined),
       checkContractReachability(),
     ]);
 
@@ -171,9 +181,9 @@ export function createApp(options: AppOptions = {}): Application {
   app.use('/api/admin', createAdminRouter());
 
   // Corridor analytics (Issue #482)
-  const analyticsPool = process.env.DATABASE_URL
+  const analyticsPool = pool ?? (process.env.DATABASE_URL
     ? new Pool({ connectionString: process.env.DATABASE_URL, max: 5 })
-    : null;
+    : null);
   if (analyticsPool) {
     app.use('/api/analytics', createAnalyticsRouter(analyticsPool, options.anchorAdminApiKey ?? process.env.ANALYTICS_ADMIN_API_KEY));
   }
@@ -228,3 +238,8 @@ export function createApp(options: AppOptions = {}): Application {
 
   return app;
 }
+
+/**
+ * Export getPool so index.ts can use it for clean shutdown.
+ */
+export { getPool };

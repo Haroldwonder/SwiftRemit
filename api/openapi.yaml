@@ -2,7 +2,61 @@ openapi: 3.0.0
 info:
   title: SwiftRemit API Service
   version: 1.0.0
-  description: API service for SwiftRemit currency configuration and anchor management
+  description: |
+    API service for SwiftRemit currency configuration and anchor management
+    
+    ## Rate Limiting
+    
+    All API endpoints are subject to rate limiting to ensure fair usage and system stability.
+    The API implements RFC 6585-compliant rate limiting with the following tiers:
+    
+    ### Rate Limit Tiers
+    
+    | Tier      | Limit                | Window    | Applies To                          |
+    |-----------|----------------------|-----------|-------------------------------------|
+    | **Global**   | 100 requests         | 15 minutes| All unauthenticated requests        |
+    | **Per-Key**  | 200 requests         | 1 minute  | Authenticated API key requests      |
+    | **Admin**    | 500 requests         | 1 minute  | Admin operations (x-api-key header) |
+    | **Webhook**  | 1000 requests        | 1 minute  | Webhook endpoints                   |
+    
+    ### Rate Limit Headers
+    
+    Every response includes the following RFC 6585-compliant headers:
+    
+    - `RateLimit-Limit`: Maximum number of requests allowed in the current window
+    - `RateLimit-Remaining`: Number of requests remaining in the current window
+    - `RateLimit-Reset`: ISO 8601 timestamp when the rate limit window resets
+    
+    When the rate limit is exceeded, the API returns:
+    
+    - HTTP Status: `429 Too Many Requests`
+    - `Retry-After` header: Number of seconds to wait before retrying
+    - Response body includes `retryAfter` (seconds) and `resetAt` (ISO 8601 timestamp)
+    
+    ### Example Response Headers
+    
+    **Successful Request (200 OK):**
+    ```
+    RateLimit-Limit: 100
+    RateLimit-Remaining: 87
+    RateLimit-Reset: 2026-07-30T12:30:00.000Z
+    ```
+    
+    **Rate Limit Exceeded (429 Too Many Requests):**
+    ```
+    RateLimit-Limit: 100
+    RateLimit-Remaining: 0
+    RateLimit-Reset: 2026-07-30T12:30:00.000Z
+    Retry-After: 120
+    ```
+    
+    ### Best Practices
+    
+    1. **Monitor Headers**: Check `RateLimit-Remaining` before making additional requests
+    2. **Honor Retry-After**: When receiving a 429 response, wait at least `Retry-After` seconds
+    3. **Implement Exponential Backoff**: For transient errors, use exponential backoff with jitter
+    4. **Use API Keys**: Authenticate with `x-api-key` header for higher rate limits
+    
   contact:
     name: SwiftRemit Team
 
