@@ -65,10 +65,8 @@ jobs:
         with:
           node-version: 20.x
           cache: npm
-          cache-dependency-path: backend/package-lock.json
       - run: npm ci
-        working-directory: backend
-      - run: npx tsc --noEmit
+      - run: npm run typecheck
         working-directory: backend
 
   api-typecheck:
@@ -80,10 +78,8 @@ jobs:
         with:
           node-version: 20.x
           cache: npm
-          cache-dependency-path: api/package-lock.json
       - run: npm ci
-        working-directory: api
-      - run: npx tsc --noEmit
+      - run: npm run typecheck
         working-directory: api
 
   frontend-typecheck:
@@ -95,10 +91,8 @@ jobs:
         with:
           node-version: 20.x
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-        working-directory: frontend
-      - run: npx tsc --noEmit
+      - run: npm run typecheck
         working-directory: frontend
 
   # ── Backend (Node.js / TypeScript) ─────────────────────────────────────────
@@ -111,9 +105,7 @@ jobs:
         with:
           node-version: 20.x
           cache: npm
-          cache-dependency-path: backend/package-lock.json
       - run: npm ci
-        working-directory: backend
       - run: npm run lint
         working-directory: backend
 
@@ -140,9 +132,7 @@ jobs:
         with:
           node-version: 20.x
           cache: npm
-          cache-dependency-path: backend/package-lock.json
       - run: npm ci
-        working-directory: backend
       - name: Run migrations
         working-directory: backend
         env:
@@ -164,9 +154,7 @@ jobs:
         with:
           node-version: 20.x
           cache: npm
-          cache-dependency-path: api/package-lock.json
       - run: npm ci
-        working-directory: api
       - run: npm run lint || echo "Linter not configured yet"
         working-directory: api
 
@@ -179,9 +167,7 @@ jobs:
         with:
           node-version: 20.x
           cache: npm
-          cache-dependency-path: api/package-lock.json
       - run: npm ci
-        working-directory: api
       - run: npm test
         working-directory: api
 
@@ -196,9 +182,7 @@ jobs:
         with:
           node-version: 20.x
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-        working-directory: frontend
       - run: npm run lint
         working-directory: frontend
 
@@ -211,9 +195,7 @@ jobs:
         with:
           node-version: 20.x
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-        working-directory: frontend
       - name: Run vitest coverage (enforce 95% gate)
         run: npm run test:coverage
         working-directory: frontend
@@ -240,9 +222,7 @@ jobs:
         with:
           node-version: 20.x
           cache: npm
-          cache-dependency-path: sdk/package-lock.json
       - run: npm ci
-        working-directory: sdk
       - run: npm run build
         working-directory: sdk
       - name: Check gzipped browser bundle size

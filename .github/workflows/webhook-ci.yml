@@ -44,10 +44,8 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
 
       - name: Install dependencies
-        working-directory: ./backend
         run: npm ci
 
       - name: Setup database
@@ -92,7 +90,6 @@ jobs:
           node-version: 20.x
 
       - name: Install dependencies
-        working-directory: ./backend
         run: npm ci
 
       - name: Run security audit
@@ -112,7 +109,6 @@ jobs:
           node-version: 20.x
 
       - name: Install dependencies
-        working-directory: ./backend
         run: npm ci
 
       - name: Run TypeScript checks
@@ -151,7 +147,6 @@ jobs:
           node-version: 20.x
 
       - name: Install dependencies
-        working-directory: ./backend
         run: npm ci
 
       - name: Setup database

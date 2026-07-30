@@ -1,15 +1,26 @@
 FROM node:20-alpine AS base
 WORKDIR /app
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Copy workspace manifests and root lockfile for workspace-aware install
+COPY package.json package-lock.json ./
+COPY backend/package.json ./backend/
+COPY sdk/package.json ./sdk/
+COPY sdk/react-native/package.json ./sdk/react-native/
+COPY api/package.json ./api/
+COPY frontend/package.json ./frontend/
+COPY mobile/package.json ./mobile/
+COPY examples/package.json ./examples/
 
-# Install dependencies
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+# Install only backend + sdk workspace dependencies
+RUN npm ci --workspace=backend --workspace=sdk --ignore-scripts
 
-# Copy source
-COPY . .
+# Copy workspace source files
+COPY backend/ ./backend/
+COPY sdk/ ./sdk/
+
+# Build the SDK first (backend depends on it)
+RUN npm run build --workspace=sdk
 
 # Run migrations then start in dev mode (hot-reload via tsx watch)
-CMD ["sh", "-c", "pnpm run migrate && pnpm run dev"]
+WORKDIR /app/backend
+CMD ["sh", "-c", "npm run migrate && npm run dev"]

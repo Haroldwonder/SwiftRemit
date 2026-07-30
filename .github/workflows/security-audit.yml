@@ -39,47 +39,16 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Check package-lock.json exists
-        id: check-lock
-        run: |
-          if [ -f "${{ matrix.service }}/package-lock.json" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          elif [ -f "${{ matrix.service }}/pnpm-lock.yaml" ]; then
-            echo "exists=pnpm" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Install dependencies (npm)
-        if: steps.check-lock.outputs.exists == 'true'
-        working-directory: ${{ matrix.service }}
+      - name: Install dependencies (workspace root)
         run: npm ci --ignore-scripts
 
-      - name: Install pnpm
-        if: steps.check-lock.outputs.exists == 'pnpm'
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
-      - name: Install dependencies (pnpm)
-        if: steps.check-lock.outputs.exists == 'pnpm'
-        working-directory: ${{ matrix.service }}
-        run: pnpm install --frozen-lockfile --ignore-scripts
-
       - name: Run npm audit (high/critical only)
-        if: steps.check-lock.outputs.exists == 'true'
         working-directory: ${{ matrix.service }}
         run: npm audit --audit-level=high --json | tee npm-audit-${{ matrix.service }}.json; npm audit --audit-level=high
         continue-on-error: false
 
-      - name: Run pnpm audit (high/critical only)
-        if: steps.check-lock.outputs.exists == 'pnpm'
-        working-directory: ${{ matrix.service }}
-        run: pnpm audit --audit-level=high
-        continue-on-error: false
-
       - name: Upload audit report
-        if: always() && steps.check-lock.outputs.exists != 'false'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: npm-audit-${{ matrix.service }}

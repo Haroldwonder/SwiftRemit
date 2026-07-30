@@ -29,10 +29,8 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
-          cache-dependency-path: api/package-lock.json
 
       - name: Install dependencies
-        working-directory: ./api
         run: npm ci
 
       - name: Run linter
@@ -72,7 +70,6 @@ jobs:
           node-version: 20.x
 
       - name: Install dependencies
-        working-directory: ./api
         run: npm ci
 
       - name: Run security audit
@@ -92,7 +89,6 @@ jobs:
           node-version: 20.x
 
       - name: Install dependencies
-        working-directory: ./api
         run: npm ci
 
       - name: Run tests with coverage

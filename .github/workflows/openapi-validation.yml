@@ -27,10 +27,8 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: api/package-lock.json
       
       - name: Install dependencies
-        working-directory: ./api
         run: npm ci
       
       - name: Generate API OpenAPI spec
@@ -59,10 +57,8 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
       
       - name: Install dependencies
-        working-directory: ./backend
         run: npm ci
       
       - name: Generate Backend OpenAPI spec
