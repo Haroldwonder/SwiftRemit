@@ -45,3 +45,10 @@ export interface SendMoneyFormData {
   amountUSD: string;
   memo: string;
 }
+
+// ─── Push notification data (deep-link payload) ───────────────────────────────
+
+/** Typed payload embedded in every push notification's `data` field. */
+export type PushNotificationData =
+  | { type: 'remittance'; remittanceId: string }
+  | { type: 'kyc' };
