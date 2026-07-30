@@ -47,7 +47,29 @@
 
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
-use crate::{AgentStats, ContractError, DailyLimit, Remittance, SenderVolumeEntry, TransferRecord};
+use crate::config::PROCESSING_WINDOW_LEDGERS;
+use crate::{
+    AgentStats, ContractError, DailyLimit, Remittance, RemittanceStatus, SenderVolumeEntry,
+    TransferRecord,
+};
+
+/// Rolling window over which an agent's daily payout cap is enforced.
+pub const AGENT_CAP_WINDOW_SECONDS: u64 = 86_400;
+
+/// Default window, in seconds, during which a completed remittance may be disputed.
+pub const DEFAULT_DISPUTE_WINDOW_SECONDS: u64 = 604_800; // 7 days
+
+/// How long an admin nomination stays valid before it must be re-issued.
+pub const ADMIN_NOMINATION_EXPIRY_SECONDS: u64 = 48 * 3600;
+
+/// Packed record for an admin nomination: proposed address + expiry timestamp.
+#[contracttype]
+#[derive(Clone)]
+pub struct AdminNomination {
+    pub nominee: Address,
+    pub expires_at: u64,
+    pub nominator: Address,
+}
 
 /// Storage keys for the SwiftRemit contract.
 ///
@@ -283,6 +305,61 @@ enum DataKey {
 
     /// Accumulated corridor volume within the current window, indexed by (currency, country).
     CorridorVolumeAccumulated(String, String),
+
+    // === Admin/Agent Lists ===
+    /// Ordered list of all admin addresses (instance storage).
+    AdminList,
+
+    /// Ordered list of all registered agent addresses (instance storage).
+    AgentList,
+
+    // === Remittance Indexes ===
+    /// Remittance IDs created by a sender (persistent storage).
+    SenderRemittances(Address),
+
+    /// Remittance IDs assigned to an agent (persistent storage).
+    AgentRemittances(Address),
+
+    // === In-Flight Volume ===
+    /// Total value of remittances currently in the Processing state (instance storage).
+    TotalProcessingVolume,
+
+    // === Expiry Sweeps ===
+    /// Maximum number of remittances that may be expired in one batch (instance storage).
+    MaxExpiredBatchSize,
+
+    // === Migration ===
+    /// Set while a storage migration is in progress (instance storage).
+    MigrationInProgress,
+
+    // === Recipient Verification ===
+    /// Recipient hash record for a remittance (persistent storage).
+    RecipientHash(u64),
+
+    // === Rate Limiting ===
+    /// Global rate-limit configuration (instance storage).
+    RateLimitConfig,
+
+    /// Rolling rate-limit window for an address (temporary storage).
+    RateLimitWindow(Address),
+
+    // === Abuse Protection ===
+    /// Decay rate, in basis points, applied to abuse cooldowns (instance storage).
+    AbuseCooldownDecayRateBps,
+
+    // === Corridor Volume Limits ===
+    /// Daily volume cap for a corridor, indexed by (from_country, to_country).
+    CorridorCap(String, String),
+
+    /// Rolling daily volume for a corridor: (from_country, to_country) -> (window_start, volume).
+    CorridorVolume(String, String),
+
+    // === Admin Key Rotation ===
+    /// Nominated new admin address and the expiry timestamp of the nomination.
+    NominatedAdmin,
+
+    /// Seconds that must elapse between governance approval and execution (instance storage).
+    GovernanceTimelockSeconds,
 }
 
 /// Checks if the contract has an admin configured.
@@ -443,7 +520,7 @@ pub fn set_remittance(env: &Env, id: u64, remittance: &Remittance) {
         .set(&key, remittance);
 
     if remittance.status == RemittanceStatus::Pending || remittance.status == RemittanceStatus::Processing {
-        extend_remittance_ttl(env, id);
+        touch_remittance_ttl(env, id);
     }
 }
 
@@ -463,19 +540,20 @@ pub fn set_remittance(env: &Env, id: u64, remittance: &Remittance) {
 /// * `Err(ContractError::RemittanceNotFound)` - Remittance does not exist
 pub fn get_remittance(env: &Env, id: u64) -> Result<Remittance, ContractError> {
     let key = DataKey::Remittance(id);
-    let remittance = env.storage()
+    let remittance: Remittance = env
+        .storage()
         .persistent()
         .get(&key)
         .ok_or(ContractError::RemittanceNotFound)?;
 
     if remittance.status == RemittanceStatus::Pending || remittance.status == RemittanceStatus::Processing {
-        extend_remittance_ttl(env, id);
+        touch_remittance_ttl(env, id);
     }
 
     Ok(remittance)
 }
 
-/// Extends the TTL of a remittance entry by PROCESSING_WINDOW_LEDGERS.
+/// Extends the TTL of a remittance entry by `PROCESSING_WINDOW_LEDGERS`.
 ///
 /// Called automatically on read/write of active remittances to keep entries
 /// alive throughout their lifetime in the system.
@@ -484,8 +562,7 @@ pub fn get_remittance(env: &Env, id: u64) -> Result<Remittance, ContractError> {
 ///
 /// * `env` - The contract execution environment
 /// * `id` - Remittance ID whose TTL to extend
-fn extend_remittance_ttl(env: &Env, id: u64) {
-    use crate::config::PROCESSING_WINDOW_LEDGERS;
+fn touch_remittance_ttl(env: &Env, id: u64) {
     let key = DataKey::Remittance(id);
     let ttl_ledgers = PROCESSING_WINDOW_LEDGERS;
     env.storage()
@@ -1998,5 +2075,424 @@ pub fn check_and_increment_corridor_volume(
             &new_volume,
         );
 
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Restored accessors
+//
+// These helpers were dropped from this module by an earlier bad merge
+// (879410eb) while their callers in lib.rs, migration.rs, governance.rs and
+// recipient_verification.rs were left in place, which broke the build.
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub fn add_agent_to_list(env: &Env, agent: &Address) {
+    let mut list = get_agent_list(env);
+    for i in 0..list.len() { if list.get_unchecked(i) == *agent { return; } }
+    list.push_back(agent.clone());
+    env.storage().instance().set(&DataKey::AgentList, &list);
+}
+
+/// Adds `amount` to the disbursed total for a remittance.
+pub fn add_disbursed_amount(env: &Env, remittance_id: u64, amount: i128) -> Result<(), ContractError> {
+    let current = get_disbursed_amount(env, remittance_id);
+    let next = current.checked_add(amount).ok_or(ContractError::Overflow)?;
+    env.storage()
+        .persistent()
+        .set(&DataKey::DisbursedAmount(remittance_id), &next);
+    Ok(())
+}
+
+/// Adds `amount` to the in-flight processing volume when a remittance enters Processing.
+pub fn add_processing_volume(env: &Env, amount: i128) -> Result<(), ContractError> {
+    let current = get_total_processing_volume(env);
+    let next = current.checked_add(amount).ok_or(ContractError::Overflow)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalProcessingVolume, &next);
+    Ok(())
+}
+
+/// Appends a remittance ID to the agent's persistent remittance index.
+pub fn append_agent_remittance(env: &Env, agent: &Address, remittance_id: u64) {
+    let key = DataKey::AgentRemittances(agent.clone());
+    let mut ids: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    ids.push_back(remittance_id);
+    env.storage().persistent().set(&key, &ids);
+}
+
+/// Appends a partial payout record to the remittance's disbursement history.
+pub fn append_partial_payout_record(
+    env: &Env,
+    remittance_id: u64,
+    record: crate::PartialPayoutRecord,
+) {
+    let mut history: Vec<crate::PartialPayoutRecord> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::PartialPayoutHistory(remittance_id))
+        .unwrap_or_else(|| Vec::new(env));
+    history.push_back(record);
+    env.storage()
+        .persistent()
+        .set(&DataKey::PartialPayoutHistory(remittance_id), &history);
+}
+
+/// Appends a remittance ID to the sender's persistent remittance index.
+pub fn append_sender_remittance(env: &Env, sender: &Address, remittance_id: u64) {
+    let key = DataKey::SenderRemittances(sender.clone());
+    let mut ids: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    ids.push_back(remittance_id);
+    env.storage().persistent().set(&key, &ids);
+}
+
+/// Checks and records an agent withdrawal against the rolling cap.
+/// Returns `Err(ContractError::DailySendLimitExceeded)` if the cap would be breached.
+pub fn check_and_record_agent_withdrawal(
+    env: &Env,
+    agent: &Address,
+    amount: i128,
+) -> Result<(), ContractError> {
+    let cap = get_agent_daily_cap(env, agent);
+    if cap == 0 {
+        return Ok(()); // no cap configured
+    }
+
+    let now = env.ledger().timestamp();
+    let window_start = now.saturating_sub(AGENT_CAP_WINDOW_SECONDS);
+
+    let records: Vec<TransferRecord> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::AgentWithdrawals(agent.clone()))
+        .unwrap_or(Vec::new(env));
+
+    let mut pruned = Vec::new(env);
+    let mut rolling: i128 = 0;
+
+    for i in 0..records.len() {
+        let r = records.get_unchecked(i);
+        if r.timestamp > window_start {
+            rolling = rolling.checked_add(r.amount).ok_or(ContractError::Overflow)?;
+            pruned.push_back(r);
+        }
+    }
+
+    let next = rolling.checked_add(amount).ok_or(ContractError::Overflow)?;
+    if next > cap {
+        return Err(ContractError::DailySendLimitExceeded);
+    }
+
+    let empty_str = soroban_sdk::String::from_str(env, "");
+    pruned.push_back(TransferRecord {
+        timestamp: now,
+        amount,
+        currency: empty_str.clone(),
+        country: empty_str,
+    });
+    env.storage()
+        .persistent()
+        .set(&DataKey::AgentWithdrawals(agent.clone()), &pruned);
+
+    Ok(())
+}
+
+/// Clears the admin nomination.
+pub fn clear_admin_nomination(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::NominatedAdmin);
+}
+
+/// Clears the pending admin proposal.
+pub fn clear_pending_admin(env: &Env) {
+    env.storage().instance().remove(&DataKey::PendingAdmin);
+}
+
+/// Extend TTLs for critical instance and persistent storage keys.
+///
+/// Called by the `extend_storage_ttl` admin function (and the backend scheduler)
+/// to prevent data loss from TTL expiry.
+///
+/// Storage key TTL strategy:
+/// - **Instance storage** (Admin, UsdcToken, PlatformFeeBps, counters, fees):
+///   Extended via `env.storage().instance().extend_ttl()`.
+/// - **Persistent storage** (Remittances, AgentRegistered, DailyLimit, UserTransfers):
+///   Each key must be extended individually; this function bumps the remittance
+///   counter range and agent-related keys that are known at call time.
+///
+/// # Arguments
+/// * `env` - Contract environment
+/// * `extend_by_ledgers` - Number of ledgers to extend TTL by (capped at 3_110_400)
+pub fn extend_critical_ttls(env: &Env, extend_by_ledgers: u32) {
+    // Cap at ~1 year of ledgers (5-second ledger time)
+    let ledgers = extend_by_ledgers.min(3_110_400);
+
+    // Bump instance storage (covers all instance-stored keys as a group)
+    env.storage()
+        .instance()
+        .extend_ttl(ledgers, ledgers);
+
+    // Bump persistent remittance records up to the current counter
+    let counter = env
+        .storage()
+        .instance()
+        .get::<DataKey, u64>(&DataKey::RemittanceCounter)
+        .unwrap_or(0);
+
+    for id in 0..counter {
+        let key = DataKey::Remittance(id);
+        if env.storage().persistent().has(&key) {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, ledgers, ledgers);
+        }
+    }
+
+    // Bump per-agent persistent keys so agents never lose their registration status.
+    let agents = get_agent_list(env);
+    for i in 0..agents.len() {
+        let agent = agents.get_unchecked(i);
+
+        let key = DataKey::AgentRegistered(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+
+        let key = DataKey::AgentKycHash(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+
+        let key = DataKey::AgentStats(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+
+        let key = DataKey::AgentDailyCap(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+    }
+}
+
+/// Extends the persistent storage TTL for a remittance record by `ledgers`.
+///
+/// Called when a remittance transitions to Processing so the escrow entry
+/// does not expire before the agent completes the off-chain fiat payout.
+pub fn extend_remittance_ttl(env: &Env, remittance_id: u64, ledgers: u32) {
+    let key = DataKey::Remittance(remittance_id);
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+    }
+}
+
+/// Returns the configured abuse cooldown decay rate in basis points.
+///
+/// The decay rate controls how quickly cooldown periods shrink after violations.
+/// A rate of 5000 bps (50%) halves the cooldown each decay step (every 24h).
+/// Returns 5000 (50%) by default if not explicitly configured.
+pub fn get_abuse_cooldown_decay_rate_bps(env: &Env) -> u128 {
+    env.storage()
+        .instance()
+        .get::<DataKey, u32>(&DataKey::AbuseCooldownDecayRateBps)
+        .unwrap_or(5_000) as u128
+}
+
+/// Returns the current admin nomination, if any.
+pub fn get_admin_nomination(env: &Env) -> Option<AdminNomination> {
+    env.storage()
+        .instance()
+        .get(&DataKey::NominatedAdmin)
+}
+
+/// Returns the per-agent daily withdrawal cap (0 = no cap).
+pub fn get_agent_daily_cap(env: &Env, agent: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AgentDailyCap(agent.clone()))
+        .unwrap_or(0)
+}
+
+// === Agent List Index ===
+pub fn get_agent_list(env: &Env) -> soroban_sdk::Vec<Address> {
+    env.storage().instance().get(&DataKey::AgentList).unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+
+/// Returns all remittance IDs for an agent.
+pub fn get_agent_remittances(env: &Env, agent: &Address) -> soroban_sdk::Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AgentRemittances(agent.clone()))
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+
+/// Returns the current corridor daily cap (0 = no cap configured).
+pub fn get_corridor_cap(env: &Env, from_country: &String, to_country: &String) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CorridorCap(from_country.clone(), to_country.clone()))
+        .unwrap_or(0)
+}
+
+/// Returns the total amount already disbursed for a remittance.
+pub fn get_disbursed_amount(env: &Env, remittance_id: u64) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::DisbursedAmount(remittance_id))
+        .unwrap_or(0)
+}
+
+/// Returns the configured dispute window in seconds.
+pub fn get_dispute_window(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::DisputeWindow)
+        .unwrap_or(DEFAULT_DISPUTE_WINDOW_SECONDS)
+}
+
+// === Min Agent Reputation Threshold ===
+pub fn get_min_agent_reputation(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::MinAgentReputation).unwrap_or(0)
+}
+
+/// Returns the full list of partial payout records for a remittance.
+pub fn get_partial_payout_history(
+    env: &Env,
+    remittance_id: u64,
+) -> Vec<crate::PartialPayoutRecord> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PartialPayoutHistory(remittance_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Returns the pending admin address, if any.
+pub fn get_pending_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::PendingAdmin)
+}
+
+/// Retrieves the recipient hash record for a remittance, if one was registered.
+pub fn get_recipient_hash_record(
+    env: &Env,
+    remittance_id: u64,
+) -> Option<crate::recipient_verification::RecipientHashRecord> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RecipientHash(remittance_id))
+}
+
+/// Returns the global remittance auto-expiry window in seconds (0 = disabled).
+pub fn get_remittance_expiry_window(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::RemittanceExpiryWindow)
+        .unwrap_or(0)
+}
+
+/// Returns all remittance IDs for a sender.
+///
+/// The caller is responsible for applying pagination (offset/limit) to avoid
+/// returning unbounded data in a single call.
+pub fn get_sender_remittances(env: &Env, sender: &Address) -> soroban_sdk::Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::SenderRemittances(sender.clone()))
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+}
+
+/// Returns the total amount currently held in Processing (in-flight) remittances.
+pub fn get_total_processing_volume(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::TotalProcessingVolume)
+        .unwrap_or(0)
+}
+
+pub fn remove_agent_from_list(env: &Env, agent: &Address) {
+    let list = get_agent_list(env);
+    let mut new_list: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(env);
+    for i in 0..list.len() { let e = list.get_unchecked(i); if e != *agent { new_list.push_back(e); } }
+    env.storage().instance().set(&DataKey::AgentList, &new_list);
+}
+
+/// Sets the abuse cooldown decay rate in basis points (0–10000).
+pub fn set_abuse_cooldown_decay_rate_bps(env: &Env, rate_bps: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::AbuseCooldownDecayRateBps, &rate_bps);
+}
+
+/// Stores an admin nomination.
+pub fn set_admin_nomination(env: &Env, nomination: &AdminNomination) {
+    env.storage()
+        .instance()
+        .set(&DataKey::NominatedAdmin, nomination);
+}
+
+/// Sets the per-agent daily withdrawal cap.
+pub fn set_agent_daily_cap(env: &Env, agent: &Address, cap: i128) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::AgentDailyCap(agent.clone()), &cap);
+}
+
+/// Sets the daily volume cap for a corridor (admin only, enforced at call site).
+pub fn set_corridor_cap(env: &Env, from_country: &String, to_country: &String, cap: i128) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::CorridorCap(from_country.clone(), to_country.clone()), &cap);
+}
+
+/// Sets the dispute window (admin only, enforced at call site).
+pub fn set_dispute_window(env: &Env, seconds: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::DisputeWindow, &seconds);
+}
+
+pub fn set_min_agent_reputation(env: &Env, threshold: u32) {
+    env.storage().instance().set(&DataKey::MinAgentReputation, &threshold);
+}
+
+/// Stores the proposed new admin address.
+pub fn set_pending_admin(env: &Env, new_admin: &Address) {
+    env.storage().instance().set(&DataKey::PendingAdmin, new_admin);
+}
+
+/// Stores a recipient hash record for a remittance.
+pub fn set_recipient_hash(
+    env: &Env,
+    remittance_id: u64,
+    record: &crate::recipient_verification::RecipientHashRecord,
+) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::RecipientHash(remittance_id), record);
+}
+
+/// Sets the global remittance auto-expiry window in seconds.
+/// A value of 0 disables auto-expiry for newly created remittances.
+pub fn set_remittance_expiry_window(env: &Env, seconds: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::RemittanceExpiryWindow, &seconds);
+}
+
+/// Subtracts `amount` from the in-flight processing volume when a remittance leaves Processing.
+pub fn sub_processing_volume(env: &Env, amount: i128) -> Result<(), ContractError> {
+    let current = get_total_processing_volume(env);
+    let next = current.saturating_sub(amount);
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalProcessingVolume, &next);
     Ok(())
 }

@@ -551,12 +551,6 @@ pub fn emit_proposal_cleaned_up(env: &Env, proposal_id: u64) {
     );
 }
 
-/// Emits when an agent's reputation score falls below the minimum threshold (#833).
-/// Fired during the reputation gate check in `create_remittance`.
-pub fn emit_agent_suspended(env: &Env, agent: Address, reputation: u32, min_threshold: u32) {
-    emit_event!(env, "agent", "suspnded", agent, reputation, min_threshold);
-}
-
 /// Emits when an agent's reputation score drops below the minimum threshold (#833).
 ///
 /// Fired at the point of the failed eligibility check inside `create_remittance`
@@ -607,14 +601,6 @@ pub fn emit_admin_transfer_accepted(env: &Env, old_admin: Address, new_admin: Ad
             new_admin,
         ),
     );
-}
-
-pub fn emit_dispute_resolved(env: &Env, id: u64, in_favour_of_sender: bool) {
-    env.events().publish((Symbol::new(env, "dispute_resolved"), id), in_favour_of_sender);
-}
-
-pub fn emit_remittance_failed(env: &Env, id: u64, agent: Address) {
-    env.events().publish((Symbol::new(env, "remittance_failed"), id), agent);
 }
 
 // ── Multi-Sig Events ──────────────────────────────────────────────

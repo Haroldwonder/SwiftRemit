@@ -320,4 +320,39 @@ pub enum ContractError {
 
     /// Evidence hash for a dispute is not a valid 32-byte SHA-256 commitment.
     MalformedEvidenceHash = 83,
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Restored Variants (70-79)
+    //
+    // These were dropped by an earlier bad merge (879410eb) while their call
+    // sites remained. Codes 64, 67 and 69 were reused in the meantime, so the
+    // three variants that held them are reassigned to free codes here.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// The requested record does not exist.
+    NotFound = 70,
+
+    /// Post-migration validation detected inconsistent storage state.
+    MigrationValidationFailed = 72,
+
+    /// No pause record exists for the requested sequence number.
+    PauseRecordNotFound = 73,
+
+    /// The dispute window for this remittance has already closed.
+    DisputeWindowExpired = 74,
+
+    /// The remittance has no recipient hash committed on-chain.
+    MissingRecipientHash = 75,
+
+    /// The stored recipient hash uses a different schema version than supplied.
+    RecipientHashSchemaMismatch = 76,
+
+    /// The supplied recipient details do not match the committed hash.
+    RecipientHashMismatch = 77,
+
+    /// Timelock duration is outside the permitted range.
+    InvalidTimelockDuration = 78,
+
+    /// Agent reputation is below the configured minimum for this operation.
+    BelowMinReputation = 79,
 }
