@@ -111,7 +111,7 @@ fn test_three_admin_fee_change_end_to_end() {
     assert_eq!(p.state, ProposalState::Executed);
 
     // Fee is now updated
-    let fee = client.get_platform_fee_bps().unwrap();
+    let fee = client.get_platform_fee_bps();
     assert_eq!(fee, new_fee_bps);
 }
 

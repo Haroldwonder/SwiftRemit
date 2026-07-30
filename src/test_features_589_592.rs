@@ -102,7 +102,7 @@ fn remit(f: &F, amount: i128) -> u64 {
     ];
     let ids = f.c.create_batch_remittance(&f.sender, &entries);
     let before = bal(&f.env, &f.tok, &f.agent);
-    f.c.confirm_batch_payout(&ids);
+    f.c.confirm_batch_payout(&f.agent, &ids);
     assert!(bal(&f.env, &f.tok, &f.agent) > before);
     assert_eq!(f.c.get_remittance(&ids.get(0).unwrap()).status, crate::RemittanceStatus::Completed);
     assert_eq!(f.c.get_remittance(&ids.get(1).unwrap()).status, crate::RemittanceStatus::Completed);
@@ -145,7 +145,7 @@ fn remit(f: &F, amount: i128) -> u64 {
 #[test] fn test_591_reputation_after_payout() {
     let f = setup();
     let id = remit(&f, 1_000);
-    f.c.confirm_payout(&id, &None, &None);
+    f.c.confirm_payout(&f.agent, &id, &None, &None);
     assert!(f.c.get_agent_reputation(&f.agent) > 0);
 }
 

@@ -21,7 +21,7 @@ use crate::{migration, SwiftRemitContract, SwiftRemitContractClient};
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
-fn create_token(env: &Env, admin: &Address) -> token::StellarAssetClient {
+fn create_token<'a>(env: &Env, admin: &Address) -> token::StellarAssetClient<'a> {
     let id = env.register_stellar_asset_contract_v2(admin.clone());
     token::StellarAssetClient::new(env, &id.address())
 }
@@ -68,15 +68,15 @@ fn test_migrate_preserves_remittance_state() {
     let id2 = client.create_remittance(&sender, &agent, &3_000, &None, &None, &None, &None, &None);
 
     // Snapshot state before migration.
-    let before1 = client.get_remittance(&id1).expect("remittance 1 not found");
-    let before2 = client.get_remittance(&id2).expect("remittance 2 not found");
+    let before1 = client.get_remittance(&id1);
+    let before2 = client.get_remittance(&id2);
 
     // Run migration (simulates post-WASM-upgrade migration step).
     migration::migrate(&env).expect("migrate failed");
 
     // Verify every field is identical after migration.
-    let after1 = client.get_remittance(&id1).expect("remittance 1 missing after migrate");
-    let after2 = client.get_remittance(&id2).expect("remittance 2 missing after migrate");
+    let after1 = client.get_remittance(&id1);
+    let after2 = client.get_remittance(&id2);
 
     assert_eq!(after1.id, before1.id);
     assert_eq!(after1.amount, before1.amount);
@@ -130,15 +130,13 @@ fn test_migrate_preserves_commitment_hashes() {
 
     // Compute deterministic commitment hash before migration.
     let hash_before = client
-        .compute_settlement_hash(&id)
-        .expect("hash computation failed before migrate");
+        .compute_settlement_hash(&id);
 
     migration::migrate(&env).expect("migrate failed");
 
     // Re-compute after migration — must be byte-for-byte identical.
     let hash_after = client
-        .compute_settlement_hash(&id)
-        .expect("hash computation failed after migrate");
+        .compute_settlement_hash(&id);
 
     assert_eq!(
         hash_before, hash_after,
@@ -154,12 +152,12 @@ fn test_migrate_preserves_accumulated_fees() {
     env.mock_all_auths();
     client.create_remittance(&sender, &agent, &8_000, &None, &None, &None, &None, &None);
 
-    let fees_before = client.get_accumulated_fees().expect("fee query failed");
+    let fees_before = client.get_accumulated_fees();
     assert!(fees_before > 0, "expected non-zero accumulated fees");
 
     migration::migrate(&env).expect("migrate failed");
 
-    let fees_after = client.get_accumulated_fees().expect("fee query after migrate failed");
+    let fees_after = client.get_accumulated_fees();
     assert_eq!(
         fees_after, fees_before,
         "accumulated fee balance changed after migration"

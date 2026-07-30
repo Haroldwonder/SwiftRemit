@@ -26,6 +26,7 @@
 extern crate std;
 
 use crate::{RemittanceStatus, SwiftRemitContract, SwiftRemitContractClient};
+use std::vec;
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;

@@ -651,7 +651,7 @@ mod tests {
             prop_assert_eq!(
                 actual_fees,
                 expected_fees,
-                "fee sum mismatch: expected {expected_fees}, got {actual_fees}"
+                "fee sum mismatch: expected {}, got {}", expected_fees, actual_fees
             );
         }
 
@@ -699,7 +699,7 @@ mod tests {
                 prop_assert_eq!(
                     transfer.net_amount.abs(),
                     expected_net,
-                    "net amount mismatch: expected {expected_net}"
+                    "net amount mismatch: expected {}", expected_net
                 );
             }
         }

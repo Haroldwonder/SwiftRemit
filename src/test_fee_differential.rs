@@ -29,6 +29,7 @@
 
 extern crate std;
 
+use std::vec;
 use soroban_sdk::{testutils::Address as _, token, Address, Env, String};
 
 use crate::{ContractError, FeeStrategy, FeeCorridor, SwiftRemitContract, SwiftRemitContractClient};
@@ -112,13 +113,11 @@ fn random_1000_amounts() -> std::vec::Vec<i128> {
 fn assert_endpoints_agree(env: &Env, contract: &SwiftRemitContractClient, amount: i128) {
     // Entry point 1: calculate_fee_breakdown (global strategy, no corridor)
     let bd1 = contract
-        .calculate_fee_breakdown(&amount)
-        .expect("calculate_fee_breakdown should not fail for valid amount");
+        .calculate_fee_breakdown(&amount);
 
     // Entry point 2: get_fee_breakdown (no corridor specified)
     let bd2 = contract
-        .get_fee_breakdown(&amount, &None, &None)
-        .expect("get_fee_breakdown should not fail for valid amount");
+        .get_fee_breakdown(&amount, &None, &None);
 
     // Entry point 3: fee_breakdown_corridor with a Percentage corridor
     // matching the global fee_bps (so the result must be identical).
@@ -129,8 +128,7 @@ fn assert_endpoints_agree(env: &Env, contract: &SwiftRemitContractClient, amount
         protocol_fee_bps: None,
     };
     let bd3 = contract
-        .fee_breakdown_corridor(&amount, &corridor)
-        .expect("fee_breakdown_corridor should not fail for valid amount");
+        .fee_breakdown_corridor(&amount, &corridor);
 
     // All three entry points must produce the same platform_fee.
     // (protocol_fee and net_amount must also agree when no protocol fee is
@@ -255,8 +253,8 @@ fn test_fee_endpoints_agree_flat_fee_strategy() {
             continue; // skip amounts below flat fee (net_amount would be negative)
         }
         // For flat fee, all endpoints must still agree.
-        let bd1 = contract.calculate_fee_breakdown(&amount).unwrap();
-        let bd2 = contract.get_fee_breakdown(&amount, &None, &None).unwrap();
+        let bd1 = contract.calculate_fee_breakdown(&amount);
+        let bd2 = contract.get_fee_breakdown(&amount, &None, &None);
         assert_eq!(
             bd1.platform_fee, bd2.platform_fee,
             "Flat-fee: calculate_fee_breakdown vs get_fee_breakdown disagree for amount={amount}"
@@ -274,8 +272,8 @@ fn test_fee_endpoints_agree_dynamic_strategy() {
     contract.update_fee_strategy(&admin, &FeeStrategy::Dynamic(300));
 
     for amount in representative_amounts() {
-        let bd1 = contract.calculate_fee_breakdown(&amount).unwrap();
-        let bd2 = contract.get_fee_breakdown(&amount, &None, &None).unwrap();
+        let bd1 = contract.calculate_fee_breakdown(&amount);
+        let bd2 = contract.get_fee_breakdown(&amount, &None, &None);
         assert_eq!(
             bd1.platform_fee, bd2.platform_fee,
             "Dynamic: calculate_fee_breakdown vs get_fee_breakdown disagree for amount={amount}"
@@ -306,7 +304,7 @@ fn test_fee_endpoints_agree_stored_corridor() {
 
     for amount in representative_amounts() {
         // Entry point A: fee_breakdown_corridor (explicit corridor struct)
-        let bd_explicit = contract.fee_breakdown_corridor(&amount, &corridor).unwrap();
+        let bd_explicit = contract.fee_breakdown_corridor(&amount, &corridor);
 
         // Entry point B: get_fee_breakdown with corridor countries
         let bd_stored = contract
@@ -314,8 +312,7 @@ fn test_fee_endpoints_agree_stored_corridor() {
                 &amount,
                 &Some(String::from_str(&env, "GB")),
                 &Some(String::from_str(&env, "NG")),
-            )
-            .unwrap();
+            );
 
         assert_eq!(
             bd_explicit.platform_fee, bd_stored.platform_fee,
@@ -340,7 +337,7 @@ fn test_direct_service_matches_contract_endpoint() {
         let direct_fee = fee_service::calculate_platform_fee(&env, amount, Some(&usdc)).unwrap();
 
         // Via the public contract endpoint.
-        let bd = contract.calculate_fee_breakdown(&amount).unwrap();
+        let bd = contract.calculate_fee_breakdown(&amount);
 
         assert_eq!(
             direct_fee, bd.platform_fee,
@@ -361,7 +358,7 @@ fn test_fee_breakdown_validate_always_passes() {
     let (contract, _, _) = setup_contract(&env, 250);
 
     for amount in representative_amounts() {
-        let bd = contract.calculate_fee_breakdown(&amount).unwrap();
+        let bd = contract.calculate_fee_breakdown(&amount);
 
         // Manually re-run the FeeBreakdown invariant check.
         let total = bd.platform_fee + bd.protocol_fee + bd.integrator_fee + bd.net_amount;

@@ -138,7 +138,7 @@ fn test_mark_failed_on_completed_remittance_rejected() {
     contract.register_agent(&agent, &None);
 
     let id = contract.create_remittance(&sender, &agent, &1_000i128, &None, &None, &None, &None, &None);
-    contract.confirm_payout(&id, &None, &None);
+    contract.confirm_payout(&agent, &id, &None, &None);
 
     let result = contract.try_mark_failed(&id);
     assert_eq!(result, Err(Ok(ContractError::InvalidStatus)));

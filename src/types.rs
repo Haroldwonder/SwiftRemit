@@ -330,7 +330,7 @@ pub enum AdminOperationType {
 
 /// A pending multi-sig admin operation awaiting sufficient approvals.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingOperation {
     /// Unique auto-incremented ID for this operation.
     pub id: u64,

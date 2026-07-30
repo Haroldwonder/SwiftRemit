@@ -253,7 +253,7 @@ pub mod mock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::Env;
+    use soroban_sdk::{testutils::Ledger as _, Env};
 
     // ── Staleness tests ──────────────────────────────────────────────────────
 
