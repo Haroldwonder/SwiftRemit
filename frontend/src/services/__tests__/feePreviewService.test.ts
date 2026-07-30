@@ -12,9 +12,11 @@ describe('feePreviewService', () => {
         ok: true,
         json: () => Promise.resolve({
           platformFeeBps: 250,
-          platformFeeAmount: 2.5,
-          protocolFeeAmount: 0.5,
-          netAmount: 97,
+          platform_fee: 2.5,
+          protocol_fee: 0.5,
+          integrator_fee: 0.25,
+          corridor_fee: 0.25,
+          net_amount: 96.5,
         }),
       })
     ) as any;
@@ -22,7 +24,16 @@ describe('feePreviewService', () => {
     const result = await getFeePreview(100, 'NG-USD');
     expect(result.platformFeeBps).toBe(250);
     expect(result.platformFeeAmount).toBe(2.5);
-    expect(result.netAmount).toBe(97);
+    expect(result.integratorFeeAmount).toBe(0.25);
+    expect(result.corridorFeeAmount).toBe(0.25);
+    expect(result.totalFeeAmount).toBe(3.5);
+    expect(result.netAmount).toBe(96.5);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/contract/get-fee-breakdown'),
+      expect.objectContaining({
+        body: expect.stringContaining('get_fee_breakdown'),
+      }),
+    );
   });
 
   it('should throw error for invalid amount', async () => {

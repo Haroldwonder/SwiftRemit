@@ -8,7 +8,7 @@ vi.mock('../../services/feePreviewService');
 describe('useFeePreview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
+    vi.useRealTimers();
   });
 
   it('should fetch fee preview after debounce', async () => {
@@ -16,15 +16,19 @@ describe('useFeePreview', () => {
       platformFeeBps: 250,
       platformFeeAmount: 2.5,
       protocolFeeAmount: 0.5,
+      integratorFeeAmount: 0,
+      corridorFeeAmount: 0,
+      totalFeeAmount: 3,
       netAmount: 97,
+      token: 'USDC',
+      corridor: 'NG-USD',
     };
     vi.mocked(feeService.getFeePreview).mockResolvedValue(mockFee);
 
-    const { result } = renderHook(() => useFeePreview(100, 'NG-USD', { debounceMs: 500 }));
+    const { result } = renderHook(() => useFeePreview(100, 'NG-USD', { debounceMs: 0 }));
 
     expect(result.current.loading).toBe(true);
 
-    vi.advanceTimersByTime(500);
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.feeData).toEqual(mockFee);
@@ -36,9 +40,8 @@ describe('useFeePreview', () => {
     vi.mocked(feeService.getFeePreview).mockRejectedValue(error);
     const onError = vi.fn();
 
-    const { result } = renderHook(() => useFeePreview(100, 'NG-USD', { onError }));
+    const { result } = renderHook(() => useFeePreview(100, 'NG-USD', { debounceMs: 0, onError }));
 
-    vi.advanceTimersByTime(500);
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.error).toEqual(error);

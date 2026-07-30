@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import './ProofOfPayout.css';
 import { horizonService, type SettlementCompletedEvent } from '../services/horizonService';
+import { validateProofFile, validateProofOnServer } from '../services/proofOfPayoutUpload';
 
 interface ProofOfPayoutProps {
   remittanceId: number;
@@ -46,6 +47,9 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [validationStatus, setValidationStatus] = useState<ProofValidationStatus>('pending');
+  const [proofHash, setProofHash] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchEventData = async () => {
@@ -132,7 +136,42 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
       if (ctx) {
         ctx.drawImage(video, 0, 0);
         setCapturedImage(canvas.toDataURL('image/png'));
+        setProofHash(null);
+        setUploadProgress(0);
+        setUploadError(null);
       }
+    }
+  };
+
+  const prepareProof = async (proof: Blob): Promise<{ image: string; hash: string }> => {
+    setUploadProgress(15);
+    setUploadError(null);
+    const validated = await validateProofFile(proof);
+    setProofHash(validated.hash);
+    setUploadProgress(55);
+    await validateProofOnServer(validated);
+    setUploadProgress(100);
+    return {
+      image: await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('Unable to read proof file'));
+        reader.readAsDataURL(validated.file);
+      }),
+      hash: validated.hash,
+    };
+  };
+
+  const handleFileProof = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const prepared = await prepareProof(file);
+      setCapturedImage(prepared.image);
+    } catch (err) {
+      setUploadProgress(0);
+      setProofHash(null);
+      setUploadError(err instanceof Error ? err.message : 'Proof upload failed');
     }
   };
 
@@ -140,8 +179,11 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
     if (capturedImage && onRelease) {
       setIsReleasing(true);
       try {
-        await onRelease(remittanceId, capturedImage);
+        const proofBlob = await (await fetch(capturedImage)).blob();
+        const prepared = proofHash ? { image: capturedImage, hash: proofHash } : await prepareProof(proofBlob);
+        await onRelease(remittanceId, prepared.image);
       } catch (err) {
+        setUploadError(err instanceof Error ? err.message : 'Proof upload failed');
         console.error('Error releasing funds:', err);
       } finally {
         setIsReleasing(false);
@@ -288,6 +330,33 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
       {onRelease && (
         <>
           <p>Capture an image as proof that the payout has been made to the recipient.</p>
+          <label className="file-upload-label">
+            Upload proof file
+            <input
+              type="file"
+              accept="image/png,image/jpeg,application/pdf"
+              onChange={handleFileProof}
+              aria-label="Upload proof of payout file"
+            />
+          </label>
+          {uploadProgress > 0 && uploadProgress < 100 && (
+            <progress value={uploadProgress} max={100} aria-label="Proof upload progress" />
+          )}
+          {proofHash && (
+            <p className="proof-upload-hash">
+              Proof SHA-256: <code>{proofHash}</code>
+            </p>
+          )}
+          {uploadError && (
+            <p className="error-message" role="alert">
+              {uploadError}{' '}
+              {capturedImage && (
+                <button type="button" onClick={handleRelease} disabled={isReleasing}>
+                  Retry
+                </button>
+              )}
+            </p>
+          )}
           {!capturedImage ? (
             <div className="camera-container">
               <video ref={videoRef} autoPlay playsInline muted className="camera-video" />
@@ -301,7 +370,7 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
             <div className="preview-container">
               <img src={capturedImage} alt="Captured proof" className="captured-image" />
               <div className="preview-actions">
-                <button onClick={() => setCapturedImage(null)} className="retake-button">Retake</button>
+                <button onClick={() => { setCapturedImage(null); setProofHash(null); }} className="retake-button">Retake</button>
                 <button onClick={handleRelease} disabled={isReleasing} className="release-button">
                   {isReleasing ? 'Releasing...' : 'Release Funds'}
                 </button>

@@ -16,6 +16,20 @@
   color: var(--error-color);
 }
 
+.fee-preview-warning {
+  color: var(--warning-color, #9a6700);
+  font-size: 0.9rem;
+}
+
+.fee-preview-warning button {
+  margin-left: 0.5rem;
+}
+
+.fee-quote-expiry {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
 .fee-breakdown {
   display: flex;
   flex-direction: column;
