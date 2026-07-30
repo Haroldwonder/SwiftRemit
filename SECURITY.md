@@ -5,6 +5,32 @@ and records the findings of the security audit conducted against issue #937.
 
 ---
 
+## External Security Audit (SR-109)
+
+An external security audit of the smart contract is required before mainnet deployment.
+**No mainnet deploy proceeds until the re-audit passes.**
+
+| Document | Path |
+|---|---|
+| Audit scope | [`docs/audit/AUDIT_SCOPE.md`](docs/audit/AUDIT_SCOPE.md) |
+| Contract architecture | [`docs/audit/ARCHITECTURE.md`](docs/audit/ARCHITECTURE.md) |
+| Known issues (pre-disclosure) | [`docs/audit/KNOWN_ISSUES.md`](docs/audit/KNOWN_ISSUES.md) |
+| Findings tracker | [`docs/audit/FINDINGS_TRACKER.md`](docs/audit/FINDINGS_TRACKER.md) |
+| Pre-engagement checklist | [`docs/audit/AUDIT_CHECKLIST.md`](docs/audit/AUDIT_CHECKLIST.md) |
+
+The audit freeze CI workflow (`.github/workflows/audit-freeze.yml`) blocks new
+`pub fn` additions to `src/lib.rs` without auditor agreement during the audit window.
+
+---
+
+## Threat Model (SR-110)
+
+See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for the full STRIDE threat model
+covering all system trust boundaries, adversary profiles, and residual risks.
+The threat model is reviewed at every release.
+
+---
+
 ## Roles
 
 | Role | Description |
@@ -120,6 +146,34 @@ immediately on a single admin signature:
 | Migration guard | `MigrationInProgress` flag blocks concurrent writes during data migration |
 | Token whitelist | Only whitelisted tokens accepted for new remittances |
 | Admin count guard | `CannotRemoveLastAdmin` error prevents admin lockout |
+
+---
+
+## AML/CTF Compliance
+
+See [docs/COMPLIANCE_CONTROLS.md](docs/COMPLIANCE_CONTROLS.md) for the full compliance control inventory mapping regulatory obligations to implemented controls.
+
+Key controls:
+- Sanctions and PEP screening: `backend/src/aml/sanctions-screening.ts`
+- Transaction monitoring (structuring, velocity): `backend/src/aml/transaction-monitoring.ts`
+- SAR workflow: `backend/src/aml/sar-workflow.ts`
+- Travel rule data collection: `backend/src/aml/travel-rule.ts`
+- Data retention: `backend/src/aml/retention.ts`
+- Review queue API: `backend/src/routes/aml.ts`
+
+---
+
+## Key Management
+
+See [docs/KEY_MANAGEMENT_POLICY.md](docs/KEY_MANAGEMENT_POLICY.md) for the admin key custody, rotation, and compromise response procedures (SR-111). All mainnet admin keys require hardware wallet (Ledger/Trezor) or HSM custody. Private key material must never exist in plaintext on any server, CI/CD system, or cloud environment.
+
+Key controls at a glance:
+
+- **Custody:** Hardware wallet or HSM for all mainnet `Admin` and Treasury keys.
+- **Rotation:** Quarterly minimum and before every mainnet upgrade. Rehearsal script: `scripts/rehearse-key-rotation.sh`.
+- **Compromise response:** Target RTO 2 hours. Rehearsal script: `scripts/rehearse-compromise-response.sh`.
+- **CI/CD keys:** Testnet-only scope; stored as GitHub Actions Secrets; rotated every 90 days and on team-member departure.
+- **Multi-sig:** High-impact operations (`withdraw_fees`, `update_fee`, `add_admin`, WASM upgrade) require M ≥ 2 admin approvals.
 
 ---
 
