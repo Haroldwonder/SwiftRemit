@@ -123,6 +123,30 @@ cp api/.env.example api/.env
 
 See [CONFIGURATION.md](CONFIGURATION.md) for detailed configuration options.
 
+### 5. One-command local stack
+
+Instead of steps 2-4, `make dev` (from the repo root) brings up Postgres, Jaeger, the backend,
+API, frontend, Prometheus, and Grafana via `docker-compose.yml` in one step, with migrations run
+automatically on container start. Run `make dev-down` to stop it, and `make verify` to run the
+same lint/typecheck/test suite CI runs across every workspace. See `make help` for the full list
+of targets. A [devcontainer](.devcontainer/devcontainer.json) is also available with the Rust
+and Node toolchains preinstalled — open the repo in VS Code and choose "Reopen in Container".
+
+#### Troubleshooting local failures
+
+- **`docker compose up` fails on port conflicts** — something else on your machine is already
+  bound to 5432, 3000, 3001, or 5173. Stop it, or edit the port mapping in `docker-compose.yml`.
+- **Backend/API container restarts in a loop** — check `docker compose logs backend` (or `api`);
+  this is almost always a migration failing against a stale `postgres_data` volume. Run
+  `docker compose down -v` to reset the volume and retry.
+- **Env var changes aren't picked up** — the containers read `backend/.env.example`,
+  `api/.env.example`, and `frontend/.env.example` directly; edit those and
+  `docker compose up --build -d` again.
+- **`cargo build` fails looking for `wasm32-unknown-unknown`** — run `make install` or
+  `rustup target add wasm32-unknown-unknown` first; the target isn't installed by default.
+- **`soroban`/`stellar` CLI not found** — install it with
+  `cargo install --locked stellar-cli`, per the prerequisites above.
+
 ## Project Structure
 
 ```
@@ -452,33 +476,8 @@ troubleshooting section.
 
 ### PR Template
 
-```markdown
-## Description
-Brief description of changes
-
-## Related Issues
-Closes #123
-
-## Type of Change
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Breaking change
-- [ ] Documentation update
-
-## Testing
-- [ ] All tests pass locally
-- [ ] Added new tests for changes
-- [ ] Manual testing completed
-
-## Checklist
-- [ ] Code follows project style guidelines
-- [ ] Self-review completed
-- [ ] Comments added for complex code
-- [ ] Documentation updated
-- [ ] No new warnings generated
-- [ ] Tests added/updated
-- [ ] All CI checks pass
-```
+GitHub automatically populates new PRs from [`.github/pull_request_template.md`](.github/pull_request_template.md).
+Fill out every section — summary, linked issue, type of change, and the checklist — before requesting review.
 
 ### Review Process
 
