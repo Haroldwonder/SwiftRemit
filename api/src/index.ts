@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import { createApp } from './app';
 import { initializeCurrencyConfig } from './config';
 import { initWebSocket } from './websocket';
-import { getSecretsManager, getJwtSecret, getDatabaseUrl } from './secrets-manager';
+import { getJwtSecret, getDatabaseUrl } from './secrets-manager';
 import { createLogger } from './types';
 
 dotenv.config();
@@ -13,15 +13,41 @@ dotenv.config();
 const logger = createLogger('main');
 const PORT = process.env.PORT || 3000;
 
+/**
+ * Load every required secret before any service is initialised.
+ *
+ * In production this calls the real AWS Secrets Manager.  If a required
+ * secret resolves from a plaintext env var in production the shared
+ * SecretsManager throws a PRODUCTION SECURITY VIOLATION error and the
+ * process exits before accepting any traffic.
+ *
+ * Required secrets for this service:
+ *   JWT_SECRET    — JWT signing key (shared with backend)
+ *   DATABASE_URL  — PostgreSQL connection string (for health checks)
+ */
 async function loadSecrets(): Promise<void> {
-  const sm = getSecretsManager();
+  const isProduction = process.env.NODE_ENV === 'production';
 
-  // Load JWT_SECRET from Secrets Manager
-  const jwtSecret = await getJwtSecret();
+  if (isProduction && !process.env.AWS_REGION) {
+    logger.error(
+      'FATAL: NODE_ENV=production but AWS_REGION is not set. ' +
+        'The secrets manager cannot reach AWS Secrets Manager. ' +
+        'Set AWS_REGION (and optionally SECRETS_MANAGER_ENABLED=true) before starting.',
+    );
+    process.exit(1);
+  }
+
+  // Resolve all required secrets — throws immediately if any are missing or
+  // (in production) fall back to a plaintext environment variable.
+  const [jwtSecret, databaseUrl] = await Promise.all([
+    getJwtSecret(),
+    getDatabaseUrl(),
+  ]);
+
+  // Write resolved values back into process.env so legacy code that reads
+  // env vars directly still works.  These writes are safe because the values
+  // came from the secret store, not the raw environment.
   process.env.JWT_SECRET = jwtSecret;
-
-  // Load DATABASE_URL from Secrets Manager (for health check dependency)
-  const databaseUrl = await getDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
 
   logger.info('[secrets] All required secrets loaded successfully');

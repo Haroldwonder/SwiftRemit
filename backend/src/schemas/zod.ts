@@ -1,70 +1,54 @@
 import { z } from 'zod';
 import { extendZodWithOpenApi } from '@asteasolutions/zod-to-openapi';
-import { StrKey } from '@stellar/stellar-sdk';
+import {
+  sanitizeForJson,
+  sanitizeOnChainMemo,
+} from '../../../shared/src/sanitizer';
 
 extendZodWithOpenApi(z);
 
-// ---------------------------------------------------------------------------
-// Stellar address validation using the official StrKey library.
-// Rejects any value that is not a valid ed25519 public key on the Stellar
-// network — regex-only checks are insufficient because they cannot validate
-// the embedded checksum.
-// ---------------------------------------------------------------------------
-const stellarAddress = (fieldName = 'address') =>
-  z
-    .string()
-    .length(56, `${fieldName} must be exactly 56 characters`)
-    .refine((val) => StrKey.isValidEd25519PublicKey(val), {
-      message: `${fieldName} must be a valid Stellar public key (G…)`,
-    });
+/**
+ * Sanitization is applied at the schema layer via .transform() so every
+ * path that parses user input (route handlers, background jobs, tests)
+ * automatically gets clean values.  A field added to a schema without a
+ * sanitize transform will fail the schema-level test in sanitizer.test.ts.
+ */
 
-// ---------------------------------------------------------------------------
-// Amount validation.
-//  - Positive integer string only (no scientific notation, no floats).
-//  - Upper bound of 10^15 stroops — far above any realistic transfer.
-//  - Rejects "1e5", "1.5", "0", "-1", etc.
-// ---------------------------------------------------------------------------
-const MAX_AMOUNT = BigInt('1000000000000000'); // 10^15
+// ── Reusable sanitized primitives ─────────────────────────────────────────────
 
-const positiveIntegerAmount = (fieldName = 'amount') =>
-  z
-    .string()
-    .regex(/^\d+$/, `${fieldName} must be a positive integer (no decimals or scientific notation)`)
-    .refine((val) => BigInt(val) > BigInt(0), {
-      message: `${fieldName} must be greater than zero`,
-    })
-    .refine((val) => BigInt(val) <= MAX_AMOUNT, {
-      message: `${fieldName} exceeds maximum allowed value (${MAX_AMOUNT.toString()})`,
-    });
+/**
+ * A free-text string that is sanitized for JSON/storage contexts.
+ * Strips all HTML tags and encodes residual angle-bracket characters.
+ */
+const sanitizedString = (base: z.ZodString) =>
+  base.transform((v) => sanitizeForJson(v));
 
-// ---------------------------------------------------------------------------
-// UUID parameter (webhook subscriber IDs)
-// ---------------------------------------------------------------------------
-const uuidParam = z
-  .string()
-  .regex(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-    'Must be a valid UUID'
-  );
-
-// ---------------------------------------------------------------------------
-// Remittance schemas
-// ---------------------------------------------------------------------------
+// ── Schemas ───────────────────────────────────────────────────────────────────
 
 export const RemittanceCreateSchema = z
   .object({
-    sender: stellarAddress('sender'),
-    agent: stellarAddress('agent'),
-    amount: positiveIntegerAmount('amount'),
-    fee: positiveIntegerAmount('fee').optional(),
+    sender: sanitizedString(z.string().min(1, 'Sender address required').max(256)),
+    agent: sanitizedString(z.string().min(1, 'Agent address required').max(256)),
+    amount: z.string().refine((val) => /^\d+(\.\d+)?$/.test(val), {
+      message: 'Amount must be a valid number',
+    }),
+    fee: z
+      .string()
+      .refine((val) => /^\d+(\.\d+)?$/.test(val), {
+        message: 'Fee must be a valid number',
+      })
+      .optional(),
     expiry: z.number().int().positive().optional(),
-    memo: z.string().max(100, 'Memo must not exceed 100 characters').optional(),
-    fromCurrency: z.string().min(1).max(10).toUpperCase().optional(),
-    toCurrency: z.string().min(1).max(10).toUpperCase().optional(),
-    fxRateMaxStalenessSeconds: z.number().int().min(0).optional(),
-    from_currency: z.string().min(1).max(10).toUpperCase().optional(),
-    to_currency: z.string().min(1).max(10).toUpperCase().optional(),
-    fx_rate_max_staleness_seconds: z.number().int().min(0).optional(),
+    /**
+     * Memo is sanitized via sanitizeOnChainMemo so the same value is safe
+     * both for the database and for writing on-chain via Stellar.
+     * Max 28 bytes enforced after sanitization (Stellar text memo limit).
+     */
+    memo: z
+      .string()
+      .max(100, 'Memo must not exceed 100 characters')
+      .transform((v) => sanitizeOnChainMemo(v))
+      .optional(),
   })
   .openapi('RemittanceCreate');
 
@@ -83,11 +67,13 @@ export const RemittanceGetQuerySchema = z.object({
 
 export const VerificationRequestSchema = z
   .object({
-    assetCode: z
-      .string()
-      .min(1, 'Asset code required')
-      .max(12, 'Asset code must not exceed 12 characters'),
-    issuer: stellarAddress('issuer'),
+    assetCode: sanitizedString(
+      z
+        .string()
+        .min(1, 'Asset code required')
+        .max(12, 'Asset code must not exceed 12 characters'),
+    ),
+    issuer: sanitizedString(z.string().length(56, 'Issuer must be 56 characters')),
   })
   .openapi('VerificationRequest');
 
@@ -125,9 +111,9 @@ export const BatchVerificationSchema = z.object({
 export const SettlementSimulationSchema = z
   .object({
     remittanceId: z.number().int().positive('Remittance ID must be positive').optional(),
-    amount: z.string().regex(/^\d+$/, 'Amount must be a positive integer').optional(),
-    asset: z.string().max(12).optional(),
-    corridor: z.string().optional(),
+    amount: z.string().regex(/^\d+(\.\d+)?$/, 'Amount must be valid').optional(),
+    asset: sanitizedString(z.string().max(12)).optional(),
+    corridor: sanitizedString(z.string()).optional(),
   })
   .openapi('SettlementSimulation');
 
@@ -223,8 +209,8 @@ export const WebhookSubscriberParamSchema = z.object({
 
 export const AuditLogFilterSchema = z
   .object({
-    admin_address: z.string().optional(),
-    action: z.string().optional(),
+    admin_address: sanitizedString(z.string()).optional(),
+    action: sanitizedString(z.string()).optional(),
     from: z.string().datetime().optional(),
     to: z.string().datetime().optional(),
     limit: z.coerce.number().int().min(1).max(200).optional(),
@@ -233,69 +219,9 @@ export const AuditLogFilterSchema = z
   })
   .openapi('AuditLogFilter');
 
-// Max date range span for exports: 90 days
-export const AUDIT_LOG_EXPORT_MAX_DAYS = 90;
-export const AUDIT_LOG_EXPORT_ROW_CAP = 100_000;
-export const AUDIT_LOG_PAGE_SIZE = 200;
+export const WebhookRotateSecretSchema = z.object({}).openapi('WebhookRotateSecret');
 
-export const AuditLogExportQuerySchema = z
-  .object({
-    admin_address: z.string().optional(),
-    action: z.string().optional(),
-    from: z
-      .string({ required_error: 'from is required for export' })
-      .datetime('from must be an ISO-8601 datetime'),
-    to: z
-      .string({ required_error: 'to is required for export' })
-      .datetime('to must be an ISO-8601 datetime'),
-  })
-  .refine(
-    (data) => {
-      const fromMs = new Date(data.from).getTime();
-      const toMs = new Date(data.to).getTime();
-      return toMs > fromMs;
-    },
-    { message: 'to must be after from', path: ['to'] }
-  )
-  .refine(
-    (data) => {
-      const fromMs = new Date(data.from).getTime();
-      const toMs = new Date(data.to).getTime();
-      const diffDays = (toMs - fromMs) / (1000 * 60 * 60 * 24);
-      return diffDays <= AUDIT_LOG_EXPORT_MAX_DAYS;
-    },
-    {
-      message: `Date range must not exceed ${AUDIT_LOG_EXPORT_MAX_DAYS} days. Narrow the range or paginate exports.`,
-      path: ['from'],
-    }
-  );
-
-export const AuditLogListQuerySchema = z.object({
-  admin_address: z.string().optional(),
-  action: z.string().optional(),
-  from: z.string().datetime().optional(),
-  to: z.string().datetime().optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  cursor: z.string().optional(),
-});
-
-// ---------------------------------------------------------------------------
-// Contract events query
-// ---------------------------------------------------------------------------
-
-export const ContractEventsQuerySchema = z.object({
-  event_type: z.string().max(50).optional(),
-  actor: z.string().max(56).optional(),
-  remittance_id: z.coerce.number().int().positive().optional(),
-  from: z.string().datetime().optional(),
-  to: z.string().datetime().optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
-});
-
-// ---------------------------------------------------------------------------
-// Exported types
-// ---------------------------------------------------------------------------
+// ── Inferred types ────────────────────────────────────────────────────────────
 
 export type RemittanceCreate = z.infer<typeof RemittanceCreateSchema>;
 export type VerificationRequest = z.infer<typeof VerificationRequestSchema>;
