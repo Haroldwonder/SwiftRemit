@@ -48,6 +48,8 @@ import {
   bytesNToScVal,
   stringToScVal,
   parseProposal,
+  validateAmount,
+  validateAddress,
 } from "./convert.js";
 
 /** Maximum number of entries allowed in a single batch remittance call. */
@@ -682,6 +684,14 @@ export class SwiftRemitClient {
    * // Sign and submit tx
    */
   async createRemittance(params: CreateRemittanceParams): Promise<Transaction> {
+    // ── Input validation (SR-090 / #1160) ──────────────────────────────────
+    // Validate before building any XDR so callers get a clear error instead of
+    // an opaque transaction-simulation failure or a silently wrong amount.
+    validateAddress(params.sender);
+    validateAddress(params.agent);
+    validateAmount(params.amount);
+    if (params.token) validateAddress(params.token);
+    // ───────────────────────────────────────────────────────────────────────
     return this.prepareTransaction(params.sender, "create_remittance", [
       addressToScVal(params.sender),
       addressToScVal(params.agent),
@@ -777,6 +787,23 @@ export class SwiftRemitClient {
         `Batch size ${entries.length} exceeds MAX_BATCH_SIZE (${MAX_BATCH_SIZE})`
       );
     }
+    // ── Input validation (SR-090 / #1160) ──────────────────────────────────
+    validateAddress(sender);
+    entries.forEach((e, i) => {
+      try {
+        validateAddress(e.agent);
+        validateAmount(e.amount);
+      } catch (err) {
+        if (err instanceof SwiftRemitError) {
+          throw new SwiftRemitError(
+            err.code,
+            `Batch entry [${i}]: ${err.message}`
+          );
+        }
+        throw err;
+      }
+    });
+    // ───────────────────────────────────────────────────────────────────────
     const entriesScVal = xdr.ScVal.scvVec(
       entries.map((e) =>
         xdr.ScVal.scvMap([
