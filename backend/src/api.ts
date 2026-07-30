@@ -31,6 +31,15 @@ import { getFxRateCache } from './fx-rate-cache';
 import { getAnchorCircuitBreaker } from './anchor-circuit-breaker';
 import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
+import { sanitizeInput } from './sanitizer';
+import docsRouter from './routes/docs';
+import { createDeviceRouter } from './routes/devices';
+import { Sep24Service, Sep24InitiateRequest, Sep24ConfigError, Sep24AnchorError } from './sep24-service';
+import { AdminAuditLogService } from './admin-audit-log';
+import { getJobSummaries } from './job-tracker';
+import { saveContractEvent, queryContractEvents } from './database';
+import { remittanceEventEmitter } from './remittance/events';
+import { handleKycWebhook } from './kyc-webhook-handler';
 import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
 
 import { createHealthRouter }       from './routes/health';
@@ -121,7 +130,10 @@ app.get('/metrics', async (_req: Request, res: Response) => {
   }
 });
 
-// ─── Routers — each instantiated once ────────────────────────────────────────
+// API documentation
+app.use('/api/docs', docsRouter);
+app.use('/api/compliance', createComplianceRouter(pool));
+app.use('/api/devices', createDeviceRouter(pool));
 
 const remittanceRouter = createRemittanceRouter(pool);  // registers event listener once
 const adminRouter      = createAdminRouter(pool);

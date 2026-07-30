@@ -1,5 +1,13 @@
+/**
+ * AppNavigator — SR-095
+ *
+ * Accepts an imperative `navigationRef` and `onReady` callback so that
+ * notification deep-link handlers outside the React tree can navigate
+ * programmatically (background taps, cold-start launches).
+ */
+
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text } from 'react-native';
@@ -10,7 +18,25 @@ import TransactionHistoryScreen from '../screens/TransactionHistoryScreen';
 import TransactionDetailScreen from '../screens/TransactionDetailScreen';
 import KycStatusScreen from '../screens/KycStatusScreen';
 
-const Stack = createNativeStackNavigator();
+// ─── Type-safe navigation params ─────────────────────────────────────────────
+
+export type RootStackParamList = {
+  Main: undefined;
+  SendMoney: undefined;
+  TransactionDetail: { remittanceId: string };
+  KycStatus: undefined;
+};
+
+// Extend the global RootParamList so NavigationContainerRef is typed.
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace ReactNavigation {
+    // eslint-disable-next-line @typescript-eslint/no-empty-interface
+    interface RootParamList extends RootStackParamList {}
+  }
+}
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
 
 function TabIcon({ name }: { name: string }) {
@@ -41,9 +67,14 @@ function MainTabs() {
   );
 }
 
-export default function AppNavigator() {
+interface AppNavigatorProps {
+  navigationRef?: React.RefObject<NavigationContainerRef<ReactNavigation.RootParamList>>;
+  onReady?: () => void;
+}
+
+export default function AppNavigator({ navigationRef, onReady }: AppNavigatorProps) {
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef} onReady={onReady}>
       <Stack.Navigator
         screenOptions={{
           headerStyle: { backgroundColor: '#1A56DB' },
@@ -53,8 +84,16 @@ export default function AppNavigator() {
       >
         <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
         <Stack.Screen name="SendMoney" component={SendMoneyScreen} options={{ title: 'Send Money' }} />
-        <Stack.Screen name="TransactionDetail" component={TransactionDetailScreen} options={{ title: 'Transfer Details' }} />
-        <Stack.Screen name="KycStatus" component={KycStatusScreen} options={{ title: 'KYC Status' }} />
+        <Stack.Screen
+          name="TransactionDetail"
+          component={TransactionDetailScreen}
+          options={{ title: 'Transfer Details' }}
+        />
+        <Stack.Screen
+          name="KycStatus"
+          component={KycStatusScreen}
+          options={{ title: 'KYC Status' }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );

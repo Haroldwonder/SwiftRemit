@@ -53,71 +53,9 @@ export interface SendMoneyFormData {
   anchorId?: string;
 }
 
-export interface FeeBreakdown {
-  sendFee: {
-    amount: string;
-    currency: string;
-    percentage: number;
-  };
-  fxFee: {
-    amount: string;
-    currency: string;
-    percentage: number;
-  };
-  payoutFee: {
-    amount: string;
-    currency: string;
-    percentage: number;
-  };
-  total: {
-    amount: string;
-    currency: string;
-  };
-  recipientReceives: string;
-  recipientCurrency: string;
-}
+// ─── Push notification data (deep-link payload) ───────────────────────────────
 
-export interface Anchor {
-  anchor_id: string;
-  name: string;
-  country: string;
-  supported_currencies: string[];
-  settlement_time_hours: number;
-  fee_percentage: number;
-  availability: 'available' | 'limited' | 'unavailable';
-  rating?: number;
-}
-
-export interface Dispute {
-  dispute_id: string;
-  remittance_id: string;
-  reason: DisputeReason;
-  status: DisputeStatus;
-  description: string;
-  created_at: string;
-  updated_at: string;
-  resolution?: string;
-}
-
-export type DisputeReason = 'funds_not_received' | 'incorrect_amount' | 'duplicate' | 'other';
-export type DisputeStatus = 'open' | 'under_investigation' | 'resolved' | 'closed';
-
-export interface Receipt {
-  remittance_id: string;
-  sender: string;
-  recipient: string;
-  amount_sent: string;
-  amount_received: string;
-  currency_from: string;
-  currency_to: string;
-  fx_rate: number;
-  fees_charged: string;
-  transfer_date: string;
-  completion_date?: string;
-  status: RemittanceStatus;
-  reference_number: string;
-  anchor_name?: string;
-  proof_of_payout_url?: string;
-}
-
-export type AppLocale = 'en-US' | 'es-ES' | 'fr-FR' | 'pt-BR';
+/** Typed payload embedded in every push notification's `data` field. */
+export type PushNotificationData =
+  | { type: 'remittance'; remittanceId: string }
+  | { type: 'kyc' };

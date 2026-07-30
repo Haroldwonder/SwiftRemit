@@ -21,7 +21,22 @@ export const authService = {
     return data;
   },
 
+  /**
+   * Logout: clears auth token, wallet address, and deregisters the push token
+   * from the backend so the device stops receiving notifications.
+   */
   async logout(): Promise<void> {
+    // Deregister push token before clearing auth so the HTTP request still
+    // carries the Authorization header.
+    const pushToken = await SecureStore.getItemAsync('push_token');
+    if (pushToken) {
+      try {
+        await http.delete('/api/devices/deregister', { data: { token: pushToken } });
+      } catch {
+        // Non-fatal — token will expire on the server or be overwritten on next login.
+      }
+      await SecureStore.deleteItemAsync('push_token');
+    }
     await SecureStore.deleteItemAsync('auth_token');
     await SecureStore.deleteItemAsync('wallet_address');
   },
@@ -99,16 +114,20 @@ export const fxService = {
   },
 };
 
-export const anchorService = {
-  async getAvailableAnchors(country: string, currency: string): Promise<Anchor[]> {
-    const { data } = await http.get('/api/anchors/available', {
-      params: { country, currency }
-    });
-    return data.anchors ?? [];
+export const deviceService = {
+  /**
+   * Register a push token with the backend.
+   * Called after login, once the auth token is persisted.
+   */
+  async register(token: string, platform: 'ios' | 'android' | 'web'): Promise<void> {
+    await http.post('/api/devices/register', { token, platform });
   },
 
-  async getAnchor(anchorId: string): Promise<Anchor> {
-    const { data } = await http.get(`/api/anchors/${anchorId}`);
-    return data;
+  /**
+   * Deregister a push token from the backend.
+   * Called during logout so the device stops receiving notifications.
+   */
+  async deregister(token: string): Promise<void> {
+    await http.delete('/api/devices/deregister', { data: { token } });
   },
 };
