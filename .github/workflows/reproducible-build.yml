@@ -1,0 +1,186 @@
+name: Reproducible Build
+
+# SR-107: Verify that the SwiftRemit WASM is reproducible.
+# Two independent clean builds must produce the same SHA-256 hash.
+#
+# On release tags: publish the hash and upload WASM + hash as release assets.
+# On every push: verify two builds match each other (and against the published
+#                hash if releases/latest-hash.txt exists).
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write  # for uploading release assets
+
+jobs:
+  reproducible-build:
+    name: Verify reproducible WASM build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Read pinned toolchain version
+        id: toolchain
+        run: |
+          # rust-toolchain.toml uses 'channel = "stable"' by default
+          CHANNEL=$(grep '^channel' rust-toolchain.toml | sed 's/.*= *"//' | tr -d '"' || echo "stable")
+          echo "rust_version=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Rust channel: $CHANNEL"
+
+      - name: Make scripts executable
+        run: |
+          chmod +x scripts/reproducible-build.sh
+          chmod +x scripts/verify-reproducible-build.sh
+
+      - name: Create output directories
+        run: mkdir -p build/reproducible releases
+
+      # ── Build 1 ──────────────────────────────────────────────────────────
+      - name: Build 1 — clean reproducible build
+        env:
+          RUST_VERSION: ${{ steps.toolchain.outputs.rust_version }}
+        run: |
+          bash scripts/reproducible-build.sh --tag swiftremit-repro-build1
+          if command -v sha256sum &>/dev/null; then
+            HASH=$(sha256sum build/reproducible/swiftremit.wasm | awk '{print $1}')
+          else
+            HASH=$(shasum -a 256 build/reproducible/swiftremit.wasm | awk '{print $1}')
+          fi
+          echo "BUILD1_SHA256=$HASH" >> "$GITHUB_ENV"
+          cp build/reproducible/swiftremit.wasm build/reproducible/swiftremit.build1.wasm
+          echo "Build 1 SHA-256: $HASH"
+
+      # ── Build 2 ──────────────────────────────────────────────────────────
+      - name: Build 2 — second independent clean build
+        env:
+          RUST_VERSION: ${{ steps.toolchain.outputs.rust_version }}
+        run: |
+          bash scripts/reproducible-build.sh --tag swiftremit-repro-build2
+          if command -v sha256sum &>/dev/null; then
+            HASH=$(sha256sum build/reproducible/swiftremit.wasm | awk '{print $1}')
+          else
+            HASH=$(shasum -a 256 build/reproducible/swiftremit.wasm | awk '{print $1}')
+          fi
+          echo "BUILD2_SHA256=$HASH" >> "$GITHUB_ENV"
+          echo "Build 2 SHA-256: $HASH"
+
+      # ── Compare ───────────────────────────────────────────────────────────
+      - name: Compare build hashes
+        run: |
+          echo "Build 1: $BUILD1_SHA256"
+          echo "Build 2: $BUILD2_SHA256"
+
+          if [ "$BUILD1_SHA256" != "$BUILD2_SHA256" ]; then
+            echo "❌ REPRODUCIBILITY FAILURE: builds produced different hashes!"
+            echo "   Build 1: $BUILD1_SHA256"
+            echo "   Build 2: $BUILD2_SHA256"
+            exit 1
+          fi
+
+          echo "✅ REPRODUCIBILITY VERIFIED: $BUILD1_SHA256"
+
+          # Compare against previously published hash if it exists
+          if [ -f "releases/latest-hash.txt" ]; then
+            PUBLISHED=$(cat releases/latest-hash.txt | tr -d '[:space:]')
+            if [ -n "$PUBLISHED" ] && [ "$BUILD1_SHA256" != "$PUBLISHED" ]; then
+              echo "⚠️  Hash differs from releases/latest-hash.txt (previous release)"
+              echo "   This is expected when the code has changed."
+              echo "   Published: $PUBLISHED"
+              echo "   Built:     $BUILD1_SHA256"
+            fi
+          fi
+
+      # ── Publish hash for releases ─────────────────────────────────────────
+      - name: Determine release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "Publishing hash for release $TAG"
+
+      - name: Write hash files
+        run: |
+          echo "$BUILD1_SHA256" > releases/latest-hash.txt
+          if [ -n "${RELEASE_TAG:-}" ]; then
+            echo "$BUILD1_SHA256" > "releases/${RELEASE_TAG}.sha256"
+          fi
+          echo "Hash files written:"
+          ls -la releases/
+
+      - name: Upload WASM and hash as release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="$RELEASE_TAG"
+
+          # Create the GitHub release if it doesn't exist
+          gh release view "$TAG" &>/dev/null || \
+            gh release create "$TAG" \
+              --title "SwiftRemit $TAG" \
+              --notes "WASM SHA-256: \`$BUILD1_SHA256\`" \
+              --verify-tag
+
+          # Upload artifacts
+          gh release upload "$TAG" \
+            "build/reproducible/swiftremit.wasm#swiftremit.wasm" \
+            "releases/${TAG}.sha256#swiftremit-${TAG}.sha256" \
+            --clobber
+
+          echo "✅ Release assets uploaded for $TAG"
+
+      # ── Commit hash back to repo ──────────────────────────────────────────
+      - name: Commit releases/latest-hash.txt
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add releases/latest-hash.txt
+          [ -f "releases/${RELEASE_TAG}.sha256" ] && git add "releases/${RELEASE_TAG}.sha256"
+
+          if git diff --cached --quiet; then
+            echo "No hash file changes to commit"
+          else
+            git commit -m "chore(release): publish WASM hash for ${RELEASE_TAG} [skip ci]"
+            git push origin HEAD:"${GITHUB_REF#refs/tags/}"  2>/dev/null || \
+            git push origin HEAD:main 2>/dev/null || \
+            echo "⚠️  Could not push hash commit — update releases/latest-hash.txt manually"
+          fi
+
+      # ── Summary ──────────────────────────────────────────────────────────
+      - name: Step summary
+        if: always()
+        run: |
+          echo "## Reproducible Build Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build | SHA-256 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|---------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build 1 | \`${BUILD1_SHA256:-N/A}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build 2 | \`${BUILD2_SHA256:-N/A}\` |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${BUILD1_SHA256:-}" = "${BUILD2_SHA256:-}" ] && [ -n "${BUILD1_SHA256:-}" ]; then
+            echo "| **Result** | ✅ Reproducible |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| **Result** | ❌ NOT Reproducible |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # ── Upload WASM artifact ──────────────────────────────────────────────
+      - name: Upload WASM artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftremit-reproducible-wasm-${{ github.sha }}
+          path: |
+            build/reproducible/swiftremit.wasm
+            build/reproducible/swiftremit.wasm.sha256
+          retention-days: 90

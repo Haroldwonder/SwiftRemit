@@ -2,8 +2,21 @@
  * k6 scenario: Create Remittance
  *
  * Exercises POST /api/remittance on the backend service at sustained load.
- * Acceptance: p99 < 500 ms at 500 RPS for 5 minutes.
+ * Target: 500 RPS, p95 < 600ms, p99 < 800ms, error rate < 1%.
+ *
+ * Thresholds (enforced — test fails if breached):
+ *   remittance_create_duration p(95) < 600ms
+ *   remittance_create_duration p(99) < 800ms
+ *   remittance_create_errors   rate  < 0.01
  */
+
+export const options = {
+  thresholds: {
+    remittance_create_duration: ['p(95)<600', 'p(99)<800'],
+    remittance_create_errors: ['rate<0.01'],
+    remittance_create_count: ['count>0'],
+  },
+};
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';

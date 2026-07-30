@@ -10,6 +10,22 @@ on:
         type: choice
         options:
           - staging
+      run_soak:
+        description: "Run 35-min soak test (detect memory leaks)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      run_spike:
+        description: "Run burst spike test (verify autoscaling)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
       create_vus:
         description: "VUs for remittance-create scenario"
         required: false
@@ -54,7 +70,7 @@ jobs:
         id: urls
         run: |
           if [ "${{ github.event.inputs.target }}" = "staging" ]; then
-            echo "api_url=${{ vars.STAGING_API_URL }}"       >> "$GITHUB_OUTPUT"
+            echo "api_url=${{ vars.STAGING_API_URL }}"         >> "$GITHUB_OUTPUT"
             echo "backend_url=${{ vars.STAGING_BACKEND_URL }}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -73,7 +89,9 @@ jobs:
       - name: Create results directory
         run: mkdir -p tests/load/results
 
-      - name: Run k6 load tests
+      # ── Standard performance run (create / list / WebSocket) ──────────────
+      - name: Run standard k6 scenarios
+        if: ${{ github.event.inputs.run_soak != 'true' && github.event.inputs.run_spike != 'true' }}
         env:
           API_URL:     ${{ steps.urls.outputs.api_url }}
           BACKEND_URL: ${{ steps.urls.outputs.backend_url }}
@@ -87,31 +105,139 @@ jobs:
             -e CREATE_VUS="$CREATE_VUS" \
             -e LIST_VUS="$LIST_VUS" \
             -e WS_VUS="$WS_VUS" \
-            --out json=tests/load/results/metrics.json
+            --out json=tests/load/results/standard-metrics.json
+          # k6 exits non-zero if any threshold is breached — fails the step
 
+      # ── Soak run (35-min sustained load) ──────────────────────────────────
+      - name: Run soak scenario
+        if: ${{ github.event.inputs.run_soak == 'true' }}
+        env:
+          API_URL:     ${{ steps.urls.outputs.api_url }}
+          BACKEND_URL: ${{ steps.urls.outputs.backend_url }}
+        run: |
+          k6 run tests/load/main.js \
+            -e API_URL="$API_URL" \
+            -e BACKEND_URL="$BACKEND_URL" \
+            -e RUN_SOAK=true \
+            --out json=tests/load/results/soak-metrics.json
+          # k6 exits non-zero if soak thresholds are breached
+
+      # ── Spike run (burst + recovery) ──────────────────────────────────────
+      - name: Run spike scenario
+        if: ${{ github.event.inputs.run_spike == 'true' }}
+        env:
+          API_URL:     ${{ steps.urls.outputs.api_url }}
+          BACKEND_URL: ${{ steps.urls.outputs.backend_url }}
+        run: |
+          k6 run tests/load/main.js \
+            -e API_URL="$API_URL" \
+            -e BACKEND_URL="$BACKEND_URL" \
+            -e RUN_SPIKE=true \
+            --out json=tests/load/results/spike-metrics.json
+          # k6 exits non-zero if spike thresholds are breached
+
+      # ── Compare results against committed baselines ────────────────────────
+      - name: Compare against baselines
+        if: always()
+        run: |
+          echo "## Threshold comparison against baselines" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Scenario | Metric | Threshold | File |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|--------|-----------|------|" >> "$GITHUB_STEP_SUMMARY"
+
+          # Read committed thresholds for reference in the summary
+          if [ -f tests/load/baselines/thresholds.json ]; then
+            CREATE_P95=$(jq -r '.scenarios.remittance_create.p95_ms' tests/load/baselines/thresholds.json)
+            LIST_P95=$(jq -r '.scenarios.remittance_list.p95_ms' tests/load/baselines/thresholds.json)
+            WS_P95=$(jq -r '.scenarios.websocket.connect_p95_ms' tests/load/baselines/thresholds.json)
+            SOAK_P95=$(jq -r '.scenarios.soak.p95_ms' tests/load/baselines/thresholds.json)
+            SPIKE_P95=$(jq -r '.scenarios.spike.p95_ms' tests/load/baselines/thresholds.json)
+
+            echo "| remittance_create | p95 latency | < ${CREATE_P95}ms | baselines/thresholds.json |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| remittance_list   | p95 latency | < ${LIST_P95}ms  | baselines/thresholds.json |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| websocket         | connect p95 | < ${WS_P95}ms   | baselines/thresholds.json |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| soak              | p95 latency | < ${SOAK_P95}ms | baselines/thresholds.json |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| spike             | p95 latency | < ${SPIKE_P95}ms | baselines/thresholds.json |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> Thresholds are enforced by k6 directly. The step above fails the workflow if any threshold is breached." >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Append trend data for regression visibility across releases ────────
+      - name: Append trend data
+        if: always() && github.ref == 'refs/heads/main'
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          SHA="${{ github.sha }}"
+
+          # Extract p95 from JSON summary files if they exist; otherwise note unavailable
+          extract_p95() {
+            local file="$1"
+            local metric="$2"
+            if [ -f "$file" ]; then
+              jq -r --arg m "$metric" \
+                '[.metrics[$m].values | to_entries[] | select(.key=="p(95)") | .value] | first // "N/A"' \
+                "$file" 2>/dev/null || echo "N/A"
+            else
+              echo "N/A"
+            fi
+          }
+
+          # Standard run metrics
+          for scenario in standard; do
+            FILE="tests/load/results/${scenario}-metrics.json"
+            P95_CREATE=$(extract_p95 "$FILE" "remittance_create_duration")
+            P95_LIST=$(extract_p95   "$FILE" "remittance_list_duration")
+            P95_WS=$(extract_p95     "$FILE" "ws_connect_duration")
+
+            [ "$P95_CREATE" != "N/A" ] && echo "${DATE},${SHA},remittance_create,${P95_CREATE},N/A,N/A,N/A" \
+              >> tests/load/baselines/trend.csv
+            [ "$P95_LIST" != "N/A" ]   && echo "${DATE},${SHA},remittance_list,${P95_LIST},N/A,N/A,N/A" \
+              >> tests/load/baselines/trend.csv
+            [ "$P95_WS" != "N/A" ]     && echo "${DATE},${SHA},websocket,${P95_WS},N/A,N/A,N/A" \
+              >> tests/load/baselines/trend.csv
+          done
+
+          # Soak/spike metrics
+          for scenario in soak spike; do
+            FILE="tests/load/results/${scenario}-metrics.json"
+            P95=$(extract_p95 "$FILE" "${scenario}_duration")
+            [ "$P95" != "N/A" ] && echo "${DATE},${SHA},${scenario},${P95},N/A,N/A,N/A" \
+              >> tests/load/baselines/trend.csv
+          done
+
+          echo "Trend data appended to tests/load/baselines/trend.csv"
+
+      # ── Upload all result artifacts ────────────────────────────────────────
       - name: Upload load test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: load-test-results-${{ github.run_id }}
           path: tests/load/results/
-          retention-days: 30
+          retention-days: 90
 
+      # ── GitHub Step Summary ────────────────────────────────────────────────
       - name: Post summary
         if: always()
         run: |
-          echo "### Load test results — ${{ github.event.inputs.target }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| API URL | \`${{ steps.urls.outputs.api_url }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Backend URL | \`${{ steps.urls.outputs.backend_url }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| create VUs | ${{ github.event.inputs.create_vus }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| list VUs | ${{ github.event.inputs.list_vus }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ws VUs | ${{ github.event.inputs.ws_vus }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Load test run details" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Parameter | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Target env     | ${{ github.event.inputs.target }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| API URL        | \`${{ steps.urls.outputs.api_url }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Backend URL    | \`${{ steps.urls.outputs.backend_url }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Create VUs     | ${{ github.event.inputs.create_vus || '150' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| List VUs       | ${{ github.event.inputs.list_vus || '300' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| WS VUs         | ${{ github.event.inputs.ws_vus || '50' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Run soak       | ${{ github.event.inputs.run_soak || 'false' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Run spike      | ${{ github.event.inputs.run_spike || 'false' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
           if [ -f tests/load/results/summary.txt ]; then
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat tests/load/results/summary.txt >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat tests/load/results/summary.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi

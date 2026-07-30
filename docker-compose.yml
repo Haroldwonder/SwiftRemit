@@ -48,7 +48,11 @@ services:
       PORT: 3001
       DATABASE_URL: postgres://${POSTGRES_USER:-swiftremit}:${POSTGRES_PASSWORD:-swiftremit}@postgres:5432/${POSTGRES_DB:-swiftremit}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      JAEGER_ENDPOINT: http://jaeger:4318
       OTEL_SERVICE_NAME: swiftremit-backend
+      # SR-108: 100% sampling locally; override with 0.1 in production
+      OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
     env_file:
       - ./backend/.env
     volumes:
@@ -72,7 +76,10 @@ services:
       PORT: 3000
       DATABASE_URL: postgres://${POSTGRES_USER:-swiftremit}:${POSTGRES_PASSWORD:-swiftremit}@postgres:5432/${POSTGRES_DB:-swiftremit}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      JAEGER_ENDPOINT: http://jaeger:4318
       OTEL_SERVICE_NAME: swiftremit-api
+      OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
     env_file:
       - ./api/.env
     volumes:

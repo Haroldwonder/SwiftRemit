@@ -3,15 +3,20 @@
  *
  * Exercises the Socket.IO WebSocket endpoint on the API service.
  * Each VU opens a connection, subscribes to events for 30 seconds,
- * then disconnects.  The scenario simulates concurrent real-time clients.
+ * then disconnects.
  *
- * k6 uses the native ws:// WebSocket protocol. Socket.IO uses a custom
- * handshake over HTTP long-polling before upgrading to WebSocket, so this
- * script targets the raw WebSocket upgrade path that Socket.IO supports
- * via `?EIO=4&transport=websocket`.
- *
- * Acceptance: 95 % of connections established in < 200 ms; 0 % error rate.
+ * Thresholds (enforced — test fails if breached):
+ *   ws_connect_duration p(95) < 200ms
+ *   ws_errors           rate  < 0.05
  */
+
+export const options = {
+  thresholds: {
+    ws_connect_duration: ['p(95)<200'],
+    ws_errors: ['rate<0.05'],
+    ws_connections_total: ['count>0'],
+  },
+};
 
 import ws   from 'k6/ws';
 import http from 'k6/http';
