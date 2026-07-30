@@ -9,6 +9,9 @@
 import axios from 'axios';
 import { Pool } from 'pg';
 import { buildLocalizedMessage, TemplateKey } from './notification-templates';
+import { createLogger, getCorrelationId } from './correlation-id';
+
+const logger = createLogger('notification-service');
 
 export type NotificationChannel = 'email' | 'sms';
 export type RemittanceNotificationStatus = 'completed' | 'failed' | 'created';
@@ -42,7 +45,7 @@ async function sendEmail(to: string, subject: string, text: string): Promise<voi
   const apiKey = process.env.SENDGRID_API_KEY;
   const from = process.env.SENDGRID_FROM_EMAIL ?? 'noreply@swiftremit.io';
   if (!apiKey) {
-    console.warn('[notification] SENDGRID_API_KEY not set — skipping email');
+    logger.warn('[notification] SENDGRID_API_KEY not set — skipping email', { correlationId: getCorrelationId() });
     return;
   }
   await axios.post(
@@ -57,7 +60,7 @@ async function sendSms(to: string, body: string): Promise<void> {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const from = process.env.TWILIO_FROM_NUMBER;
   if (!accountSid || !authToken || !from) {
-    console.warn('[notification] Twilio credentials not set — skipping SMS');
+    logger.warn('[notification] Twilio credentials not set — skipping SMS', { correlationId: getCorrelationId() });
     return;
   }
   const params = new URLSearchParams({ To: to, From: from, Body: body });
@@ -84,20 +87,23 @@ async function dispatch(
   text: string,
   userId: string,
 ): Promise<void> {
+  const correlationId = getCorrelationId();
   const tasks: Promise<void>[] = [];
 
   if (prefs.email_opt_in && prefs.email) {
+    logger.info('Dispatching email notification', { userId, correlationId });
     tasks.push(
       sendEmail(prefs.email, subject, text).catch(err =>
-        console.error(`[notification] email failed for ${userId}:`, err),
+        logger.error(`Email failed for ${userId}`, err instanceof Error ? err : new Error(String(err)), { correlationId }),
       ),
     );
   }
 
   if (prefs.sms_opt_in && prefs.phone) {
+    logger.info('Dispatching SMS notification', { userId, correlationId });
     tasks.push(
       sendSms(prefs.phone, text).catch(err =>
-        console.error(`[notification] sms failed for ${userId}:`, err),
+        logger.error(`SMS failed for ${userId}`, err instanceof Error ? err : new Error(String(err)), { correlationId }),
       ),
     );
   }
@@ -150,12 +156,17 @@ export class NotificationService {
 
   /**
    * Send notifications for a remittance status change.
-   * Messages are localised to the user's preferred_language; falls back to English.
+   * Messages are localised to the user's preferred_language; falls back through
+   * base-language → 'en' (see notification-templates/index.ts).
    */
   async notifyRemittanceStatus(payload: RemittanceNotificationPayload): Promise<void> {
     const { remittanceId, status, amount, currency, senderUserId } = payload;
+    const correlationId = getCorrelationId();
     const prefs = await this.getPreferences(senderUserId);
-    if (!prefs) return;
+    if (!prefs) {
+      logger.debug('No notification preferences for user — skipping', { userId: senderUserId, correlationId });
+      return;
+    }
 
     const key = remittanceStatusToTemplateKey(status);
     const { subject, text } = buildLocalizedMessage(prefs.preferred_language, key, {
@@ -164,19 +175,39 @@ export class NotificationService {
       currency,
     });
 
+    logger.info('Sending remittance notification', {
+      remittanceId,
+      status,
+      userId: senderUserId,
+      locale: prefs.preferred_language ?? 'en',
+      correlationId,
+    });
+
     await dispatch(prefs, subject, text, senderUserId);
   }
 
   /**
    * Send a KYC event notification (approved / expired).
-   * Messages are localised to the user's preferred_language; falls back to English.
+   * Messages are localised to the user's preferred_language; falls back through
+   * base-language → 'en'.
    */
   async notifyKycEvent(payload: KycNotificationPayload): Promise<void> {
     const { event, userId } = payload;
+    const correlationId = getCorrelationId();
     const prefs = await this.getPreferences(userId);
-    if (!prefs) return;
+    if (!prefs) {
+      logger.debug('No notification preferences for user — skipping', { userId, correlationId });
+      return;
+    }
 
     const { subject, text } = buildLocalizedMessage(prefs.preferred_language, event, {});
+
+    logger.info('Sending KYC notification', {
+      event,
+      userId,
+      locale: prefs.preferred_language ?? 'en',
+      correlationId,
+    });
 
     await dispatch(prefs, subject, text, userId);
   }

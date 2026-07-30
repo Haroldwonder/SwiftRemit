@@ -13,7 +13,9 @@ import { withAdvisoryLock } from './distributed-lock';
 import { AnchorHealthChecker } from './anchor-health-checker';
 import { getMetricsService } from './metrics';
 import { runTracked } from './job-tracker';
-import { WebhookDlqProcessor } from './webhook-dlq-processor';
+import { createLogger } from './correlation-id';
+
+const logger = createLogger('scheduler');
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
@@ -35,7 +37,7 @@ export async function startBackgroundJobs() {
     const ran = await withAdvisoryLock(pool, 'revalidate-stale-assets', async () => {
       await runTracked(pool, 'revalidate-stale-assets', revalidateStaleAssets);
     });
-    if (!ran) console.log('revalidate-stale-assets: skipped (another instance holds the lock)');
+    if (!ran) logger.info('revalidate-stale-assets: skipped (another instance holds the lock)');
   });
 
   // Run KYC polling every 30 minutes
@@ -43,7 +45,7 @@ export async function startBackgroundJobs() {
     const ran = await withAdvisoryLock(pool, 'poll-kyc-statuses', async () => {
       await runTracked(pool, 'poll-kyc-statuses', pollKycStatuses);
     });
-    if (!ran) console.log('poll-kyc-statuses: skipped (another instance holds the lock)');
+    if (!ran) logger.info('poll-kyc-statuses: skipped (another instance holds the lock)');
   });
 
   // Run SEP-24 transaction polling every 2 minutes
@@ -51,7 +53,7 @@ export async function startBackgroundJobs() {
     const ran = await withAdvisoryLock(pool, 'poll-sep24-transactions', async () => {
       await runTracked(pool, 'poll-sep24-transactions', pollSep24Transactions);
     });
-    if (!ran) console.log('poll-sep24-transactions: skipped (another instance holds the lock)');
+    if (!ran) logger.info('poll-sep24-transactions: skipped (another instance holds the lock)');
   });
 
   // Extend contract storage TTLs daily to prevent data loss
@@ -59,7 +61,7 @@ export async function startBackgroundJobs() {
     const ran = await withAdvisoryLock(pool, 'extend-contract-storage-ttl', async () => {
       await runTracked(pool, 'extend-contract-storage-ttl', extendContractStorageTtl);
     });
-    if (!ran) console.log('extend-contract-storage-ttl: skipped (another instance holds the lock)');
+    if (!ran) logger.info('extend-contract-storage-ttl: skipped (another instance holds the lock)');
   });
 
   // Send KYC expiry warnings daily at 08:00 UTC
@@ -67,7 +69,7 @@ export async function startBackgroundJobs() {
     const ran = await withAdvisoryLock(pool, 'notify-kyc-expiries', async () => {
       await runTracked(pool, 'notify-kyc-expiries', notifyKycExpiries);
     });
-    if (!ran) console.log('notify-kyc-expiries: skipped (another instance holds the lock)');
+    if (!ran) logger.info('notify-kyc-expiries: skipped (another instance holds the lock)');
   });
 
   // Run anchor health checks every 5 minutes
@@ -75,19 +77,10 @@ export async function startBackgroundJobs() {
     const ran = await withAdvisoryLock(pool, 'check-anchor-health', async () => {
       await runTracked(pool, 'check-anchor-health', checkAnchorHealth);
     });
-    if (!ran) console.log('check-anchor-health: skipped (another instance holds the lock)');
+    if (!ran) logger.info('check-anchor-health: skipped (another instance holds the lock)');
   });
 
-  // SR-027: Process DLQ entries every 5 minutes
-  // — retries with exponential backoff, expires stale entries, auto-disables on K failures
-  cron.schedule('*/5 * * * *', async () => {
-    const ran = await withAdvisoryLock(pool, 'process-webhook-dlq', async () => {
-      await runTracked(pool, 'process-webhook-dlq', processDlq);
-    });
-    if (!ran) console.log('process-webhook-dlq: skipped (another instance holds the lock)');
-  });
-
-  console.log('Background jobs scheduled');
+  logger.info('Background jobs scheduled');
 }
 
 async function revalidateStaleAssets() {
@@ -95,11 +88,11 @@ async function revalidateStaleAssets() {
     const hoursOld = parseInt(process.env.VERIFICATION_INTERVAL_HOURS || '24');
     const staleAssets = await getStaleAssets(hoursOld);
 
-    console.log(`Found ${staleAssets.length} assets to revalidate`);
+    logger.info(`Found ${staleAssets.length} assets to revalidate`);
 
     for (const asset of staleAssets) {
       try {
-        console.log(`Revalidating ${asset.asset_code}-${asset.issuer}`);
+        logger.info(`Revalidating ${asset.asset_code}-${asset.issuer}`);
 
         const result = await verifier.verifyAsset(asset.asset_code, asset.issuer);
 
@@ -122,37 +115,37 @@ async function revalidateStaleAssets() {
         try {
           await storeVerificationOnChain(verification);
         } catch (error) {
-          console.error(`Failed to store on-chain for ${asset.asset_code}:`, error);
+          logger.error(`Failed to store on-chain for ${asset.asset_code}`, error as Error);
         }
 
         // Rate limiting - wait 1 second between verifications
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
-        console.error(`Failed to revalidate ${asset.asset_code}:`, error);
+        logger.error(`Failed to revalidate ${asset.asset_code}`, error as Error);
       }
     }
 
-    console.log('Periodic revalidation completed');
+    logger.info('Periodic revalidation completed');
   } catch (error) {
-    console.error('Error in revalidation job:', error);
+    logger.error('Error in revalidation job', error as Error);
   }
 }
 
 async function pollKycStatuses() {
   try {
     await kycService.pollAllAnchors();
-    console.log('KYC polling completed');
+    logger.info('KYC polling completed');
   } catch (error) {
-    console.error('Error in KYC polling job:', error);
+    logger.error('Error in KYC polling job', error as Error);
   }
 }
 
 async function pollSep24Transactions() {
   try {
     await sep24Service.pollAllTransactions();
-    console.log('SEP-24 polling completed');
+    logger.info('SEP-24 polling completed');
   } catch (error) {
-    console.error('Error in SEP-24 polling job:', error);
+    logger.error('Error in SEP-24 polling job', error as Error);
   }
 }
 
@@ -172,7 +165,7 @@ async function extendContractStorageTtl() {
   const adminSecretKey = process.env.ADMIN_SECRET_KEY;
 
   if (!contractId || !rpcUrl || !networkPassphrase || !adminSecretKey) {
-    console.warn('extend_storage_ttl: missing env vars (CONTRACT_ID, SOROBAN_RPC_URL, NETWORK_PASSPHRASE, ADMIN_SECRET_KEY). Skipping.');
+    logger.warn('extend_storage_ttl: missing env vars (CONTRACT_ID, SOROBAN_RPC_URL, NETWORK_PASSPHRASE, ADMIN_SECRET_KEY). Skipping.');
     return;
   }
 
@@ -192,9 +185,9 @@ async function extendContractStorageTtl() {
     // Use the SDK's extendStorageTtl method
     const preparedTx = await (client as any).extendStorageTtl(adminAddress, extendByLedgers);
     await (client as any).submitTransaction(preparedTx, keypair);
-    console.log(`Contract storage TTLs extended by ${extendByLedgers} ledgers`);
+    logger.info(`Contract storage TTLs extended by ${extendByLedgers} ledgers`);
   } catch (error) {
-    console.error('Failed to extend contract storage TTLs:', error);
+    logger.error('Failed to extend contract storage TTLs', error as Error);
   }
 }
 
@@ -204,19 +197,19 @@ async function notifyKycExpiries() {
     const notifier = new KycExpiryNotifier(pool, store);
     await notifier.run();
   } catch (error) {
-    console.error('Error in KYC expiry notification job:', error);
+    logger.error('Error in KYC expiry notification job', error as Error);
   }
 }
 
 async function checkAnchorHealth() {
   try {
     const results = await anchorHealthChecker.checkAllAnchors();
-    console.log(`Anchor health check completed: ${results.length} anchors checked`);
+    logger.info(`Anchor health check completed: ${results.length} anchors checked`);
     for (const result of results) {
-      console.log(`  ${result.anchor_id}: ${result.status} (${result.response_time_ms}ms)`);
+      logger.info(`Anchor health result`, { anchor_id: result.anchor_id, status: result.status, response_time_ms: result.response_time_ms });
     }
   } catch (error) {
-    console.error('Error in anchor health check job:', error);
+    logger.error('Error in anchor health check job', error as Error);
   }
 }
 

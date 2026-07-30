@@ -62,6 +62,11 @@ export function getTracer(name = 'swiftremit') {
 /**
  * Wrap an async operation in a named span.
  * Automatically records exceptions and sets error status.
+ *
+ * SR-035: `correlation_id` is always set as a span attribute so every span
+ * exported to Jaeger can be filtered by the originating correlation ID.
+ * The value is read from AsyncLocalStorage (set by HTTP middleware or
+ * job-tracker); callers may also pass it explicitly via `attributes`.
  */
 export async function withSpan<T>(
   name: string,
@@ -69,8 +74,9 @@ export async function withSpan<T>(
   attributes?: Record<string, string | number | boolean>
 ): Promise<T> {
   const tracer = getTracer();
+  const correlationId = getCorrelationId() ?? (attributes?.['correlation_id'] as string | undefined) ?? '';
   const span = tracer.startSpan(name);
-  span.setAttribute('correlation_id', getCorrelationId() ?? '');
+  span.setAttribute('correlation_id', correlationId);
   if (attributes) {
     span.setAttributes(attributes);
   }
@@ -89,4 +95,22 @@ export async function withSpan<T>(
   });
 }
 
+/**
+ * Convenience wrapper for scheduled job spans.
+ *
+ * Identical to `withSpan` but also sets the `job.name` span attribute so
+ * job traces are easily distinguished in Jaeger from HTTP request traces.
+ *
+ *   await withJobSpan('revalidate-stale-assets', async (span) => { ... });
+ */
+export async function withJobSpan<T>(
+  jobName: string,
+  fn: (span: Span) => Promise<T>,
+  extraAttributes?: Record<string, string | number | boolean>
+): Promise<T> {
+  return withSpan(jobName, fn, { 'job.name': jobName, ...extraAttributes });
+}
+
 export { trace, context, propagation };
+export type { Span };
+

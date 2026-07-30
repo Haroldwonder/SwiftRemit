@@ -59,18 +59,13 @@ export class WebhookDispatcher {
   }
 
   /**
-   * Generate webhook headers including HMAC-SHA256 signature.
-   *
-   * If `subscriber` has a `previous_secret` and `secret_rotated_at` value
-   * that falls within the 24-hour rotation grace period an additional
-   * `x-webhook-signature-prev` header is emitted so that receivers can
-   * verify against either the old or the new secret without downtime.
+   * Generate webhook headers including signature and optional correlation ID.
    */
   private generateHeaders(
     payload: string,
     secret: string,
     contentType = 'application/json',
-    subscriber?: WebhookSubscriber
+    correlationId?: string,
   ): Record<string, string> {
     const timestamp = Date.now().toString();
     const webhookId = `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -85,15 +80,10 @@ export class WebhookDispatcher {
       'User-Agent': 'SwiftRemit-Webhook/1.0',
     };
 
-    // Dual-signature during secret rotation grace period
-    if (subscriber?.previous_secret && subscriber.secret_rotated_at) {
-      const rotatedAt = typeof subscriber.secret_rotated_at === 'string'
-        ? new Date(subscriber.secret_rotated_at).getTime()
-        : subscriber.secret_rotated_at.getTime();
-      const age = Date.now() - rotatedAt;
-      if (age < ROTATION_GRACE_MS) {
-        headers['x-webhook-signature-prev'] = this.generateSignature(msg, subscriber.previous_secret);
-      }
+    // SR-035: propagate the originating correlation ID so receivers can join
+    // traces across the API → contract-event → webhook delivery chain.
+    if (correlationId) {
+      headers['X-Correlation-ID'] = correlationId;
     }
 
     return headers;
@@ -162,7 +152,16 @@ export class WebhookDispatcher {
             attempt: 0,
           } as WebhookDeliveryRecord);
 
-          const success = await this.attemptDelivery(deliveryId, subscriber.url, subscriber.secret, enrichedPayload, 1, deliveryRecord, subscriber.content_type, subscriber);
+          const success = await this.attemptDelivery(
+            deliveryId,
+            subscriber.url,
+            subscriber.secret,
+            enrichedPayload,
+            1,
+            deliveryRecord,
+            subscriber.content_type,
+            correlationId,
+          );
 
           if (success) {
             successCount++;
@@ -196,7 +195,7 @@ export class WebhookDispatcher {
     attempt: number = 1,
     deliveryRecord?: Partial<WebhookDeliveryRecord>,
     contentType: string = 'application/json',
-    subscriber?: WebhookSubscriber
+    correlationId?: string,
   ): Promise<boolean> {
     if (!url.startsWith('https://')) {
       const msg = `Webhook delivery rejected: URL must use HTTPS (received: ${url})`;
@@ -219,7 +218,7 @@ export class WebhookDispatcher {
           ).toString()
         : JSON.stringify(payload);
 
-      const headers = this.generateHeaders(serialized, secret, contentType, subscriber);
+      const headers = this.generateHeaders(serialized, secret, contentType, correlationId);
 
       this.logger.debug(`Attempting delivery ${attempt}/${this.options.maxRetries} to ${url}`);
 
@@ -250,7 +249,7 @@ export class WebhookDispatcher {
         await this.store.updateDeliveryStatus(deliveryId, 'pending', attempt, errorMessage);
         await new Promise(resolve => setTimeout(resolve, delay));
 
-        return this.attemptDelivery(deliveryId, url, secret, payload, attempt + 1, deliveryRecord, contentType, subscriber);
+        return this.attemptDelivery(deliveryId, url, secret, payload, attempt + 1, deliveryRecord, contentType, correlationId);
       } else {
         await this.store.updateDeliveryStatus(deliveryId, 'failed', attempt, errorMessage);
         this.logger.error(`Delivery ${deliveryId} failed after ${attempt} attempts: ${errorMessage}`);

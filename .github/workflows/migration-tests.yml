@@ -6,12 +6,14 @@ on:
     paths:
       - "backend/migrations/**"
       - "backend/src/migrate.ts"
+      - "backend/scripts/check-migration-rollbacks.sh"
       - ".github/workflows/migration-tests.yml"
   pull_request:
     branches: [main]
     paths:
       - "backend/migrations/**"
       - "backend/src/migrate.ts"
+      - "backend/scripts/check-migration-rollbacks.sh"
       - ".github/workflows/migration-tests.yml"
 
 defaults:
@@ -19,9 +21,20 @@ defaults:
     working-directory: backend
 
 jobs:
+  # ── SR-036: Every migration must have a rollback file ──────────────────────
+  rollback-parity:
+    name: Check every migration has a .down.sql
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify rollback parity
+        run: bash scripts/check-migration-rollbacks.sh
+
+  # ── Run all migrations from scratch ────────────────────────────────────────
   migration-up:
     name: Run all migrations from scratch
     runs-on: ubuntu-latest
+    needs: rollback-parity
     timeout-minutes: 10
 
     services:
@@ -70,9 +83,7 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
-          # Verify a representative set of tables that must exist after all
-          # migrations run from scratch.
-          for table in schema_migrations remittances anchors kyc_status webhooks admin_audit_log; do
+          for table in schema_migrations anchors kyc_status webhook_logs admin_audit_log job_runs contract_events; do
             exists=$(psql -h localhost -U postgres -d swiftremit_migration_test \
               -tAc "SELECT EXISTS (
                 SELECT 1 FROM information_schema.tables
@@ -85,11 +96,12 @@ jobs:
             fi
           done
 
+  # ── Rollback most-recent migration ─────────────────────────────────────────
   migration-rollback:
     name: Rollback most-recent migration
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     needs: migration-up
+    timeout-minutes: 10
 
     services:
       postgres:
@@ -154,3 +166,40 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftremit_rollback_test
         run: npm run migrate
+
+  # ── SR-036: Full up→down→up round-trip via Vitest ──────────────────────────
+  migration-roundtrip:
+    name: Full up→down→up round-trip test
+    runs-on: ubuntu-latest
+    needs: rollback-parity
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: swiftremit_roundtrip_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      - name: Run migration round-trip test suite
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftremit_roundtrip_test
+        run: npx vitest run src/__tests__/migration-roundtrip.test.ts --reporter=verbose

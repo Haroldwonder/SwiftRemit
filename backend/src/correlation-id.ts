@@ -6,7 +6,11 @@ import { redact as sharedRedact, StructuredLogger as SharedLogger } from '../../
 
 // ── AsyncLocalStorage for correlation IDs ────────────────────────────────────
 
-const correlationStorage = new AsyncLocalStorage<string>();
+// AsyncLocalStorage to maintain correlation ID across async operations.
+// Exported so job-tracker (and any other non-Express entry point) can call
+// correlationStorage.run(id, fn) to establish a correlation context without
+// going through HTTP middleware.
+export const correlationStorage = new AsyncLocalStorage<string>();
 
 export function getCorrelationId(): string | undefined {
   return correlationStorage.getStore();
