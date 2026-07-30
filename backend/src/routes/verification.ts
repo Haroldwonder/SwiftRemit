@@ -122,7 +122,7 @@ export function createVerificationRouter(): Router {
       const { assetCode, issuer } = req.params;
       if (!assetCode || assetCode.length > 12) return res.status(400).json({ error: 'Invalid asset code' });
       if (!issuer || issuer.length !== 56) return res.status(400).json({ error: 'Invalid issuer address' });
-      const verification = await getAssetVerification(assetCode, issuer);
+      const verification = await getAssetVerification(assetCode as string, issuer as string);
       if (!verification) return res.status(404).json({ error: 'Asset verification not found' });
       res.json(verification);
     } catch (error) {

@@ -51,9 +51,15 @@ export interface AuthContext {
   expiresAt: number;
 }
 
-declare module 'express-serve-static-core' {
-  interface Request {
-    auth?: AuthContext;
+// Augment the global Express namespace rather than the
+// 'express-serve-static-core' module: express 5 resolves its own nested copy of
+// those types, so a module augmentation would attach to the wrong declaration.
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      auth?: AuthContext;
+    }
   }
 }
 

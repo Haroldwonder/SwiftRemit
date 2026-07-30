@@ -2,6 +2,7 @@ import type { RetryPolicy } from "./types.js";
 import { SwiftRemitError } from "./errors.js";
 
 export function isTransientError(err: unknown): boolean {
+  if (err instanceof RateLimitError) return true;
   if (err instanceof SwiftRemitError) return err.retryable;
 
   const msg = err instanceof Error ? err.message : String(err);
@@ -17,6 +18,27 @@ export function isTransientError(err: unknown): boolean {
     msg.includes("timeout") ||
     msg.includes("timed out")
   );
+}
+
+/**
+ * A 429 response error that carries the Retry-After value from the response header.
+ * Callers should use this to back off by exactly the advertised duration instead
+ * of the jittered exponential backoff used for other transient failures.
+ */
+export class RateLimitError extends Error {
+  /** How long to wait before retrying, in milliseconds (from Retry-After). */
+  readonly retryAfterMs: number;
+  /** ISO 8601 reset timestamp from the error body (if available). */
+  readonly resetAt?: string;
+
+  constructor(retryAfterSeconds: number, message?: string, resetAt?: string) {
+    super(message ?? `Rate limit exceeded. Retry after ${retryAfterSeconds}s`);
+    this.name = "RateLimitError";
+    this.retryAfterMs = retryAfterSeconds * 1000;
+    this.resetAt = resetAt;
+    // Maintain proper prototype chain in transpiled environments
+    Object.setPrototypeOf(this, RateLimitError.prototype);
+  }
 }
 
 /**
@@ -41,6 +63,10 @@ export function parseRetryAfterMs(retryAfter: string | null | undefined): number
  */
 export function extractRetryAfter(err: unknown): number | null {
   if (err == null || typeof err !== "object") return null;
+
+  // A RateLimitError already carries the parsed Retry-After duration.
+  if (err instanceof RateLimitError) return err.retryAfterMs;
+
   const e = err as Record<string, unknown>;
 
   // Direct property
@@ -66,6 +92,25 @@ export function extractRetryAfter(err: unknown): number | null {
   }
 
   return null;
+}
+
+/**
+ * Build a {@link RateLimitError} from a fetch Response that returned 429.
+ * Reads the Retry-After header and, best-effort, the `error.resetAt` field
+ * from the JSON body.
+ */
+export async function rateLimitErrorFromResponse(response: Response): Promise<RateLimitError> {
+  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after")) ?? 60_000;
+
+  let resetAt: string | undefined;
+  try {
+    const body = (await response.json()) as { error?: { resetAt?: string } };
+    resetAt = body?.error?.resetAt;
+  } catch {
+    // Body parsing is best-effort
+  }
+
+  return new RateLimitError(retryAfterMs / 1000, undefined, resetAt);
 }
 
 /**

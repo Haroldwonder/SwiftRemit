@@ -53,7 +53,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
   describe('authService.login — POST /api/auth/login', () => {
     it('returns token for wallet + signature credentials', async () => {
       await provider.addInteraction({
-        state: 'mobile user exists',
+        states: [{ description: 'mobile user exists' }],
         uponReceiving: 'mobile login with walletAddress and signature',
         withRequest: {
           method: 'POST',
@@ -85,7 +85,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
 
     it('returns 400 for missing walletAddress', async () => {
       await provider.addInteraction({
-        state: 'mobile login missing walletAddress',
+        states: [{ description: 'mobile login missing walletAddress' }],
         uponReceiving: 'mobile login request without walletAddress',
         withRequest: {
           method: 'POST',
@@ -111,7 +111,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
   describe('remittanceService.create — POST /api/remittance', () => {
     it('creates a remittance and returns the new record', async () => {
       await provider.addInteraction({
-        state: 'mobile user authenticated',
+        states: [{ description: 'mobile user authenticated' }],
         uponReceiving: 'mobile create remittance request',
         withRequest: {
           method: 'POST',
@@ -151,7 +151,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
 
     it('returns 401 when not authenticated', async () => {
       await provider.addInteraction({
-        state: 'no auth token provided',
+        states: [{ description: 'no auth token provided' }],
         uponReceiving: 'mobile unauthenticated create remittance',
         withRequest: {
           method: 'POST',
@@ -177,7 +177,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
 
     it('returns remittance history for the wallet', async () => {
       await provider.addInteraction({
-        state: 'mobile user has remittances',
+        states: [{ description: 'mobile user has remittances' }],
         uponReceiving: 'mobile get remittance history',
         withRequest: {
           method: 'GET',
@@ -208,7 +208,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
     it('returns empty array when no history exists', async () => {
       const newWallet = 'GNEWWALLET1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
       await provider.addInteraction({
-        state: 'mobile user has no remittances',
+        states: [{ description: 'mobile user has no remittances' }],
         uponReceiving: 'mobile get empty remittance history',
         withRequest: {
           method: 'GET',
@@ -232,7 +232,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
   describe('remittanceService.getById — GET /api/remittance/:id', () => {
     it('returns a single remittance by id', async () => {
       await provider.addInteraction({
-        state: 'remittance rem-001 exists',
+        states: [{ description: 'remittance rem-001 exists' }],
         uponReceiving: 'mobile get remittance by id',
         withRequest: {
           method: 'GET',
@@ -261,7 +261,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
 
     it('returns 404 for unknown remittance', async () => {
       await provider.addInteraction({
-        state: 'remittance rem-unknown does not exist',
+        states: [{ description: 'remittance rem-unknown does not exist' }],
         uponReceiving: 'mobile get non-existent remittance',
         withRequest: {
           method: 'GET',
@@ -286,7 +286,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
   describe('kycService.getStatus — GET /api/kyc/status/:userId/:anchorId', () => {
     it('returns KYC status for a user and anchor', async () => {
       await provider.addInteraction({
-        state: 'KYC record exists for user user-1 at anchor anchor-1',
+        states: [{ description: 'KYC record exists for user user-1 at anchor anchor-1' }],
         uponReceiving: 'mobile get KYC status',
         withRequest: {
           method: 'GET',
@@ -314,7 +314,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
   describe('kycService.register — POST /api/kyc/register', () => {
     it('registers KYC fields and returns 200', async () => {
       await provider.addInteraction({
-        state: 'KYC registration is open',
+        states: [{ description: 'KYC registration is open' }],
         uponReceiving: 'mobile KYC registration request',
         withRequest: {
           method: 'POST',
@@ -345,7 +345,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
   describe('fxService.getRate — GET /api/fx-rate/current', () => {
     it('returns exchange rate for a currency pair', async () => {
       await provider.addInteraction({
-        state: 'FX rates are available',
+        states: [{ description: 'FX rates are available' }],
         uponReceiving: 'mobile FX rate request USD to NGN',
         withRequest: {
           method: 'GET',
@@ -372,7 +372,7 @@ describe('SwiftRemitMobile — Pact consumer contract (SR-062)', () => {
 
     it('returns 400 for unsupported currency pair', async () => {
       await provider.addInteraction({
-        state: 'FX rates exist but XYZ is unsupported',
+        states: [{ description: 'FX rates exist but XYZ is unsupported' }],
         uponReceiving: 'mobile FX rate request for unsupported pair',
         withRequest: {
           method: 'GET',

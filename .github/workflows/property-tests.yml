@@ -78,6 +78,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+        working-directory: .
 
       - name: Run fast-check fee property tests
         run: npx vitest run src/__tests__/fee-calculation-property.test.ts --reporter=verbose

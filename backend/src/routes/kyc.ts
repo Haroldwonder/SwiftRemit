@@ -37,7 +37,7 @@ export function createKycRouter(pool: Pool): Router {
     try {
       const { userId, anchorId } = req.params;
       if (!userId || !anchorId) return res.status(400).json({ error: 'Invalid user ID or anchor ID' });
-      const kycStatus = await getUserKycStatus(userId, anchorId);
+      const kycStatus = await getUserKycStatus(userId as string, anchorId as string);
       if (!kycStatus) return res.status(404).json({ error: 'KYC status not found' });
       res.json(kycStatus);
     } catch (error) {
@@ -53,7 +53,7 @@ export function createKycRouter(pool: Pool): Router {
       if (!userId) return res.status(400).json({ error: 'Invalid user ID' });
       const { KycService } = await import('../kyc-service');
       const service = new KycService();
-      const isApproved = await service.isUserKycApproved(userId);
+      const isApproved = await service.isUserKycApproved(userId as string);
       res.json({ userId, kycApproved: isApproved });
     } catch (error) {
       console.error('Error checking KYC approval:', error);

@@ -68,7 +68,7 @@ function MainTabs() {
 }
 
 interface AppNavigatorProps {
-  navigationRef?: React.RefObject<NavigationContainerRef<ReactNavigation.RootParamList>>;
+  navigationRef?: React.RefObject<NavigationContainerRef<ReactNavigation.RootParamList> | null>;
   onReady?: () => void;
 }
 

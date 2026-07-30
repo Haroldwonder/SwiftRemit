@@ -9,10 +9,12 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as SecureStore from 'expo-secure-store';
 import { remittanceService } from '../services/api';
 import { readThroughCache } from '../services/offlineCache';
 import OfflineBanner from '../components/OfflineBanner';
+import type { RootStackParamList } from '../navigation/AppNavigator';
 import { Remittance, RemittanceStatus } from '../types';
 
 const STATUS_COLORS: Record<RemittanceStatus, string> = {
@@ -36,7 +38,7 @@ const STATUS_LABELS: Record<RemittanceStatus, string> = {
 };
 
 export default function TransactionHistoryScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [remittances, setRemittances] = useState<Remittance[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -95,7 +97,7 @@ export default function TransactionHistoryScreen() {
         <TouchableOpacity
           style={styles.card}
           onPress={() =>
-            navigation.navigate('TransactionDetail' as never, { remittanceId: item.remittance_id } as never)
+            navigation.navigate('TransactionDetail', { remittanceId: item.remittance_id })
           }
         >
           <View style={styles.cardLeft}>

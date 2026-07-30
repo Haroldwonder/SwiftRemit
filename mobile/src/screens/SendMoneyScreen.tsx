@@ -11,19 +11,31 @@ import {
   FlatList,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { remittanceService, fxService } from '../services/api';
-import { authenticateWithBiometrics } from '../services/biometrics';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { remittanceService, fxService, anchorService } from '../services/api';
+import { authenticateAndGetSigningKey } from '../services/biometrics';
 import { useNetworkStatus } from '../services/offlineCache';
+import { t } from '../services/i18n';
 import OfflineBanner from '../components/OfflineBanner';
-import { SendMoneyFormData, FxRate } from '../types';
+import type { RootStackParamList } from '../navigation/AppNavigator';
+import {
+  SendMoneyFormData,
+  FxRate,
+  FeeBreakdown,
+  Anchor,
+  AnchorAvailability,
+} from '../types';
 
 const SUPPORTED_CURRENCIES = ['PHP', 'MXN', 'INR', 'NGN', 'GHS', 'KES', 'UGX'];
 
 export default function SendMoneyScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [loading, setLoading] = useState(false);
   const [fxRate, setFxRate] = useState<FxRate | null>(null);
+  const [fees, setFees] = useState<FeeBreakdown | null>(null);
+  const [anchors, setAnchors] = useState<Anchor[]>([]);
+  const [selectedAnchor, setSelectedAnchor] = useState<Anchor | null>(null);
   const { isOffline } = useNetworkStatus();
 
   const [form, setForm] = useState<SendMoneyFormData>({
@@ -84,7 +96,7 @@ export default function SendMoneyScreen() {
       console.log('[SendMoney] Biometric auth succeeded. Keystore key:', authResult.keystoreKeyId);
 
       const remittance = await remittanceService.create(form);
-      navigation.navigate('TransactionDetail' as never, { remittanceId: remittance.remittance_id } as never);
+      navigation.navigate('TransactionDetail', { remittanceId: remittance.remittance_id });
     } catch (err: any) {
       Alert.alert('Transfer failed', err?.response?.data?.error || 'Please try again.');
     } finally {
@@ -242,7 +254,7 @@ export default function SendMoneyScreen() {
                 >
                   <View style={styles.anchorHeader}>
                     <Text style={styles.anchorName}>{anchor.name}</Text>
-                    <Text style={[styles.availabilityBadge, styles[`availability_${anchor.availability}`]]}>
+                    <Text style={[styles.availabilityBadge, AVAILABILITY_STYLES[anchor.availability]]}>
                       {anchor.availability}
                     </Text>
                   </View>
@@ -430,3 +442,9 @@ const styles = StyleSheet.create({
   },
   emptyText: { color: '#6B7280', fontSize: 14 },
 });
+
+const AVAILABILITY_STYLES: Record<AnchorAvailability, object> = {
+  available: styles.availability_available,
+  limited: styles.availability_limited,
+  unavailable: styles.availability_unavailable,
+};

@@ -53,6 +53,82 @@ export interface SendMoneyFormData {
   anchorId?: string;
 }
 
+// ─── Fee breakdown ────────────────────────────────────────────────────────────
+
+/** A single line item in the fee breakdown returned by the pricing endpoint. */
+export interface FeeLineItem {
+  amount: string;
+  currency: string;
+  description?: string;
+}
+
+export interface FeeBreakdown {
+  sendFee: FeeLineItem;
+  fxFee: FeeLineItem;
+  payoutFee: FeeLineItem;
+  total: FeeLineItem;
+  recipientReceives: string;
+  recipientCurrency: string;
+}
+
+// ─── Payout anchors ───────────────────────────────────────────────────────────
+
+export type AnchorAvailability = 'available' | 'limited' | 'unavailable';
+
+export interface Anchor {
+  anchor_id: string;
+  name: string;
+  country: string;
+  currency: string;
+  availability: AnchorAvailability;
+  settlement_time_hours: number;
+  fee_percentage: number;
+}
+
+// ─── Receipts ─────────────────────────────────────────────────────────────────
+
+export interface Receipt {
+  remittance_id: string;
+  sender: string;
+  recipient: string;
+  amount_sent: string;
+  currency_from: string;
+  amount_received: string;
+  currency_to: string;
+  fx_rate: number;
+  fees_charged: string;
+  transfer_date: string;
+  completion_date?: string;
+  status: RemittanceStatus;
+  proof_of_payout_url?: string;
+}
+
+// ─── Disputes ─────────────────────────────────────────────────────────────────
+
+export type DisputeReason =
+  | 'funds_not_received'
+  | 'incorrect_amount'
+  | 'duplicate'
+  | 'other';
+
+export type DisputeStatus = 'open' | 'under_investigation' | 'resolved' | 'closed';
+
+export interface Dispute {
+  dispute_id: string;
+  remittance_id: string;
+  reason: DisputeReason;
+  status: DisputeStatus;
+  description: string;
+  resolution?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Localisation ─────────────────────────────────────────────────────────────
+
+/** Locales shipped with the app (see src/services/i18n.ts). */
+export type AppLocale = 'en-US' | 'es-ES' | 'fr-FR' | 'pt-BR';
+
 // ─── Push notification data (deep-link payload) ───────────────────────────────
 
 /** Typed payload embedded in every push notification's `data` field. */

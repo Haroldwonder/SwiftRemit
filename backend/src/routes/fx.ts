@@ -49,7 +49,7 @@ export function createFxRouter(): Router {
     try {
       const { transactionId } = req.params;
       if (!transactionId) return res.status(400).json({ error: 'Invalid transaction ID' });
-      const fxRate = await getFxRate(transactionId);
+      const fxRate = await getFxRate(transactionId as string);
       if (!fxRate) return res.status(404).json({ error: 'FX rate not found for this transaction' });
       res.json({ ...fxRate, fx_rate_source: fxRate.provider });
     } catch (error) {

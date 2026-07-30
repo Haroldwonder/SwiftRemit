@@ -46,11 +46,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           # Cache based on the lockfile so the cache is invalidated when deps change.
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: package-lock.json
 
       # npm ci is deterministic and respects the lockfile exactly.
       - name: Install dependencies
         run: npm ci
+        working-directory: .
 
       - name: Run ESLint
         run: npm run lint
@@ -70,10 +71,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
+        working-directory: .
 
       - name: Run tsc --noEmit
         run: npm run typecheck
@@ -93,10 +95,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
+        working-directory: .
 
       - name: Run tests with coverage
         run: npm run test:coverage
@@ -128,10 +131,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
+        working-directory: .
 
       - name: Export Metro bundle (hermes, android baseline)
         # expo export --platform android produces a Hermes-compiled JS bundle
@@ -181,10 +185,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
+        working-directory: .
 
       - name: Install EAS CLI
         run: npm install --global eas-cli@latest
@@ -237,10 +242,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
+        working-directory: .
 
       - name: Install EAS CLI
         run: npm install --global eas-cli@latest

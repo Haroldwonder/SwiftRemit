@@ -167,6 +167,19 @@ export const fxService = {
   },
 };
 
+export const anchorService = {
+  /**
+   * List the payout anchors that can settle into the given corridor.
+   * Returns them ordered by the backend (best availability first).
+   */
+  async getAvailableAnchors(country: string, currency: string): Promise<Anchor[]> {
+    const { data } = await http.get('/api/anchors/available', {
+      params: { country, currency },
+    });
+    return data.anchors ?? data;
+  },
+};
+
 export const deviceService = {
   /**
    * Register a push token with the backend.

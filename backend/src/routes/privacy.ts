@@ -75,7 +75,7 @@ privacyRouter.post('/consent', (req: Request, res: Response) => {
  */
 privacyRouter.get('/consent/:userId', (req: Request, res: Response) => {
   const { userId } = req.params;
-  const consents = mockConsentStore.get(userId) || [];
+  const consents = mockConsentStore.get(userId as string) || [];
   res.json({ user_id: userId, consents });
 });
 

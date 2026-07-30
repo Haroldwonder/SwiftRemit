@@ -60,6 +60,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+        working-directory: .
 
       - name: Run all migrations (up)
         env:
@@ -125,6 +126,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+        working-directory: .
 
       - name: Apply all migrations
         env:
@@ -193,9 +195,10 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - run: npm ci
+        working-directory: .
 
       - name: Run migration round-trip test suite
         env:

@@ -43,8 +43,9 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Run npm audit (high/critical only)
-        working-directory: ${{ matrix.service }}
-        run: npm audit --audit-level=high --json | tee npm-audit-${{ matrix.service }}.json; npm audit --audit-level=high
+        # Single root lockfile (npm workspaces): audit from the root, scoped to
+        # the workspace with -w. `npm audit` inside a workspace dir has no lockfile.
+        run: npm audit --audit-level=high -w ${{ matrix.service }} --json | tee npm-audit-${{ matrix.service }}.json; npm audit --audit-level=high -w ${{ matrix.service }}
         continue-on-error: false
 
       - name: Upload audit report
@@ -52,7 +53,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: npm-audit-${{ matrix.service }}
-          path: ${{ matrix.service }}/npm-audit-${{ matrix.service }}.json
+          path: npm-audit-${{ matrix.service }}.json
           retention-days: 14
 
   rust-audit:

@@ -1,0 +1,669 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`TransactionHistory snapshots > renders a failed transaction with retry button 1`] = `
+<div>
+  <section
+    aria-label="Transaction history"
+    class="transaction-history"
+  >
+    <header
+      class="transaction-history-header"
+    >
+      <h2>
+        Transaction History
+      </h2>
+      <div
+        aria-label="History view mode"
+        class="history-view-controls"
+        role="tablist"
+      >
+        <button
+          aria-selected="true"
+          class="active"
+          role="tab"
+          type="button"
+        >
+          Table
+        </button>
+        <button
+          aria-selected="false"
+          class=""
+          role="tab"
+          type="button"
+        >
+          Cards
+        </button>
+      </div>
+    </header>
+    <div
+      aria-atomic="true"
+      aria-live="polite"
+      class="history-pagination-info"
+    >
+      Showing 
+      1
+      –
+      1
+       of
+       
+      1
+       transactions
+    </div>
+    <div
+      class="history-table-wrap"
+    >
+      <table
+        class="history-table"
+      >
+        <thead>
+          <tr>
+            <th>
+              Amount
+            </th>
+            <th>
+              Asset
+            </th>
+            <th>
+              Recipient
+            </th>
+            <th>
+              Status
+            </th>
+            <th>
+              Timestamp
+            </th>
+            <th
+              aria-label="Expand details column"
+            />
+            <th>
+              Receipt
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              250 undefined
+            </td>
+            <td />
+            <td
+              class="history-recipient"
+            >
+              GABC1234DEF5678HIJK9012LMNO3456PQRS7890TUVW1234XYZ5678ABCD
+            </td>
+            <td>
+              <span
+                class="history-status status-failed"
+              >
+                failed
+              </span>
+            </td>
+            <td />
+            <td>
+              <button
+                aria-expanded="false"
+                class="history-expand"
+                type="button"
+              >
+                Expand
+              </button>
+            </td>
+            <td>
+              <span
+                class="receipt-download-buttons"
+              >
+                <button
+                  aria-label="Download CSV receipt"
+                  type="button"
+                >
+                  CSV
+                </button>
+                <button
+                  aria-label="Download JSON receipt"
+                  type="button"
+                >
+                  JSON
+                </button>
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <nav
+      aria-label="Pagination"
+      class="history-pagination"
+    >
+      <button
+        aria-label="Previous page"
+        disabled=""
+        type="button"
+      >
+        Previous
+      </button>
+      <span
+        aria-live="polite"
+        class="pagination-info"
+      >
+        Page 
+        1
+         of 
+        1
+      </span>
+      <button
+        aria-label="Next page"
+        disabled=""
+        type="button"
+      >
+        Next
+      </button>
+    </nav>
+  </section>
+</div>
+`;
+
+exports[`TransactionHistory snapshots > renders a single completed transaction 1`] = `
+<div>
+  <section
+    aria-label="Transaction history"
+    class="transaction-history"
+  >
+    <header
+      class="transaction-history-header"
+    >
+      <h2>
+        Transaction History
+      </h2>
+      <div
+        aria-label="History view mode"
+        class="history-view-controls"
+        role="tablist"
+      >
+        <button
+          aria-selected="true"
+          class="active"
+          role="tab"
+          type="button"
+        >
+          Table
+        </button>
+        <button
+          aria-selected="false"
+          class=""
+          role="tab"
+          type="button"
+        >
+          Cards
+        </button>
+      </div>
+    </header>
+    <div
+      aria-atomic="true"
+      aria-live="polite"
+      class="history-pagination-info"
+    >
+      Showing 
+      1
+      –
+      1
+       of
+       
+      1
+       transactions
+    </div>
+    <div
+      class="history-table-wrap"
+    >
+      <table
+        class="history-table"
+      >
+        <thead>
+          <tr>
+            <th>
+              Amount
+            </th>
+            <th>
+              Asset
+            </th>
+            <th>
+              Recipient
+            </th>
+            <th>
+              Status
+            </th>
+            <th>
+              Timestamp
+            </th>
+            <th
+              aria-label="Expand details column"
+            />
+            <th>
+              Receipt
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              250 undefined
+            </td>
+            <td />
+            <td
+              class="history-recipient"
+            >
+              GABC1234DEF5678HIJK9012LMNO3456PQRS7890TUVW1234XYZ5678ABCD
+            </td>
+            <td>
+              <span
+                class="history-status status-completed"
+              >
+                completed
+              </span>
+            </td>
+            <td />
+            <td>
+              <button
+                aria-expanded="false"
+                class="history-expand"
+                type="button"
+              >
+                Expand
+              </button>
+            </td>
+            <td>
+              <span
+                class="receipt-download-buttons"
+              >
+                <button
+                  aria-label="Download CSV receipt"
+                  type="button"
+                >
+                  CSV
+                </button>
+                <button
+                  aria-label="Download JSON receipt"
+                  type="button"
+                >
+                  JSON
+                </button>
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <nav
+      aria-label="Pagination"
+      class="history-pagination"
+    >
+      <button
+        aria-label="Previous page"
+        disabled=""
+        type="button"
+      >
+        Previous
+      </button>
+      <span
+        aria-live="polite"
+        class="pagination-info"
+      >
+        Page 
+        1
+         of 
+        1
+      </span>
+      <button
+        aria-label="Next page"
+        disabled=""
+        type="button"
+      >
+        Next
+      </button>
+    </nav>
+  </section>
+</div>
+`;
+
+exports[`TransactionHistory snapshots > renders empty state when no transactions 1`] = `
+<div>
+  <section
+    aria-label="Transaction history"
+    class="transaction-history"
+  >
+    <header
+      class="transaction-history-header"
+    >
+      <h2>
+        Transaction History
+      </h2>
+      <div
+        aria-label="History view mode"
+        class="history-view-controls"
+        role="tablist"
+      >
+        <button
+          aria-selected="true"
+          class="active"
+          role="tab"
+          type="button"
+        >
+          Table
+        </button>
+        <button
+          aria-selected="false"
+          class=""
+          role="tab"
+          type="button"
+        >
+          Cards
+        </button>
+      </div>
+    </header>
+    <p
+      class="history-empty"
+    >
+      No transactions yet.
+    </p>
+  </section>
+</div>
+`;
+
+exports[`TransactionHistory snapshots > renders with a populated list of transactions 1`] = `
+<div>
+  <section
+    aria-label="Transaction history"
+    class="transaction-history"
+  >
+    <header
+      class="transaction-history-header"
+    >
+      <h2>
+        Transaction History
+      </h2>
+      <div
+        aria-label="History view mode"
+        class="history-view-controls"
+        role="tablist"
+      >
+        <button
+          aria-selected="true"
+          class="active"
+          role="tab"
+          type="button"
+        >
+          Table
+        </button>
+        <button
+          aria-selected="false"
+          class=""
+          role="tab"
+          type="button"
+        >
+          Cards
+        </button>
+      </div>
+    </header>
+    <div
+      aria-atomic="true"
+      aria-live="polite"
+      class="history-pagination-info"
+    >
+      Showing 
+      1
+      –
+      4
+       of
+       
+      4
+       transactions
+    </div>
+    <div
+      class="history-table-wrap"
+    >
+      <table
+        class="history-table"
+      >
+        <thead>
+          <tr>
+            <th>
+              Amount
+            </th>
+            <th>
+              Asset
+            </th>
+            <th>
+              Recipient
+            </th>
+            <th>
+              Status
+            </th>
+            <th>
+              Timestamp
+            </th>
+            <th
+              aria-label="Expand details column"
+            />
+            <th>
+              Receipt
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              250 undefined
+            </td>
+            <td />
+            <td
+              class="history-recipient"
+            >
+              GABC1234DEF5678HIJK9012LMNO3456PQRS7890TUVW1234XYZ5678ABCD
+            </td>
+            <td>
+              <span
+                class="history-status status-completed"
+              >
+                completed
+              </span>
+            </td>
+            <td />
+            <td>
+              <button
+                aria-expanded="false"
+                class="history-expand"
+                type="button"
+              >
+                Expand
+              </button>
+            </td>
+            <td>
+              <span
+                class="receipt-download-buttons"
+              >
+                <button
+                  aria-label="Download CSV receipt"
+                  type="button"
+                >
+                  CSV
+                </button>
+                <button
+                  aria-label="Download JSON receipt"
+                  type="button"
+                >
+                  JSON
+                </button>
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              100 undefined
+            </td>
+            <td />
+            <td
+              class="history-recipient"
+            >
+              GABC1234DEF5678HIJK9012LMNO3456PQRS7890TUVW1234XYZ5678ABCD
+            </td>
+            <td>
+              <span
+                class="history-status status-pending"
+              >
+                pending
+              </span>
+            </td>
+            <td />
+            <td>
+              <button
+                aria-expanded="false"
+                class="history-expand"
+                type="button"
+              >
+                Expand
+              </button>
+            </td>
+            <td>
+              <span
+                class="receipt-download-buttons"
+              >
+                <button
+                  aria-label="Download CSV receipt"
+                  type="button"
+                >
+                  CSV
+                </button>
+                <button
+                  aria-label="Download JSON receipt"
+                  type="button"
+                >
+                  JSON
+                </button>
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              500 undefined
+            </td>
+            <td />
+            <td
+              class="history-recipient"
+            >
+              GABC1234DEF5678HIJK9012LMNO3456PQRS7890TUVW1234XYZ5678ABCD
+            </td>
+            <td>
+              <span
+                class="history-status status-failed"
+              >
+                failed
+              </span>
+            </td>
+            <td />
+            <td>
+              <button
+                aria-expanded="false"
+                class="history-expand"
+                type="button"
+              >
+                Expand
+              </button>
+            </td>
+            <td>
+              <span
+                class="receipt-download-buttons"
+              >
+                <button
+                  aria-label="Download CSV receipt"
+                  type="button"
+                >
+                  CSV
+                </button>
+                <button
+                  aria-label="Download JSON receipt"
+                  type="button"
+                >
+                  JSON
+                </button>
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              75.5 undefined
+            </td>
+            <td />
+            <td
+              class="history-recipient"
+            >
+              GABC1234DEF5678HIJK9012LMNO3456PQRS7890TUVW1234XYZ5678ABCD
+            </td>
+            <td>
+              <span
+                class="history-status status-cancelled"
+              >
+                cancelled
+              </span>
+            </td>
+            <td />
+            <td>
+              <button
+                aria-expanded="false"
+                class="history-expand"
+                type="button"
+              >
+                Expand
+              </button>
+            </td>
+            <td>
+              <span
+                class="receipt-download-buttons"
+              >
+                <button
+                  aria-label="Download CSV receipt"
+                  type="button"
+                >
+                  CSV
+                </button>
+                <button
+                  aria-label="Download JSON receipt"
+                  type="button"
+                >
+                  JSON
+                </button>
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <nav
+      aria-label="Pagination"
+      class="history-pagination"
+    >
+      <button
+        aria-label="Previous page"
+        disabled=""
+        type="button"
+      >
+        Previous
+      </button>
+      <span
+        aria-live="polite"
+        class="pagination-info"
+      >
+        Page 
+        1
+         of 
+        1
+      </span>
+      <button
+        aria-label="Next page"
+        disabled=""
+        type="button"
+      >
+        Next
+      </button>
+    </nav>
+  </section>
+</div>
+`;

@@ -1,5 +1,4 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
-import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { Pool } from 'pg';
 import {
   getAnchorKycConfigs,
@@ -20,6 +19,11 @@ import { renderNotification, NotificationEventType } from './notification-templa
 // Constants
 // ---------------------------------------------------------------------------
 
+/** Maximum refund retry attempts before escalating to manual-review queue. */
+const MAX_REFUND_RETRIES = 3;
+
+/** Idempotency key prefix stored in the DB to mark a refund as in-flight. */
+const REFUND_IDEMPOTENCY_PREFIX = 'refund:';
 
 /**
  * SEP-24 transaction types
@@ -572,14 +576,6 @@ export class Sep24Service {
 
     // ── 8. Emit webhook event ───────────────────────────────────────────────
     try {
-      await this.dispatcher.dispatchSep24ExpiredRefund({
-        transaction_id,
-        anchor_id:   transaction.anchor_id,
-        user_id:     transaction.user_id,
-        asset_code:  transaction.asset_code,
-        amount:      actualAmount,
-        refunded_at: new Date().toISOString(),
-      });
       await this.dispatcher.dispatch('sep24.expired_refund', {
         event: 'sep24.expired_refund',
         timestamp: new Date().toISOString(),

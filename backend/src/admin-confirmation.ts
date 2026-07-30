@@ -11,6 +11,16 @@ import { AdminAuditLogService } from './admin-audit-log';
 
 export type HighRiskOperation = 'withdraw_fees' | 'remove_agent' | 'update_fee';
 
+export interface PendingAdminAction {
+  id: string;
+  operation: HighRiskOperation;
+  initiated_by: string;
+  params: Record<string, unknown>;
+  expires_at: Date;
+  confirmed_by: string | null;
+  confirmed_at: Date | null;
+  created_at: Date;
+}
 
 const EXPIRY_HOURS = 1;
 
@@ -39,7 +49,37 @@ export class AdminConfirmationService {
     `);
   }
 
+  /**
+   * Initiate a high-risk operation. Returns the pending action ID.
+   * The initiating admin cannot also confirm.
+   */
+  async initiate(
+    operation: HighRiskOperation,
+    initiatedBy: string,
+    params: Record<string, unknown>
+  ): Promise<PendingAdminAction> {
+    const expiresAt = new Date(Date.now() + EXPIRY_HOURS * 60 * 60 * 1000);
 
+    const result = await this.pool.query<PendingAdminAction>(
+      `INSERT INTO pending_admin_actions (operation, initiated_by, params, expires_at)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [operation, initiatedBy, JSON.stringify(params), expiresAt]
+    );
+
+    const action = result.rows[0];
+
+    await this.auditLog.log({
+      admin_address: initiatedBy,
+      action: `${operation}.initiated`,
+      target: action.id,
+      params_json: params,
+      tx_hash: null,
+      ip_address: null,
+    });
+
+    return action;
+  }
 
   /**
    * Confirm a pending action. The confirming admin must differ from the initiator.
@@ -114,39 +154,3 @@ export class AdminConfirmationService {
     return result.rowCount ?? 0;
   }
 }
-
-
-
-
-
-  /**
-   * Initiate a high-risk operation. Returns the pending action ID.
-   * The initiating admin cannot also confirm.
-   */
-  async initiate(
-    operation: HighRiskOperation,
-    initiatedBy: string,
-    params: Record<string, unknown>
-  ): Promise<PendingAdminAction> {
-    const expiresAt = new Date(Date.now() + EXPIRY_HOURS * 60 * 60 * 1000);
-
-    const result = await this.pool.query<PendingAdminAction>(
-      `INSERT INTO pending_admin_actions (operation, initiated_by, params, expires_at)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
-      [operation, initiatedBy, JSON.stringify(params), expiresAt]
-    );
-
-    const action = result.rows[0];
-
-    await this.auditLog.log({
-      admin_address: initiatedBy,
-      action: `${operation}.initiated`,
-      target: action.id,
-      params_json: params,
-      tx_hash: null,
-      ip_address: null,
-    });
-
-    return action;
-  }

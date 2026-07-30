@@ -15,7 +15,12 @@ import {
 } from "../src/client.js";
 import type { Proposal, ProposalAction } from "../src/types.js";
 import { makeProposalScVal } from "../src/test-utils.js";
-import { xdr, nativeToScVal } from "@stellar/stellar-sdk";
+import { Account, xdr, nativeToScVal } from "@stellar/stellar-sdk";
+
+// Valid 56-character StrKey addresses — `addressToScVal` validates every address
+// argument, so placeholder strings like "GVOTER" are rejected.
+const SOURCE_ADDRESS = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+const VOTER_ADDRESS = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 
 const mockSimulateTransaction = vi.fn();
 const mockGetAccount = vi.fn();
@@ -190,7 +195,7 @@ describe("getActiveProposals pagination", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetAccount.mockResolvedValue({});
+    mockGetAccount.mockResolvedValue(new Account(SOURCE_ADDRESS, "0"));
     client = new SwiftRemitClient({
       contractId: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
       networkPassphrase: "Test SDF Network ; September 2015",
@@ -220,7 +225,7 @@ describe("getActiveProposals pagination", () => {
       };
     });
 
-    const result = await client.getActiveProposals("GSOURCE", 0n, 50n);
+    const result = await client.getActiveProposals(SOURCE_ADDRESS, 0n, 50n);
     expect(result).toHaveLength(2);
     expect(result.map((p) => p.state)).toEqual(["Pending", "Approved"]);
   });
@@ -246,7 +251,7 @@ describe("getActiveProposals pagination", () => {
       };
     });
 
-    const result = await client.getActiveProposals("GSOURCE", 0n, 2n);
+    const result = await client.getActiveProposals(SOURCE_ADDRESS, 0n, 2n);
     expect(result).toHaveLength(2);
     expect(callIndex).toBe(2);
   });
@@ -270,7 +275,7 @@ describe("getActiveProposals pagination", () => {
       };
     });
 
-    const result = await client.getActiveProposals("GSOURCE", 0n, 50n);
+    const result = await client.getActiveProposals(SOURCE_ADDRESS, 0n, 50n);
     expect(result).toHaveLength(0);
   });
 });
@@ -282,7 +287,7 @@ describe("getVoteStatus", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetAccount.mockResolvedValue({});
+    mockGetAccount.mockResolvedValue(new Account(SOURCE_ADDRESS, "0"));
     client = new SwiftRemitClient({
       contractId: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
       networkPassphrase: "Test SDF Network ; September 2015",
@@ -297,7 +302,7 @@ describe("getVoteStatus", () => {
       },
     });
 
-    const result = await client.getVoteStatus("GSOURCE", 1n, "GVOTER");
+    const result = await client.getVoteStatus(SOURCE_ADDRESS, 1n, VOTER_ADDRESS);
     expect(result).toBe(true);
     expect(mockSimulateTransaction).toHaveBeenCalledTimes(1);
   });
@@ -309,7 +314,7 @@ describe("getVoteStatus", () => {
       },
     });
 
-    const result = await client.getVoteStatus("GSOURCE", 1n, "GVOTER");
+    const result = await client.getVoteStatus(SOURCE_ADDRESS, 1n, VOTER_ADDRESS);
     expect(result).toBe(false);
   });
 });

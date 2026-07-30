@@ -26,8 +26,14 @@ function sign(keypair: Keypair, address: string, timestamp: number): string {
   return Buffer.from(keypair.sign(message)).toString('base64');
 }
 
-describe('WebSocket Sender Subscription – SR-025', () => {
-  // Reset nonce store before each test so replays are isolated.
+/** Create a valid base64-encoded ed25519 signature for `${address}:${timestamp}`. */
+function signMessage(kp: Keypair, address: string, timestamp: number): string {
+  const msg = Buffer.from(`${address}:${timestamp}`);
+  return Buffer.from(kp.sign(msg)).toString('base64');
+}
+
+describe('WebSocket Sender Subscription (SR-025)', () => {
+  // Reset the nonce store before each test so replays are isolated.
   beforeEach(() => {
     resetNonceStore();
   });
@@ -89,51 +95,7 @@ describe('WebSocket Sender Subscription – SR-025', () => {
     });
   });
 
-  // ─── Existing helper / regression tests ────────────────────────────────────
-
-  describe('getSenderRoom', () => {
-    const addr = 'GBUTQWP3Z4UP32NQKU5DNPOBLB7AAHT5FEZRVPNWM37DQHQG65KK3GP';
-
-    it('returns the correct room name', () => {
-      expect(getSenderRoom(addr)).toBe(`sender:${addr}`);
-    });
-
-    it('returns unique rooms for different addresses', () => {
-      expect(getSenderRoom('ADDRESS1')).not.toBe(getSenderRoom('ADDRESS2'));
-    });
-
-    it('is consistent across calls', () => {
-      expect(getSenderRoom(addr)).toBe(getSenderRoom(addr));
-    });
-
-    it('handles addresses containing special characters', () => {
-      const a = 'GBZACUMVX6YRZG3QZYVJCZFJXFMLG2VFNVZZ2YWCXO6PYCWVX24ZYXU';
-      const room = getSenderRoom(a);
-      expect(room).toContain('sender:');
-      expect(room).toContain(a);
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Create a valid base64-encoded ed25519 signature for `${address}:${timestamp}`. */
-function signMessage(kp: Keypair, address: string, timestamp: number): string {
-  const msg = Buffer.from(`${address}:${timestamp}`);
-  return Buffer.from(kp.sign(msg)).toString('base64');
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe('WebSocket Sender Subscription (SR-025)', () => {
-  // Reset the nonce store before each test so tests are isolated.
-  beforeEach(() => {
-    resetNonceStore();
-  });
-
-  // -------------------------------------------------------------------------
-  // Unchanged helper / enum tests
-  // -------------------------------------------------------------------------
+  // ─── Helper / enum regression tests ────────────────────────────────────────
 
   describe('getSenderRoom', () => {
     it('returns the correct room name', () => {
@@ -199,11 +161,6 @@ describe('WebSocket Sender Subscription (SR-025)', () => {
     });
   });
 
-  describe('validateSignatureProof – invalid inputs', () => {
-    it('rejects an invalid (non-Stellar) address', () => {
-      const ts = Date.now();
-      // Keypair.fromPublicKey will throw; expect false rather than an exception
-      expect(validateSignatureProof('not-a-valid-address', 'somesig', ts)).toBe(false);
   // -------------------------------------------------------------------------
   // Real cryptographic verification tests
   // -------------------------------------------------------------------------
@@ -347,6 +304,9 @@ describe('WebSocket Sender Subscription (SR-025)', () => {
       const ts = Date.now();
       // "!!!" is not valid base64 and will produce a buffer that fails verify
       expect(validateSignatureProof(kp.publicKey(), '!!!invalid!!!', ts)).toBe(false);
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Input validation
   // -------------------------------------------------------------------------

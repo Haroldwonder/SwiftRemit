@@ -51,7 +51,7 @@ export function createAnchorRouter(pool: Pool): Router {
       const { transactionId } = req.params;
       if (!transactionId) return res.status(400).json({ error: 'Invalid transaction ID' });
       const service = await getSep24();
-      const transaction = await service.getTransactionStatus(transactionId);
+      const transaction = await service.getTransactionStatus(transactionId as string);
       if (!transaction) return res.status(404).json({ error: 'Transaction not found' });
       res.json({
         success: true,

@@ -1,11 +1,10 @@
 import cron from 'node-cron';
-import cron from 'node-cron';
 import { AssetVerifier } from './verifier';
 import { getStaleAssets, saveAssetVerification, getPool, retireExpiredWebhookSecrets, getWebhookSubscriberById } from './database';
 import { storeVerificationOnChain } from './stellar';
 import { KycService } from './kyc-service';
 import { Sep24Service } from './sep24-service';
-import { SorobanRpc, Keypair } from '@stellar/stellar-sdk';
+import { Keypair } from '@stellar/stellar-sdk';
 import { SwiftRemitClient } from '@swiftremit/sdk';
 import { KycExpiryNotifier } from './kyc-expiry-notifier';
 import { createWebhookStore } from './webhooks/store';
@@ -13,11 +12,16 @@ import { withAdvisoryLock } from './distributed-lock';
 import { AnchorHealthChecker } from './anchor-health-checker';
 import { getMetricsService } from './metrics';
 import { runTracked } from './job-tracker';
-import { AdminAuditLogService } from './audit-service';
+import { tracedJob } from './tracing/job-tracer';
+import { WebhookDlqProcessor } from './webhook-dlq-processor';
+import { AdminAuditLogService } from './admin-audit-log';
 import { SanctionsScreeningService } from './aml/sanctions-screening';
 import { TravelRuleService } from './aml/travel-rule';
 import { RetentionService } from './aml/retention';
+import { createLogger } from './correlation-id';
 import crypto from 'crypto';
+
+const logger = createLogger('scheduler');
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
@@ -299,6 +303,59 @@ async function checkAnchorHealth() {
     }
   } catch (error) {
     logger.error('Error in anchor health check job', error as Error);
+  }
+}
+
+async function retireWebhookSecrets() {
+  try {
+    const retiredIds = await retireExpiredWebhookSecrets();
+    if (retiredIds.length === 0) return;
+
+    logger.info(`Retired expired webhook secrets for ${retiredIds.length} subscribers`);
+    const auditService = new AdminAuditLogService(pool);
+
+    for (const id of retiredIds) {
+      await auditService.log({
+        admin_address: 'system',
+        action: 'retire_webhook_secret',
+        target: id,
+        params_json: null,
+        tx_hash: null,
+        ip_address: '127.0.0.1',
+      });
+
+      // Notify subscriber via a signed webhook delivery (best-effort)
+      const subscriber = await getWebhookSubscriberById(id);
+      if (subscriber?.url && subscriber.secret) {
+        try {
+          const timestamp = Date.now().toString();
+          const notificationBody = JSON.stringify({
+            event: 'webhook.secret_retired',
+            subscriber_id: id,
+            retired_at: new Date().toISOString(),
+          });
+          const signature = crypto
+            .createHmac('sha256', subscriber.secret)
+            .update(`${timestamp}.${notificationBody}`)
+            .digest('hex');
+
+          await fetch(subscriber.url, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-event-type': 'webhook.secret_retired',
+              'x-webhook-timestamp': timestamp,
+              'x-webhook-signature': signature,
+            },
+            body: notificationBody,
+          }).catch(() => {});
+        } catch (e) {
+          logger.warn('Failed to notify subscriber of secret retirement', { id, error: e });
+        }
+      }
+    }
+  } catch (error) {
+    logger.error('Error in retire webhook secrets job', error as Error);
   }
 }
 

@@ -29,11 +29,14 @@ Configures Rust toolchain with cargo caching.
 
 ### setup-node
 Configures Node.js with npm caching and `npm ci`.
+
+This repo is a single npm-workspaces project with **one** lockfile at the repo
+root, so `npm ci` always runs at the root and installs every workspace. The
+`working-directory` input is deprecated and ignored.
 ```yaml
 - uses: ./.github/actions/setup-node
   with:
-    cache-dependency-path: backend/package-lock.json
-    working-directory: backend
+    cache-dependency-path: package-lock.json
 ```
 
 ### setup-db
@@ -139,8 +142,7 @@ mobile-test:
     - uses: actions/checkout@v4
     - uses: ./.github/actions/setup-node
       with:
-        cache-dependency-path: mobile/package-lock.json
-        working-directory: mobile
+        cache-dependency-path: package-lock.json
     - run: npm test
       working-directory: mobile
 ```

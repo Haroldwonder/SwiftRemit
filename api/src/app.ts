@@ -2,7 +2,6 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import rateLimit from 'express-rate-limit';
 import { Pool } from 'pg';
 import http from 'http';
 import https from 'https';
@@ -24,6 +23,9 @@ import { AnchorStore, PostgresAnchorStore, createAnchorPool } from './db/anchorS
 import { Server as SocketIOServer } from 'socket.io';
 import { createWsHealthRouter } from './websocket/health';
 import { createRateLimitMiddleware, addRateLimitHeaders } from './middleware/rateLimitHeaders';
+import { createGraphQLRouter } from './routes/graphql';
+import { createLivenessRouter, createReadinessRouter } from './routes/health';
+import { initPool, getPool } from './db/pool';
 
 type AppOptions = {
   anchorStore?: AnchorStore;
@@ -131,7 +133,7 @@ export function createApp(options: AppOptions = {}): Application {
     const startedAt = process.hrtime.bigint();
     res.on('finish', () => {
       const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1e9;
-      const route = req.route?.path ?? (req.baseUrl || req.path) || 'unknown';
+      const route = (req.route?.path ?? (req.baseUrl || req.path)) || 'unknown';
       apiMetrics.recordHttpRequest(req.method, route, res.statusCode, durationSeconds);
     });
     next();
@@ -139,7 +141,7 @@ export function createApp(options: AppOptions = {}): Application {
 
   // Prometheus scrape endpoint — deliberately outside /api/ so it is not
   // rate limited.
-  app.get('/metrics', async (req: Request, res: Response) => {
+  app.get('/metrics', async (_req: Request, res: Response) => {
     await apiMetrics.refresh(options.io);
     res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
     res.send(apiMetrics.generatePrometheusText());
@@ -157,7 +159,7 @@ export function createApp(options: AppOptions = {}): Application {
   app.use('/readyz', createReadinessRouter(pool));
 
   // ─── Legacy /health endpoint (deprecated; kept for backward compat) ─────────
-  app.get('/health', async (req: Request, res: Response) => {
+  app.get('/health', async (_req: Request, res: Response) => {
     const [dbResult, contractResult] = await Promise.all([
       checkDatabaseConnectivity(pool ?? undefined),
       checkContractReachability(),
@@ -288,7 +290,7 @@ export function createApp(options: AppOptions = {}): Application {
   });
 
   // Global error handler
-  app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.error('Unhandled error:', err);
 
     const errorResponse: ErrorResponse = {

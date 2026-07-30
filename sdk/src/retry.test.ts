@@ -159,7 +159,7 @@ describe("withRetry", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("applies exponential backoff delays", async () => {
+  it("applies exponentially growing jittered backoff delays", async () => {
     const delays: number[] = [];
     const originalSetTimeout = globalThis.setTimeout;
     const setTimeoutSpy = vi
@@ -174,9 +174,15 @@ describe("withRetry", () => {
     await vi.runAllTimersAsync();
     await promise;
 
-    // delays should be 100, 200, 400 (100 * 2^0, 100 * 2^1, 100 * 2^2)
-    const retryDelays = delays.filter((d) => d > 0);
-    expect(retryDelays).toEqual([100, 200, 400]);
+    // Full jitter: each delay is drawn from [0, cap] where the cap grows
+    // exponentially — 100, 200, 400 (100 * 2^0, 100 * 2^1, 100 * 2^2).
+    expect(delays).toHaveLength(3);
+    expect(delays[0]).toBeGreaterThanOrEqual(0);
+    expect(delays[0]).toBeLessThanOrEqual(100);
+    expect(delays[1]).toBeGreaterThanOrEqual(0);
+    expect(delays[1]).toBeLessThanOrEqual(200);
+    expect(delays[2]).toBeGreaterThanOrEqual(0);
+    expect(delays[2]).toBeLessThanOrEqual(400);
 
     setTimeoutSpy.mockRestore();
   });

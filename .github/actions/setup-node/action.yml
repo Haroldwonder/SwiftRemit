@@ -11,7 +11,10 @@ inputs:
     required: false
     default: ''
   working-directory:
-    description: Working directory for npm ci
+    description: |
+      Deprecated and unused. This repo is a single npm workspaces project with one
+      root lockfile, so dependencies are always installed at the repository root.
+      Kept for backward compatibility with existing callers.
     required: false
     default: '.'
 
@@ -25,7 +28,9 @@ runs:
         cache: npm
         cache-dependency-path: ${{ inputs.cache-dependency-path }}
 
+    # npm workspaces: the only lockfile lives at the repository root, so the
+    # install must happen there. It installs every workspace in one pass.
     - name: Install dependencies
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      working-directory: ${{ github.workspace }}
       run: npm ci

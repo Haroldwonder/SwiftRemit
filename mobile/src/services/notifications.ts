@@ -209,16 +209,16 @@ export function handleNotificationNavigation(
   if (!navigationRef.isReady()) return;
 
   if (data.type === 'remittance' && data.remittanceId) {
-    navigationRef.navigate('TransactionDetail' as never, {
+    navigationRef.navigate('TransactionDetail', {
       remittanceId: data.remittanceId,
-    } as never);
+    });
     return;
   }
 
   if (data.type === 'kyc') {
     // KycStatus lives as both a tab and a standalone stack screen.
     // Navigate to the standalone stack screen so we get a back button.
-    navigationRef.navigate('KycStatus' as never);
+    navigationRef.navigate('KycStatus');
     return;
   }
 }

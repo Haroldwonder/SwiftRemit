@@ -147,7 +147,7 @@ export function createAmlRouter(pool: Pool, deps: AmlRouterDeps = {}): Router {
       try {
         const latest = await screening.latestFor(
           req.params.subjectType as SubjectType,
-          req.params.subjectId,
+          req.params.subjectId as string,
         );
         if (!latest) {
           res.status(404).json({ error: 'Subject has never been screened' });
@@ -491,7 +491,7 @@ export function createAmlRouter(pool: Pool, deps: AmlRouterDeps = {}): Router {
     validateParams(TravelRuleTransactionParamSchema),
     async (req: Request, res: Response): Promise<void> => {
       try {
-        const result = await travelRule.transmitOne(req.params.transactionId);
+        const result = await travelRule.transmitOne(req.params.transactionId as string);
         res.status(result.status === 'transmitted' ? 200 : 502).json(result);
       } catch (err) {
         fail(res, err, 'Travel-rule transmission failed');

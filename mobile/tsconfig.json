@@ -2,8 +2,15 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      // Hoisting puts a second copy of @types/react at the monorepo root, which
+      // react-navigation's .d.ts files resolve to. Pin every consumer to the
+      // workspace copy so JSX element types line up.
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"]
     }
-  }
+  },
+  "exclude": ["node_modules"]
 }

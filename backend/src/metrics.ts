@@ -7,6 +7,10 @@ export class MetricsService {
   private logger = createLogger('MetricsService');
   private fxRateCache?: FxRateCache;
 
+  // Per-subscription DLQ gauges (SR-027), keyed by subscription id
+  private dlqDepthPerSubscription = new Map<string, number>();
+  private dlqOldestEntryTimestamp = new Map<string, number>();
+
   // Metrics storage
   private metrics = {
     swiftremit_settlements_total: {} as Record<string, number>,

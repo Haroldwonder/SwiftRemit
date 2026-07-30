@@ -25,6 +25,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+        working-directory: .
       - run: npm run lint
 
   test:
@@ -55,6 +56,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+        working-directory: .
 
       - name: Run migrations
         env:

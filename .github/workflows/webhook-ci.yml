@@ -93,8 +93,8 @@ jobs:
         run: npm ci
 
       - name: Run security audit
-        working-directory: ./backend
-        run: npm audit --audit-level=moderate
+        # Single root lockfile (npm workspaces): audit from the root, scoped with -w.
+        run: npm audit --audit-level=moderate -w backend
 
   lint:
     name: Code Quality

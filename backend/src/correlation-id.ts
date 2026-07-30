@@ -50,8 +50,7 @@ export function getCorrelationId(): string | undefined {
   return correlationStorage.getStore();
 }
 
-export class StructuredLogger {
-  private context: string;
+export class StructuredLogger extends SharedLogger {
 
   private correlationAwareFormat(
     level: string,
@@ -72,7 +71,7 @@ export class StructuredLogger {
       ...(traceId && { traceId }),
       ...(spanId && { spanId }),
       message,
-      ...(data && { data: sharedRedact(data) }),
+      ...(data ? { data: sharedRedact(data) } : {}),
     };
     return JSON.stringify(logEntry);
   }
@@ -90,7 +89,9 @@ export class StructuredLogger {
       error instanceof Error
         ? { name: error.name, message: error.message, stack: error.stack }
         : error;
-    console.error(this.correlationAwareFormat('ERROR', message, { ...data, error: errorData }));
+    console.error(
+      this.correlationAwareFormat('ERROR', message, { ...(data as object), error: errorData }),
+    );
   }
 
   override debug(message: string, data?: unknown): void {

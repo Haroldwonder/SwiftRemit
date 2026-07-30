@@ -4,38 +4,6 @@ import { createLogger } from './correlation-id';
 
 const logger = createLogger('websocket-subscription');
 
-/** TTL for a consumed nonce (matches the timestamp tolerance). */
-const NONCE_TTL_MS = 300_000; // 5 minutes
-
-/**
- * Single-use nonce store.
- *
- * Each entry is the unix-ms timestamp at which the nonce was recorded.
- * Entries are pruned when they exceed NONCE_TTL_MS to bound memory usage.
- *
- * Key format: `${address}:${timestamp}`
- */
-const usedNonces = new Map<string, number>();
-
-/** Periodic cleanup — remove nonces that have aged past their TTL. */
-const _nonceCleanup = setInterval(() => {
-  const cutoff = Date.now() - NONCE_TTL_MS;
-  for (const [key, recordedAt] of usedNonces) {
-    if (recordedAt < cutoff) usedNonces.delete(key);
-  }
-}, NONCE_TTL_MS);
-
-// Allow the interval to be garbage-collected when the process exits
-if (_nonceCleanup.unref) _nonceCleanup.unref();
-
-/**
- * Reset the nonce store. Exposed for unit-test isolation only — do not
- * call this in production code.
- */
-export function resetNonceStore(): void {
-  usedNonces.clear();
-}
-
 /**
  * Enum for Socket.IO event names
  */
@@ -91,6 +59,14 @@ if (cleanupTimer && typeof (cleanupTimer as any).unref === 'function') {
 }
 
 /**
+ * Resets the nonce store to a clean state.
+ * Exported for use in tests so each test case starts with a fresh store.
+ */
+export function resetNonceStore(): void {
+  nonceStore = new Map();
+}
+
+/**
  * Validates a Stellar ed25519 signature proof for a sender-subscription request.
  *
  * Protocol
@@ -111,33 +87,6 @@ if (cleanupTimer && typeof (cleanupTimer as any).unref === 'function') {
  * @param timestamp Unix epoch in milliseconds, used as a single-use nonce.
  * @param tolerance Acceptable clock skew in milliseconds (default 300 000).
  * @returns `true` if and only if all checks pass.
- * Resets the nonce store to a clean state.
- * Exported for use in tests so each test case starts with a fresh store.
- */
-export function resetNonceStore(): void {
-  nonceStore = new Map();
-}
-
-// ---------------------------------------------------------------------------
-// Signature verification
-// ---------------------------------------------------------------------------
-
-/**
- * Validates the ed25519 signature proof for a sender subscription.
- *
- * The client must sign the message `${address}:${timestamp}` with the Stellar
- * secret key that corresponds to `address`, then base64-encode the signature.
- *
- * Verification steps:
- *   1. Timestamp is within `tolerance` ms of now (replay prevention).
- *   2. The nonce `address:timestamp` has not been used before (single-use).
- *   3. The ed25519 signature is valid for the message under `address`.
- *   4. The nonce is recorded to block future replays.
- *
- * @param address   - Stellar public key (StrKey G… format)
- * @param signature - Base64-encoded ed25519 signature of `${address}:${timestamp}`
- * @param timestamp - Unix timestamp in milliseconds (serves as the nonce)
- * @param tolerance - Acceptable clock skew window in ms (default: 5 minutes)
  */
 export function validateSignatureProof(
   address: string,
@@ -145,7 +94,6 @@ export function validateSignatureProof(
   timestamp: number,
   tolerance: number = NONCE_TTL_MS
 ): boolean {
-  // 1. Timestamp window — prevent use of stale or far-future proofs
   // 1. Timestamp window check — prevents replay of old proofs.
   const now = Date.now();
   if (Math.abs(now - timestamp) > tolerance) {
@@ -154,34 +102,6 @@ export function validateSignatureProof(
       diff: Math.abs(now - timestamp),
       tolerance,
     });
-    return false;
-  }
-
-  // 2. Single-use nonce — prevent replay within the tolerance window
-  const nonceKey = `${address}:${timestamp}`;
-  if (usedNonces.has(nonceKey)) {
-    logger.warn('Replayed nonce rejected', { address, timestamp });
-    return false;
-  }
-
-  // 3. Cryptographic verification using Stellar ed25519
-  try {
-    const keypair = Keypair.fromPublicKey(address);
-    const message = Buffer.from(`${address}:${timestamp}`);
-    const signatureBytes = Buffer.from(signature, 'base64');
-
-    if (!keypair.verify(message, signatureBytes)) {
-      logger.warn('ed25519 signature verification failed', { address });
-      return false;
-    }
-  } catch (err) {
-    // Keypair.fromPublicKey throws for invalid Stellar addresses; treat as failure
-    logger.warn('Signature verification error', { address, err });
-    return false;
-  }
-
-  // Record nonce only after all checks pass to avoid poisoning on failed attempts
-  usedNonces.set(nonceKey, now);
     return false;
   }
 

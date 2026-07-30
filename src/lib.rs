@@ -1155,26 +1155,41 @@ impl SwiftRemitContract {
             return Err(ContractError::NotDisputed);
         }
 
+        // A disputed remittance may already have been partially disbursed by
+        // confirm_partial_payout. Only the escrow still held may be paid out —
+        // settling the full amount here would drain other remittances' escrow.
+        let already_disbursed = storage::get_disbursed_amount(&env, remittance_id);
+        let escrow_remaining = remittance
+            .amount
+            .checked_sub(already_disbursed)
+            .ok_or(ContractError::Underflow)?;
+
         let token_client = token::Client::new(&env, &remittance.token);
         if in_favour_of_sender {
             token_client.transfer(
                 &env.current_contract_address(),
                 &remittance.sender,
-                &remittance.amount,
+                &escrow_remaining,
             );
             remittance.status = RemittanceStatus::Cancelled;
         } else {
-            let fee_breakdown = fee_service::calculate_fees_with_breakdown(
-                &env,
-                remittance.amount,
-                Some(&remittance.token),
-                None,
-            )?;
-            token_client.transfer(
-                &env.current_contract_address(),
-                &remittance.agent,
-                &fee_breakdown.net_amount,
-            );
+            // Honour the fee quoted at creation rather than re-pricing, and pay
+            // the agent only the part of their net entitlement not already sent.
+            let fee_breakdown =
+                fee_service::breakdown_from_platform_fee(&env, remittance.amount, remittance.fee)?;
+            let owed = fee_breakdown
+                .net_amount
+                .saturating_sub(already_disbursed)
+                .min(escrow_remaining);
+            token_client.transfer(&env.current_contract_address(), &remittance.agent, &owed);
+
+            // What is left of the escrow after paying the agent is the platform fee.
+            let retained = escrow_remaining
+                .checked_sub(owed)
+                .ok_or(ContractError::Underflow)?;
+            if retained > 0 {
+                crate::fee_management::safe_add_accumulated_fee(&env, retained)?;
+            }
             remittance.status = RemittanceStatus::Completed;
         }
 

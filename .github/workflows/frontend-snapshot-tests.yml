@@ -28,6 +28,7 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        working-directory: .
 
       - name: Run snapshot tests with coverage
         run: npm run test:coverage
@@ -79,6 +80,7 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        working-directory: .
 
       - name: Build Storybook
         run: npm run build-storybook

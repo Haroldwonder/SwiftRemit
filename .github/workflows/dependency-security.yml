@@ -38,8 +38,9 @@ jobs:
         run: npm ci
 
       - name: Audit npm production dependencies (fail on high/critical)
-        working-directory: ${{ matrix.workspace }}
-        run: npm audit --audit-level=high --omit=dev
+        # Single root lockfile (npm workspaces): audit from the root, scoped to
+        # the workspace with -w. `npm audit` inside a workspace dir has no lockfile.
+        run: npm audit --audit-level=high --omit=dev -w ${{ matrix.workspace }}
 
   cargo-audit-and-deny:
     name: cargo audit & cargo deny (Rust)
