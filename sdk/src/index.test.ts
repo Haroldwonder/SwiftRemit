@@ -23,18 +23,36 @@ describe("ErrorCode enum", () => {
     expect(ErrorCode.AlreadyInitialized).toBe(1);
     expect(ErrorCode.Unauthorized).toBe(20);
     expect(ErrorCode.DailySendLimitExceeded).toBe(21);
-    expect(ErrorCode.TimelockNotElapsed).toBe(70);
-    expect(ErrorCode.GovernanceAlreadyInitialized).toBe(74);
+    expect(ErrorCode.GovernanceAlreadyInitialized).toBe(67);
+    expect(ErrorCode.NotDisputed).toBe(71);
+    expect(ErrorCode.MalformedEvidenceHash).toBe(83);
   });
 
-  it("covers all 74 error codes without gaps", () => {
+  it("covers all 71 contract error codes without duplicates", () => {
     const codes = Object.values(ErrorCode).filter(
       (v): v is number => typeof v === "number"
     );
-    expect(codes.length).toBe(74);
-    // Codes should be 1..74 with no duplicates
+    expect(codes.length).toBe(71);
     const unique = new Set(codes);
-    expect(unique.size).toBe(74);
+    expect(unique.size).toBe(71);
+  });
+
+  it("round-trips every code through SwiftRemitError with a message and remediation", () => {
+    const codes = Object.values(ErrorCode).filter(
+      (v): v is number => typeof v === "number"
+    ) as ErrorCode[];
+
+    for (const code of codes) {
+      const err = new SwiftRemitError(code, `ContractError(${code})`);
+      expect(err.code).toBe(code);
+      expect(err.message.length).toBeGreaterThan(0);
+      expect(err.remediation.length).toBeGreaterThan(0);
+      expect(typeof err.retryable).toBe("boolean");
+
+      const parsed = parseContractError(`Simulation failed: Error(Contract, #${code})`);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.code).toBe(code);
+    }
   });
 });
 
@@ -89,8 +107,8 @@ describe("parseContractError", () => {
   });
 
   it("works with Error objects", () => {
-    const err = parseContractError(new Error("ContractError(70)"));
+    const err = parseContractError(new Error("ContractError(67)"));
     expect(err).not.toBeNull();
-    expect(err!.code).toBe(ErrorCode.TimelockNotElapsed);
+    expect(err!.code).toBe(ErrorCode.GovernanceAlreadyInitialized);
   });
 });

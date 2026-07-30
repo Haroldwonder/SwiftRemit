@@ -1,7 +1,7 @@
 /**
  * Typed error mapping for the SwiftRemit TypeScript SDK.
  *
- * Mirrors the 74 ContractError codes defined in src/errors.rs so callers
+ * Mirrors the 71 ContractError codes defined in src/errors.rs so callers
  * can catch and branch on named error codes instead of parsing raw strings.
  *
  * Usage:
@@ -53,10 +53,12 @@ export enum ErrorCode {
   TransactionNotFound = 24,
   RateLimitExceeded = 25,
 
-  // Authorization (26-29)
+  // Authorization (26-28)
   AdminAlreadyExists = 26,
   AdminNotFound = 27,
   CannotRemoveLastAdmin = 28,
+
+  // Token whitelist (29)
   TokenNotWhitelisted = 29,
 
   // Migration (30-32)
@@ -69,7 +71,7 @@ export enum ErrorCode {
   SuspiciousActivity = 34,
   ActionBlocked = 35,
 
-  // Arithmetic / data (36-52)
+  // Arithmetic / data (36-55)
   Overflow = 36,
   NetSettlementValidationFailed = 37,
   EscrowNotFound = 38,
@@ -83,40 +85,37 @@ export enum ErrorCode {
   StringConversionFailed = 46,
   InvalidSymbol = 47,
   Underflow = 48,
-  IdempotencyConflict = 49,
-  InvalidProof = 50,
-  MissingProof = 51,
-  InvalidOracleAddress = 52,
+  NoPendingAdminTransfer = 49,
+  IdempotencyConflict = 50,
+  InvalidProof = 51,
+  MissingProof = 52,
+  InvalidOracleAddress = 53,
+  AlreadyPaused = 54,
+  NotPaused = 55,
 
-  // Dispute (53-55)
-  DisputeWindowExpired = 53,
-  AlreadyDisputed = 54,
-  NotDisputed = 55,
+  // Multi-sig (56-59)
+  OperationNotFound = 56,
+  AlreadyApproved = 57,
+  OperationExpired = 58,
+  InvalidMultiSigThreshold = 59,
 
-  // Circuit breaker (56-62)
-  AlreadyPaused = 56,
-  NotPaused = 57,
-  TimelockActive = 58,
-  AlreadyVoted = 59,
-  InvalidTimelockDuration = 60,
-  InvalidQuorum = 61,
-  PauseRecordNotFound = 62,
-
-  // Recipient address verification (63-66)
-  InvalidRecipientHash = 63,
-  MissingRecipientHash = 64,
-  RecipientHashMismatch = 65,
-  RecipientHashSchemaMismatch = 66,
-
-  // Governance (67-74)
-  ProposalAlreadyPending = 67,
+  // Governance / DAO (60-69)
+  AlreadyAdmin = 60,
+  InsufficientAdmins = 61,
+  InvalidQuorum = 62,
+  AlreadyVoted = 63,
+  InvalidProposalState = 64,
+  ProposalAlreadyPending = 65,
+  TimelockActive = 66,
+  GovernanceAlreadyInitialized = 67,
   ProposalNotFound = 68,
-  InvalidProposalState = 69,
-  TimelockNotElapsed = 70,
-  AlreadyAdmin = 71,
-  InsufficientAdmins = 72,
-  AgentAlreadyRegistered = 73,
-  GovernanceAlreadyInitialized = 74,
+  AgentAlreadyRegistered = 69,
+
+  // Dispute (71)
+  NotDisputed = 71,
+
+  // Dispute evidence (83)
+  MalformedEvidenceHash = 83,
 }
 
 /** Human-readable messages for each error code. */
@@ -169,33 +168,126 @@ const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.StringConversionFailed]: "String conversion failed",
   [ErrorCode.InvalidSymbol]: "Invalid symbol string",
   [ErrorCode.Underflow]: "Arithmetic underflow occurred",
+  [ErrorCode.NoPendingAdminTransfer]: "No pending admin transfer to accept",
   [ErrorCode.IdempotencyConflict]: "Idempotency key exists but request payload differs",
   [ErrorCode.InvalidProof]: "Proof validation failed",
   [ErrorCode.MissingProof]: "Proof is required but not provided",
   [ErrorCode.InvalidOracleAddress]: "Oracle address is invalid or not configured",
-  [ErrorCode.DisputeWindowExpired]: "The dispute window for this remittance has expired",
-  [ErrorCode.AlreadyDisputed]: "This remittance has already been disputed",
-  [ErrorCode.NotDisputed]: "This operation requires the remittance to be in a Disputed state",
   [ErrorCode.AlreadyPaused]: "Contract is already paused",
-  [ErrorCode.NotPaused]: "Contract is not paused",
-  [ErrorCode.TimelockActive]: "Timelock has not yet elapsed",
-  [ErrorCode.AlreadyVoted]: "Admin has already cast a vote for this instance",
-  [ErrorCode.InvalidTimelockDuration]: "Timelock duration exceeds the maximum allowed value",
-  [ErrorCode.InvalidQuorum]: "Quorum value is invalid",
-  [ErrorCode.PauseRecordNotFound]: "Pause record not found",
-  [ErrorCode.InvalidRecipientHash]: "Supplied recipient hash is not exactly 32 bytes",
-  [ErrorCode.MissingRecipientHash]: "Recipient hash is required but not provided",
-  [ErrorCode.RecipientHashMismatch]: "Supplied recipient hash does not match the stored hash",
-  [ErrorCode.RecipientHashSchemaMismatch]: "Stored hash schema version mismatch",
-  [ErrorCode.ProposalAlreadyPending]: "A proposal with this action type is already pending",
-  [ErrorCode.ProposalNotFound]: "Proposal not found",
+  [ErrorCode.NotPaused]: "Contract is not currently paused",
+  [ErrorCode.OperationNotFound]: "Pending admin operation not found",
+  [ErrorCode.AlreadyApproved]: "Caller has already approved this pending operation",
+  [ErrorCode.OperationExpired]: "Pending operation has exceeded its time-to-live",
+  [ErrorCode.InvalidMultiSigThreshold]: "Multi-sig threshold must be at least 1 and no greater than the admin count",
+  [ErrorCode.AlreadyAdmin]: "Address is already in the admin set",
+  [ErrorCode.InsufficientAdmins]: "Removing this admin would drop the admin count below quorum or below 1",
+  [ErrorCode.InvalidQuorum]: "Quorum must be at least 1 and no greater than the current admin count",
+  [ErrorCode.AlreadyVoted]: "Admin has already cast a vote on this proposal",
   [ErrorCode.InvalidProposalState]: "Proposal is not in the required state for this operation",
-  [ErrorCode.TimelockNotElapsed]: "Governance execution timelock has not yet elapsed",
-  [ErrorCode.AlreadyAdmin]: "The address is already an Admin",
-  [ErrorCode.InsufficientAdmins]: "Removing this admin would violate the minimum admin invariant",
-  [ErrorCode.AgentAlreadyRegistered]: "The agent is already registered",
+  [ErrorCode.ProposalAlreadyPending]: "A fee-update proposal is already pending or approved",
+  [ErrorCode.TimelockActive]: "Proposal timelock has not elapsed; cannot execute yet",
   [ErrorCode.GovernanceAlreadyInitialized]: "Governance has already been initialized",
+  [ErrorCode.ProposalNotFound]: "Proposal with the given ID does not exist",
+  [ErrorCode.AgentAlreadyRegistered]: "Agent is already registered in the system",
+  [ErrorCode.NotDisputed]: "This operation requires the remittance to be in a Disputed state",
+  [ErrorCode.MalformedEvidenceHash]: "Evidence hash for a dispute is not a valid 32-byte SHA-256 commitment",
 };
+
+/**
+ * Suggested remediation for each error code, surfaced to integrators so they
+ * know what to actually do about a failure instead of just what went wrong.
+ */
+const ERROR_REMEDIATIONS: Record<ErrorCode, string> = {
+  [ErrorCode.AlreadyInitialized]: "Do not call initialize() again; the contract is already set up.",
+  [ErrorCode.NotInitialized]: "Call initialize() before performing any other operation.",
+  [ErrorCode.InvalidAmount]: "Pass an amount greater than zero.",
+  [ErrorCode.InvalidFeeBps]: "Use a fee value between 0 and 10000 basis points.",
+  [ErrorCode.AgentNotRegistered]: "Register the agent via registerAgent() before using it.",
+  [ErrorCode.RemittanceNotFound]: "Verify the remittance ID; it may not exist or may have been pruned.",
+  [ErrorCode.InvalidStatus]: "Check the remittance's current status before retrying this operation.",
+  [ErrorCode.InvalidStateTransition]: "Only perform transitions valid for the remittance's current state.",
+  [ErrorCode.NoFeesToWithdraw]: "Wait until accumulated fees are greater than zero before withdrawing.",
+  [ErrorCode.InvalidAddress]: "Double-check the address format passed to this call.",
+  [ErrorCode.SettlementExpired]: "The settlement window has closed; a new remittance must be created.",
+  [ErrorCode.DuplicateSettlement]: "This remittance was already settled; do not resubmit.",
+  [ErrorCode.ContractPaused]: "Wait for an admin to unpause the contract, then retry.",
+  [ErrorCode.AssetNotFound]: "Verify the asset has a verification record before querying it.",
+  [ErrorCode.UserBlacklisted]: "This address is blacklisted; contact an admin if this is unexpected.",
+  [ErrorCode.InvalidReputationScore]: "Use a reputation score between 0 and 100.",
+  [ErrorCode.KycNotApproved]: "Complete KYC verification for this user before retrying.",
+  [ErrorCode.SuspiciousAsset]: "This asset has been flagged; do not proceed without admin review.",
+  [ErrorCode.AnchorTransactionFailed]: "Retry the anchor withdrawal/deposit, or check anchor-side status.",
+  [ErrorCode.Unauthorized]: "Use an address with the required admin/role privileges.",
+  [ErrorCode.DailySendLimitExceeded]: "Wait until the user's rolling 24h window resets, or raise their limit.",
+  [ErrorCode.TokenAlreadyWhitelisted]: "This token is already whitelisted; no action needed.",
+  [ErrorCode.KycExpired]: "Renew the user's KYC verification before retrying.",
+  [ErrorCode.TransactionNotFound]: "Verify the transaction record ID.",
+  [ErrorCode.RateLimitExceeded]: "Back off and retry after the rate limit window elapses.",
+  [ErrorCode.AdminAlreadyExists]: "This address is already an admin; no action needed.",
+  [ErrorCode.AdminNotFound]: "Verify the admin address before attempting removal.",
+  [ErrorCode.CannotRemoveLastAdmin]: "Add another admin before removing this one.",
+  [ErrorCode.TokenNotWhitelisted]: "Whitelist the token before using it in the contract.",
+  [ErrorCode.InvalidMigrationHash]: "Recompute the snapshot hash; the data may be corrupted or tampered with.",
+  [ErrorCode.MigrationInProgress]: "Wait for the current migration to complete before starting another.",
+  [ErrorCode.InvalidMigrationBatch]: "Import migration batches strictly in order.",
+  [ErrorCode.CooldownActive]: "Wait for the cooldown period to elapse before retrying.",
+  [ErrorCode.SuspiciousActivity]: "This action was blocked by abuse detection; contact support.",
+  [ErrorCode.ActionBlocked]: "This action is temporarily blocked; retry after the block clears.",
+  [ErrorCode.Overflow]: "Reduce the input magnitude; the operation would exceed the maximum value.",
+  [ErrorCode.NetSettlementValidationFailed]: "Recheck the net settlement inputs for consistency.",
+  [ErrorCode.EscrowNotFound]: "Verify the escrow ID before querying or operating on it.",
+  [ErrorCode.InvalidEscrowStatus]: "Check the escrow's current status before retrying.",
+  [ErrorCode.SettlementCounterOverflow]: "The settlement counter has reached its maximum; contact support.",
+  [ErrorCode.InvalidBatchSize]: "Use a batch size greater than zero and within the allowed maximum.",
+  [ErrorCode.DataCorruption]: "Stored data failed integrity checks; contact support before retrying.",
+  [ErrorCode.IndexOutOfBounds]: "Use an index within the bounds of the collection.",
+  [ErrorCode.EmptyCollection]: "Ensure the collection has at least one element before this call.",
+  [ErrorCode.KeyNotFound]: "Verify the lookup key exists before retrying.",
+  [ErrorCode.StringConversionFailed]: "Check the input string for invalid characters or length.",
+  [ErrorCode.InvalidSymbol]: "Use a valid, well-formed symbol string.",
+  [ErrorCode.Underflow]: "Reduce the subtraction amount; the operation would go below zero.",
+  [ErrorCode.NoPendingAdminTransfer]: "Call proposeAdmin() before attempting to accept an admin transfer.",
+  [ErrorCode.IdempotencyConflict]: "Use a new idempotency key, or resend the exact same payload.",
+  [ErrorCode.InvalidProof]: "Recheck the proof; it did not validate against the expected commitment.",
+  [ErrorCode.MissingProof]: "Supply the required proof for this operation.",
+  [ErrorCode.InvalidOracleAddress]: "Configure a valid oracle address before retrying.",
+  [ErrorCode.AlreadyPaused]: "The contract is already paused; no action needed.",
+  [ErrorCode.NotPaused]: "The contract is not paused; there is nothing to unpause.",
+  [ErrorCode.OperationNotFound]: "Verify the pending operation ID before approving or executing it.",
+  [ErrorCode.AlreadyApproved]: "This caller has already approved this operation; no action needed.",
+  [ErrorCode.OperationExpired]: "This operation's TTL has passed; submit a new one.",
+  [ErrorCode.InvalidMultiSigThreshold]: "Use a threshold between 1 and the current admin count.",
+  [ErrorCode.AlreadyAdmin]: "This address is already an admin; no action needed.",
+  [ErrorCode.InsufficientAdmins]: "Add more admins before removing one, to preserve quorum.",
+  [ErrorCode.InvalidQuorum]: "Use a quorum between 1 and the current admin count.",
+  [ErrorCode.AlreadyVoted]: "This admin has already voted on this proposal.",
+  [ErrorCode.InvalidProposalState]: "Check the proposal's current state before retrying.",
+  [ErrorCode.ProposalAlreadyPending]: "Wait for the pending proposal to resolve before submitting another.",
+  [ErrorCode.TimelockActive]: "Wait for the proposal's timelock to elapse before executing it.",
+  [ErrorCode.GovernanceAlreadyInitialized]: "Governance is already set up; migrateToGovernance() cannot run twice.",
+  [ErrorCode.ProposalNotFound]: "Verify the proposal ID before operating on it.",
+  [ErrorCode.AgentAlreadyRegistered]: "This agent is already registered; no action needed.",
+  [ErrorCode.NotDisputed]: "This operation is only valid while the remittance is in a Disputed state.",
+  [ErrorCode.MalformedEvidenceHash]: "Supply a 32-byte SHA-256 hash as the evidence commitment.",
+};
+
+/**
+ * Error codes that represent transient/temporary conditions worth retrying
+ * after a backoff, as opposed to terminal conditions that will not resolve
+ * by resubmitting the same call. Kept in sync with {@link isTransientError}.
+ */
+const RETRYABLE_CODES: ReadonlySet<ErrorCode> = new Set([
+  ErrorCode.ContractPaused,
+  ErrorCode.RateLimitExceeded,
+  ErrorCode.CooldownActive,
+  ErrorCode.ActionBlocked,
+  ErrorCode.AnchorTransactionFailed,
+]);
+
+/** Returns whether a given error code is retryable after a backoff. */
+export function isRetryableCode(code: ErrorCode): boolean {
+  return RETRYABLE_CODES.has(code);
+}
 
 /**
  * Typed error thrown by all SwiftRemitClient methods when the contract
@@ -206,6 +298,10 @@ export class SwiftRemitError extends Error {
   readonly code: ErrorCode;
   /** The raw error string from the RPC response (for debugging). */
   readonly rawError: string;
+  /** Suggested remediation for this error. */
+  readonly remediation: string;
+  /** Whether retrying the same call after a backoff may succeed. */
+  readonly retryable: boolean;
 
   constructor(code: ErrorCode, rawError: string) {
     const message = ERROR_MESSAGES[code] ?? `Contract error ${code}`;
@@ -213,6 +309,8 @@ export class SwiftRemitError extends Error {
     this.name = "SwiftRemitError";
     this.code = code;
     this.rawError = rawError;
+    this.remediation = ERROR_REMEDIATIONS[code] ?? "Consult the contract documentation for this error code.";
+    this.retryable = isRetryableCode(code);
     // Maintain proper prototype chain in transpiled environments
     Object.setPrototypeOf(this, SwiftRemitError.prototype);
   }
