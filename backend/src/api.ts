@@ -41,6 +41,34 @@ import { saveContractEvent, queryContractEvents } from './database';
 import { remittanceEventEmitter } from './remittance/events';
 import { handleKycWebhook } from './kyc-webhook-handler';
 import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
+import { createComplianceRouter } from './routes/compliance';
+import { privacyRouter } from './routes/privacy';
+import { validateRequest, validateQuery, validateParams } from './middleware/validate';
+import {
+  RemittanceCreateSchema,
+  RemittanceIdParamSchema,
+  VerificationRequestSchema,
+  VerificationAssetParamSchema,
+  VerificationListQuerySchema,
+  ReportAssetSchema,
+  BatchVerificationSchema,
+  SimulateSettlementBodySchema,
+  FxRateStoreSchema,
+  FxRateTransactionParamSchema,
+  FxRateCurrentQuerySchema,
+  KycConfigSchema,
+  KycStatusParamSchema,
+  KycUserParamSchema,
+  KycRegisterSchema,
+  Sep24InitiateSchema,
+  Sep24TransactionParamSchema,
+  WebhookSubscriberParamSchema,
+  AuditLogListQuerySchema,
+  AuditLogExportQuerySchema,
+  ContractEventsQuerySchema,
+  AUDIT_LOG_EXPORT_MAX_DAYS,
+  AUDIT_LOG_EXPORT_ROW_CAP,
+} from './schemas/zod';
 
 import { createHealthRouter }       from './routes/health';
 import { createVerificationRouter } from './routes/verification';
@@ -133,7 +161,8 @@ app.get('/metrics', async (_req: Request, res: Response) => {
 // API documentation
 app.use('/api/docs', docsRouter);
 app.use('/api/compliance', createComplianceRouter(pool));
-app.use('/api/devices', createDeviceRouter(pool));
+app.use('/api/v1/privacy', privacyRouter);
+app.use('/api/privacy', privacyRouter);
 
 const remittanceRouter = createRemittanceRouter(pool);  // registers event listener once
 const adminRouter      = createAdminRouter(pool);
