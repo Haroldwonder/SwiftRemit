@@ -35,6 +35,8 @@ fn setup() -> F<'static> {
     let c = make_contract(&env);
     c.initialize(&admin, &tok.address, &250u32, &0u64, &0u32, &admin);
     c.register_agent(&agent, &None);
+    // confirm_payout gates on sender KYC (pre_confirm_validation).
+    c.set_kyc_approved(&sender, &true, &u64::MAX);
     F { env, c, tok, admin, sender, agent }
 }
 

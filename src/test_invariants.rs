@@ -86,6 +86,7 @@ proptest! {
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
         contract.register_agent(&agent, &None);
+        contract.set_kyc_approved(&sender, &true, &u64::MAX);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let sender_before = token.balance(&sender);
@@ -132,6 +133,7 @@ proptest! {
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
         contract.register_agent(&agent, &None);
+        contract.set_kyc_approved(&sender, &true, &u64::MAX);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
@@ -152,10 +154,12 @@ proptest! {
             total_before, total_after,
             "Tokens were created or destroyed during settlement"
         );
+        // The platform fee stays in the contract as accumulated fees until an
+        // admin withdraws it, so the residual balance is exactly that fee.
         prop_assert_eq!(
             token.balance(&contract.address),
-            0,
-            "Contract still holds tokens after settlement"
+            contract.get_accumulated_fees(),
+            "Contract holds tokens beyond the accumulated platform fees after settlement"
         );
     }
 
@@ -180,6 +184,7 @@ proptest! {
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
         contract.register_agent(&agent, &None);
+        contract.set_kyc_approved(&sender, &true, &u64::MAX);
 
         let sender_before = token.balance(&sender);
         let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
@@ -229,6 +234,7 @@ proptest! {
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
         contract.register_agent(&agent, &None);
+        contract.set_kyc_approved(&sender, &true, &u64::MAX);
 
         let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
         let r = contract.get_remittance(&id);
@@ -260,6 +266,7 @@ proptest! {
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
         contract.register_agent(&agent, &None);
+        contract.set_kyc_approved(&sender, &true, &u64::MAX);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
@@ -297,6 +304,7 @@ proptest! {
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
         contract.register_agent(&agent, &None);
+        contract.set_kyc_approved(&sender, &true, &u64::MAX);
 
         let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
         contract.cancel_remittance(&id);
@@ -401,16 +409,27 @@ proptest! {
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
         contract.register_agent(&agent, &None);
+        contract.set_kyc_approved(&sender, &true, &u64::MAX);
 
         let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
         let r = contract.get_remittance(&id);
 
         prop_assert!(r.fee >= 0, "Fee must be non-negative");
         prop_assert!(r.fee <= r.amount, "Fee must not exceed the remittance amount");
+
+        // create_remittance prices through calculate_platform_fee_for_sender, which
+        // applies the rolling-volume discount tier. For a fresh sender the rolling
+        // volume is exactly this remittance, so the tier caps the rate once the
+        // amount reaches the threshold.
+        let effective_bps = if r.amount >= crate::config::SENDER_VOLUME_TIER_THRESHOLD_10K {
+            fee_bps.min(crate::config::SENDER_VOLUME_TIER_FEE_BPS_10K)
+        } else {
+            fee_bps
+        };
         prop_assert_eq!(
-            (r.amount * fee_bps as i128) / 10_000,
+            (r.amount * effective_bps as i128) / 10_000,
             r.fee,
-            "Fee must equal amount * fee_bps / 10000"
+            "Fee must equal amount * effective_fee_bps / 10000"
         );
     }
 }
@@ -521,6 +540,7 @@ proptest! {
         let contract = make_contract(&env);
         contract.initialize(&admin, &token.address, &fee_bps, &0, &0, &admin);
         contract.register_agent(&agent, &None);
+        contract.set_kyc_approved(&sender, &true, &u64::MAX);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
         let mut rems: std::vec::Vec<RemModel> = std::vec::Vec::new();
@@ -641,12 +661,12 @@ proptest! {
                 Op::MarkFailed { pick } => {
                     if let Some(idx) = pick_index(pick, rems.len()) {
                         let id = rems[idx].id;
-                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        // The escrow is retained on failure so a dispute can still be
+                        // resolved either way, so the remittance stays an obligation
+                        // until resolve_dispute (or expiry) disburses it.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             contract.mark_failed(&id)
                         }));
-                        if result.is_ok() {
-                            rems[idx].open = false;
-                        }
                     }
                 }
 

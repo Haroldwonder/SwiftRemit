@@ -993,18 +993,11 @@ impl SwiftRemitContract {
         // Enforce per-agent daily withdrawal cap
         storage::check_and_record_agent_withdrawal(&env, &remittance.agent, remittance.amount)?;
 
-        // Use centralized fee service to get complete breakdown
-        let fee_breakdown = fee_service::calculate_fees_with_breakdown(
-            &env,
-            remittance.amount,
-            None, // No corridor specified
-            None, // No corridor config
-        )?;
-
-        // Verify stored fee matches calculated platform fee
-        if remittance.fee != fee_breakdown.platform_fee {
-            return Err(ContractError::InvalidAmount);
-        }
+        // Settle against the fee quoted at creation time. Re-pricing here would
+        // reject any remittance whose fee was discounted by the sender's rolling
+        // volume, because that discount is not reproducible from the amount alone.
+        let fee_breakdown =
+            fee_service::breakdown_from_platform_fee(&env, remittance.amount, remittance.fee)?;
 
         let payout_amount = fee_breakdown.net_amount;
         let protocol_fee = fee_breakdown.protocol_fee;
@@ -1082,18 +1075,14 @@ impl SwiftRemitContract {
             return Err(ContractError::InvalidStatus);
         }
 
-        // Auto-refund the escrowed amount to the sender (#621)
-        let token_client = token::Client::new(&env, &remittance.token);
-        token_client.transfer(
-            &env.current_contract_address(),
-            &remittance.sender,
-            &remittance.amount,
-        );
-
+        // The escrowed amount stays with the contract: the sender has a dispute
+        // window in which to contest the failure, and `resolve_dispute` is what
+        // disburses the funds (refund to sender, or net payout to the agent).
+        // Refunding here would leave the contract unable to honour that payout.
         let was_processing = remittance.status == RemittanceStatus::Processing;
         let original_amount = remittance.amount;
-        remittance.status = RemittanceStatus::Cancelled;
-        remittance.amount = 0;
+        remittance.status = RemittanceStatus::Failed;
+        remittance.failed_at = Some(env.ledger().timestamp());
         set_remittance(&env, remittance_id, &remittance);
 
         if was_processing {

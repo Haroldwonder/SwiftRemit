@@ -137,6 +137,8 @@ fn test_mark_failed_on_completed_remittance_rejected() {
     contract.initialize(&admin, &token.address, &250u32, &0u64, &0u32, &admin);
     contract.register_agent(&agent, &None);
 
+    contract.set_kyc_approved(&sender, &true, &u64::MAX);
+
     let id = contract.create_remittance(&sender, &agent, &1_000i128, &None, &None, &None, &None, &None);
     contract.confirm_payout(&agent, &id, &None, &None);
 

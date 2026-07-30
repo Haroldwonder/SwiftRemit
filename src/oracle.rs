@@ -255,6 +255,16 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Ledger as _, Env};
 
+    /// Runs `body` inside a contract frame.
+    ///
+    /// `validate_rate`, `get_fx_rate_guarded` and `configure_oracle` all read
+    /// contract storage (the configurable staleness window, the oracle address),
+    /// which is only reachable from within a contract invocation.
+    fn in_contract<T>(env: &Env, body: impl FnOnce() -> T) -> T {
+        let id = env.register_contract(None, crate::SwiftRemitContract {});
+        env.as_contract(&id, body)
+    }
+
     // ── Staleness tests ──────────────────────────────────────────────────────
 
     #[test]
@@ -264,7 +274,7 @@ mod tests {
             rate_bps: 1_000_000,                       // 1:1 peg
             published_ledger: env.ledger().sequence(), // current ledger — fresh
         };
-        assert!(validate_rate(&env, &rate).is_ok());
+        assert!(in_contract(&env, || validate_rate(&env, &rate)).is_ok());
     }
 
     #[test]
@@ -278,7 +288,7 @@ mod tests {
             rate_bps: 1_000_000,
             published_ledger: 0, // Published at genesis — way too old.
         };
-        let err = validate_rate(&env, &rate).unwrap_err();
+        let err = in_contract(&env, || validate_rate(&env, &rate)).unwrap_err();
         assert_eq!(err, ContractError::InvalidOracleAddress);
     }
 
@@ -295,7 +305,7 @@ mod tests {
             rate_bps: 1_000_000,
             published_ledger: 0,
         };
-        assert!(validate_rate(&env, &rate).is_ok());
+        assert!(in_contract(&env, || validate_rate(&env, &rate)).is_ok());
     }
 
     #[test]
@@ -309,7 +319,7 @@ mod tests {
             rate_bps: 1_000_000,
             published_ledger: 0,
         };
-        let err = validate_rate(&env, &rate).unwrap_err();
+        let err = in_contract(&env, || validate_rate(&env, &rate)).unwrap_err();
         assert_eq!(err, ContractError::InvalidOracleAddress);
     }
 
@@ -322,7 +332,7 @@ mod tests {
             rate_bps: 0, // Zero rate → rejected
             published_ledger: env.ledger().sequence(),
         };
-        let err = validate_rate(&env, &rate).unwrap_err();
+        let err = in_contract(&env, || validate_rate(&env, &rate)).unwrap_err();
         assert_eq!(err, ContractError::InvalidOracleAddress);
     }
 
@@ -333,7 +343,7 @@ mod tests {
             rate_bps: ORACLE_RATE_MAX_BPS,
             published_ledger: env.ledger().sequence(),
         };
-        assert!(validate_rate(&env, &rate).is_ok());
+        assert!(in_contract(&env, || validate_rate(&env, &rate)).is_ok());
     }
 
     #[test]
@@ -343,7 +353,7 @@ mod tests {
             rate_bps: ORACLE_RATE_MAX_BPS + 1,
             published_ledger: env.ledger().sequence(),
         };
-        let err = validate_rate(&env, &rate).unwrap_err();
+        let err = in_contract(&env, || validate_rate(&env, &rate)).unwrap_err();
         assert_eq!(err, ContractError::InvalidOracleAddress);
     }
 
@@ -354,7 +364,7 @@ mod tests {
             rate_bps: 0, // below ORACLE_RATE_MIN_BPS (1)
             published_ledger: env.ledger().sequence(),
         };
-        let err = validate_rate(&env, &rate).unwrap_err();
+        let err = in_contract(&env, || validate_rate(&env, &rate)).unwrap_err();
         assert_eq!(err, ContractError::InvalidOracleAddress);
     }
 
@@ -364,7 +374,7 @@ mod tests {
     fn test_unset_oracle_returns_none() {
         let env = Env::default();
         // No oracle configured — should return Ok(None) without error.
-        let result = get_fx_rate_guarded(&env).unwrap();
+        let result = in_contract(&env, || get_fx_rate_guarded(&env)).unwrap();
         assert!(result.is_none());
     }
 
@@ -375,7 +385,7 @@ mod tests {
         let env = Env::default();
         let mock = mock::MockOracleState::valid(&env, 1_000_000);
         let rate = mock.to_fx_rate();
-        assert!(validate_rate(&env, &rate).is_ok());
+        assert!(in_contract(&env, || validate_rate(&env, &rate)).is_ok());
     }
 
     #[test]
@@ -386,7 +396,7 @@ mod tests {
         });
         let mock = mock::MockOracleState::stale(&env, 1_000_000);
         let rate = mock.to_fx_rate();
-        let err = validate_rate(&env, &rate).unwrap_err();
+        let err = in_contract(&env, || validate_rate(&env, &rate)).unwrap_err();
         assert_eq!(err, ContractError::InvalidOracleAddress);
     }
 
@@ -396,15 +406,18 @@ mod tests {
         // Rate deliberately set to 0 (malicious/broken feed)
         let mock = mock::MockOracleState::valid(&env, 0);
         let rate = mock.to_fx_rate();
-        let err = validate_rate(&env, &rate).unwrap_err();
+        let err = in_contract(&env, || validate_rate(&env, &rate)).unwrap_err();
         assert_eq!(err, ContractError::InvalidOracleAddress);
     }
 
     #[test]
     fn test_configure_oracle_rejects_self_reference() {
         let env = Env::default();
-        let self_addr = env.current_contract_address();
-        let err = configure_oracle(&env, &self_addr).unwrap_err();
+        let err = in_contract(&env, || {
+            let self_addr = env.current_contract_address();
+            configure_oracle(&env, &self_addr)
+        })
+        .unwrap_err();
         assert_eq!(err, ContractError::InvalidOracleAddress);
     }
 }

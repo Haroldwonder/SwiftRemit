@@ -110,7 +110,12 @@ fn random_1000_amounts() -> std::vec::Vec<i128> {
 /// Asserts that `calculate_fee_breakdown` and `fee_breakdown_corridor`
 /// (without an explicit corridor) both agree on the platform fee for a
 /// given amount and fee_bps setting.
-fn assert_endpoints_agree(env: &Env, contract: &SwiftRemitContractClient, amount: i128) {
+fn assert_endpoints_agree(
+    env: &Env,
+    contract: &SwiftRemitContractClient,
+    amount: i128,
+    fee_bps: u32,
+) {
     // Entry point 1: calculate_fee_breakdown (global strategy, no corridor)
     let bd1 = contract
         .calculate_fee_breakdown(&amount);
@@ -124,7 +129,7 @@ fn assert_endpoints_agree(env: &Env, contract: &SwiftRemitContractClient, amount
     let corridor = FeeCorridor {
         from_country: String::from_str(env, "US"),
         to_country: String::from_str(env, "MX"),
-        strategy: FeeStrategy::Percentage(250), // matches the 250 bps used in setup_contract
+        strategy: FeeStrategy::Percentage(fee_bps), // must match the global rate under test
         protocol_fee_bps: None,
     };
     let bd3 = contract
@@ -177,7 +182,7 @@ fn test_fee_endpoints_agree_representative_amounts_250_bps() {
     let env = setup_env();
     let (contract, _, _) = setup_contract(&env, 250);
     for amount in representative_amounts() {
-        assert_endpoints_agree(&env, &contract, amount);
+        assert_endpoints_agree(&env, &contract, amount, 250u32);
     }
 }
 
@@ -188,7 +193,7 @@ fn test_fee_endpoints_agree_representative_amounts_500_bps() {
     let env = setup_env();
     let (contract, _, _) = setup_contract(&env, 500);
     for amount in representative_amounts() {
-        assert_endpoints_agree(&env, &contract, amount);
+        assert_endpoints_agree(&env, &contract, amount, 500u32);
     }
 }
 
@@ -200,7 +205,7 @@ fn test_fee_endpoints_agree_zero_fee_bps() {
     let (contract, _, _) = setup_contract(&env, 0);
     // At 0 bps, platform_fee = MIN_FEE for all amounts.
     for amount in representative_amounts() {
-        assert_endpoints_agree(&env, &contract, amount);
+        assert_endpoints_agree(&env, &contract, amount, 0u32);
     }
 }
 
@@ -216,7 +221,7 @@ fn test_fee_endpoints_agree_max_fee_bps() {
     {
         // At 100% fee the platform_fee == amount and net_amount == 0.
         // This is valid as long as FeeBreakdown invariant holds.
-        assert_endpoints_agree(&env, &contract, amount);
+        assert_endpoints_agree(&env, &contract, amount, 10000u32);
     }
 }
 
@@ -235,7 +240,7 @@ fn test_fee_endpoints_agree_1000_random_inputs() {
         amounts.len()
     );
     for amount in amounts {
-        assert_endpoints_agree(&env, &contract, amount);
+        assert_endpoints_agree(&env, &contract, amount, 250u32);
     }
 }
 
@@ -334,7 +339,9 @@ fn test_direct_service_matches_contract_endpoint() {
 
     for amount in representative_amounts() {
         // Direct call to the canonical computation function.
-        let direct_fee = fee_service::calculate_platform_fee(&env, amount, Some(&usdc)).unwrap();
+        let direct_fee = env.as_contract(&contract.address, || {
+            fee_service::calculate_platform_fee(&env, amount, Some(&usdc)).unwrap()
+        });
 
         // Via the public contract endpoint.
         let bd = contract.calculate_fee_breakdown(&amount);

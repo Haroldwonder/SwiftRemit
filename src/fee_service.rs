@@ -221,6 +221,48 @@ pub fn calculate_fees_with_breakdown(
     Ok(breakdown)
 }
 
+/// Builds a fee breakdown around an already-quoted platform fee.
+///
+/// The platform fee is fixed when a remittance is created — it is the figure the
+/// sender was quoted and the amount escrowed against. Settlement must honour that
+/// quote rather than re-price, because the inputs to pricing (the sender's rolling
+/// volume, the configured strategy, the corridor table) can all legitimately move
+/// between creation and payout. Re-pricing at settlement makes any remittance that
+/// was quoted at a volume-discounted rate impossible to complete.
+pub fn breakdown_from_platform_fee(
+    env: &Env,
+    amount: i128,
+    platform_fee: i128,
+) -> Result<FeeBreakdown, ContractError> {
+    if amount <= 0 || platform_fee < 0 || platform_fee > amount {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    let protocol_fee = calculate_protocol_fee(amount, get_protocol_fee_bps(env))?;
+
+    let total_fees = platform_fee
+        .checked_add(protocol_fee)
+        .ok_or(ContractError::Overflow)?;
+    if total_fees > amount {
+        return Err(ContractError::Overflow);
+    }
+
+    let net_amount = amount
+        .checked_sub(total_fees)
+        .ok_or(ContractError::Overflow)?;
+
+    let breakdown = FeeBreakdown {
+        amount,
+        platform_fee,
+        protocol_fee,
+        integrator_fee: 0,
+        net_amount,
+        corridor: None,
+    };
+    breakdown.validate()?;
+    Ok(breakdown)
+}
+
 /// Calculates complete fee breakdown for a sender using rolling volume discounts.
 pub fn calculate_fees_with_breakdown_for_sender(
     env: &Env,

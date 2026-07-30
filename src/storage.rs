@@ -56,8 +56,8 @@ use crate::{
 /// Rolling window over which an agent's daily payout cap is enforced.
 pub const AGENT_CAP_WINDOW_SECONDS: u64 = 86_400;
 
-/// Default window, in seconds, during which a completed remittance may be disputed.
-pub const DEFAULT_DISPUTE_WINDOW_SECONDS: u64 = 604_800; // 7 days
+/// Default window, in seconds, during which a failed remittance may be disputed.
+pub const DEFAULT_DISPUTE_WINDOW_SECONDS: u64 = 72 * 3600; // 72 hours
 
 /// How long an admin nomination stays valid before it must be re-issued.
 pub const ADMIN_NOMINATION_EXPIRY_SECONDS: u64 = 48 * 3600;

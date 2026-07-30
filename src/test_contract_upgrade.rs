@@ -51,10 +51,10 @@ fn setup() -> (Env, SwiftRemitContractClient<'static>, Address, Address, Address
 /// `migrate()` is idempotent: calling it twice at the same schema version is safe.
 #[test]
 fn test_migrate_is_idempotent() {
-    let (env, _client, _, _, _) = setup();
-    let result1 = migration::migrate(&env);
+    let (env, client, _, _, _) = setup();
+    let result1 = env.as_contract(&client.address, || migration::migrate(&env));
     assert!(result1.is_ok(), "first migrate failed: {:?}", result1);
-    let result2 = migration::migrate(&env);
+    let result2 = env.as_contract(&client.address, || migration::migrate(&env));
     assert!(result2.is_ok(), "second migrate failed (not idempotent): {:?}", result2);
 }
 
@@ -72,7 +72,7 @@ fn test_migrate_preserves_remittance_state() {
     let before2 = client.get_remittance(&id2);
 
     // Run migration (simulates post-WASM-upgrade migration step).
-    migration::migrate(&env).expect("migrate failed");
+    env.as_contract(&client.address, || migration::migrate(&env)).expect("migrate failed");
 
     // Verify every field is identical after migration.
     let after1 = client.get_remittance(&id1);
@@ -101,7 +101,7 @@ fn test_migrate_preserves_agent_registrations() {
     assert!(client.is_agent_registered(&agent));
     assert!(client.is_agent_registered(&agent2));
 
-    migration::migrate(&env).expect("migrate failed");
+    env.as_contract(&client.address, || migration::migrate(&env)).expect("migrate failed");
 
     assert!(
         client.is_agent_registered(&agent),
@@ -132,7 +132,7 @@ fn test_migrate_preserves_commitment_hashes() {
     let hash_before = client
         .compute_settlement_hash(&id);
 
-    migration::migrate(&env).expect("migrate failed");
+    env.as_contract(&client.address, || migration::migrate(&env)).expect("migrate failed");
 
     // Re-compute after migration — must be byte-for-byte identical.
     let hash_after = client
@@ -150,12 +150,15 @@ fn test_migrate_preserves_accumulated_fees() {
     let (env, client, _, agent, sender) = setup();
 
     env.mock_all_auths();
-    client.create_remittance(&sender, &agent, &8_000, &None, &None, &None, &None, &None);
+    client.set_kyc_approved(&sender, &true, &u64::MAX);
+    let id = client.create_remittance(&sender, &agent, &8_000, &None, &None, &None, &None, &None);
+    // Fees accrue when the payout is confirmed, not when the remittance is created.
+    client.confirm_payout(&agent, &id, &None, &None);
 
     let fees_before = client.get_accumulated_fees();
     assert!(fees_before > 0, "expected non-zero accumulated fees");
 
-    migration::migrate(&env).expect("migrate failed");
+    env.as_contract(&client.address, || migration::migrate(&env)).expect("migrate failed");
 
     let fees_after = client.get_accumulated_fees();
     assert_eq!(
@@ -176,7 +179,7 @@ fn test_migrate_preserves_remittance_count() {
 
     let count_before = client.get_remittance_count();
 
-    migration::migrate(&env).expect("migrate failed");
+    env.as_contract(&client.address, || migration::migrate(&env)).expect("migrate failed");
 
     assert_eq!(
         client.get_remittance_count(),
