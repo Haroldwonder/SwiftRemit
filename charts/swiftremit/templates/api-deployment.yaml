@@ -36,8 +36,21 @@ spec:
             - secretRef:
                 name: {{ include "swiftremit.fullname" . }}-api
           livenessProbe:
-            {{- toYaml $svc.livenessProbe | nindent 12 }}
+            httpGet:
+              path: /healthz
+              port: {{ $svc.service.targetPort }}
+            initialDelaySeconds: {{ $svc.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $svc.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ $svc.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ $svc.livenessProbe.failureThreshold }}
           readinessProbe:
-            {{- toYaml $svc.readinessProbe | nindent 12 }}
+            httpGet:
+              path: /readyz
+              port: {{ $svc.service.targetPort }}
+            initialDelaySeconds: {{ $svc.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $svc.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ $svc.readinessProbe.timeoutSeconds }}
+            successThreshold: {{ $svc.readinessProbe.successThreshold }}
+            failureThreshold: {{ $svc.readinessProbe.failureThreshold }}
           resources:
             {{- toYaml $svc.resources | nindent 12 }}

@@ -51,6 +51,13 @@ api:
     CURRENCY_CONFIG_PATH: "./config/currencies.json"
     SECRETS_MANAGER_ENABLED: "true"
     AWS_REGION: "us-east-1"
+    # Database pool configuration
+    DB_POOL_MAX: "10"
+    DB_POOL_IDLE_TIMEOUT_MS: "30000"
+    DB_POOL_CONNECTION_TIMEOUT_MS: "5000"
+    # Pool saturation thresholds for readiness probe
+    POOL_SATURATION_WAITING_THRESHOLD: "3"
+    POOL_SATURATION_DURATION_MS: "5000"
 
   # Secrets should be injected via AWS Secrets Manager or External Secrets Operator.
   # Do NOT put real credentials here — use external secret management.
@@ -65,18 +72,17 @@ api:
     JWT_SECRET: ""
 
   livenessProbe:
-    httpGet:
-      path: /health
-      port: 3000
     initialDelaySeconds: 15
     periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
 
   readinessProbe:
-    httpGet:
-      path: /health
-      port: 3000
     initialDelaySeconds: 5
     periodSeconds: 10
+    timeoutSeconds: 5
+    successThreshold: 1
+    failureThreshold: 3
 
 # ─── Backend service ───────────────────────────────────────────────────────────
 backend:

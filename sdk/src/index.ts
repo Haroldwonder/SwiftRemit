@@ -71,7 +71,7 @@ export const RpcUrls = {
   MAINNET: "https://soroban-mainnet.stellar.org",
 } as const;
 
-export { withRetry, withRetryPolicy, isTransientError } from "./retry.js";
+export { withRetry, withRetryPolicy, isTransientError, RateLimitError, parseRetryAfterMs, rateLimitErrorFromResponse } from "./retry.js";
 
 /** USDC multiplier: 1 USDC = 10_000_000 stroops. */
 export const USDC_MULTIPLIER = 10_000_000n;
