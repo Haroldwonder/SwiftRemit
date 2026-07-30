@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
-import { Remittance, KycStatus, FxRate, SendMoneyFormData } from '../types';
+import { Remittance, KycStatus, FxRate, SendMoneyFormData, FeeBreakdown, Anchor, Receipt, Dispute, DisputeReason } from '../types';
 
 const BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://localhost:3000';
 
@@ -39,6 +39,7 @@ export const remittanceService = {
       agent: payload.recipientCountry,
       amount: payload.amountUSD,
       memo: payload.memo || undefined,
+      anchor_id: payload.anchorId || undefined,
     });
     return data.remittance;
   },
@@ -51,6 +52,32 @@ export const remittanceService = {
   async getById(remittanceId: string): Promise<Remittance> {
     const { data } = await http.get(`/api/remittance/${remittanceId}`);
     return data.remittance ?? data;
+  },
+
+  async getFeeBreakdown(amount: string, currency: string): Promise<FeeBreakdown> {
+    const { data } = await http.get('/api/remittance/fees/breakdown', {
+      params: { amount, currency }
+    });
+    return data;
+  },
+
+  async getReceipt(remittanceId: string): Promise<Receipt> {
+    const { data } = await http.get(`/api/remittance/${remittanceId}/receipt`);
+    return data;
+  },
+
+  async createDispute(remittanceId: string, payload: { reason: DisputeReason; description: string }): Promise<Dispute> {
+    const { data } = await http.post(`/api/remittance/${remittanceId}/dispute`, payload);
+    return data;
+  },
+
+  async getDispute(remittanceId: string): Promise<Dispute | null> {
+    try {
+      const { data } = await http.get(`/api/remittance/${remittanceId}/dispute`);
+      return data;
+    } catch {
+      return null;
+    }
   },
 };
 
@@ -68,6 +95,20 @@ export const kycService = {
 export const fxService = {
   async getRate(from: string, to: string): Promise<FxRate> {
     const { data } = await http.get('/api/fx-rate/current', { params: { from, to } });
+    return data;
+  },
+};
+
+export const anchorService = {
+  async getAvailableAnchors(country: string, currency: string): Promise<Anchor[]> {
+    const { data } = await http.get('/api/anchors/available', {
+      params: { country, currency }
+    });
+    return data.anchors ?? [];
+  },
+
+  async getAnchor(anchorId: string): Promise<Anchor> {
+    const { data } = await http.get(`/api/anchors/${anchorId}`);
     return data;
   },
 };
