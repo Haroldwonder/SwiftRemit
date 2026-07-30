@@ -16,6 +16,7 @@ jest.mock('expo-local-authentication', () => ({
   hasHardwareAsync: jest.fn().mockResolvedValue(true),
   isEnrolledAsync: jest.fn().mockResolvedValue(true),
   authenticateAsync: jest.fn().mockResolvedValue({ success: true }),
+  supportedAuthenticationTypesAsync: jest.fn().mockResolvedValue([1, 2]),
   AuthenticationType: { FINGERPRINT: 1, FACIAL_RECOGNITION: 2, IRIS: 3 },
 }));
 
@@ -36,6 +37,16 @@ jest.mock('expo-device', () => ({
   deviceName: 'Test Device',
   osName: 'iOS',
   osVersion: '17.0',
+}));
+
+// ── expo-crypto ────────────────────────────────────────────────────────────
+jest.mock('expo-crypto', () => ({
+  digestStringAsync: jest.fn().mockResolvedValue('mocked-digest-hash'),
+  CryptoDigestAlgorithm: {
+    SHA1: 'SHA1',
+    SHA256: 'SHA256',
+    MD5: 'MD5',
+  },
 }));
 
 // ── expo-constants ─────────────────────────────────────────────────────────

@@ -11,10 +11,9 @@ import {
   FlatList,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { remittanceService, fxService, anchorService } from '../services/api';
-import { authenticateWithBiometrics } from '../services/biometrics';
-import { SendMoneyFormData, FxRate, FeeBreakdown, Anchor } from '../types';
-import { t } from '../services/i18n';
+import { remittanceService, fxService } from '../services/api';
+import { authenticateAndGetSigningKey, BiometricState } from '../services/biometrics';
+import { SendMoneyFormData, FxRate } from '../types';
 
 const SUPPORTED_CURRENCIES = ['PHP', 'MXN', 'INR', 'NGN', 'GHS', 'KES', 'UGX'];
 
@@ -67,11 +66,18 @@ export default function SendMoneyScreen() {
   async function handleConfirm() {
     setLoading(true);
     try {
-      const confirmed = await authenticateWithBiometrics('Confirm your transfer with biometrics');
-      if (!confirmed) {
-        Alert.alert('Authentication required', 'Please authenticate to confirm the transfer.');
+      const authResult = await authenticateAndGetSigningKey('Confirm your transfer with biometrics');
+
+      // Handle each biometric state explicitly
+      if (!authResult.success) {
+        // Use the reason string from the result for user-friendly messaging
+        Alert.alert('Authentication Required', authResult.reason || 'Please try again.');
         return;
       }
+
+      // Success: authResult.keystoreKeyId contains the OS keystore key ID
+      // In production, this would be passed to the signing function
+      console.log('[SendMoney] Biometric auth succeeded. Keystore key:', authResult.keystoreKeyId);
 
       const remittance = await remittanceService.create(form);
       navigation.navigate('TransactionDetail' as never, { remittanceId: remittance.remittance_id } as never);
