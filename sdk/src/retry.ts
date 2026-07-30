@@ -5,6 +5,8 @@ export function isTransientError(err: unknown): boolean {
   return (
     msg.includes("429") ||
     msg.includes("503") ||
+    msg.includes("502") ||
+    msg.includes("504") ||
     msg.includes("ECONNRESET") ||
     msg.includes("ECONNREFUSED") ||
     msg.includes("ETIMEDOUT") ||
@@ -12,6 +14,64 @@ export function isTransientError(err: unknown): boolean {
     msg.includes("timeout") ||
     msg.includes("timed out")
   );
+}
+
+/**
+ * Parse the Retry-After header value (seconds or HTTP-date) into milliseconds.
+ * Returns null if the value cannot be parsed or is absent.
+ */
+export function parseRetryAfterMs(retryAfter: string | null | undefined): number | null {
+  if (!retryAfter) return null;
+  const seconds = Number(retryAfter);
+  if (!Number.isNaN(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const date = new Date(retryAfter);
+  if (!Number.isNaN(date.getTime())) {
+    const delta = date.getTime() - Date.now();
+    return delta > 0 ? delta : 0;
+  }
+  return null;
+}
+
+/**
+ * Extract Retry-After from an error object that may carry HTTP response metadata.
+ * Supports: err.retryAfter, err.headers?.["retry-after"], err.response?.headers?.["retry-after"].
+ */
+export function extractRetryAfter(err: unknown): number | null {
+  if (err == null || typeof err !== "object") return null;
+  const e = err as Record<string, unknown>;
+
+  // Direct property
+  if (typeof e["retryAfter"] === "string" || typeof e["retryAfter"] === "number") {
+    return parseRetryAfterMs(String(e["retryAfter"]));
+  }
+
+  // Headers bag directly on error
+  if (e["headers"] && typeof e["headers"] === "object") {
+    const h = e["headers"] as Record<string, string>;
+    const val = h["retry-after"] ?? h["Retry-After"];
+    if (val) return parseRetryAfterMs(val);
+  }
+
+  // headers inside err.response
+  if (e["response"] && typeof e["response"] === "object") {
+    const res = e["response"] as Record<string, unknown>;
+    if (res["headers"] && typeof res["headers"] === "object") {
+      const h = res["headers"] as Record<string, string>;
+      const val = h["retry-after"] ?? h["Retry-After"];
+      if (val) return parseRetryAfterMs(val);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Full jitter: pick a delay uniformly in [0, cap] to avoid thundering herds.
+ * See https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+ */
+function jitteredDelay(baseMs: number, backoffFactor: number, attempt: number): number {
+  const cap = baseMs * Math.pow(backoffFactor, attempt);
+  return Math.random() * cap;
 }
 
 export async function withRetry<T>(
@@ -26,9 +86,14 @@ export async function withRetry<T>(
       return await fn();
     } catch (err) {
       if (attempt >= retries || !isTransientError(err)) throw err;
-      await new Promise((r) =>
-        setTimeout(r, delayMs * Math.pow(backoffFactor, attempt))
-      );
+
+      // Honour Retry-After if present, otherwise use jittered exponential backoff
+      const retryAfterMs = extractRetryAfter(err);
+      const waitMs = retryAfterMs != null
+        ? retryAfterMs
+        : jitteredDelay(delayMs, backoffFactor, attempt);
+
+      await new Promise((r) => setTimeout(r, waitMs));
       attempt++;
     }
   }
