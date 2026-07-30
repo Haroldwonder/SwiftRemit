@@ -8,7 +8,7 @@ vi.mock('../../services/feePreviewService');
 describe('FeePreview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
+    vi.useRealTimers();
   });
 
   it('should show empty state when no amount', () => {
@@ -21,7 +21,6 @@ describe('FeePreview', () => {
 
     render(<FeePreview amount={100} corridor="NG-USD" />);
 
-    vi.advanceTimersByTime(500);
     expect(screen.getByText(/Calculating fees/i)).toBeInTheDocument();
   });
 
@@ -30,16 +29,22 @@ describe('FeePreview', () => {
       platformFeeBps: 250,
       platformFeeAmount: 2.5,
       protocolFeeAmount: 0.5,
+      integratorFeeAmount: 0.25,
+      corridorFeeAmount: 0.25,
+      totalFeeAmount: 3.5,
       netAmount: 97,
+      token: 'USDC',
+      corridor: 'NG-USD',
     };
     vi.mocked(feeService.getFeePreview).mockResolvedValue(mockFee);
 
     render(<FeePreview amount={100} corridor="NG-USD" />);
 
-    vi.advanceTimersByTime(500);
     await waitFor(() => {
       expect(screen.getByText(/\$2.50/)).toBeInTheDocument();
       expect(screen.getByText(/\$0.50/)).toBeInTheDocument();
+      expect(screen.getAllByText(/\$0.25/)).toHaveLength(2);
+      expect(screen.getByText(/\$3.50/)).toBeInTheDocument();
       expect(screen.getByText(/\$97.00/)).toBeInTheDocument();
     });
   });
@@ -49,7 +54,6 @@ describe('FeePreview', () => {
 
     render(<FeePreview amount={100} corridor="NG-USD" />);
 
-    vi.advanceTimersByTime(500);
     await waitFor(() => {
       expect(screen.getByText(/Could not calculate fees/i)).toBeInTheDocument();
     });

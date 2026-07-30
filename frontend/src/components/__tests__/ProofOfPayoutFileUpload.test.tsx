@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
+import { validateProofFile, PROOF_MAX_BYTES } from '../../services/proofOfPayoutUpload';
 
 // Mock crypto API for SHA-256
 const mockCryptoSubtle = {
-  digest: vi.fn(async (algorithm: string, data: ArrayBuffer) => {
+  digest: vi.fn(async (_algorithm: string, _data: ArrayBuffer) => {
     // Mock SHA-256 output (64 hex chars)
     return new ArrayBuffer(32); // 32 bytes = 64 hex chars
   }),
@@ -19,6 +20,12 @@ Object.defineProperty(global.crypto, 'subtle', {
 describe('Issue #896: ProofOfPayout File Upload with SHA-256 Hashing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ ok: true }),
+      })
+    ) as any;
   });
 
   it('should accept image and PDF file uploads', async () => {
@@ -286,13 +293,6 @@ describe('Issue #896: ProofOfPayout File Upload with SHA-256 Hashing', () => {
     const dropZone = screen.getByTestId('drop-zone');
     const file = new File(['data'], 'proof.pdf', { type: 'application/pdf' });
 
-    const dragEvent = new DragEvent('drop', {
-      dataTransfer: new DataTransfer(),
-    });
-    Object.defineProperty(dragEvent.dataTransfer, 'files', {
-      value: new DataTransfer().items.add(file).dataTransfer.files,
-    });
-
     fireEvent.drop(dropZone, { dataTransfer: { files: [file] } });
 
     await waitFor(() => {
@@ -341,5 +341,22 @@ describe('Issue #896: ProofOfPayout File Upload with SHA-256 Hashing', () => {
     await waitFor(() => {
       expect(screen.getByTestId('error-msg')).toBeInTheDocument();
     });
+  });
+
+  it('should reject oversized proof files', async () => {
+    const file = new File([new Uint8Array(PROOF_MAX_BYTES + 1)], 'large.png', { type: 'image/png' });
+    await expect(validateProofFile(file)).rejects.toThrow(/10MB/);
+  });
+
+  it('should reject mismatched magic bytes', async () => {
+    const file = new File(['not a png'], 'proof.png', { type: 'image/png' });
+    await expect(validateProofFile(file)).rejects.toThrow(/PNG, JPEG, and PDF/);
+  });
+
+  it('should hash validated PDF bytes', async () => {
+    const pdf = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])], 'proof.pdf', { type: 'application/pdf' });
+    const proof = await validateProofFile(pdf);
+    expect(proof.type).toBe('application/pdf');
+    expect(proof.hash).toMatch(/^[a-f0-9]{64}$/);
   });
 });

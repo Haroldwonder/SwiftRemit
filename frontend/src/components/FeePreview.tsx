@@ -1,6 +1,5 @@
 import React from 'react';
 import { useFeePreview } from '../utils/useFeePreview';
-import type { FeeBreakdown } from '../services/feePreviewService';
 
 interface FeePreviewProps {
   amount: number;
@@ -13,7 +12,7 @@ function Spinner(): React.ReactElement {
 }
 
 export function FeePreview({ amount, corridor, onError }: FeePreviewProps): React.ReactElement {
-  const { feeData, loading, error } = useFeePreview(amount, corridor, { debounceMs: 500, onError });
+  const { feeData, loading, error, secondsUntilExpiry, requiresRequote, refreshQuote } = useFeePreview(amount, corridor, { debounceMs: 500, onError });
 
   if (!amount || !corridor) {
     return <div className="fee-preview fee-preview-empty">Enter amount and corridor</div>;
@@ -51,10 +50,31 @@ export function FeePreview({ amount, corridor, onError }: FeePreviewProps): Reac
           <span className="fee-label">Protocol Fee:</span>
           <span className="fee-amount">${feeData.protocolFeeAmount.toFixed(2)}</span>
         </div>
+        <div className="fee-item">
+          <span className="fee-label">Integrator Fee:</span>
+          <span className="fee-amount">${feeData.integratorFeeAmount.toFixed(2)}</span>
+        </div>
+        <div className="fee-item">
+          <span className="fee-label">Corridor Fee ({feeData.corridor}, {feeData.token}):</span>
+          <span className="fee-amount">${feeData.corridorFeeAmount.toFixed(2)}</span>
+        </div>
+        <div className="fee-item">
+          <span className="fee-label">Total Fee:</span>
+          <span className="fee-amount">${feeData.totalFeeAmount.toFixed(2)}</span>
+        </div>
         <div className="fee-item fee-net">
           <span className="fee-label">Net Amount:</span>
           <span className="fee-amount">${feeData.netAmount.toFixed(2)}</span>
         </div>
+        <div className="fee-quote-expiry" aria-live="polite">
+          Quote expires in {secondsUntilExpiry ?? 0}s
+        </div>
+        {requiresRequote && (
+          <div className="fee-preview-warning" role="alert">
+            FX rate moved or quote expired. Re-quote before submitting.
+            <button type="button" onClick={refreshQuote}>Re-quote</button>
+          </div>
+        )}
       </div>
     </div>
   );

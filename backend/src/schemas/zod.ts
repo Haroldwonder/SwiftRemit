@@ -145,6 +145,12 @@ export const FxRateCurrentQuerySchema = z.object({
   to: z.string().min(1).max(10),
 });
 
+export const ProofOfPayoutValidationSchema = z.object({
+  fileBase64: z.string().min(1).max(14_000_000),
+  declaredType: z.enum(['image/png', 'image/jpeg', 'application/pdf']),
+  proofHash: z.string().regex(/^[a-f0-9]{64}$/i),
+});
+
 // ---------------------------------------------------------------------------
 // KYC schemas
 // ---------------------------------------------------------------------------

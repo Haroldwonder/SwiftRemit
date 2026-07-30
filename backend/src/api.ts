@@ -56,6 +56,7 @@ import {
   FxRateStoreSchema,
   FxRateTransactionParamSchema,
   FxRateCurrentQuerySchema,
+  ProofOfPayoutValidationSchema,
   KycConfigSchema,
   KycStatusParamSchema,
   KycUserParamSchema,
@@ -135,9 +136,40 @@ function makeRateLimiter(max: number, windowMs = 60_000) {
   });
 }
 
-const publicLimiter  = makeRateLimiter(100);   // 100 req/min — public endpoints
-const webhookLimiter = makeRateLimiter(1000);  // 1 000 req/min — anchor callbacks
-const adminLimiter   = makeRateLimiter(20);    // 20 req/min — admin endpoints
+// Public endpoints: 100 req/min
+const publicLimiter = makeRateLimiter(100);
+
+const PROOF_MAX_BYTES = 10 * 1024 * 1024;
+
+function sniffProofMime(buffer: Buffer): string | null {
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return 'image/png';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return 'application/pdf';
+  return null;
+}
+
+app.post('/api/proof-of-payout/validate', validateRequest(ProofOfPayoutValidationSchema), (req: Request, res: Response) => {
+  const file = Buffer.from(req.body.fileBase64, 'base64');
+  if (file.length > PROOF_MAX_BYTES) {
+    return res.status(413).json({ error: 'Proof file must be 10MB or smaller' });
+  }
+
+  const sniffedType = sniffProofMime(file);
+  if (!sniffedType || sniffedType !== req.body.declaredType) {
+    return res.status(400).json({ error: 'Proof file content does not match declared type' });
+  }
+
+  const serverHash = crypto.createHash('sha256').update(file).digest('hex');
+  if (serverHash !== req.body.proofHash.toLowerCase()) {
+    return res.status(400).json({ error: 'Proof hash does not match uploaded content' });
+  }
+
+  res.json({ ok: true, proofHash: serverHash, contentType: sniffedType });
+});
+// Webhook endpoints: 1000 req/min (higher for anchor callbacks)
+const webhookLimiter = makeRateLimiter(1000);
+// Admin endpoints: 20 req/min
+const adminLimiter = makeRateLimiter(20);
 
 // Middleware-level rate limits (must be registered before routers)
 app.use('/api/webhook',    webhookLimiter);
