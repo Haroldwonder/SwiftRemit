@@ -1,0 +1,284 @@
+name: Mobile CI
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triggers
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mobile-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+
+# Cancel in-progress runs for the same PR/branch to save minutes.
+concurrency:
+  group: mobile-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: mobile
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared setup step — reused by all Node jobs
+# ─────────────────────────────────────────────────────────────────────────────
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # 1. Install & lint
+  # ───────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          # Cache based on the lockfile so the cache is invalidated when deps change.
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      # npm ci is deterministic and respects the lockfile exactly.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 2. TypeScript type-check
+  # ───────────────────────────────────────────────────────────────────────────
+  typecheck:
+    name: Type-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tsc --noEmit
+        run: npm run typecheck
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 3. Unit tests + coverage
+  # ───────────────────────────────────────────────────────────────────────────
+  test:
+    name: Test & Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-coverage
+          path: mobile/coverage/
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 4. JS bundle size check
+  #    Warns (non-blocking) if the production Metro bundle exceeds 2 MB.
+  #    Adjust BUDGET_BYTES below to tighten the gate when the app matures.
+  # ───────────────────────────────────────────────────────────────────────────
+  bundle-size:
+    name: Bundle Size Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only run on PRs — informational, not a hard gate.
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Export Metro bundle (hermes, android baseline)
+        # expo export --platform android produces a Hermes-compiled JS bundle
+        # under dist/. We measure that as a proxy for the binary JS size.
+        run: |
+          npx expo export --platform android --output-dir /tmp/mobile-bundle 2>/dev/null || true
+
+      - name: Check bundle size
+        run: |
+          BUDGET_BYTES=2097152   # 2 MB
+          BUNDLE_FILE=$(find /tmp/mobile-bundle -name "*.js" | head -1)
+
+          if [ -z "$BUNDLE_FILE" ]; then
+            echo "::warning::Could not locate JS bundle — skipping size check"
+            exit 0
+          fi
+
+          SIZE=$(stat -c%s "$BUNDLE_FILE")
+          SIZE_KB=$(echo "scale=1; $SIZE / 1024" | bc)
+          echo "JS bundle size: ${SIZE_KB} KB (${SIZE} bytes)"
+
+          if [ "$SIZE" -gt "$BUDGET_BYTES" ]; then
+            echo "::warning file=$BUNDLE_FILE::JS bundle is ${SIZE_KB} KB — exceeds 2 MB budget. Consider lazy-loading screens."
+          else
+            echo "✅ Bundle ${SIZE_KB} KB is within the 2 MB budget."
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 5. EAS Build — iOS (Simulator preview, no code-signing required)
+  #    Produces an .ipa / simulator archive downloadable from the Actions tab.
+  # ───────────────────────────────────────────────────────────────────────────
+  eas-build-ios:
+    name: EAS Build — iOS
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only run on pushes to main or when the PR label "build" is present.
+    # This keeps the workflow fast on every PR while still producing artifacts
+    # on merge.  Remove the condition to build on every PR (costs more EAS minutes).
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build'))
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install EAS CLI
+        run: npm install --global eas-cli@latest
+
+      - name: Build iOS preview (no signing)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          eas build \
+            --platform ios \
+            --profile preview \
+            --non-interactive \
+            --no-wait \
+            --json > /tmp/eas-ios-build.json || true
+
+          echo "EAS iOS build submitted. Check Expo dashboard for artifact download."
+          cat /tmp/eas-ios-build.json || true
+
+      # Download the completed artifact once EAS finishes (blocking wait).
+      # Comment this block out if you prefer the non-waiting approach above.
+      # - name: Wait for iOS build and download artifact
+      #   env:
+      #     EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      #   run: |
+      #     BUILD_ID=$(cat /tmp/eas-ios-build.json | jq -r '.[0].id')
+      #     eas build:view "$BUILD_ID" --wait
+      #     eas build:download --id "$BUILD_ID" --output ./ios-build.tar.gz
+      #
+      # - uses: actions/upload-artifact@v4
+      #   with:
+      #     name: ios-preview-build
+      #     path: mobile/ios-build.tar.gz
+      #     retention-days: 14
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 6. EAS Build — Android (APK preview)
+  # ───────────────────────────────────────────────────────────────────────────
+  eas-build-android:
+    name: EAS Build — Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build'))
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install EAS CLI
+        run: npm install --global eas-cli@latest
+
+      - name: Build Android preview (APK)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          eas build \
+            --platform android \
+            --profile preview \
+            --non-interactive \
+            --no-wait \
+            --json > /tmp/eas-android-build.json || true
+
+          echo "EAS Android build submitted. Check Expo dashboard for artifact download."
+          cat /tmp/eas-android-build.json || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 7. Summary gate — required status check for branch protection
+  # ───────────────────────────────────────────────────────────────────────────
+  mobile-ci:
+    name: Mobile CI
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - typecheck
+      - test
+    # Always run so we get a clear pass/fail even if a dependency was skipped.
+    if: always()
+    steps:
+      - name: Check required jobs
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          for r in $results; do
+            if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
+              echo "❌ Mobile CI failed"
+              exit 1
+            fi
+          done
+          echo "✅ Mobile CI passed"

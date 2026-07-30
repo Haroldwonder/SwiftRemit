@@ -31,6 +31,7 @@ import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
 import { sanitizeInput } from './sanitizer';
 import docsRouter from './routes/docs';
+import { createDeviceRouter } from './routes/devices';
 import { Sep24Service, Sep24InitiateRequest, Sep24ConfigError, Sep24AnchorError } from './sep24-service';
 import { AdminAuditLogService } from './admin-audit-log';
 import { getJobSummaries } from './job-tracker';
@@ -143,6 +144,7 @@ app.get('/metrics', async (req: Request, res: Response) => {
 // API documentation
 app.use('/api/docs', docsRouter);
 app.use('/api/compliance', createComplianceRouter(pool));
+app.use('/api/devices', createDeviceRouter(pool));
 
 function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const userId = (req.headers['x-user-id'] as string) || '';
