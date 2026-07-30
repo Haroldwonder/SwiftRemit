@@ -9,6 +9,18 @@ export interface SuspiciousActivity {
   timestamp: Date;
 }
 
+
+export interface SuspiciousActivity {
+  webhook_id: string;
+  anchor_id: string;
+  reason: string;
+  payload: any;
+  timestamp: Date;
+}
+
+
+
+
 export class WebhookLogger {
   private logger = createLogger('WebhookLogger');
 

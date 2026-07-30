@@ -12,9 +12,7 @@ import { redact as sharedRedact, StructuredLogger as SharedLogger } from '../../
 // going through HTTP middleware.
 export const correlationStorage = new AsyncLocalStorage<string>();
 
-export function getCorrelationId(): string | undefined {
-  return correlationStorage.getStore();
-}
+
 
 export function getCorrelationIdFromRequest(req: Request): string | undefined {
   return (req as any).correlationId;
@@ -45,10 +43,15 @@ export { sharedRedact as redact };
 // Extends the shared logger with OpenTelemetry trace/span context and
 // AsyncLocalStorage correlation IDs.
 
-export class StructuredLogger extends SharedLogger {
-  // Override formatMessage to inject correlation + OTel context.
-  // We replicate the private method pattern here since TypeScript does not
-  // allow overriding private methods; instead we intercept at the public API.
+/**
+ * Get the current correlation ID from AsyncLocalStorage
+ */
+export function getCorrelationId(): string | undefined {
+  return correlationStorage.getStore();
+}
+
+export class StructuredLogger {
+  private context: string;
 
   private correlationAwareFormat(
     level: string,

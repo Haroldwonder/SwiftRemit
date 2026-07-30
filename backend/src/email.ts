@@ -8,23 +8,6 @@ const from = process.env.SMTP_FROM || 'no-reply@swiftremit.example';
 
 let transporter: nodemailer.Transporter | null = null;
 
-function getTransporter() {
-  if (transporter) return transporter;
-  if (!host || !port) {
-    console.warn('SMTP not configured; email will not be sent');
-    return null as unknown as nodemailer.Transporter;
-  }
-
-  transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: user && pass ? { user, pass } : undefined,
-  });
-
-  return transporter;
-}
-
 export async function sendEmail(to: string, subject: string, text: string, html?: string) {
   const tx = getTransporter();
   if (!tx) {

@@ -14,35 +14,7 @@ export interface TomlData {
   [key: string]: unknown;
 }
 
-/**
- * Fetch and parse stellar.toml for a given home domain.
- * Results are cached for 24 h and re-validated on cache miss.
- */
-export async function fetchAnchorToml(homeDomain: string): Promise<TomlData> {
-  const cacheKey = `toml:${homeDomain}`;
-  const cached = tomlCache.get<TomlData>(cacheKey);
-  if (cached) return cached;
 
-  const url = `https://${homeDomain}/.well-known/stellar.toml`;
-  const response = await axios.get<string>(url, {
-    timeout: 10_000,
-    responseType: 'text',
-    headers: { Accept: 'text/plain' },
-  });
-
-  const data: TomlData = toml.parse(response.data);
-
-  const missingFields: string[] = [];
-  if (!data.SIGNING_KEY) missingFields.push('SIGNING_KEY');
-  if (!data.NETWORK_PASSPHRASE) missingFields.push('NETWORK_PASSPHRASE');
-  if (missingFields.length > 0) {
-    throw new Error(`stellar.toml missing required fields: ${missingFields.join(', ')}`);
-  }
-
-  tomlCache.set(cacheKey, data);
-  logger.debug('Fetched and cached stellar.toml', { homeDomain });
-  return data;
-}
 
 /**
  * Invalidate cached TOML for a domain (forces re-fetch on next request).
@@ -81,4 +53,35 @@ export async function validateAnchorToml(
     logger.error('Failed to fetch/validate stellar.toml', { homeDomain, err });
     return false;
   }
+}
+
+
+/**
+ * Fetch and parse stellar.toml for a given home domain.
+ * Results are cached for 24 h and re-validated on cache miss.
+ */
+export async function fetchAnchorToml(homeDomain: string): Promise<TomlData> {
+  const cacheKey = `toml:${homeDomain}`;
+  const cached = tomlCache.get<TomlData>(cacheKey);
+  if (cached) return cached;
+
+  const url = `https://${homeDomain}/.well-known/stellar.toml`;
+  const response = await axios.get<string>(url, {
+    timeout: 10_000,
+    responseType: 'text',
+    headers: { Accept: 'text/plain' },
+  });
+
+  const data: TomlData = toml.parse(response.data);
+
+  const missingFields: string[] = [];
+  if (!data.SIGNING_KEY) missingFields.push('SIGNING_KEY');
+  if (!data.NETWORK_PASSPHRASE) missingFields.push('NETWORK_PASSPHRASE');
+  if (missingFields.length > 0) {
+    throw new Error(`stellar.toml missing required fields: ${missingFields.join(', ')}`);
+  }
+
+  tomlCache.set(cacheKey, data);
+  logger.debug('Fetched and cached stellar.toml', { homeDomain });
+  return data;
 }
