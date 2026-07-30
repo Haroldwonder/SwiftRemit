@@ -11,7 +11,7 @@ export default defineConfig([
     target: "node18",
     outDir: "dist",
   },
-  // Browser: IIFE (UMD-compatible) + ESM, no Node.js built-ins
+  // Browser: IIFE (UMD-compatible) + ESM, suitable for CDN use
   {
     entry: { "browser/index": "src/index.ts" },
     format: ["iife", "esm"],
@@ -22,11 +22,17 @@ export default defineConfig([
     target: "es2020",
     outDir: "dist",
     platform: "browser",
+    minify: false,
+    splitting: false,
     // Prevent Node.js built-ins from leaking into the browser bundle
     noExternal: [],
     external: ["@stellar/stellar-sdk"],
     esbuildOptions(options) {
       options.conditions = ["browser"];
+      options.define = {
+        ...options.define,
+        global: "globalThis",
+      };
     },
   },
 ]);

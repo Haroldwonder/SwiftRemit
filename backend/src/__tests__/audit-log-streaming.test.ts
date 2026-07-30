@@ -12,6 +12,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
+import express from 'express';
 
 // ---------------------------------------------------------------------------
 // Row-budget constant (must match what's in schemas/zod.ts)
@@ -23,6 +24,8 @@ const RSS_CEILING_MB  = 200; // documented memory ceiling for 1M-row export
 // ---------------------------------------------------------------------------
 // Mocks — heavy dependencies
 // ---------------------------------------------------------------------------
+let auditLogLogSpy = vi.fn();
+
 vi.mock('../database', () => ({
   getPool: vi.fn(() => mockPool),
   saveContractEvent: vi.fn(),
@@ -74,7 +77,7 @@ vi.mock('../sep24-service', () => ({
 }));
 vi.mock('../admin-audit-log', () => ({
   AdminAuditLogService: vi.fn().mockImplementation(() => ({
-    log:   vi.fn(),
+    log:   auditLogLogSpy,
     query: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
   })),
 }));
@@ -85,10 +88,10 @@ vi.mock('../middleware/api-key-rate-limit', () => ({
   apiKeyRateLimiter: vi.fn((_: any, __: any, next: any) => next()),
 }));
 vi.mock('../routes/docs', () => ({
-  default: { get: vi.fn(), use: vi.fn(), stack: [] },
+  default: express.Router(),
 }));
 vi.mock('../routes/compliance', () => ({
-  createComplianceRouter: vi.fn(() => ({ get: vi.fn(), use: vi.fn(), stack: [] })),
+  createComplianceRouter: vi.fn(() => express.Router()),
   autoFlagIfAboveThreshold: vi.fn(),
 }));
 vi.mock('../verifier', () => ({
@@ -191,6 +194,7 @@ describe('Audit-log export streaming and load (Feature D)', () => {
     cursorBatchRows   = [];
     cursorBatchIndex  = 0;
     listingRows       = [];
+    auditLogLogSpy = vi.fn();
     mockClient.query.mockClear();
     mockPool.query.mockClear();
     mockPool.connect.mockClear();
@@ -396,6 +400,39 @@ describe('Audit-log export streaming and load (Feature D)', () => {
       `growth=${growthMB.toFixed(1)} MB  ceiling=${RSS_CEILING_MB} MB`
     );
   }, 60_000); // generous timeout for large export
+
+  it('logs admin actions for webhook listing and audit export routes', async () => {
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (/select id, url, secret, previous_secret, secret_rotated_at, active, created_at, updated_at/i.test(sql)) {
+        return { rows: [{ id: 1, url: 'https://example.com', secret: 'secret', previous_secret: null, secret_rotated_at: null, active: true, created_at: new Date(), updated_at: new Date() }], rowCount: 1 };
+      }
+      if (/select count\(\*\) from admin_audit_log/i.test(sql)) {
+        return { rows: [{ count: '0' }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    const webhooksRes = await request(app).get('/api/webhooks');
+    expect(webhooksRes.status).toBe(200);
+    expect(auditLogLogSpy).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'list_webhooks',
+      admin_address: 'unknown',
+    }));
+
+    const { from, to } = rangeParams(7);
+    mockCountRows = [{ count: '0' }];
+    cursorBatchRows = [[]];
+
+    const exportRes = await request(app).get(
+      `/api/admin/audit-log/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    );
+
+    expect(exportRes.status).toBe(200);
+    expect(auditLogLogSpy).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'export_admin_audit_log',
+      admin_address: 'unknown',
+    }));
+  });
 
   // ── Listing cursor pagination ──────────────────────────────────────────
 

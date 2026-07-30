@@ -1,30 +1,4 @@
-/**
- * api.ts — SR-033
- *
- * Application construction, middleware wiring, and router mounting.
- * All route handlers live in src/routes/*.ts.
- *
- * Preserved paths (verified against original api.ts):
- *   GET|POST /health, GET /health/db
- *   GET /metrics
- *   GET /api/verification/:assetCode/:issuer
- *   POST /api/verification/verify|/report|/batch
- *   GET /api/verification/verified
- *   GET /api/kyc/status, /api/kyc/status/:userId/:anchorId, /api/kyc/approved/:userId
- *   POST /api/kyc/config, /api/kyc/register
- *   POST /api/transfer
- *   POST|GET /api/fx-rate, GET /api/fx-rate/current, GET /api/fx-rate/:id
- *   POST /api/anchor/initiate, GET /api/anchor/transaction/:id
- *   POST /api/remittance, GET /api/remittance/:id
- *   POST /api/simulate-settlement
- *   GET /api/events
- *   GET /api/admin/audit-log, /api/admin/audit-log/export, /api/admin/jobs
- *   POST /api/webhooks/:id/rotate-secret
- *   POST /webhooks/kyc/:anchor_id
- *   GET /api/docs, /api/compliance
- */
-
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -78,6 +52,18 @@ const logger = createLogger('api');
 
 const fxRateCache    = getFxRateCache();
 const metricsService = getMetricsService(pool);
+
+async function logAdminAction(req: Request, action: string, target: string | null = null, params: Record<string, unknown> | null = null) {
+  const auditService = new AdminAuditLogService(pool);
+  await auditService.log({
+    admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+    action,
+    target,
+    params_json: params,
+    tx_hash: null,
+    ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
+  });
+}
 
 fxRateCache.setMetricsObserver((from, to, stalenessSeconds) => {
   metricsService.setFxRateStalenessMetric(from, to, stalenessSeconds);
@@ -203,9 +189,30 @@ app.post('/api/developers/keys', adminLimiter, async (req: Request, res: Respons
     });
   }
 
-  const validTiers: RateLimitTier[] = ['free', 'standard', 'premium'];
-  if (tier !== undefined && !validTiers.includes(tier as RateLimitTier)) {
-    return res.status(400).json({ error: `Invalid tier. Must be one of: ${validTiers.join(', ')}` });
+// Get all webhook subscribers (Admin view)
+app.get('/api/webhooks', adminLimiter, async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, url, secret, previous_secret, secret_rotated_at, active, created_at, updated_at
+       FROM webhook_subscribers
+       ORDER BY created_at DESC`
+    );
+    // map DB rows to frontend interface
+    const subscriptions = result.rows.map(row => ({
+      id: row.id,
+      url: row.url,
+      events: [], // this mock app doesn't have events in DB schema it seems!
+      secret: row.secret,
+      secret_rotated_at: row.secret_rotated_at,
+      has_previous_secret: !!row.previous_secret,
+    }));
+
+    await logAdminAction(req, 'list_webhooks', null, { count: subscriptions.length });
+
+    res.status(200).json(subscriptions);
+  } catch (error) {
+    logger.error('Failed to get webhook subscribers', { error });
+    res.status(500).json({ error: 'Internal server error' });
   }
 
   let expiresAtDate: Date | null | undefined;
@@ -217,14 +224,10 @@ app.post('/api/developers/keys', adminLimiter, async (req: Request, res: Respons
   }
 
   try {
-    const result = await apiKeyStore.create({
-      name:       name.trim(),
-      ownerId,
-      scopes:     scopes as ApiKeyScope[],
-      tier:       (tier as RateLimitTier) ?? 'free',
-      expiresAt:  expiresAtDate,
-      ipAddress:  (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? undefined,
-    });
+    const { newSecret, rotatedAt } = await rotateWebhookSecret(id);
+    const subscriber = await getWebhookSubscriberById(id);
+
+    await logAdminAction(req, 'rotate_webhook_secret', id);
 
     // Notify subscriber of new secret via a signed delivery (best-effort)
     if (subscriber?.url) {
@@ -569,15 +572,7 @@ app.post('/api/kyc/config', async (req: Request, res: Response) => {
 
     await saveAnchorKycConfig(config);
 
-    const auditService = new AdminAuditLogService(pool);
-    await auditService.log({
-      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
-      action: 'configure_kyc',
-      target: anchorId,
-      params_json: { kycServerUrl, pollingIntervalMinutes, enabled },
-      tx_hash: null,
-      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
-    });
+    await logAdminAction(req, 'configure_kyc', anchorId, { kycServerUrl, pollingIntervalMinutes, enabled });
 
     res.json({ success: true, message: 'Anchor KYC config saved successfully' });
   } catch (error) {
@@ -625,15 +620,7 @@ app.post('/api/kyc/register', async (req: Request, res: Response) => {
     const service = new kycService();
     await service.registerUserForKyc(sanitizedUserId, sanitizedAnchorId);
 
-    const auditService = new AdminAuditLogService(pool);
-    await auditService.log({
-      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
-      action: 'register_kyc_user',
-      target: sanitizedUserId,
-      params_json: { anchorId: sanitizedAnchorId },
-      tx_hash: null,
-      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
-    });
+    await logAdminAction(req, 'register_kyc_user', sanitizedUserId, { anchorId: sanitizedAnchorId });
 
     res.json({ success: true, message: 'User registered for KYC successfully' });
   } catch (error) {
@@ -906,18 +893,55 @@ app.post('/api/simulate-settlement', async (req: Request, res: Response) => {
 app.get('/api/admin/audit-log', async (req: Request, res: Response) => {
   try {
     const auditService = new AdminAuditLogService(pool);
-    const limit  = Math.min(parseInt(req.query.limit  as string) || 50, 200);
-    const offset = parseInt(req.query.offset as string) || 0;
-    const filter = {
-      admin_address: req.query.admin_address as string | undefined,
-      action:        req.query.action        as string | undefined,
-      from:  req.query.from  ? new Date(req.query.from  as string) : undefined,
-      to:    req.query.to    ? new Date(req.query.to    as string) : undefined,
+    const q = req.query as any;
+    const limit = Math.min(Number(q.limit) || 50, 200);
+
+    // Decode opaque cursor (base64-encoded JSON {id, created_at})
+    let cursorCondition = '';
+    const params: unknown[] = [];
+    let idx = 1;
+
+    if (q.admin_address) { params.push(q.admin_address); cursorCondition += ` AND admin_address = $${idx++}`; }
+    if (q.action)        { params.push(q.action);        cursorCondition += ` AND action = $${idx++}`; }
+    if (q.from)          { params.push(new Date(q.from)); cursorCondition += ` AND created_at >= $${idx++}`; }
+    if (q.to)            { params.push(new Date(q.to));   cursorCondition += ` AND created_at <= $${idx++}`; }
+
+    if (q.cursor) {
+      try {
+        const decoded = JSON.parse(Buffer.from(q.cursor, 'base64').toString('utf8'));
+        params.push(decoded.created_at);
+        params.push(decoded.id);
+        cursorCondition += ` AND (created_at < $${idx} OR (created_at = $${idx} AND id < $${idx + 1}))`;
+        idx += 2;
+      } catch {
+        return res.status(400).json({ error: 'Invalid cursor' });
+      }
+    }
+
+    const where = cursorCondition ? `WHERE 1=1 ${cursorCondition}` : '';
+    params.push(limit + 1); // fetch one extra to detect next page
+    const rows = await pool.query(
+      `SELECT * FROM admin_audit_log ${where} ORDER BY created_at DESC, id DESC LIMIT $${idx}`,
+      params
+    );
+
+    const hasMore = rows.rows.length > limit;
+    const entries = hasMore ? rows.rows.slice(0, limit) : rows.rows;
+
+    let nextCursor: string | null = null;
+    if (hasMore) {
+      const last = entries[entries.length - 1];
+      nextCursor = Buffer.from(JSON.stringify({ id: last.id, created_at: last.created_at })).toString('base64');
+    }
+
+    await logAdminAction(req, 'list_admin_audit_log', null, {
+      action: q.action ?? null,
+      admin_address: q.admin_address ?? null,
       limit,
-      offset,
-    };
-    const { entries, total } = await auditService.query(filter);
-    res.json({ total, limit, offset, entries });
+      cursor: Boolean(q.cursor),
+    });
+
+    res.json({ limit, cursor: q.cursor ?? null, next_cursor: nextCursor, entries });
   } catch (error) {
     logger.error('Error fetching audit log', error);
     res.status(500).json({ error: 'Failed to fetch audit log' });
@@ -928,6 +952,7 @@ app.get('/api/admin/audit-log', async (req: Request, res: Response) => {
 app.get('/api/admin/jobs', adminLimiter, async (req: Request, res: Response) => {
   try {
     const summaries = await getJobSummaries(pool);
+    await logAdminAction(req, 'view_admin_jobs', null, { job_count: summaries.length });
     res.json({ jobs: summaries });
   } catch (error) {
     logger.error('Error fetching job summaries', error);
@@ -938,15 +963,31 @@ app.get('/api/admin/jobs', adminLimiter, async (req: Request, res: Response) => 
 // Per-anchor circuit breaker state, gating anchor calls (SR-031)
 app.get('/api/admin/anchors/health', adminLimiter, async (req: Request, res: Response) => {
   try {
-    const anchors = await getEnabledAnchors();
-    const circuitBreaker = getAnchorCircuitBreaker();
-    const health = await Promise.all(
-      anchors.map(async anchor => ({
-        anchor_id: anchor.id,
-        name: anchor.name,
-        circuit_state: circuitBreaker.getState(anchor.id),
-        latest_health: await getLatestAnchorHealth(anchor.id),
-      }))
+    const q = req.query as any;
+    const from  = new Date(q.from as string);
+    const to    = new Date(q.to   as string);
+    const adminAddress = q.admin_address as string | undefined;
+    const action       = q.action        as string | undefined;
+
+    // Build parameterised WHERE clause
+    const baseParams: unknown[] = [from, to];
+    let extraWhere = '';
+    if (adminAddress) { baseParams.push(adminAddress); extraWhere += ` AND admin_address = $${baseParams.length}`; }
+    if (action)       { baseParams.push(action);        extraWhere += ` AND action = $${baseParams.length}`; }
+
+    const baseWhere = `WHERE created_at >= $1 AND created_at <= $2${extraWhere}`;
+
+    await logAdminAction(req, 'export_admin_audit_log', null, {
+      from: q.from as string,
+      to: q.to as string,
+      admin_address: adminAddress ?? null,
+      action: action ?? null,
+    });
+
+    // Check row count before streaming — hard cap at AUDIT_LOG_EXPORT_ROW_CAP
+    const countRes = await pool.query(
+      `SELECT COUNT(*) FROM admin_audit_log ${baseWhere}`,
+      baseParams
     );
     res.json({ anchors: health });
   } catch (error) {
