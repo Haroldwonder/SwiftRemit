@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import cron from 'node-cron';
 import { AssetVerifier } from './verifier';
 import { getStaleAssets, saveAssetVerification, getPool, retireExpiredWebhookSecrets, getWebhookSubscriberById } from './database';
 import { storeVerificationOnChain } from './stellar';
@@ -12,8 +13,7 @@ import { withAdvisoryLock } from './distributed-lock';
 import { AnchorHealthChecker } from './anchor-health-checker';
 import { getMetricsService } from './metrics';
 import { runTracked } from './job-tracker';
-import { AdminAuditLogService } from './audit-service';
-import crypto from 'crypto';
+import { WebhookDlqProcessor } from './webhook-dlq-processor';
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
@@ -21,6 +21,7 @@ const pool = getPool();
 const sep24Service = new Sep24Service(pool);
 const metricsService = getMetricsService(pool);
 const anchorHealthChecker = new AnchorHealthChecker(pool, metricsService);
+const dlqProcessor = new WebhookDlqProcessor(pool);
 
 export async function startBackgroundJobs() {
   // Initialize KYC service
@@ -77,12 +78,13 @@ export async function startBackgroundJobs() {
     if (!ran) console.log('check-anchor-health: skipped (another instance holds the lock)');
   });
 
-  // Retire expired webhook secrets hourly
-  cron.schedule('0 * * * *', async () => {
-    const ran = await withAdvisoryLock(pool, 'retire-webhook-secrets', async () => {
-      await runTracked(pool, 'retire-webhook-secrets', retireWebhookSecrets);
+  // SR-027: Process DLQ entries every 5 minutes
+  // — retries with exponential backoff, expires stale entries, auto-disables on K failures
+  cron.schedule('*/5 * * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'process-webhook-dlq', async () => {
+      await runTracked(pool, 'process-webhook-dlq', processDlq);
     });
-    if (!ran) console.log('retire-webhook-secrets: skipped (another instance holds the lock)');
+    if (!ran) console.log('process-webhook-dlq: skipped (another instance holds the lock)');
   });
 
   console.log('Background jobs scheduled');
@@ -218,55 +220,12 @@ async function checkAnchorHealth() {
   }
 }
 
-async function retireWebhookSecrets() {
+// SR-027: DLQ retry / expiry / auto-disable
+async function processDlq() {
   try {
-    const retiredIds = await retireExpiredWebhookSecrets();
-    if (retiredIds.length > 0) {
-      console.log(`Retired expired webhook secrets for ${retiredIds.length} subscribers`);
-      const auditService = new AdminAuditLogService(pool);
-      for (const id of retiredIds) {
-        await auditService.log({
-          admin_address: 'system',
-          action: 'retire_webhook_secret',
-          target: id,
-          params_json: null,
-          tx_hash: null,
-          ip_address: '127.0.0.1',
-        });
-        
-        // Notify subscriber via webhook delivery best-effort
-        const subscriber = await getWebhookSubscriberById(id);
-        if (subscriber?.url && subscriber.secret) {
-          try {
-            const timestamp = Date.now().toString();
-            const notificationBody = JSON.stringify({
-              event: 'webhook.secret_retired',
-              subscriber_id: id,
-              retired_at: new Date().toISOString(),
-            });
-            const signature = crypto
-              .createHmac('sha256', subscriber.secret)
-              .update(`${timestamp}.${notificationBody}`)
-              .digest('hex');
-
-            await fetch(subscriber.url, {
-              method: 'POST',
-              headers: {
-                'content-type': 'application/json',
-                'x-event-type': 'webhook.secret_retired',
-                'x-webhook-timestamp': timestamp,
-                'x-webhook-signature': signature,
-              },
-              body: notificationBody,
-            }).catch(() => {});
-          } catch (e) {
-            console.warn('Failed to notify subscriber of secret retirement', e);
-          }
-        }
-      }
-    }
+    await dlqProcessor.run();
+    console.log('DLQ processing completed');
   } catch (error) {
-    console.error('Error in retire webhook secrets job:', error);
+    console.error('Error in DLQ processing job:', error);
   }
 }
-

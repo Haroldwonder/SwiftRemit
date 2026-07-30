@@ -1122,5 +1122,267 @@ export function createAdminRouter(): Router {
     }
   });
 
+  // ── SR-027: Bulk DLQ Replay ───────────────────────────────────────────────
+
+  /**
+   * @openapi
+   * /api/admin/webhooks/dlq/bulk-replay:
+   *   post:
+   *     summary: Bulk-replay dead-letter queue entries (admin only)
+   *     description: >
+   *       Re-delivers a list of DLQ entry IDs to their original webhook URL.
+   *       Each attempt is recorded in the admin audit log regardless of outcome.
+   *       Entries already replayed or expired are skipped (not treated as errors).
+   *       Requires admin authentication via x-api-key header.
+   *     tags:
+   *       - Admin
+   *     security:
+   *       - ApiKeyAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - ids
+   *             properties:
+   *               ids:
+   *                 type: array
+   *                 items:
+   *                   type: string
+   *                   format: uuid
+   *                 maxItems: 100
+   *                 description: List of DLQ entry UUIDs to replay
+   *               replayed_by:
+   *                 type: string
+   *                 description: Identifier of the admin performing the replay (for audit log)
+   *     responses:
+   *       200:
+   *         description: Bulk replay results
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     replayed:
+   *                       type: array
+   *                       items:
+   *                         type: string
+   *                     failed:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           id:
+   *                             type: string
+   *                           reason:
+   *                             type: string
+   *                     skipped:
+   *                       type: array
+   *                       items:
+   *                         type: string
+   *       400:
+   *         description: Missing or invalid request body
+   *       401:
+   *         description: Unauthorized
+   */
+  router.post('/webhooks/dlq/bulk-replay', async (req: Request, res: Response) => {
+    if (!isAdminAuthorized(req)) {
+      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
+    }
+
+    const { ids, replayed_by } = req.body as { ids?: unknown; replayed_by?: unknown };
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return sendError(res, 400, 'ids must be a non-empty array of DLQ entry UUIDs', 'INVALID_IDS');
+    }
+
+    // Guard against excessively large batches
+    if (ids.length > 100) {
+      return sendError(res, 400, 'Maximum 100 entries per bulk-replay request', 'BATCH_TOO_LARGE');
+    }
+
+    // Validate each id is a string
+    const invalidIds = ids.filter((id) => typeof id !== 'string' || !id.trim());
+    if (invalidIds.length > 0) {
+      return sendError(res, 400, 'All ids must be non-empty strings', 'INVALID_IDS');
+    }
+
+    const adminId =
+      typeof replayed_by === 'string' && replayed_by.trim()
+        ? replayed_by.trim()
+        : 'admin';
+
+    const ipAddress =
+      req.headers['x-forwarded-for']?.toString().split(',')[0].trim() ??
+      req.socket.remoteAddress ??
+      null;
+
+    const dbUrl = process.env.DATABASE_URL;
+    if (!dbUrl) {
+      return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
+    }
+
+    const pool = new Pool({ connectionString: dbUrl });
+
+    const replayed: string[] = [];
+    const failed: Array<{ id: string; reason: string }> = [];
+    const skipped: string[] = [];
+
+    try {
+      for (const entryId of ids as string[]) {
+        // Fetch the DLQ entry
+        const entryResult = await pool.query(
+          `SELECT id, delivery_id, webhook_id, event_type, payload, last_error, attempts
+             FROM webhook_dead_letters
+            WHERE id = $1`,
+          [entryId]
+        );
+
+        if (entryResult.rows.length === 0) {
+          skipped.push(entryId);
+          await writeAuditLog(pool, adminId, 'dlq.bulk-replay.skipped', entryId, ipAddress, {
+            reason: 'entry_not_found',
+          });
+          continue;
+        }
+
+        const entry = entryResult.rows[0];
+
+        // Skip already-replayed or expired entries
+        if (entry.replayed_at || entry.expired_at) {
+          skipped.push(entryId);
+          await writeAuditLog(pool, adminId, 'dlq.bulk-replay.skipped', entryId, ipAddress, {
+            reason: entry.replayed_at ? 'already_replayed' : 'expired',
+          });
+          continue;
+        }
+
+        // Fetch the webhook
+        const webhookResult = await pool.query(
+          `SELECT id, url, secret FROM webhooks WHERE id = $1 AND active = TRUE`,
+          [entry.webhook_id]
+        );
+
+        if (webhookResult.rows.length === 0) {
+          failed.push({ id: entryId, reason: 'Webhook not found or inactive' });
+          await writeAuditLog(pool, adminId, 'dlq.bulk-replay.failed', entryId, ipAddress, {
+            reason: 'webhook_not_found',
+            webhook_id: entry.webhook_id,
+          });
+          continue;
+        }
+
+        const webhook = webhookResult.rows[0];
+
+        // Attempt delivery
+        const payloadStr = JSON.stringify(entry.payload);
+        const ts = Date.now().toString();
+        const signature = require('crypto')
+          .createHmac('sha256', webhook.secret || '')
+          .update(`${ts}.${payloadStr}`)
+          .digest('hex');
+
+        let delivered = false;
+        let deliveryError: string | null = null;
+
+        try {
+          const response = await axios.post(webhook.url, entry.payload, {
+            headers: {
+              'Content-Type': 'application/json',
+              'x-webhook-signature': signature,
+              'x-webhook-timestamp': ts,
+              'x-webhook-id': `bulk-replay_${Date.now()}`,
+              'User-Agent': 'SwiftRemit-Webhook/1.0',
+            },
+            timeout: 30_000,
+            validateStatus: () => true,
+          });
+          delivered = response.status >= 200 && response.status < 300;
+          if (!delivered) {
+            deliveryError = `HTTP ${response.status}: ${response.statusText}`;
+          }
+        } catch (err) {
+          deliveryError = err instanceof Error ? err.message : String(err);
+        }
+
+        if (delivered) {
+          await pool.query(
+            `UPDATE webhook_dead_letters
+                SET replayed_at = NOW(), replayed_by = $2
+              WHERE id = $1`,
+            [entryId, adminId]
+          );
+          replayed.push(entryId);
+          await writeAuditLog(pool, adminId, 'dlq.bulk-replay.success', entryId, ipAddress, {
+            webhook_id: entry.webhook_id,
+            webhook_url: webhook.url,
+          });
+        } else {
+          // Update error on the DLQ entry but leave it unresolved for future retries
+          await pool.query(
+            `UPDATE webhook_dead_letters
+                SET last_error = $2, attempts = attempts + 1
+              WHERE id = $1`,
+            [entryId, deliveryError]
+          );
+          failed.push({ id: entryId, reason: deliveryError ?? 'Delivery failed' });
+          await writeAuditLog(pool, adminId, 'dlq.bulk-replay.failed', entryId, ipAddress, {
+            webhook_id: entry.webhook_id,
+            webhook_url: webhook.url,
+            error: deliveryError,
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        data: { replayed, failed, skipped },
+        timestamp: timestamp(),
+      });
+    } catch (err) {
+      return sendError(
+        res,
+        500,
+        err instanceof Error ? err.message : 'Bulk replay encountered an unexpected error',
+        'DLQ_BULK_REPLAY_ERROR'
+      );
+    } finally {
+      await pool.end();
+    }
+  });
+
   return router;
+}
+
+// ── Audit log helper ──────────────────────────────────────────────────────────
+
+/**
+ * Insert a single row into admin_audit_log.
+ * Errors are swallowed so a logging failure never breaks the API response.
+ */
+async function writeAuditLog(
+  pool: Pool,
+  adminAddress: string,
+  action: string,
+  target: string,
+  ipAddress: string | null,
+  params: Record<string, unknown>
+): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO admin_audit_log (admin_address, action, target, params_json, ip_address)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [adminAddress, action, target, JSON.stringify(params), ipAddress]
+    );
+  } catch {
+    // Non-fatal — log to stderr and continue
+    console.error('[admin] Failed to write audit log entry:', { action, target });
+  }
 }

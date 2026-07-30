@@ -55,6 +55,46 @@ groups:
             {{ $value }} webhook deliveries are in the dead-letter queue.
             Immediate investigation required — subscribers may be down.
 
+      # SR-027 — Per-subscription DLQ depth (fires within 5 min of threshold being crossed)
+      - alert: WebhookDlqDepthHighPerSubscription
+        expr: swiftremit_webhook_dlq_depth > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DLQ depth > 10 for subscription {{ $labels.subscription_id }}"
+          description: >
+            {{ $value }} pending dead-letter entries for subscription
+            {{ $labels.subscription_id }}. The endpoint may be down or rejecting
+            deliveries. Check /admin/webhooks/dlq and consider replaying or disabling.
+
+      - alert: WebhookDlqDepthCriticalPerSubscription
+        expr: swiftremit_webhook_dlq_depth > 50
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DLQ depth critical (>50) for subscription {{ $labels.subscription_id }}"
+          description: >
+            {{ $value }} dead-letter entries for subscription {{ $labels.subscription_id }}.
+            Immediate investigation required.
+
+      # SR-027 — Stale DLQ entry older than N hours (default: 24 h = 86400 s)
+      # swiftremit_webhook_dlq_oldest_entry_timestamp_seconds is a per-subscription gauge
+      # set by the MetricsService to the Unix epoch of the oldest unresolved DLQ entry.
+      - alert: WebhookDlqStaleEntries
+        expr: >
+          (time() - swiftremit_webhook_dlq_oldest_entry_timestamp_seconds) > 86400
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DLQ has entries older than 24 h for subscription {{ $labels.subscription_id }}"
+          description: >
+            The oldest unresolved DLQ entry for subscription {{ $labels.subscription_id }}
+            is {{ $value | humanizeDuration }} old. Entries older than the configured
+            DLQ_MAX_AGE_HOURS will be expired by the scheduler. Consider a bulk replay.
+
       # Alert when webhook failure rate exceeds threshold over a 10-minute window
       - alert: WebhookFailureRateHigh
         expr: >
