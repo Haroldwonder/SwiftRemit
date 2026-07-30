@@ -176,6 +176,17 @@ export async function initDatabase() {
       );
 
       CREATE INDEX IF NOT EXISTS idx_wpn_expires_at ON webhook_processed_nonces(expires_at);
+
+      -- Ramp provider webhook event deduplication
+      CREATE TABLE IF NOT EXISTS ramp_processed_events (
+        provider    VARCHAR(50) NOT NULL,
+        event_id    VARCHAR(255) NOT NULL,
+        processed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at  TIMESTAMP NOT NULL,
+        PRIMARY KEY (provider, event_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_rpe_expires_at ON ramp_processed_events(expires_at);
     `);
 
     // Agent KYC table
@@ -1021,6 +1032,34 @@ export async function recordWebhookNonce(
 export async function purgeExpiredWebhookNonces(): Promise<void> {
   await getPool().query(
     `DELETE FROM webhook_processed_nonces WHERE expires_at < NOW()`
+  );
+}
+
+/**
+ * Records a ramp provider event for idempotency. Returns true if this is a new event (first time seeing it).
+ * Returns false if this event was already processed (replay protection).
+ */
+export async function recordRampEvent(
+  provider: string,
+  eventId: string,
+  ttlSeconds: number = 86400
+): Promise<boolean> {
+  const result = await getPool().query(
+    `INSERT INTO ramp_processed_events (provider, event_id, expires_at)
+     VALUES ($1, $2, NOW() + ($3 || ' seconds')::INTERVAL)
+     ON CONFLICT (provider, event_id) DO NOTHING
+     RETURNING event_id`,
+    [provider, eventId, ttlSeconds]
+  );
+  return result.rowCount !== null && result.rowCount > 0;
+}
+
+/**
+ * Purges expired ramp event records. Call this periodically (e.g. from a cron job).
+ */
+export async function purgeExpiredRampEvents(): Promise<void> {
+  await getPool().query(
+    `DELETE FROM ramp_processed_events WHERE expires_at < NOW()`
   );
 }
 

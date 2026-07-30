@@ -1,0 +1,42 @@
+name: Build Artifact Check
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  check-build-artifacts:
+    name: Check for committed build artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fail if backend/dist is in git index
+        run: |
+          if git ls-files | grep -q '^backend/dist/'; then
+            echo "❌ Error: backend/dist/ directory is committed to git"
+            echo "This directory should be ignored and built locally."
+            echo "Run: git rm -r --cached backend/dist"
+            exit 1
+          fi
+
+      - name: Fail if examples/node_modules is in git index
+        run: |
+          if git ls-files | grep -q '^examples/node_modules/'; then
+            echo "❌ Error: examples/node_modules/ directory is committed to git"
+            echo "This directory should be ignored and installed locally."
+            echo "Run: git rm -r --cached examples/node_modules"
+            exit 1
+          fi
+
+      - name: Verify build artifacts are in .gitignore
+        run: |
+          if ! grep -q "^backend/dist/$" .gitignore; then
+            echo "⚠️ Warning: backend/dist/ should be in .gitignore"
+          fi
+          if ! grep -q "^examples/node_modules/$" .gitignore; then
+            echo "⚠️ Warning: examples/node_modules/ should be in .gitignore"
+          fi
