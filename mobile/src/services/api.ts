@@ -1,32 +1,96 @@
-import axios from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
 import { Remittance, KycStatus, FxRate, SendMoneyFormData } from '../types';
 
 const BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://localhost:3000';
 
-const http = axios.create({ baseURL: BASE_URL, timeout: 15000 });
+// Inactivity window after which the session is considered stale and the
+// stored access token must be discarded, forcing re-authentication.
+const SESSION_INACTIVITY_MS = 15 * 60 * 1000;
+
+const SECRET_KEYS = ['auth_token', 'wallet_address', 'last_active'];
+
+const http = axios.create({ baseURL: BASE_URL, timeout: 15000, withCredentials: true });
+
+async function clearAllSecrets(): Promise<void> {
+  await Promise.all(SECRET_KEYS.map((key) => SecureStore.deleteItemAsync(key)));
+}
+
+async function touchActivity(): Promise<void> {
+  await SecureStore.setItemAsync('last_active', String(Date.now()));
+}
+
+async function isSessionExpired(): Promise<boolean> {
+  const lastActive = await SecureStore.getItemAsync('last_active');
+  if (!lastActive) return false;
+  return Date.now() - Number(lastActive) > SESSION_INACTIVITY_MS;
+}
 
 http.interceptors.request.use(async (config) => {
+  if (await isSessionExpired()) {
+    await clearAllSecrets();
+    return Promise.reject(new Error('Session expired due to inactivity'));
+  }
   const token = await SecureStore.getItemAsync('auth_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  await touchActivity();
   return config;
 });
+
+interface RetriableRequestConfig extends AxiosRequestConfig {
+  _retried?: boolean;
+}
+
+http.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (!axios.isAxiosError(error)) return Promise.reject(error);
+    const original = error.config as RetriableRequestConfig | undefined;
+    if (error.response?.status === 401 && original && !original._retried) {
+      original._retried = true;
+      try {
+        const { data } = await axios.post(
+          `${BASE_URL}/api/auth/refresh`,
+          {},
+          { withCredentials: true },
+        );
+        await SecureStore.setItemAsync('auth_token', data.data.access_token);
+        await touchActivity();
+        original.headers = { ...original.headers, Authorization: `Bearer ${data.data.access_token}` };
+        return http(original);
+      } catch (refreshError) {
+        await clearAllSecrets();
+        return Promise.reject(refreshError);
+      }
+    }
+    return Promise.reject(error);
+  },
+);
 
 export const authService = {
   async login(walletAddress: string, signature: string): Promise<{ token: string }> {
     const { data } = await http.post('/api/auth/login', { walletAddress, signature });
     await SecureStore.setItemAsync('auth_token', data.token);
     await SecureStore.setItemAsync('wallet_address', walletAddress);
+    await touchActivity();
     return data;
   },
 
   async logout(): Promise<void> {
-    await SecureStore.deleteItemAsync('auth_token');
-    await SecureStore.deleteItemAsync('wallet_address');
+    try {
+      await http.post('/api/auth/logout');
+    } catch {
+      // best-effort server-side revocation; local secrets are cleared regardless
+    }
+    await clearAllSecrets();
   },
 
   async getStoredWallet(): Promise<string | null> {
+    if (await isSessionExpired()) {
+      await clearAllSecrets();
+      return null;
+    }
     return SecureStore.getItemAsync('wallet_address');
   },
 };
