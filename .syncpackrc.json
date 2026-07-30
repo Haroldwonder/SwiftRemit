@@ -1,0 +1,45 @@
+{
+  "$schema": "https://unpkg.com/syncpack@13/dist/config.schema.json",
+  "indent": "  ",
+  "versionGroups": [
+    {
+      "label": "Stellar SDK — must be identical across all workspaces",
+      "packages": ["**"],
+      "dependencies": ["@stellar/stellar-sdk"],
+      "policy": "sameRange"
+    },
+    {
+      "label": "TypeScript — must be identical across all workspaces",
+      "packages": ["**"],
+      "dependencies": ["typescript"],
+      "policy": "sameRange"
+    },
+    {
+      "label": "ESLint — must be identical across all workspaces",
+      "packages": ["**"],
+      "dependencies": ["eslint"],
+      "policy": "sameRange"
+    },
+    {
+      "label": "@typescript-eslint — plugin and parser must match",
+      "packages": ["**"],
+      "dependencies": [
+        "@typescript-eslint/eslint-plugin",
+        "@typescript-eslint/parser"
+      ],
+      "policy": "sameRange"
+    },
+    {
+      "label": "Vitest — must be identical across all workspaces",
+      "packages": ["**"],
+      "dependencies": ["vitest", "@vitest/coverage-v8", "@vitest/ui"],
+      "policy": "sameRange"
+    },
+    {
+      "label": "Vite — must be identical across all workspaces",
+      "packages": ["**"],
+      "dependencies": ["vite"],
+      "policy": "sameRange"
+    }
+  ]
+}

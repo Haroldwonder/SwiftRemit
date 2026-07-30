@@ -38,7 +38,6 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install SDK dependencies
-        working-directory: sdk
         run: npm ci
 
       - name: Build SDK
@@ -88,7 +87,6 @@ jobs:
           fi
 
       - name: Install SDK dependencies
-        working-directory: sdk
         run: npm ci
 
       - name: Build SDK

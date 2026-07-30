@@ -1,0 +1,37 @@
+{
+  "name": "swiftremit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SwiftRemit monorepo — Stellar-based cross-border remittance platform",
+  "workspaces": [
+    "backend",
+    "api",
+    "frontend",
+    "sdk",
+    "sdk/react-native",
+    "mobile",
+    "examples"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present && rimraf node_modules",
+    "syncpack:check": "syncpack list-mismatches",
+    "syncpack:fix": "syncpack fix-mismatches"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^8.57.0",
+    "rimraf": "^6.0.1",
+    "syncpack": "^13.0.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

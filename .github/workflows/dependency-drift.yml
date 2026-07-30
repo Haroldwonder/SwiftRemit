@@ -1,0 +1,33 @@
+name: Dependency Drift Check
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "**/package.json"
+      - ".syncpackrc.json"
+      - ".github/workflows/dependency-drift.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**/package.json"
+      - ".syncpackrc.json"
+
+jobs:
+  syncpack:
+    name: Check for dependency version drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install root dependencies (syncpack only)
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Run syncpack list-mismatches
+        run: npx syncpack list-mismatches
+        # Exits non-zero when any mismatch is found, failing the job.

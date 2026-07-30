@@ -81,7 +81,13 @@ dist/
 out/
 build/
 *.log
-*.lock
+# Per-package lockfiles (redundant with root package-lock.json after workspace migration)
+backend/package-lock.json
+backend/pnpm-lock.yaml
+api/package-lock.json
+frontend/package-lock.json
+sdk/package-lock.json
+examples/package-lock.json
 *.tmp
 *.bak
 *.orig
