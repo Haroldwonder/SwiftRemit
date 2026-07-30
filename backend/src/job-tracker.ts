@@ -1,9 +1,7 @@
 import { Pool } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
 import { getMetricsService } from './metrics';
-import { correlationStorage, createLogger } from './correlation-id';
-
-const logger = createLogger('job-tracker');
+import { JobRunRepository } from './repositories/JobRunRepository';
 
 export interface JobRun {
   id: number;
@@ -35,77 +33,40 @@ export async function runTracked(
   jobName: string,
   fn: () => Promise<void>
 ): Promise<void> {
-  // Generate a correlation ID scoped to this job execution
-  const correlationId = uuidv4();
-
-  const { rows } = await pool.query<{ id: number }>(
-    `INSERT INTO job_runs (job_name, started_at, status, correlation_id)
-     VALUES ($1, NOW(), 'running', $2) RETURNING id`,
-    [jobName, correlationId]
-  );
-  const runId = rows[0].id;
+  const repo = new JobRunRepository(pool);
+  const runId = await repo.insertRunning(jobName);
   const metrics = getMetricsService(pool);
-
-  logger.info(`Job started`, { jobName, runId, correlationId });
-
-  // Run the job function inside the ALS context so getCorrelationId() works
-  // throughout the entire async call-tree of this job run.
-  await correlationStorage.run(correlationId, async () => {
-    try {
-      await fn();
-      await pool.query(
-        `UPDATE job_runs SET finished_at = NOW(), status = 'success' WHERE id = $1`,
-        [runId]
-      );
-      metrics.recordJobRun(jobName);
-      logger.info(`Job completed successfully`, { jobName, runId, correlationId });
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      await pool.query(
-        `UPDATE job_runs SET finished_at = NOW(), status = 'failure', error = $2 WHERE id = $1`,
-        [runId, errorMsg]
-      );
-      metrics.recordJobFailure(jobName);
-      logger.error(`Job failed`, err instanceof Error ? err : new Error(String(err)), {
-        jobName,
-        runId,
-        correlationId,
-      });
-      throw err;
-    }
-  });
+  try {
+    await fn();
+    await repo.markSuccess(runId);
+    metrics.recordJobRun(jobName);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    await repo.markFailure(runId, errorMsg);
+    metrics.recordJobFailure(jobName);
+    throw err;
+  }
 }
 
 /** Return per-job summaries for the admin dashboard. */
 export async function getJobSummaries(pool: Pool): Promise<JobSummary[]> {
-  const jobsResult = await pool.query<{ job_name: string }>(
-    `SELECT DISTINCT job_name FROM job_runs ORDER BY job_name`
-  );
+  const repo = new JobRunRepository(pool);
+  const jobNames = await repo.getDistinctJobNames();
 
   return Promise.all(
-    jobsResult.rows.map(async ({ job_name }) => {
-      const [lastRun, failures, recent] = await Promise.all([
-        pool.query<Pick<JobRun, 'started_at' | 'status'>>(
-          `SELECT started_at, status FROM job_runs WHERE job_name = $1 ORDER BY started_at DESC LIMIT 1`,
-          [job_name]
-        ),
-        pool.query<{ count: string }>(
-          `SELECT COUNT(*) as count FROM job_runs
-           WHERE job_name = $1 AND status = 'failure' AND started_at > NOW() - INTERVAL '24 hours'`,
-          [job_name]
-        ),
-        pool.query<JobRun>(
-          `SELECT * FROM job_runs WHERE job_name = $1 ORDER BY started_at DESC LIMIT 10`,
-          [job_name]
-        ),
+    jobNames.map(async (job_name) => {
+      const [lastRun, failureCount24h, recentRuns] = await Promise.all([
+        repo.getLastRun(job_name),
+        repo.getFailureCount24h(job_name),
+        repo.getRecentRuns(job_name),
       ]);
 
       return {
         job_name,
-        last_run_at: lastRun.rows[0]?.started_at ?? null,
-        last_status: lastRun.rows[0]?.status ?? null,
-        failure_count_24h: parseInt(failures.rows[0].count),
-        recent_runs: recent.rows,
+        last_run_at: lastRun?.started_at ?? null,
+        last_status: lastRun?.status ?? null,
+        failure_count_24h: failureCount24h,
+        recent_runs: recentRuns,
       };
     })
   );
