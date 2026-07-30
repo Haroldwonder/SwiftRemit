@@ -12,6 +12,8 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { remittanceService, fxService } from '../services/api';
 import { authenticateWithBiometrics } from '../services/biometrics';
+import { useNetworkStatus } from '../services/offlineCache';
+import OfflineBanner from '../components/OfflineBanner';
 import { SendMoneyFormData, FxRate } from '../types';
 
 const SUPPORTED_CURRENCIES = ['PHP', 'MXN', 'INR', 'NGN', 'GHS', 'KES', 'UGX'];
@@ -21,6 +23,7 @@ export default function SendMoneyScreen() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [loading, setLoading] = useState(false);
   const [fxRate, setFxRate] = useState<FxRate | null>(null);
+  const { isOffline } = useNetworkStatus();
 
   const [form, setForm] = useState<SendMoneyFormData>({
     recipientName: '',
@@ -45,6 +48,10 @@ export default function SendMoneyScreen() {
       : '—';
 
   async function handleConfirm() {
+    if (isOffline) {
+      Alert.alert('You\'re offline', 'Connect to the internet to send money.');
+      return;
+    }
     setLoading(true);
     try {
       const confirmed = await authenticateWithBiometrics('Confirm your transfer with biometrics');
@@ -64,6 +71,7 @@ export default function SendMoneyScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <OfflineBanner />
       {step === 1 && (
         <>
           <Text style={styles.heading}>Who are you sending to?</Text>
@@ -177,14 +185,14 @@ export default function SendMoneyScreen() {
               <Text style={styles.btnOutlineText}>Back</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.btn, styles.btnFlex, loading && styles.btnDisabled]}
-              disabled={loading}
+              style={[styles.btn, styles.btnFlex, (loading || isOffline) && styles.btnDisabled]}
+              disabled={loading || isOffline}
               onPress={handleConfirm}
             >
               {loading ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.btnText}>Confirm & Send</Text>
+                <Text style={styles.btnText}>{isOffline ? 'Offline' : 'Confirm & Send'}</Text>
               )}
             </TouchableOpacity>
           </View>
