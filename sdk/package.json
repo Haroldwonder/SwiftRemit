@@ -42,6 +42,10 @@
     "usdc"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "peerDependencies": {
     "@stellar/stellar-sdk": ">=13.0.0"
   },
