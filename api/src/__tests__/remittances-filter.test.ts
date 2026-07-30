@@ -11,6 +11,11 @@ import { createApp } from '../app';
 import { Application } from 'express';
 import { RemittanceStore, Remittance, PaginatedResult } from '../db/remittanceStore';
 import { RemittanceStatus } from '../websocket/types';
+import { bearer, useTestJwtSecret } from './helpers/authTestUtils';
+
+// SR-048: GET /api/remittances now requires a verified access token. These
+// filter tests run as an admin so results are not scoped to a single agent.
+const ADMIN = () => bearer('filter-admin', { role: 'admin' });
 
 /** Minimal in-memory store stub for filter tests */
 class StubRemittanceStore implements RemittanceStore {
@@ -82,101 +87,102 @@ describe('GET /api/remittances — filter params (Issue #882)', () => {
   ];
 
   beforeAll(() => {
+    useTestJwtSecret();
     app = createApp({ remittanceStore: new StubRemittanceStore(rows) });
   });
 
   it('returns all rows with no filters', async () => {
-    const res = await request(app).get('/api/remittances?limit=10');
+    const res = await request(app).get('/api/remittances?limit=10').set('Authorization', ADMIN());
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(3);
     expect(res.body.has_more).toBe(false);
   });
 
   it('filters by status=Pending', async () => {
-    const res = await request(app).get('/api/remittances?status=Pending');
+    const res = await request(app).get('/api/remittances?status=Pending').set('Authorization', ADMIN());
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(2);
     res.body.data.forEach((r: Remittance) => expect(r.status).toBe('Pending'));
   });
 
   it('filters by status=Completed', async () => {
-    const res = await request(app).get('/api/remittances?status=Completed');
+    const res = await request(app).get('/api/remittances?status=Completed').set('Authorization', ADMIN());
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(1);
     expect(res.body.data[0].id).toBe('r2');
   });
 
   it('returns 400 for invalid status', async () => {
-    const res = await request(app).get('/api/remittances?status=Unknown');
+    const res = await request(app).get('/api/remittances?status=Unknown').set('Authorization', ADMIN());
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('INVALID_STATUS');
   });
 
   it('filters by from_date', async () => {
-    const res = await request(app).get('/api/remittances?from_date=2026-02-01T00:00:00.000Z');
+    const res = await request(app).get('/api/remittances?from_date=2026-02-01T00:00:00.000Z').set('Authorization', ADMIN());
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(2);
     expect(res.body.data.map((r: Remittance) => r.id).sort()).toEqual(['r2', 'r3'].sort());
   });
 
   it('filters by to_date', async () => {
-    const res = await request(app).get('/api/remittances?to_date=2026-01-31T23:59:59.000Z');
+    const res = await request(app).get('/api/remittances?to_date=2026-01-31T23:59:59.000Z').set('Authorization', ADMIN());
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(1);
     expect(res.body.data[0].id).toBe('r1');
   });
 
   it('returns 400 for invalid from_date', async () => {
-    const res = await request(app).get('/api/remittances?from_date=notadate');
+    const res = await request(app).get('/api/remittances?from_date=notadate').set('Authorization', ADMIN());
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('INVALID_DATE');
   });
 
   it('filters by min_amount', async () => {
-    const res = await request(app).get('/api/remittances?min_amount=1000');
+    const res = await request(app).get('/api/remittances?min_amount=1000').set('Authorization', ADMIN());
     expect(res.status).toBe(200);
     res.body.data.forEach((r: Remittance) => expect(r.amount).toBeGreaterThanOrEqual(1000));
   });
 
   it('filters by max_amount', async () => {
-    const res = await request(app).get('/api/remittances?max_amount=1000');
+    const res = await request(app).get('/api/remittances?max_amount=1000').set('Authorization', ADMIN());
     expect(res.status).toBe(200);
     res.body.data.forEach((r: Remittance) => expect(r.amount).toBeLessThanOrEqual(1000));
   });
 
   it('returns 400 when min_amount > max_amount', async () => {
-    const res = await request(app).get('/api/remittances?min_amount=5000&max_amount=100');
+    const res = await request(app).get('/api/remittances?min_amount=5000&max_amount=100').set('Authorization', ADMIN());
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('INVALID_AMOUNT_RANGE');
   });
 
   it('returns 400 for negative min_amount', async () => {
-    const res = await request(app).get('/api/remittances?min_amount=-1');
+    const res = await request(app).get('/api/remittances?min_amount=-1').set('Authorization', ADMIN());
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('INVALID_AMOUNT');
   });
 
   it('combines status + min_amount filters', async () => {
-    const res = await request(app).get('/api/remittances?status=Pending&min_amount=2000');
+    const res = await request(app).get('/api/remittances?status=Pending&min_amount=2000').set('Authorization', ADMIN());
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(1);
     expect(res.body.data[0].id).toBe('r3');
   });
 
   it('corridor param is accepted without error', async () => {
-    const res = await request(app).get('/api/remittances?corridor=USD-NG');
+    const res = await request(app).get('/api/remittances?corridor=USD-NG').set('Authorization', ADMIN());
     expect(res.status).toBe(200);
   });
 
   it('respects limit param', async () => {
-    const res = await request(app).get('/api/remittances?limit=2');
+    const res = await request(app).get('/api/remittances?limit=2').set('Authorization', ADMIN());
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(2);
     expect(res.body.has_more).toBe(true);
   });
 
   it('returns 400 for invalid limit', async () => {
-    const res = await request(app).get('/api/remittances?limit=999');
+    const res = await request(app).get('/api/remittances?limit=999').set('Authorization', ADMIN());
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('INVALID_LIMIT');
   });

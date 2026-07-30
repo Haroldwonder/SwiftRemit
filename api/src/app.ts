@@ -18,6 +18,7 @@ import { createAnalyticsRouter } from './routes/analytics';
 import { createAgentsRouter } from './routes/agents';
 import { createAuthRouter } from './routes/auth';
 import { createAccountsRouter } from './routes/accounts';
+import { createGraphQLRouter } from './routes/graphql';
 import { ErrorResponse } from './types';
 import { AnchorStore } from './db/anchorStore';
 import { Server as SocketIOServer } from 'socket.io';
@@ -189,6 +190,13 @@ export function createApp(options: AppOptions = {}): Application {
 
   // Accounts — Stellar fee estimation and XLM balance (Issue #949)
   app.use('/api/accounts', createAccountsRouter());
+
+  // GraphQL — authenticated, depth/complexity limited (SR-050). The router
+  // existed but was never mounted, so the endpoint was unreachable.
+  app.use('/api/graphql', createGraphQLRouter({
+    pool: analyticsPool ?? undefined,
+    remittanceStore: options.remittanceStore,
+  }));
 
   // WebSocket health endpoint (development only — guarded inside the router)
   if (options.io) {

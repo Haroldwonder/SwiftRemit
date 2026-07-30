@@ -9,6 +9,7 @@
 import { Router, Request, Response } from 'express';
 import { ErrorResponse } from '../types';
 import { sanitizeInput } from '../utils/sanitize.js';
+import { extractBearerToken, verifyAccessToken } from '../middleware/auth.js';
 
 function timestamp(): string {
   return new Date().toISOString();
@@ -20,10 +21,24 @@ function sendError(res: Response, status: number, message: string, code: string)
 
 const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{54}$/;
 
+/**
+ * Elevated authorisation for agent registration and payout-address changes
+ * (SR-048).
+ *
+ * Accepts either the pre-existing shared admin API key or a verified access
+ * token carrying the `agent` or `admin` role. The API-key path is kept so
+ * existing operational tooling keeps working; the token path is what lets an
+ * individual agent act as themselves instead of sharing one secret.
+ */
 function isAdminAuthorized(req: Request): boolean {
   const adminKey = process.env.ADMIN_API_KEY;
-  if (!adminKey) return false;
-  return req.headers['x-api-key'] === adminKey;
+  if (adminKey && req.headers['x-api-key'] === adminKey) return true;
+
+  const token = extractBearerToken(req);
+  if (!token) return false;
+
+  const result = verifyAccessToken(token);
+  return result.ok && (result.auth.role === 'agent' || result.auth.role === 'admin');
 }
 
 export interface Agent {
