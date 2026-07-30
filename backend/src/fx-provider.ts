@@ -61,10 +61,27 @@ interface CircuitBreaker {
   halfOpenAfterMs: number;
 }
 
+/**
+ * Observer for circuit-breaker transitions (SR-104). Wired to the metrics
+ * service from api.ts; kept as a callback so this module does not import the
+ * metrics service and create a cycle.
+ */
+type CircuitObserver = (provider: string, open: boolean) => void;
+let circuitObserver: CircuitObserver | null = null;
+
+export function setFxCircuitObserver(observer: CircuitObserver | null): void {
+  circuitObserver = observer;
+}
+
+function notifyCircuit(open: boolean): void {
+  circuitObserver?.('fx', open);
+}
+
 function isCircuitOpen(cb: CircuitBreaker): boolean {
   if (!cb.open) return false;
   if (Date.now() - cb.openedAt >= cb.halfOpenAfterMs) {
     cb.open = false;
+    notifyCircuit(false);
     return false;
   }
   return true;
@@ -168,7 +185,7 @@ export class FailoverFxService {
     const reason = err instanceof Error ? err.message : String(err);
     this.cb.open = true;
     this.cb.openedAt = Date.now();
-    this.metricsObserver?.onFailover?.(this.primary.name, this.secondary.name, `${from}/${to}`);
+    notifyCircuit(true);
     console.warn(JSON.stringify({
       event: 'fx_provider_switch',
       from: this.primary.name,

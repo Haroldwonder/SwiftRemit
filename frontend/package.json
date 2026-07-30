@@ -2,9 +2,13 @@
   "name": "swiftremit-frontend",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
+    "check:env": "node scripts/check-env.mjs",
+    "predev": "node scripts/check-env.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/check-env.mjs --production",
     "build": "tsc && vite build",
     "test": "vitest run",
     "test:watch": "vitest",

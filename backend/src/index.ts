@@ -11,9 +11,13 @@ import { WebhookHandler } from './webhook-handler';
 import { KycService } from './kyc-service';
 import { createWebhookVerificationMiddleware } from './webhook-middleware';
 import { patchConsoleForProduction } from './console-shim';
-import { getDatabaseUrl, getAdminSecretKey, getContractId, initializeSecretRotation } from './secrets-manager';
+import { getSecretsManager, getDatabaseUrl, getAdminSecretKey, getContractId, initializeSecretRotation } from './secrets-manager';
+import { assertEnvConfigured } from './env-guard';
 
 dotenv.config();
+// Fail fast on missing / placeholder configuration (SR-102) before anything
+// tries to use it.
+assertEnvConfigured();
 patchConsoleForProduction();
 
 const PORT = process.env.PORT || 3000;

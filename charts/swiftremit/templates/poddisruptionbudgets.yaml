@@ -1,0 +1,28 @@
+{{/*
+SR-103 — keep at least one replica of each component serving during voluntary
+disruptions (node drains, cluster upgrades). Components inherit the chart-wide
+podDisruptionBudget block unless they declare their own.
+*/}}
+{{- range list "api" "backend" "frontend" }}
+{{- $svc := index $.Values . }}
+{{- $pdb := default $.Values.podDisruptionBudget $svc.podDisruptionBudget }}
+{{- if $pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "swiftremit.fullname" $ }}-{{ . }}
+  labels:
+    {{- include "swiftremit.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ . }}
+spec:
+  {{- if $pdb.maxUnavailable }}
+  maxUnavailable: {{ $pdb.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ default 1 $pdb.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "swiftremit.selectorLabels" (merge (dict "component" .) $) | nindent 6 }}
+{{- end }}
+{{- end }}

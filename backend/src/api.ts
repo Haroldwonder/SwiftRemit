@@ -28,7 +28,7 @@ import { KycUpsertService } from './kyc-upsert-service';
 import { createTransferGuard, AuthenticatedRequest } from './transfer-guard';
 import { AgentKycService } from './agent-kyc-service';
 import { getFxRateCache } from './fx-rate-cache';
-import { getAnchorCircuitBreaker } from './anchor-circuit-breaker';
+import { setFxCircuitObserver } from './fx-provider';
 import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
 import { sanitizeInput } from './sanitizer';
@@ -114,12 +114,34 @@ getFailoverFxService().setMetricsObserver({
 
 // ─── Security & parsing middleware ───────────────────────────────────────────
 
+// Publish the FX provider circuit-breaker state (SR-104). Seeded closed so the
+// series exists before the first transition and alerts can evaluate it.
+metricsService.setCircuitOpen('fx', false);
+setFxCircuitObserver((provider, open) => {
+  metricsService.setCircuitOpen(provider, open);
+});
+
+// Security middleware
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 app.use(correlationIdMiddleware);
 
-// ─── Rate limiters ───────────────────────────────────────────────────────────
+// Request instrumentation (SR-104) — feeds the API availability and latency
+// SLIs. The route pattern is used rather than the concrete path so the label
+// cardinality stays bounded.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const startedAt = process.hrtime.bigint();
+  res.on('finish', () => {
+    const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1e9;
+    const route = req.route?.path ?? (req.baseUrl || req.path) || 'unknown';
+    metricsService.recordHttpRequest(req.method, route, res.statusCode, durationSeconds);
+  });
+  next();
+});
+
+const kycUpsertService = new KycUpsertService(pool);
+const transferGuard = createTransferGuard(kycUpsertService);
 
 function makeRateLimiter(max: number, windowMs = 60_000) {
   return rateLimit({

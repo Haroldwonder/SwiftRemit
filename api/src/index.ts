@@ -7,8 +7,12 @@ import { initializeCurrencyConfig } from './config';
 import { initWebSocket } from './websocket';
 import { getJwtSecret, getDatabaseUrl } from './secrets-manager';
 import { createLogger } from './types';
+import { assertEnvConfigured } from './env-guard';
 
 dotenv.config();
+// Fail fast on missing / placeholder configuration (SR-102) before anything
+// tries to use it.
+assertEnvConfigured();
 
 const logger = createLogger('main');
 const PORT = process.env.PORT || 3000;

@@ -1,0 +1,104 @@
+name: Helm chart
+
+# SR-103 — lint, render and validate charts/swiftremit against every value set,
+# so a template error surfaces here instead of during a production deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'charts/**'
+      - 'scripts/helm-validate.sh'
+      - 'scripts/check-rendered-manifests.py'
+      - '.github/workflows/helm-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'charts/**'
+      - 'scripts/helm-validate.sh'
+      - 'scripts/check-rendered-manifests.py'
+      - '.github/workflows/helm-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helm-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  KUBE_VERSION: '1.29.0'
+
+jobs:
+  lint-and-render:
+    name: helm lint + template (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [dev, staging, production]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+
+      - name: helm lint
+        run: helm lint charts/swiftremit --strict -f charts/swiftremit/values.${{ matrix.environment }}.yaml
+
+      - name: helm template
+        run: |
+          helm template swiftremit charts/swiftremit \
+            --namespace swiftremit \
+            -f charts/swiftremit/values.${{ matrix.environment }}.yaml \
+            > rendered.yaml
+          echo "Rendered $(grep -c '^kind:' rendered.yaml) manifests"
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz kubeconform
+          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+
+      - name: Validate rendered manifests against Kubernetes schemas
+        run: |
+          kubeconform \
+            -strict \
+            -summary \
+            -kubernetes-version "$KUBE_VERSION" \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            rendered.yaml
+
+      # Secrets must never reach a ConfigMap; every container must run non-root
+      # with resource limits and both probes.
+      - name: Check secrets, security contexts, resources and probes
+        run: python3 scripts/check-rendered-manifests.py --label ${{ matrix.environment }} < rendered.yaml
+
+      - name: Upload rendered manifests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-${{ matrix.environment }}
+          path: rendered.yaml
+          retention-days: 7
+
+  unittest:
+    name: helm unittest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+
+      - name: Install helm-unittest
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
+
+      - name: Run chart unit tests
+        run: helm unittest charts/swiftremit

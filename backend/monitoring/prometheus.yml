@@ -1,21 +1,33 @@
-# Prometheus configuration for SwiftRemit Verification Service
+# Prometheus configuration for the SwiftRemit stack.
+#
+# SR-104 — alerting rules live in monitoring/ at the repository root and are
+# mounted into /etc/prometheus/ by docker-compose.yml. There is a single source
+# of truth for alerts; the previous backend/monitoring/alert_rules.yml duplicated
+# several of them under different names and thresholds, which double-paged.
 
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
 rule_files:
-  - "alert_rules.yml"
+  - "alerts.yml"   # operational alerts     (monitoring/alerts.yml)
+  - "slo.yml"      # SLOs and error budgets (monitoring/slo.yml)
 
 scrape_configs:
+  # Service names resolve on the Compose network. The ports match the ones the
+  # services actually listen on: backend 3001, api 3000.
   - job_name: "swiftremit-backend"
     static_configs:
-      - targets: ["localhost:3000"]
+      - targets: ["backend:3001"]
     metrics_path: "/metrics"
     scrape_interval: 10s
 
   - job_name: "swiftremit-api"
     static_configs:
-      - targets: ["localhost:3001"]
+      - targets: ["api:3000"]
     metrics_path: "/metrics"
     scrape_interval: 10s
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -6,6 +6,37 @@ global:
   imagePullSecrets: []
   nodeEnv: production
 
+# ─── Security defaults (SR-103) ────────────────────────────────────────────────
+# Applied to every component unless a component overrides them with its own
+# `podSecurityContext` / `containerSecurityContext` block.
+#
+# The containers run non-root on a read-only root filesystem, so each one gets a
+# writable emptyDir at /tmp (see `writableVolumes` per component).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  capabilities:
+    drop:
+      - ALL
+
+# ─── Pod disruption budgets (SR-103) ───────────────────────────────────────────
+# Keeps at least one replica serving during voluntary disruptions (node drains,
+# cluster upgrades). Disabled in dev where a single replica runs.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
 # ─── PostgreSQL (managed externally; supply DATABASE_URL via secret) ───────────
 postgresql:
   # Set to true to spin up an in-cluster postgres (dev only)
@@ -71,6 +102,14 @@ api:
     ANCHORS_ADMIN_API_KEY: ""
     JWT_SECRET: ""
 
+  # emptyDir mounts that keep the container writable where it has to be, so the
+  # root filesystem can stay read-only.
+  writableVolumes:
+    - name: tmp
+      mountPath: /tmp
+
+  # Probes hit the /health endpoint added in SR-064, which reports database and
+  # contract reachability and returns a non-200 when either is down.
   livenessProbe:
     initialDelaySeconds: 15
     periodSeconds: 20
@@ -139,6 +178,12 @@ backend:
     CONTRACT_ID: ""
     ADMIN_SECRET_KEY: ""
 
+  writableVolumes:
+    - name: tmp
+      mountPath: /tmp
+
+  # /health and /health/db come from SR-064. /health returns 503 when Postgres is
+  # unreachable, so it doubles as the readiness signal.
   livenessProbe:
     httpGet:
       path: /health
@@ -192,6 +237,12 @@ frontend:
     VITE_USDC_TOKEN_ID: ""
 
   secret: {}
+
+  writableVolumes:
+    - name: tmp
+      mountPath: /tmp
+    - name: vite-cache
+      mountPath: /app/node_modules/.vite
 
   livenessProbe:
     httpGet:

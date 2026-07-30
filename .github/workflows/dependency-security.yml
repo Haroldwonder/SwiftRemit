@@ -59,5 +59,46 @@ jobs:
       - name: Audit Rust dependencies (cargo audit)
         run: cargo audit
 
-      - name: Check Rust licenses and advisories (cargo deny)
-        run: cargo deny check
+  # ─── Licence compatibility (SR-101) ─────────────────────────────────────────
+  manifest-licenses:
+    name: Manifests declare MIT
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check LICENSE file and every package manifest
+        run: node scripts/check-manifest-licenses.js
+
+  npm-licenses:
+    name: npm licence compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Reads the committed lockfiles directly — no install needed. A copyleft
+      # dependency (GPL/AGPL/LGPL/SSPL) would make the MIT claim in LICENSE false.
+      - name: Check production dependency licences
+        run: node scripts/check-dependency-licenses.js
+
+  cargo-licenses:
+    name: cargo licence compatibility (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Check Rust dependency licences against deny.toml
+        run: cargo deny --all-features check licenses

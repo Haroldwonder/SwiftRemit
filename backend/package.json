@@ -2,6 +2,7 @@
   "name": "swiftremit-verification-service",
   "version": "1.0.0",
   "description": "Asset verification backend service for SwiftRemit",
+  "license": "MIT",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",

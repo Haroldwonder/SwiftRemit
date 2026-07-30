@@ -1,0 +1,111 @@
+name: Monitoring
+
+# SR-104 — validate the alerting rules, SLO rules, and dashboards in CI so
+# a broken expression or missing runbook section fails here rather than in
+# Grafana/Prometheus at runtime.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'monitoring/**'
+      - 'scripts/check-alert-runbooks.js'
+      - 'RUNBOOK.md'
+      - '.github/workflows/monitoring-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'monitoring/**'
+      - 'scripts/check-alert-runbooks.js'
+      - 'RUNBOOK.md'
+      - '.github/workflows/monitoring-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitoring-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Alert / runbook cross-reference ─────────────────────────────────────────
+  alert-runbooks:
+    name: Every alert has a severity, team, and runbook section
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check alert → runbook cross-references
+        run: node scripts/check-alert-runbooks.js
+
+  # ── promtool rule syntax and unit tests ─────────────────────────────────────
+  promtool-test:
+    name: promtool — rule syntax + unit tests
+    runs-on: ubuntu-latest
+    env:
+      PROMETHEUS_VERSION: '2.52.0'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install promtool
+        run: |
+          curl -sSL -o prometheus.tar.gz \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          tar xzf prometheus.tar.gz --strip-components=1 \
+            "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+          sudo install -m 0755 promtool /usr/local/bin/promtool
+          promtool --version
+
+      - name: Validate alert rule syntax
+        working-directory: monitoring
+        run: |
+          promtool check rules alerts.yml
+          promtool check rules slo.yml
+
+      - name: Run alert unit tests
+        working-directory: monitoring
+        run: promtool test rules alerts_test.yml
+
+  # ── Dashboard JSON validity ──────────────────────────────────────────────────
+  dashboard-json:
+    name: Grafana dashboards are valid JSON with required fields
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate dashboard JSON
+        run: |
+          python3 - <<'EOF'
+          import json, sys, pathlib, os
+
+          required_fields = {"title", "uid", "panels", "schemaVersion"}
+          errors = []
+
+          for f in pathlib.Path("monitoring/dashboards").glob("*.json"):
+            try:
+              d = json.loads(f.read_text())
+            except json.JSONDecodeError as e:
+              errors.append(f"{f}: invalid JSON — {e}")
+              continue
+            for field in required_fields:
+              if field not in d:
+                errors.append(f"{f}: missing required field '{field}'")
+            panels = d.get("panels", [])
+            if not panels:
+              errors.append(f"{f}: has no panels")
+            print(f"  {f.name}: uid={d.get('uid','?')}, {len(panels)} panels")
+
+          if errors:
+            print("\nErrors:", file=sys.stderr)
+            for e in errors:
+              print(f"  - {e}", file=sys.stderr)
+            sys.exit(1)
+
+          print(f"\n✓ {len(list(pathlib.Path('monitoring/dashboards').glob('*.json')))} dashboards are valid")
+          EOF

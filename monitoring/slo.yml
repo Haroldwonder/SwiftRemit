@@ -1,0 +1,181 @@
+# SwiftRemit service level objectives (SR-104)
+#
+# Three user-facing SLOs, each with a 30-day rolling window and an error budget:
+#
+#   | SLO                          | Target  | Budget over 30d      |
+#   | ---------------------------- | ------- | -------------------- |
+#   | API availability             | 99.9 %  | 43m 12s of errors    |
+#   | API latency (p95 < 500 ms)   | 99.0 %  | 7h 12m over budget   |
+#   | Remittance settles < 15 min  | 95.0 %  | 36h over budget      |
+#
+# Burn-rate alerting follows the multi-window / multi-burn-rate pattern from the
+# Google SRE workbook: a fast burn (budget gone in ~2 days) pages, a slow burn
+# (budget gone in ~10 days) opens a ticket. Both windows must be burning before
+# the alert fires, which keeps single short spikes from paging.
+#
+# Loaded by Prometheus via rule_files in backend/monitoring/prometheus.yml.
+
+groups:
+  # ── Recording rules: the SLIs ───────────────────────────────────────────────
+  - name: swiftremit-slo-recording
+    interval: 30s
+    rules:
+      - record: swiftremit:http_requests:rate5m
+        expr: sum(rate(swiftremit_http_requests_total[5m]))
+
+      - record: swiftremit:http_requests:rate1h
+        expr: sum(rate(swiftremit_http_requests_total[1h]))
+
+      - record: swiftremit:http_requests:rate6h
+        expr: sum(rate(swiftremit_http_requests_total[6h]))
+
+      - record: swiftremit:http_errors:rate5m
+        expr: sum(rate(swiftremit_http_requests_total{status=~"5.."}[5m]))
+
+      - record: swiftremit:http_errors:rate1h
+        expr: sum(rate(swiftremit_http_requests_total{status=~"5.."}[1h]))
+
+      - record: swiftremit:http_errors:rate6h
+        expr: sum(rate(swiftremit_http_requests_total{status=~"5.."}[6h]))
+
+      # Fraction of requests that failed. clamp_min keeps the ratio defined
+      # while no traffic is being served.
+      - record: swiftremit:slo_availability:error_ratio_5m
+        expr: >
+          swiftremit:http_errors:rate5m
+          / clamp_min(swiftremit:http_requests:rate5m, 0.001)
+
+      - record: swiftremit:slo_availability:error_ratio_1h
+        expr: >
+          swiftremit:http_errors:rate1h
+          / clamp_min(swiftremit:http_requests:rate1h, 0.001)
+
+      - record: swiftremit:slo_availability:error_ratio_6h
+        expr: >
+          swiftremit:http_errors:rate6h
+          / clamp_min(swiftremit:http_requests:rate6h, 0.001)
+
+      # Fraction of requests slower than the 500 ms latency objective.
+      - record: swiftremit:slo_latency:slow_ratio_1h
+        expr: >
+          1 - (
+            sum(rate(swiftremit_http_request_duration_seconds_bucket{le="0.5"}[1h]))
+            / clamp_min(sum(rate(swiftremit_http_request_duration_seconds_count[1h])), 0.001)
+          )
+
+      - record: swiftremit:slo_latency:slow_ratio_6h
+        expr: >
+          1 - (
+            sum(rate(swiftremit_http_request_duration_seconds_bucket{le="0.5"}[6h]))
+            / clamp_min(sum(rate(swiftremit_http_request_duration_seconds_count[6h])), 0.001)
+          )
+
+      - record: swiftremit:slo_availability:p95_latency_seconds
+        expr: >
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(swiftremit_http_request_duration_seconds_bucket[5m]))
+          )
+
+      # Remaining error budget as a fraction of the 30-day allowance.
+      # 1 = untouched, 0 = exhausted, < 0 = overspent.
+      - record: swiftremit:slo_availability:budget_remaining
+        expr: >
+          1 - (
+            sum(rate(swiftremit_http_requests_total{status=~"5.."}[30d]))
+            / clamp_min(sum(rate(swiftremit_http_requests_total[30d])), 0.001)
+          ) / 0.001
+
+      - record: swiftremit:slo_latency:budget_remaining
+        expr: >
+          1 - (
+            1 - (
+              sum(rate(swiftremit_http_request_duration_seconds_bucket{le="0.5"}[30d]))
+              / clamp_min(sum(rate(swiftremit_http_request_duration_seconds_count[30d])), 0.001)
+            )
+          ) / 0.01
+
+  # ── Burn-rate alerts ────────────────────────────────────────────────────────
+  - name: swiftremit-slo-burn
+    rules:
+      - alert: SwiftRemitAvailabilityBudgetBurnFast
+        # 14.4x burn exhausts a 99.9% monthly budget in ~2 days.
+        expr: >
+          swiftremit:slo_availability:error_ratio_1h > (14.4 * 0.001)
+          and
+          swiftremit:slo_availability:error_ratio_5m > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          slo: api-availability
+        annotations:
+          summary: "API availability error budget burning 14x faster than allowed"
+          description: >
+            {{ $value | humanizePercentage }} of API requests are failing. At this rate the
+            30-day availability budget (99.9%) is gone in under 2 days.
+          runbook_url: "RUNBOOK.md#9-api-availability-slo-burn"
+
+      - alert: SwiftRemitAvailabilityBudgetBurnSlow
+        # 6x burn exhausts the monthly budget in ~5 days.
+        expr: >
+          swiftremit:slo_availability:error_ratio_6h > (6 * 0.001)
+          and
+          swiftremit:slo_availability:error_ratio_1h > (6 * 0.001)
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+          slo: api-availability
+        annotations:
+          summary: "API availability error budget burning 6x faster than allowed"
+          description: >
+            Sustained elevated 5xx rate over 6 hours. The 30-day availability budget
+            will be exhausted well before the window closes.
+          runbook_url: "RUNBOOK.md#9-api-availability-slo-burn"
+
+      - alert: SwiftRemitLatencyBudgetBurnFast
+        expr: >
+          swiftremit:slo_latency:slow_ratio_1h > (14.4 * 0.01)
+          and
+          swiftremit:slo_latency:slow_ratio_6h > (6 * 0.01)
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          slo: api-latency
+        annotations:
+          summary: "API latency error budget burning fast"
+          description: >
+            {{ $value | humanizePercentage }} of requests are slower than the 500 ms
+            objective over the last hour.
+          runbook_url: "RUNBOOK.md#10-api-latency-slo-burn"
+
+      - alert: SwiftRemitSettlementTimeSLOBreached
+        # 95% of remittances must settle within 15 minutes.
+        expr: swiftremit_settlement_seconds_p95 > 900
+        for: 15m
+        labels:
+          severity: warning
+          team: payments
+          slo: settlement-time
+        annotations:
+          summary: "95th percentile remittance settlement time is above 15 minutes"
+          description: >
+            p95 settlement time is {{ $value | humanizeDuration }} over the last hour
+            (objective: 15 minutes). Senders are waiting far longer than promised.
+          runbook_url: "RUNBOOK.md#11-remittance-settlement-time-slo-breach"
+
+      - alert: SwiftRemitAvailabilityBudgetExhausted
+        expr: swiftremit:slo_availability:budget_remaining <= 0
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+          slo: api-availability
+        annotations:
+          summary: "30-day API availability error budget is exhausted"
+          description: >
+            The availability error budget for the current 30-day window has been fully
+            spent. Freeze risky deploys until the window rolls over.
+          runbook_url: "RUNBOOK.md#9-api-availability-slo-burn"

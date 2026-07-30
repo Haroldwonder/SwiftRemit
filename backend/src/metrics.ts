@@ -23,15 +23,27 @@ export class MetricsService {
     db_pool_active_connections: 0,
     db_pool_idle_connections: 0,
     db_pool_waiting_connections: 0,
+    // Money-at-risk signals (SR-104)
+    swiftremit_contract_paused: 0,
+    swiftremit_oldest_pending_remittance_age_seconds: 0,
+    swiftremit_settlement_seconds_p95: 0,
+    swiftremit_failed_migrations: 0,
+    swiftremit_migration_last_applied_timestamp_seconds: 0,
   };
 
-  // Per-subscription DLQ depth gauge (SR-027)
-  // Maps subscription_id → pending (not yet replayed/expired) entry count
-  private dlqDepthPerSubscription: Map<string, number> = new Map();
+  // Provider circuit-breaker state, 1 = open (SR-104)
+  private circuitOpen: Map<string, number> = new Map();
 
-  // Per-subscription oldest unresolved DLQ entry Unix timestamp (SR-027)
-  // Used by the stale-entries alert: (time() - metric) > threshold
-  private dlqOldestEntryTimestamp: Map<string, number> = new Map();
+  // HTTP request instrumentation (SR-104 — API availability and latency SLOs)
+  private httpRequestsTotal: Map<string, number> = new Map();
+  private httpRequestDurationBuckets: Map<string, number[]> = new Map();
+  private httpRequestDurationSum: Map<string, number> = new Map();
+  private httpRequestDurationCount: Map<string, number> = new Map();
+
+  /** Upper bounds, in seconds, of the request-duration histogram. */
+  static readonly HTTP_DURATION_BUCKETS = [
+    0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
+  ];
 
   // Anchor availability metrics
   private anchorAvailability: Map<string, string> = new Map();
@@ -294,6 +306,137 @@ export class MetricsService {
     this.metrics.contract_event_indexer_lag_ledgers = lagLedgers;
   }
 
+  // ── Money-at-risk signals (SR-104) ───────────────────────────────────────
+
+  /**
+   * Record whether the on-chain contract is paused. While paused no remittance
+   * can settle, so this is a page-worthy condition.
+   */
+  setContractPaused(paused: boolean): void {
+    this.metrics.swiftremit_contract_paused = paused ? 1 : 0;
+  }
+
+  /**
+   * Derive the contract pause state from the indexed circuit-breaker events.
+   * The contract emits ("cb", "paused") / ("cb", "unpaused"); the most recent of
+   * the two wins. No events at all means the contract has never been paused.
+   */
+  async updateContractPauseState(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT event_type
+           FROM contract_events
+          WHERE event_type IN ('paused', 'unpaused', 'cb_paused', 'cb_unpaused')
+          ORDER BY ledger_sequence DESC NULLS LAST, timestamp DESC
+          LIMIT 1`
+      );
+
+      const latest: string | undefined = result.rows[0]?.event_type;
+      this.setContractPaused(latest === 'paused' || latest === 'cb_paused');
+    } catch (error) {
+      this.logger.error('Failed to update contract pause state', error);
+    }
+  }
+
+  /** Record a provider circuit-breaker transition. `open` = calls are shed. */
+  setCircuitOpen(provider: string, open: boolean): void {
+    this.circuitOpen.set(provider, open ? 1 : 0);
+  }
+
+  /**
+   * Record one served HTTP request. Feeds the availability and latency SLIs.
+   * `route` should be the Express route pattern, not the concrete path, so the
+   * label cardinality stays bounded.
+   */
+  recordHttpRequest(method: string, route: string, statusCode: number, durationSeconds: number): void {
+    const key = `${method.toUpperCase()}|${route}|${statusCode}`;
+    this.httpRequestsTotal.set(key, (this.httpRequestsTotal.get(key) ?? 0) + 1);
+
+    const durationKey = `${method.toUpperCase()}|${route}`;
+    const buckets =
+      this.httpRequestDurationBuckets.get(durationKey) ??
+      new Array(MetricsService.HTTP_DURATION_BUCKETS.length).fill(0);
+
+    MetricsService.HTTP_DURATION_BUCKETS.forEach((bound, index) => {
+      if (durationSeconds <= bound) buckets[index] += 1;
+    });
+
+    this.httpRequestDurationBuckets.set(durationKey, buckets);
+    this.httpRequestDurationSum.set(
+      durationKey,
+      (this.httpRequestDurationSum.get(durationKey) ?? 0) + durationSeconds,
+    );
+    this.httpRequestDurationCount.set(
+      durationKey,
+      (this.httpRequestDurationCount.get(durationKey) ?? 0) + 1,
+    );
+  }
+
+  /**
+   * Age of the oldest remittance that has not reached a terminal state. This is
+   * the single clearest "money is stuck" signal the platform has.
+   */
+  async updateOldestPendingRemittanceAge(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT COALESCE(EXTRACT(EPOCH FROM (NOW() - MIN(created_at))), 0) AS age_seconds
+           FROM transactions
+          WHERE status NOT IN ('completed', 'refunded', 'error', 'expired')`
+      );
+
+      this.metrics.swiftremit_oldest_pending_remittance_age_seconds = parseFloat(
+        result.rows[0].age_seconds,
+      );
+    } catch (error) {
+      this.logger.error('Failed to update oldest pending remittance age', error);
+    }
+  }
+
+  /**
+   * 95th percentile settlement time over the last hour, in seconds. Backs the
+   * remittance settlement-time SLO.
+   */
+  async updateSettlementDurationP95(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT COALESCE(
+                  PERCENTILE_CONT(0.95) WITHIN GROUP (
+                    ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at))
+                  ),
+                  0
+                ) AS p95
+           FROM transactions
+          WHERE status = 'completed'
+            AND updated_at > NOW() - INTERVAL '1 hour'`
+      );
+
+      this.metrics.swiftremit_settlement_seconds_p95 = parseFloat(result.rows[0].p95);
+    } catch (error) {
+      this.logger.error('Failed to update settlement duration p95', error);
+    }
+  }
+
+  /**
+   * Migration health, read from schema_migrations so it survives a restart —
+   * a migration that failed and killed the process still shows up here.
+   */
+  async updateMigrationStatus(): Promise<void> {
+    try {
+      const result = await this.pool.query(
+        `SELECT COUNT(*) FILTER (WHERE failed) AS failed_count,
+                COALESCE(EXTRACT(EPOCH FROM MAX(applied_at)), 0) AS last_applied
+           FROM schema_migrations`
+      );
+
+      this.metrics.swiftremit_failed_migrations = parseInt(result.rows[0].failed_count, 10);
+      this.metrics.swiftremit_migration_last_applied_timestamp_seconds = parseFloat(
+        result.rows[0].last_applied,
+      );
+    } catch (error) {
+      this.logger.error('Failed to update migration status', error);
+    }
+  }
+
 /**
     * Update all metrics
     */
@@ -309,7 +452,10 @@ export class MetricsService {
       this.updateActiveRemittances(),
       this.updateAccumulatedFees(),
       this.updateDeadLetterCount(),
-      this.updateDlqDepthPerSubscription(),
+      this.updateOldestPendingRemittanceAge(),
+      this.updateSettlementDurationP95(),
+      this.updateMigrationStatus(),
+      this.updateContractPauseState(),
     ]);
   }
 
@@ -450,22 +596,73 @@ export class MetricsService {
       lines.push(`swiftremit_job_failure_total{job_name="${this.sanitizeLabelValue(jobName)}"} ${count}`);
     });
 
-    // FX provider resilience metrics (SR-029)
-    lines.push('# HELP fx_provider_failures_total Total number of FX provider call failures by provider');
-    lines.push('# TYPE fx_provider_failures_total counter');
-    this.fxProviderFailuresTotal.forEach((count, provider) => {
-      lines.push(`fx_provider_failures_total{provider="${this.sanitizeLabelValue(provider)}"} ${count}`);
+    // ── Money-at-risk signals (SR-104) ─────────────────────────────────────
+    lines.push('# HELP swiftremit_contract_paused 1 when the on-chain contract is paused, 0 otherwise');
+    lines.push('# TYPE swiftremit_contract_paused gauge');
+    lines.push(`swiftremit_contract_paused ${this.metrics.swiftremit_contract_paused}`);
+
+    lines.push('# HELP swiftremit_oldest_pending_remittance_age_seconds Age of the oldest remittance that has not reached a terminal state');
+    lines.push('# TYPE swiftremit_oldest_pending_remittance_age_seconds gauge');
+    lines.push(
+      `swiftremit_oldest_pending_remittance_age_seconds ${this.metrics.swiftremit_oldest_pending_remittance_age_seconds}`,
+    );
+
+    lines.push('# HELP swiftremit_settlement_seconds_p95 95th percentile remittance settlement time over the last hour');
+    lines.push('# TYPE swiftremit_settlement_seconds_p95 gauge');
+    lines.push(`swiftremit_settlement_seconds_p95 ${this.metrics.swiftremit_settlement_seconds_p95}`);
+
+    lines.push('# HELP swiftremit_circuit_open 1 when a provider circuit breaker is open (calls are being shed)');
+    lines.push('# TYPE swiftremit_circuit_open gauge');
+    this.circuitOpen.forEach((state, provider) => {
+      lines.push(`swiftremit_circuit_open{provider="${this.sanitizeLabelValue(provider)}"} ${state}`);
     });
 
-    lines.push('# HELP fx_provider_failovers_total Total number of failovers from primary to secondary FX provider');
-    lines.push('# TYPE fx_provider_failovers_total counter');
-    lines.push(`fx_provider_failovers_total ${this.fxProviderFailoversTotal}`);
+    lines.push('# HELP swiftremit_failed_migrations Number of migrations recorded as failed in schema_migrations');
+    lines.push('# TYPE swiftremit_failed_migrations gauge');
+    lines.push(`swiftremit_failed_migrations ${this.metrics.swiftremit_failed_migrations}`);
 
-    lines.push('# HELP fx_rate_rejected_total Total number of FX rates rejected by reason (stale, sanity)');
-    lines.push('# TYPE fx_rate_rejected_total counter');
-    this.fxRateRejectedTotal.forEach((count, reason) => {
-      lines.push(`fx_rate_rejected_total{reason="${this.sanitizeLabelValue(reason)}"} ${count}`);
+    lines.push('# HELP swiftremit_migration_last_applied_timestamp_seconds Unix timestamp of the most recent migration record');
+    lines.push('# TYPE swiftremit_migration_last_applied_timestamp_seconds gauge');
+    lines.push(
+      `swiftremit_migration_last_applied_timestamp_seconds ${this.metrics.swiftremit_migration_last_applied_timestamp_seconds}`,
+    );
+
+    // ── HTTP request instrumentation (SR-104 — availability / latency SLIs) ─
+    lines.push('# HELP swiftremit_http_requests_total Total HTTP requests served, by method, route and status code');
+    lines.push('# TYPE swiftremit_http_requests_total counter');
+    this.httpRequestsTotal.forEach((count, key) => {
+      const [method, route, status] = key.split('|');
+      lines.push(
+        `swiftremit_http_requests_total{method="${this.sanitizeLabelValue(method)}",` +
+          `route="${this.sanitizeLabelValue(route)}",status="${this.sanitizeLabelValue(status)}"} ${count}`,
+      );
     });
+
+    lines.push('# HELP swiftremit_http_request_duration_seconds HTTP request duration in seconds');
+    lines.push('# TYPE swiftremit_http_request_duration_seconds histogram');
+    this.httpRequestDurationBuckets.forEach((buckets, key) => {
+      const [method, route] = key.split('|');
+      const labels =
+        `method="${this.sanitizeLabelValue(method)}",route="${this.sanitizeLabelValue(route)}"`;
+      MetricsService.HTTP_DURATION_BUCKETS.forEach((bound, index) => {
+        lines.push(
+          `swiftremit_http_request_duration_seconds_bucket{${labels},le="${bound}"} ${buckets[index]}`,
+        );
+      });
+      const count = this.httpRequestDurationCount.get(key) ?? 0;
+      const sum = this.httpRequestDurationSum.get(key) ?? 0;
+      lines.push(`swiftremit_http_request_duration_seconds_bucket{${labels},le="+Inf"} ${count}`);
+      lines.push(`swiftremit_http_request_duration_seconds_sum{${labels}} ${sum}`);
+      lines.push(`swiftremit_http_request_duration_seconds_count{${labels}} ${count}`);
+    });
+
+    // On-chain reconciler metrics (Feature C)
+    try {
+      const { reconcilerMetricsText } = require('./reconciler');
+      lines.push(reconcilerMetricsText());
+    } catch {
+      // reconciler not loaded yet — safe to skip
+    }
 
     return lines.join('\n') + '\n';
   }

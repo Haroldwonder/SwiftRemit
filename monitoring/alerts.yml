@@ -1,122 +1,326 @@
+# SwiftRemit alerting rules.
+#
+# SR-104 — a custodial payments platform has to alert on the conditions that mean
+# money is stuck, not just on generic service health. Every rule below carries:
+#
+#   severity: critical  → pages on-call immediately (money is stuck or at risk)
+#   severity: warning   → ticket during business hours (degradation, not loss)
+#
+#   team:        routing key for Alertmanager (payments | platform | backend)
+#   runbook_url: a section that must exist in RUNBOOK.md — enforced in CI by
+#                scripts/check-alert-runbooks.js
+#
+# Loaded by Prometheus via rule_files in backend/monitoring/prometheus.yml, next
+# to slo.yml (SLO and error-budget burn rules).
+
 groups:
-  - name: swiftremit-backend-alerts
+  # ── Money is stuck ──────────────────────────────────────────────────────────
+  - name: swiftremit-funds-at-risk
     rules:
-      - alert: SwiftRemitWebhookDeliveryFailureRateHigh
-        expr: |
-          sum(rate(swiftremit_webhook_deliveries_total{result=~"failed|error"}[10m]))
-          /
-          sum(rate(swiftremit_webhook_deliveries_total[10m])) > 0.10
+      - alert: SwiftRemitContractPaused
+        expr: swiftremit_contract_paused == 1
+        for: 1m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "SwiftRemit contract is paused — no remittance can settle"
+          description: >
+            The on-chain circuit breaker is engaged. Every in-flight remittance is
+            frozen until the contract is unpaused. Confirm the pause was intentional,
+            then follow the vote-to-unpause quorum procedure.
+          runbook_url: "RUNBOOK.md#2-circuit-breaker-multi-admin-vote-to-unpause"
+
+      - alert: SwiftRemitOldestPendingRemittanceStuck
+        expr: swiftremit_oldest_pending_remittance_age_seconds > 3600
+        for: 10m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "A remittance has been pending for over an hour"
+          description: >
+            The oldest non-terminal remittance is {{ $value | humanizeDuration }} old.
+            Sender funds are held in escrow and the recipient has not been paid.
+          runbook_url: "RUNBOOK.md#12-remittance-stuck-in-a-non-terminal-state"
+
+      - alert: SwiftRemitOldestPendingRemittanceStuckWarning
+        expr: swiftremit_oldest_pending_remittance_age_seconds > 1800
+        for: 10m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "A remittance has been pending for over 30 minutes"
+          description: >
+            The oldest non-terminal remittance is {{ $value | humanizeDuration }} old,
+            past the 15-minute settlement objective. Check the anchor and the
+            on-chain state before it escalates.
+          runbook_url: "RUNBOOK.md#12-remittance-stuck-in-a-non-terminal-state"
+
+      - alert: SwiftRemitStateDivergence
+        expr: reconciler_consecutive_divergent_cycles >= 3
+        for: 5m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "Database and on-chain state have diverged for {{ $value }} cycles"
+          description: >
+            The reconciler has found unrepaired divergence between the database and the
+            contract in {{ $value }} consecutive cycles. Balances shown to users may be
+            wrong. Do not process refunds until this is resolved.
+          runbook_url: "RUNBOOK.md#13-on-chain-state-divergence"
+
+      - alert: SwiftRemitReconcilerStalled
+        expr: time() - reconciler_last_run_timestamp_seconds > 3600
+        for: 5m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "The on-chain reconciler has not run in over an hour"
+          description: >
+            Last reconciliation was {{ $value | humanizeDuration }} ago. Divergence
+            between the database and the chain would currently go undetected.
+          runbook_url: "RUNBOOK.md#13-on-chain-state-divergence"
+
+  # ── Dependencies degraded ───────────────────────────────────────────────────
+  - name: swiftremit-dependencies
+    rules:
+      - alert: SwiftRemitAnchorCircuitOpen
+        expr: max by (anchor_id) (swiftremit_anchor_availability{status="offline"}) == 1
+        for: 5m
+        labels:
+          severity: critical
+          team: payments
+        annotations:
+          summary: "Anchor {{ $labels.anchor_id }} is offline — payouts to it are shed"
+          description: >
+            Health probes to anchor {{ $labels.anchor_id }} have failed for 5 minutes.
+            Remittances routed to this anchor cannot complete and will age into the
+            stuck-remittance alert.
+          runbook_url: "RUNBOOK.md#14-anchor-unavailable-or-circuit-open"
+
+      - alert: SwiftRemitAnchorDegraded
+        expr: max by (anchor_id) (swiftremit_anchor_availability{status="degraded"}) == 1
+        for: 15m
+        labels:
+          severity: warning
+          team: payments
+        annotations:
+          summary: "Anchor {{ $labels.anchor_id }} is degraded"
+          description: >
+            Anchor {{ $labels.anchor_id }} is responding slowly (>5s). Settlement times
+            for this corridor will drift past the SLO.
+          runbook_url: "RUNBOOK.md#14-anchor-unavailable-or-circuit-open"
+
+      - alert: SwiftRemitFxProviderCircuitOpen
+        expr: swiftremit_circuit_open{provider="fx"} == 1
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "FX provider circuit breaker is open"
+          description: >
+            The primary FX provider has been failing and its circuit is open; quotes are
+            being served by the secondary provider or from stale cache.
+          runbook_url: "RUNBOOK.md#15-fx-rates-stale-or-provider-circuit-open"
+
+      - alert: SwiftRemitFxRateStale
+        expr: max(fx_rate_age_seconds) > 900
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "FX rates are more than 15 minutes stale"
+          description: >
+            The freshest cached FX rate is {{ $value | humanizeDuration }} old. Quoting a
+            remittance on a stale rate loses money on every transaction.
+          runbook_url: "RUNBOOK.md#15-fx-rates-stale-or-provider-circuit-open"
+
+      - alert: SwiftRemitFxRateStaleWarning
+        expr: max(fx_rate_age_seconds) > 300
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "FX rates are more than 5 minutes stale"
+          description: >
+            The freshest cached FX rate is {{ $value | humanizeDuration }} old. The
+            provider may be rate-limiting or down.
+          runbook_url: "RUNBOOK.md#15-fx-rates-stale-or-provider-circuit-open"
+
+  # ── Delivery and background work ────────────────────────────────────────────
+  - name: swiftremit-delivery
+    rules:
+      - alert: SwiftRemitDeadLetterQueueGrowing
+        expr: swiftremit_webhook_dead_letter_count > 10
         for: 10m
         labels:
           severity: warning
           team: backend
         annotations:
-          summary: "SwiftRemit webhook delivery failure rate is above 10%"
-          description: "More than 10% of webhook deliveries failed for at least 10 minutes. Check webhook receivers, delivery queues, and retry behavior."
+          summary: "Webhook dead-letter queue holds {{ $value }} undelivered events"
+          description: >
+            Subscribers are consistently rejecting deliveries. Partners are not being
+            told about settlements they need to act on.
+          runbook_url: "RUNBOOK.md#6-replay-failed-webhook-deliveries"
+
+      - alert: SwiftRemitDeadLetterQueueCritical
+        expr: swiftremit_webhook_dead_letter_count > 50
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Webhook dead-letter queue is critically deep ({{ $value }} events)"
+          description: >
+            More than 50 deliveries have exhausted their retries. Replay them once the
+            receiving endpoints are healthy.
+          runbook_url: "RUNBOOK.md#6-replay-failed-webhook-deliveries"
+
+      - alert: SwiftRemitWebhookDeliveryFailureRateHigh
+        expr: |
+          sum(rate(swiftremit_webhook_deliveries_total{result=~"failed|error"}[10m]))
+          /
+          clamp_min(sum(rate(swiftremit_webhook_deliveries_total[10m])), 0.001) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Webhook delivery failure rate is above 10%"
+          description: >
+            More than 10% of webhook deliveries have failed for 10 minutes. Check
+            receiver endpoints, delivery queues and retry behaviour.
+          runbook_url: "RUNBOOK.md#6-replay-failed-webhook-deliveries"
 
       - alert: SwiftRemitKycPollFailureRateHigh
         expr: |
           rate(swiftremit_kyc_poll_failures_total[5m])
           /
-          max(rate(swiftremit_kyc_poll_runs_total[5m]), 1) > 0.20
+          clamp_min(rate(swiftremit_kyc_poll_runs_total[5m]), 0.001) > 0.20
         for: 5m
         labels:
           severity: warning
           team: backend
         annotations:
-          summary: "SwiftRemit KYC poll failure rate is above 20%"
-          description: "KYC poll failures are exceeding 20% of poll cycles. Investigate anchor availability, network connectivity, or KYC API throttling."
+          summary: "KYC poll failure rate is above 20%"
+          description: >
+            KYC polling is failing for more than a fifth of cycles. Investigate anchor
+            availability, connectivity or KYC API throttling.
+          runbook_url: "RUNBOOK.md#16-background-job-failing-or-stalled"
 
-      - alert: SwiftRemitFxCacheMissRateHigh
-        expr: |
-          rate(fx_rate_cache_misses_total[5m])
-          /
-          max(rate(fx_rate_cache_hits_total[5m]) + rate(fx_rate_cache_misses_total[5m]), 1) > 0.15
+      - alert: SwiftRemitKycPollerLag
+        expr: time() - kyc_poller_last_run_timestamp_seconds > 1800
         for: 5m
         labels:
           severity: warning
           team: backend
         annotations:
-          summary: "SwiftRemit FX cache miss rate is above 15%"
-          description: "The FX rate cache miss percentage has exceeded 15% over the last 5 minutes. This may indicate stale cache configuration or downstream rate provider latency."
+          summary: "KYC poller has not run in over 30 minutes"
+          description: >
+            The KYC status poller last ran {{ $value | humanizeDuration }} ago against an
+            expected 30-minute interval. KYC approvals are going stale.
+          runbook_url: "RUNBOOK.md#16-background-job-failing-or-stalled"
+
+      - alert: SwiftRemitKycPollerDown
+        expr: time() - kyc_poller_last_run_timestamp_seconds > 3600
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "KYC poller has been silent for over an hour"
+          description: >
+            The KYC status poller has not completed a cycle in over an hour. Senders
+            whose KYC has been approved cannot transact.
+          runbook_url: "RUNBOOK.md#16-background-job-failing-or-stalled"
+
+      - alert: SwiftRemitBackgroundJobStalled
+        expr: time() - max by (job_name) (swiftremit_job_last_run_timestamp) > 7200
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Background job {{ $labels.job_name }} has not run in 2 hours"
+          description: >
+            {{ $labels.job_name }} last completed {{ $value | humanizeDuration }} ago.
+            The scheduler may have crashed.
+          runbook_url: "RUNBOOK.md#16-background-job-failing-or-stalled"
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+  - name: swiftremit-infrastructure
+    rules:
+      - alert: SwiftRemitMigrationFailed
+        expr: swiftremit_failed_migrations > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "{{ $value }} database migration(s) are recorded as failed"
+          description: >
+            A migration did not apply cleanly. The schema is in an unknown state and the
+            service may be reading or writing the wrong shape of data.
+          runbook_url: "RUNBOOK.md#5-handle-a-stuck-migration"
+
+      - alert: SwiftRemitDbPoolSaturated
+        expr: >
+          db_pool_waiting_connections > 0
+          and
+          db_pool_idle_connections == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "PostgreSQL connection pool is saturated"
+          description: >
+            {{ $value }} request(s) are queued with no idle connections available. New
+            requests will time out. Look for connection leaks or long-running queries.
+          runbook_url: "RUNBOOK.md#17-database-connection-pool-saturation"
+
+      - alert: SwiftRemitDbPoolNearlyExhausted
+        expr: db_pool_idle_connections < 3
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "PostgreSQL connection pool is nearly exhausted"
+          description: >
+            Only {{ $value }} idle connections remain. Sustained load at this level will
+            start failing requests.
+          runbook_url: "RUNBOOK.md#17-database-connection-pool-saturation"
+
+      - alert: SwiftRemitContractEventIndexerLag
+        expr: contract_event_indexer_lag_ledgers > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Contract event indexer is {{ $value }} ledgers behind"
+          description: >
+            Indexed on-chain state is lagging. Settlement confirmations will be delayed
+            and the reconciler may report false divergence.
+          runbook_url: "RUNBOOK.md#13-on-chain-state-divergence"
 
       - alert: SwiftRemitAccumulatedFeesThresholdExceeded
         expr: swiftremit_accumulated_fees > 1000000
         for: 15m
         labels:
-          severity: critical
-          team: backend
-        annotations:
-          summary: "SwiftRemit accumulated fees exceed threshold"
-          description: "Accumulated completed transaction fees have exceeded the configured safe threshold. Review fee calculations, completed transaction volume, and potential accounting issues."
-
-  - name: swiftremit-db-pool-alerts
-    rules:
-      - alert: SwiftRemitDbPoolSaturated
-        # Fires when the number of waiting connection requests has been >= 3 for
-        # at least 1 minute.  This mirrors the server-side POOL_SATURATION_WAITING_THRESHOLD
-        # and POOL_SATURATION_DURATION_MS defaults, but evaluated at the scrape interval
-        # so alerting is not dependent on the process-level timer.
-        expr: db_pool_waiting_requests >= 3
-        for: 1m
-        labels:
           severity: warning
-          team: backend
-          component: database
+          team: payments
         annotations:
-          summary: "SwiftRemit API database pool is saturated"
+          summary: "Accumulated fees exceed the configured threshold"
           description: >
-            {{ $value }} connection requests have been waiting for a free pool slot for
-            more than 1 minute. Replicas with an exhausted pool will fail their /readyz
-            probe and be removed from the load-balancer. Check database load, slow queries,
-            and connection pool sizing (DB_POOL_MAX).
-
-      - alert: SwiftRemitDbPoolCritical
-        # Critical tier: waiting requests >= 8 sustained for 30 s.
-        # At this point the pool is almost certainly blocking all API traffic.
-        expr: db_pool_waiting_requests >= 8
-        for: 30s
-        labels:
-          severity: critical
-          team: backend
-          component: database
-        annotations:
-          summary: "SwiftRemit API database pool critically saturated"
-          description: >
-            {{ $value }} connection requests are waiting on a database pool slot. This is
-            likely causing widespread request timeouts. Immediately investigate database
-            health, long-running queries, and connection leaks. Consider scaling up replicas
-            or increasing DB_POOL_MAX.
-
-      - alert: SwiftRemitDbPoolAcquireLatencyHigh
-        # p95 acquire latency above 500 ms suggests pool exhaustion or slow queries
-        expr: |
-          histogram_quantile(0.95,
-            rate(db_pool_acquire_latency_ms_bucket[5m])
-          ) > 500
-        for: 5m
-        labels:
-          severity: warning
-          team: backend
-          component: database
-        annotations:
-          summary: "SwiftRemit DB pool acquire latency p95 is above 500 ms"
-          description: >
-            The 95th-percentile time to acquire a database connection has exceeded 500 ms
-            over the last 5 minutes. This indicates pool saturation or slow query load.
-            Current p95: {{ $value | humanizeDuration }}
-
-      - alert: SwiftRemitDbPoolIdleConnectionsZero
-        # No idle connections and non-zero waiting requests means the pool is full
-        expr: db_pool_idle_connections == 0 and db_pool_waiting_requests > 0
-        for: 2m
-        labels:
-          severity: warning
-          team: backend
-          component: database
-        annotations:
-          summary: "SwiftRemit DB pool has no idle connections"
-          description: >
-            The database pool has no idle connections and {{ $value }} requests are waiting.
-            All {{ $labels.instance }} pool slots are in use. Consider increasing DB_POOL_MAX
-            or optimizing query performance to reduce connection hold time.
+            Undistributed fees have passed the safe threshold. Review fee accounting and
+            sweep the treasury.
+          runbook_url: "RUNBOOK.md#18-accumulated-fees-above-threshold"

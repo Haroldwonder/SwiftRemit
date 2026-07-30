@@ -2,6 +2,7 @@
   "name": "swiftremit-mobile",
   "version": "1.0.0",
   "description": "SwiftRemit mobile app for senders (iOS & Android)",
+  "license": "MIT",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",

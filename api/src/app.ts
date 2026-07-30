@@ -18,8 +18,7 @@ import { createAnalyticsRouter } from './routes/analytics';
 import { createAgentsRouter } from './routes/agents';
 import { createAuthRouter } from './routes/auth';
 import { createAccountsRouter } from './routes/accounts';
-import { createLivenessRouter, createReadinessRouter } from './routes/health';
-import { initPool, getPool } from './db/pool';
+import { getApiMetrics } from './metrics';
 import { ErrorResponse } from './types';
 import { AnchorStore, PostgresAnchorStore, createAnchorPool } from './db/anchorStore';
 import { Server as SocketIOServer } from 'socket.io';
@@ -124,6 +123,27 @@ export function createApp(options: AppOptions = {}): Application {
   app.use(cors());
   app.use(express.json());
   app.use(cookieParser());
+
+  // Request instrumentation (SR-104) — mounted before the rate limiter so
+  // shed requests are counted too. Feeds the API latency and error-rate panels.
+  const apiMetrics = getApiMetrics();
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const startedAt = process.hrtime.bigint();
+    res.on('finish', () => {
+      const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1e9;
+      const route = req.route?.path ?? (req.baseUrl || req.path) || 'unknown';
+      apiMetrics.recordHttpRequest(req.method, route, res.statusCode, durationSeconds);
+    });
+    next();
+  });
+
+  // Prometheus scrape endpoint — deliberately outside /api/ so it is not
+  // rate limited.
+  app.get('/metrics', async (req: Request, res: Response) => {
+    await apiMetrics.refresh(options.io);
+    res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    res.send(apiMetrics.generatePrometheusText());
+  });
 
   // Rate limiting with RFC 6585 headers
   const limiter = createRateLimitMiddleware();
