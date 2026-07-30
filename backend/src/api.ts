@@ -1,5 +1,4 @@
 import express, { Request, Response, NextFunction } from 'express';
-import express, { Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -72,6 +71,19 @@ const verifier = new AssetVerifier();
 const logger = createLogger('api');
 const pool = getPool();
 const metricsService = getMetricsService(pool);
+
+async function logAdminAction(req: Request, action: string, target: string | null = null, params: Record<string, unknown> | null = null) {
+  const auditService = new AdminAuditLogService(pool);
+  await auditService.log({
+    admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+    action,
+    target,
+    params_json: params,
+    tx_hash: null,
+    ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
+  });
+}
+
 fxRateCache.setMetricsObserver((from, to, stalenessSeconds) => {
   metricsService.setFxRateStalenessMetric(from, to, stalenessSeconds);
 });
@@ -213,6 +225,9 @@ app.get('/api/webhooks', adminLimiter, async (req: Request, res: Response) => {
       secret_rotated_at: row.secret_rotated_at,
       has_previous_secret: !!row.previous_secret,
     }));
+
+    await logAdminAction(req, 'list_webhooks', null, { count: subscriptions.length });
+
     res.status(200).json(subscriptions);
   } catch (error) {
     logger.error('Failed to get webhook subscribers', { error });
@@ -228,15 +243,7 @@ app.post('/api/webhooks/:id/rotate-secret', adminLimiter, validateParams(Webhook
     const { newSecret, rotatedAt } = await rotateWebhookSecret(id);
     const subscriber = await getWebhookSubscriberById(id);
 
-    const auditService = new AdminAuditLogService(pool);
-    await auditService.log({
-      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
-      action: 'rotate_webhook_secret',
-      target: id,
-      params_json: null,
-      tx_hash: null,
-      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
-    });
+    await logAdminAction(req, 'rotate_webhook_secret', id);
 
     // Notify subscriber of new secret via a signed delivery (best-effort)
     if (subscriber?.url) {
@@ -540,15 +547,7 @@ app.post('/api/kyc/config', adminLimiter, validateRequest(KycConfigSchema), asyn
 
     await saveAnchorKycConfig(config);
 
-    const auditService = new AdminAuditLogService(pool);
-    await auditService.log({
-      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
-      action: 'configure_kyc',
-      target: anchorId,
-      params_json: { kycServerUrl, pollingIntervalMinutes, enabled },
-      tx_hash: null,
-      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
-    });
+    await logAdminAction(req, 'configure_kyc', anchorId, { kycServerUrl, pollingIntervalMinutes, enabled });
 
     res.json({ success: true, message: 'Anchor KYC config saved successfully' });
   } catch (error) {
@@ -590,15 +589,7 @@ app.post('/api/kyc/register', validateRequest(KycRegisterSchema), async (req: Re
     const service = new kycService();
     await service.registerUserForKyc(sanitizedUserId, sanitizedAnchorId);
 
-    const auditService = new AdminAuditLogService(pool);
-    await auditService.log({
-      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
-      action: 'register_kyc_user',
-      target: sanitizedUserId,
-      params_json: { anchorId: sanitizedAnchorId },
-      tx_hash: null,
-      ip_address: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? null,
-    });
+    await logAdminAction(req, 'register_kyc_user', sanitizedUserId, { anchorId: sanitizedAnchorId });
 
     res.json({ success: true, message: 'User registered for KYC successfully' });
   } catch (error) {
@@ -861,6 +852,13 @@ app.get('/api/admin/audit-log', adminLimiter, validateQuery(AuditLogListQuerySch
       nextCursor = Buffer.from(JSON.stringify({ id: last.id, created_at: last.created_at })).toString('base64');
     }
 
+    await logAdminAction(req, 'list_admin_audit_log', null, {
+      action: q.action ?? null,
+      admin_address: q.admin_address ?? null,
+      limit,
+      cursor: Boolean(q.cursor),
+    });
+
     res.json({ limit, cursor: q.cursor ?? null, next_cursor: nextCursor, entries });
   } catch (error) {
     logger.error('Error fetching audit log', error);
@@ -872,6 +870,7 @@ app.get('/api/admin/audit-log', adminLimiter, validateQuery(AuditLogListQuerySch
 app.get('/api/admin/jobs', adminLimiter, async (req: Request, res: Response) => {
   try {
     const summaries = await getJobSummaries(pool);
+    await logAdminAction(req, 'view_admin_jobs', null, { job_count: summaries.length });
     res.json({ jobs: summaries });
   } catch (error) {
     logger.error('Error fetching job summaries', error);
@@ -895,6 +894,13 @@ app.get('/api/admin/audit-log/export', adminLimiter, validateQuery(AuditLogExpor
     if (action)       { baseParams.push(action);        extraWhere += ` AND action = $${baseParams.length}`; }
 
     const baseWhere = `WHERE created_at >= $1 AND created_at <= $2${extraWhere}`;
+
+    await logAdminAction(req, 'export_admin_audit_log', null, {
+      from: q.from as string,
+      to: q.to as string,
+      admin_address: adminAddress ?? null,
+      action: action ?? null,
+    });
 
     // Check row count before streaming — hard cap at AUDIT_LOG_EXPORT_ROW_CAP
     const countRes = await pool.query(
