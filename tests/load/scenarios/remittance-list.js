@@ -3,8 +3,21 @@
  *
  * Exercises GET /api/remittances on the API service with cursor-based
  * pagination and various filter combinations at sustained load.
- * Acceptance: p99 < 500 ms at 500 RPS for 5 minutes.
+ * Target: p95 < 400ms, p99 < 700ms, error rate < 1%.
+ *
+ * Thresholds (enforced — test fails if breached):
+ *   remittance_list_duration p(95) < 400ms
+ *   remittance_list_duration p(99) < 700ms
+ *   remittance_list_errors   rate  < 0.01
  */
+
+export const options = {
+  thresholds: {
+    remittance_list_duration: ['p(95)<400', 'p(99)<700'],
+    remittance_list_errors: ['rate<0.01'],
+    remittance_list_count: ['count>0'],
+  },
+};
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';

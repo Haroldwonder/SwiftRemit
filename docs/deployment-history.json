@@ -1,0 +1,14 @@
+[
+  {
+    "_comment": "This file is appended by the deploy-mainnet.yml workflow after every successful deploy.",
+    "_comment2": "Each entry is written by the 'Store deployment record' step as a deployment-record.json artifact AND appended here.",
+    "event": "initial_placeholder",
+    "wasm_hash": "",
+    "contract_id": "",
+    "ledger": 0,
+    "initialiser": "",
+    "git_sha": "",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "deployed_by": ""
+  }
+]

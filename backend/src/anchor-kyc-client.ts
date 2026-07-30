@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { KycRecord, KycStatus, KycLevel } from './types';
+import { anchoredFetch } from './tracing/anchor-tracer';
 
 export interface AnchorKycConfig {
   anchor_id: string;
@@ -19,16 +20,21 @@ export class AnchorKycClient {
     const nonce = crypto.randomUUID();
     const signature = this.computeSignature(timestamp, nonce, this.config.anchor_id);
 
-    const response = await fetch(this.config.kyc_endpoint, {
-      method: 'GET',
-      headers: {
-        'x-signature': signature,
-        'x-timestamp': timestamp,
-        'x-nonce': nonce,
-        'x-anchor-id': this.config.anchor_id,
-        'Content-Type': 'application/json',
+    const response = await anchoredFetch(
+      this.config.kyc_endpoint,
+      {
+        method: 'GET',
+        headers: {
+          'x-signature':  signature,
+          'x-timestamp':  timestamp,
+          'x-nonce':      nonce,
+          'x-anchor-id':  this.config.anchor_id,
+          'Content-Type': 'application/json',
+        },
       },
-    });
+      'kyc.fetchStatuses',
+      { sepOperation: 'sep12.kyc', anchorId: this.config.anchor_id }
+    );
 
     if (!response.ok) {
       throw new Error(

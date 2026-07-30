@@ -1,5 +1,20 @@
 name: Deploy to Mainnet
 
+# SR-106: Mainnet deployment pipeline with mechanical pre-flight gates.
+#
+# Gate order:
+#   1. confirmation-gate      – human types DEPLOY
+#   2. gate-tests             – all CI tests green on this SHA
+#   3. gate-audit             – no CRITICAL/HIGH security advisories
+#   4. gate-wasm-hash         – reproducible build hash matches
+#   5. gate-testnet-dry-run   – testnet deploy succeeded on this SHA (last 24h)
+#   6. require-checklist      – mainnet-checklist.yml passed on this SHA
+#   7. build-wasm             – build the final WASM artifact
+#   8. deploy-contract        – deploy to mainnet (requires "mainnet" environment approval)
+#   9. post-deploy-verify     – on-chain WASM hash == built artifact hash
+#  10. post-deploy-smoke      – automated smoke tests; pauses contract on failure
+#  11. store-deployment-record– write deployment-record.json artifact + append to history
+
 on:
   workflow_dispatch:
     inputs:
@@ -13,11 +28,12 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
   deployments: write
 
 jobs:
-  # ── Guard: require manual confirmation word ────────────────────────────────
+
+  # ── 1. Gate: human confirmation word ──────────────────────────────────────
   confirmation-gate:
     name: Confirm deployment intent
     runs-on: ubuntu-latest
@@ -28,13 +44,134 @@ jobs:
             echo "❌ Deployment aborted: confirmation word must be DEPLOY (got '${{ github.event.inputs.confirm }}')"
             exit 1
           fi
-          echo "✅ Deployment confirmed"
+          echo "✅ Deployment confirmed by ${{ github.actor }}"
 
-  # ── Guard: mainnet checklist must pass ────────────────────────────────────
-  require-checklist:
-    name: Wait for mainnet checklist
+  # ── 2. Gate: all CI tests green on this SHA ────────────────────────────────
+  gate-tests:
+    name: Gate — all CI tests green
     runs-on: ubuntu-latest
     needs: confirmation-gate
+    steps:
+      - name: Check CI status for this SHA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA="${{ github.sha }}"
+          echo "Checking CI (contract-ci) status for $SHA…"
+
+          STATUS=$(gh api \
+            "/repos/${{ github.repository }}/commits/$SHA/check-runs" \
+            --jq '[.check_runs[] | select(.name == "Contract CI" or .name == "contract-ci")] |
+                   sort_by(.completed_at) | last | .conclusion' \
+            2>/dev/null || echo "not_found")
+
+          echo "Latest contract-ci conclusion: $STATUS"
+          if [ "$STATUS" != "success" ]; then
+            echo "❌ CI has not passed on this commit (status: $STATUS)."
+            echo "   Ensure contract-ci passes before deploying to mainnet."
+            exit 1
+          fi
+          echo "✅ All CI tests green"
+
+  # ── 3. Gate: security audit clean ─────────────────────────────────────────
+  gate-audit:
+    name: Gate — security audit clean
+    runs-on: ubuntu-latest
+    needs: gate-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        run: |
+          cargo audit --json > audit-output.json 2>&1 || true
+
+          # Fail if any CRITICAL or HIGH advisories are present
+          CRITICAL=$(jq '.vulnerabilities.list | map(select(.advisory.cvss != null and .advisory.cvss >= 9.0)) | length' audit-output.json 2>/dev/null || echo 0)
+          HIGH=$(jq '[.vulnerabilities.list[] | select(.advisory.severity == "high" or .advisory.severity == "critical")] | length' audit-output.json 2>/dev/null || echo 0)
+
+          echo "Critical advisories: $CRITICAL"
+          echo "High advisories: $HIGH"
+
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+            echo "❌ Security audit failed — $HIGH high/critical advisories found."
+            jq '.vulnerabilities.list[] | select(.advisory.severity == "high" or .advisory.severity == "critical") | .advisory | {id, title, severity, cvss}' audit-output.json || true
+            exit 1
+          fi
+          echo "✅ Security audit clean (no high/critical advisories)"
+
+  # ── 4. Gate: WASM hash matches reproducible build ─────────────────────────
+  gate-wasm-hash:
+    name: Gate — reproducible build WASM hash
+    runs-on: ubuntu-latest
+    needs: gate-audit
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify reproducible build script exists
+        run: |
+          if [ ! -f "scripts/verify-reproducible-build.sh" ]; then
+            echo "❌ scripts/verify-reproducible-build.sh not found."
+            echo "   SR-107 must be completed before mainnet deployment."
+            echo "   See docs/REPRODUCIBLE_BUILD.md for setup instructions."
+            exit 1
+          fi
+          echo "✅ Reproducible build script found"
+
+      - name: Check if Docker is available for reproducible build
+        run: |
+          if ! command -v docker &>/dev/null; then
+            echo "⚠️  Docker not available in this runner — skipping reproducible build verification."
+            echo "   Ensure this check passes in your self-hosted runner or add Docker support."
+            exit 0
+          fi
+          echo "Docker available — running reproducible build verification…"
+          bash scripts/verify-reproducible-build.sh \
+            --expected "$(cat releases/latest-hash.txt 2>/dev/null || echo '')"
+
+  # ── 5. Gate: testnet dry-run succeeded on this SHA (within 24h) ───────────
+  gate-testnet-dry-run:
+    name: Gate — testnet dry-run within 24h
+    runs-on: ubuntu-latest
+    needs: gate-wasm-hash
+    steps:
+      - name: Verify testnet integration workflow passed recently
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA="${{ github.sha }}"
+          CUTOFF=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+                   date -u -v -24H +%Y-%m-%dT%H:%M:%SZ)  # macOS fallback
+
+          echo "Looking for testnet-integration workflow runs for $SHA since $CUTOFF…"
+
+          # Look for the testnet-integration workflow run on this SHA
+          STATUS=$(gh run list \
+            --workflow testnet-integration.yml \
+            --branch "${{ github.ref_name }}" \
+            --json headSha,conclusion,createdAt \
+            --jq --arg sha "$SHA" --arg cutoff "$CUTOFF" \
+            '[.[] | select(.headSha == $sha and .createdAt >= $cutoff)] |
+             sort_by(.createdAt) | last | .conclusion' \
+            2>/dev/null || echo "not_found")
+
+          echo "Testnet integration status: $STATUS"
+          if [ "$STATUS" != "success" ]; then
+            echo "❌ Testnet dry-run has not succeeded on this SHA within the last 24 hours."
+            echo "   Run testnet-integration.yml for this SHA and ensure it passes."
+            exit 1
+          fi
+          echo "✅ Testnet dry-run passed within the last 24 hours"
+
+  # ── 6. Gate: mainnet checklist passed ─────────────────────────────────────
+  require-checklist:
+    name: Gate — mainnet checklist passed
+    runs-on: ubuntu-latest
+    needs: gate-testnet-dry-run
     steps:
       - uses: actions/checkout@v4
 
@@ -47,23 +184,24 @@ jobs:
 
           STATUS=$(gh api \
             "/repos/${{ github.repository }}/commits/$SHA/check-runs" \
-            --jq '[.check_runs[] | select(.name == "Mainnet Checklist")] | sort_by(.completed_at) | last | .conclusion' \
+            --jq '[.check_runs[] | select(.name == "Mainnet Checklist")] |
+                   sort_by(.completed_at) | last | .conclusion' \
             2>/dev/null || echo "not_found")
 
-          echo "Latest Mainnet Checklist conclusion: $STATUS"
-
+          echo "Mainnet Checklist conclusion: $STATUS"
           if [ "$STATUS" != "success" ]; then
             echo "❌ Mainnet Checklist has not passed on this commit ($STATUS)."
-            echo "   Run the mainnet-checklist workflow and ensure it succeeds before deploying."
             exit 1
           fi
           echo "✅ Mainnet Checklist passed"
 
-  # ── Build production WASM artifact ────────────────────────────────────────
+  # ── 7. Build production WASM artifact ─────────────────────────────────────
   build-wasm:
     name: Build WASM artifact
     runs-on: ubuntu-latest
     needs: require-checklist
+    outputs:
+      wasm_sha256: ${{ steps.hash.outputs.wasm_sha256 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -81,7 +219,33 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-wasm-
 
       - name: Build production WASM
+        env:
+          SOURCE_DATE_EPOCH: "0"
+          CARGO_INCREMENTAL: "0"
         run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Compute WASM SHA-256
+        id: hash
+        run: |
+          WASM_FILE="target/wasm32-unknown-unknown/release/swiftremit.wasm"
+          SHA256=$(sha256sum "$WASM_FILE" | awk '{print $1}')
+          echo "wasm_sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "Built WASM SHA-256: $SHA256"
+
+          # Cross-check against published hash if available
+          if [ -f "releases/latest-hash.txt" ]; then
+            PUBLISHED=$(cat releases/latest-hash.txt | tr -d '[:space:]')
+            if [ "$SHA256" != "$PUBLISHED" ]; then
+              echo "❌ WASM hash mismatch:"
+              echo "   Built:     $SHA256"
+              echo "   Published: $PUBLISHED"
+              echo "   The built WASM does not match the published reproducible-build hash."
+              exit 1
+            fi
+            echo "✅ WASM hash matches published reproducible-build hash"
+          else
+            echo "⚠️  releases/latest-hash.txt not found — hash comparison skipped (first release?)"
+          fi
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
@@ -90,13 +254,21 @@ jobs:
           path: target/wasm32-unknown-unknown/release/swiftremit.wasm
           retention-days: 90
 
-  # ── Deploy contract to mainnet ─────────────────────────────────────────────
+  # ── 8. Deploy contract to mainnet ─────────────────────────────────────────
+  # NOTE: The "mainnet" environment MUST be configured in GitHub Settings →
+  # Environments with:
+  #   • Required reviewers: at least 2 admins
+  #   • Deployment branch policy: restrict to main
+  # This cannot be enforced via workflow YAML alone.
   deploy-contract:
     name: Deploy contract to mainnet
     runs-on: ubuntu-latest
     needs: build-wasm
     environment:
       name: mainnet
+      url: https://stellar.expert/explorer/public/contract/${{ env.CONTRACT_ID }}
+    outputs:
+      contract_id: ${{ steps.deploy.outputs.contract_id }}
     steps:
       - uses: actions/checkout@v4
 
@@ -108,30 +280,211 @@ jobs:
 
       - name: Install Stellar CLI
         run: |
-          curl -sSL https://github.com/stellar/stellar-cli/releases/latest/download/stellar-cli-x86_64-unknown-linux-gnu.tar.gz \
+          curl -sSfL \
+            "https://github.com/stellar/stellar-cli/releases/latest/download/stellar-cli-x86_64-unknown-linux-gnu.tar.gz" \
             | tar -xz -C /usr/local/bin stellar
+          stellar --version
 
       - name: Deploy contract
+        id: deploy
         env:
           MAINNET_SECRET_KEY: ${{ secrets.MAINNET_DEPLOYER_SECRET_KEY }}
+          MAINNET_RPC_URL: ${{ vars.MAINNET_RPC_URL }}
         run: |
-          stellar contract deploy \
+          OUTPUT=$(stellar contract deploy \
             --wasm wasm/swiftremit.wasm \
             --source-account "$MAINNET_SECRET_KEY" \
-            --network mainnet \
-            --rpc-url "${{ vars.MAINNET_RPC_URL }}" \
+            --rpc-url "$MAINNET_RPC_URL" \
             --network-passphrase "Public Global Stellar Network ; September 2015" \
-          | tee deploy-output.txt
+            2>&1)
 
-          CONTRACT_ID=$(cat deploy-output.txt | tail -1)
-          echo "Deployed contract ID: $CONTRACT_ID"
-          echo "CONTRACT_ID=$CONTRACT_ID" >> $GITHUB_ENV
+          echo "$OUTPUT"
+          CONTRACT_ID=$(echo "$OUTPUT" | grep -Eo '^C[A-Z0-9]{55}$' | tail -1)
 
-      - name: Record deployment
+          if [ -z "$CONTRACT_ID" ]; then
+            echo "❌ Failed to extract CONTRACT_ID from deploy output"
+            exit 1
+          fi
+
+          echo "contract_id=$CONTRACT_ID" >> "$GITHUB_OUTPUT"
+          echo "CONTRACT_ID=$CONTRACT_ID" >> "$GITHUB_ENV"
+          echo "✅ Contract deployed: $CONTRACT_ID"
+
+      - name: Deployment summary
         run: |
-          echo "## Mainnet Deployment" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deployed by:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Contract ID:** \`${{ env.CONTRACT_ID }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Timestamp:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "## Mainnet Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| SHA | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Contract ID | \`${{ steps.deploy.outputs.contract_id }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deployed by | \`${{ github.actor }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Timestamp | $(date -u +%Y-%m-%dT%H:%M:%SZ) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| WASM SHA-256 | \`${{ needs.build-wasm.outputs.wasm_sha256 }}\` |" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 9. Post-deploy: verify on-chain WASM hash ─────────────────────────────
+  post-deploy-verify:
+    name: Post-deploy — verify on-chain WASM hash
+    runs-on: ubuntu-latest
+    needs:
+      - build-wasm
+      - deploy-contract
+    environment:
+      name: mainnet
+    steps:
+      - name: Install Stellar CLI
+        run: |
+          curl -sSfL \
+            "https://github.com/stellar/stellar-cli/releases/latest/download/stellar-cli-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C /usr/local/bin stellar
+
+      - name: Verify on-chain WASM hash
+        env:
+          MAINNET_RPC_URL: ${{ vars.MAINNET_RPC_URL }}
+          CONTRACT_ID: ${{ needs.deploy-contract.outputs.contract_id }}
+          EXPECTED_HASH: ${{ needs.build-wasm.outputs.wasm_sha256 }}
+        run: |
+          echo "Querying on-chain WASM hash for contract $CONTRACT_ID…"
+
+          ONCHAIN_HASH=$(stellar contract info \
+            --id "$CONTRACT_ID" \
+            --rpc-url "$MAINNET_RPC_URL" \
+            --network-passphrase "Public Global Stellar Network ; September 2015" \
+            2>/dev/null | jq -r '.wasm_hash // empty' || echo "")
+
+          echo "On-chain hash:  $ONCHAIN_HASH"
+          echo "Expected hash:  $EXPECTED_HASH"
+
+          if [ -z "$ONCHAIN_HASH" ]; then
+            echo "❌ Could not retrieve on-chain WASM hash — stellar contract info failed"
+            exit 1
+          fi
+
+          if [ "$ONCHAIN_HASH" != "$EXPECTED_HASH" ]; then
+            echo "❌ WASM hash MISMATCH — the deployed contract does not match the built artifact!"
+            echo "   This is a critical security failure. Emergency pause may be required."
+            exit 1
+          fi
+
+          echo "✅ On-chain WASM hash matches the built artifact"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### WASM Hash Verification" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Hash |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| On-chain | \`$ONCHAIN_HASH\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Built artifact | \`$EXPECTED_HASH\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Match | ✅ |" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 10. Post-deploy: automated smoke tests ────────────────────────────────
+  post-deploy-smoke:
+    name: Post-deploy — smoke tests (auto-pause on failure)
+    runs-on: ubuntu-latest
+    needs:
+      - deploy-contract
+      - post-deploy-verify
+    environment:
+      name: mainnet
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Stellar CLI
+        run: |
+          curl -sSfL \
+            "https://github.com/stellar/stellar-cli/releases/latest/download/stellar-cli-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C /usr/local/bin stellar
+
+      - name: Run mainnet smoke tests
+        env:
+          MAINNET_RPC_URL: ${{ vars.MAINNET_RPC_URL }}
+          MAINNET_CONTRACT_ID: ${{ needs.deploy-contract.outputs.contract_id }}
+          MAINNET_SMOKE_ACCOUNT: ${{ vars.MAINNET_SMOKE_ACCOUNT }}
+          MAINNET_SMOKE_SECRET_KEY: ${{ secrets.MAINNET_SMOKE_SECRET_KEY }}
+          MAINNET_SMOKE_AGENT: ${{ vars.MAINNET_SMOKE_AGENT }}
+          MAINNET_EMERGENCY_ADMIN_KEY: ${{ secrets.MAINNET_EMERGENCY_ADMIN_KEY }}
+          POLL_TIMEOUT_SECS: "120"
+        run: |
+          chmod +x scripts/smoke-mainnet.sh
+          bash scripts/smoke-mainnet.sh
+
+      - name: Smoke test summary
+        if: always()
+        run: |
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Smoke Test Result" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ Smoke tests passed — mainnet deployment is healthy" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "❌ Smoke tests FAILED — contract has been automatically paused" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "See [ROLLBACK_RUNBOOK.md](docs/ROLLBACK_RUNBOOK.md) for recovery steps." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ── 11. Store deployment record ───────────────────────────────────────────
+  store-deployment-record:
+    name: Store deployment record
+    runs-on: ubuntu-latest
+    needs:
+      - build-wasm
+      - deploy-contract
+      - post-deploy-smoke
+    if: always() && needs.deploy-contract.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write deployment-record.json
+        env:
+          CONTRACT_ID: ${{ needs.deploy-contract.outputs.contract_id }}
+          WASM_HASH: ${{ needs.build-wasm.outputs.wasm_sha256 }}
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          SMOKE_RESULT="${{ needs.post-deploy-smoke.result }}"
+
+          jq -n \
+            --arg wasm_hash    "$WASM_HASH" \
+            --arg contract_id  "$CONTRACT_ID" \
+            --arg git_sha      "${{ github.sha }}" \
+            --arg deployed_by  "${{ github.actor }}" \
+            --arg timestamp    "$TIMESTAMP" \
+            --arg smoke_result "$SMOKE_RESULT" \
+            '{
+              wasm_hash:    $wasm_hash,
+              contract_id:  $contract_id,
+              ledger:       0,
+              initialiser:  $deployed_by,
+              git_sha:      $git_sha,
+              timestamp:    $timestamp,
+              deployed_by:  $deployed_by,
+              smoke_result: $smoke_result,
+              event:        "deploy"
+            }' > deployment-record.json
+
+          echo "Deployment record:"
+          cat deployment-record.json
+
+          # Append to deployment-history.json
+          if [ -f docs/deployment-history.json ]; then
+            UPDATED=$(jq --slurpfile record deployment-record.json '. + [$record[0]]' docs/deployment-history.json)
+            echo "$UPDATED" > docs/deployment-history.json
+          fi
+
+      - name: Upload deployment record artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mainnet-deployment-record-${{ github.sha }}
+          path: deployment-record.json
+          retention-days: 365
+
+      - name: Commit updated deployment history
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/deployment-history.json
+          if git diff --cached --quiet; then
+            echo "No changes to deployment-history.json"
+          else
+            git commit -m "chore: record mainnet deployment ${{ github.sha }}"
+            git push
+          fi

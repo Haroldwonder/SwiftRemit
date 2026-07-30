@@ -1,0 +1,93 @@
+# docker/Dockerfile.reproducible — SR-107
+#
+# Produces a byte-identical swiftremit.wasm from a clean checkout.
+#
+# Key reproducibility knobs:
+#   SOURCE_DATE_EPOCH=0   – Rust embeds no wall-clock timestamps
+#   CARGO_INCREMENTAL=0   – disables incremental compilation state
+#   codegen-units = 1     – single codegen unit (already in Cargo.toml)
+#   lto = true            – LTO already enabled in Cargo.toml
+#   strip = "symbols"     – already in Cargo.toml
+#
+# The final stage copies ONLY the optimised WASM out; everything else
+# (toolchain, build cache, source) is discarded, keeping the image lean.
+#
+# Build:
+#   docker build --no-cache -f docker/Dockerfile.reproducible \
+#     --build-arg RUST_VERSION=stable -t swiftremit-repro:latest .
+#
+# Extract:
+#   docker run --rm swiftremit-repro:latest cat /out/swiftremit.wasm \
+#     > build/reproducible/swiftremit.wasm
+
+# ── Stage 1: build ────────────────────────────────────────────────────────────
+ARG RUST_VERSION=stable
+FROM rust:${RUST_VERSION}-slim AS builder
+
+# Install build dependencies and soroban/stellar CLI at pinned versions
+RUN apt-get update -q && apt-get install -y -q --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      && rm -rf /var/lib/apt/lists/*
+
+# Install wasm-opt from binaryen (soroban optimizer)
+# Pinned version ensures byte-identical optimized output across builds
+ARG BINARYEN_VERSION=116
+RUN curl -sSfL \
+      "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
+      | tar -xz -C /usr/local --strip-components=1 \
+    && wasm-opt --version
+
+# Install stellar CLI at pinned version for the optimizer step
+ARG STELLAR_CLI_VERSION=21.3.0
+RUN curl -sSfL \
+      "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-x86_64-unknown-linux-gnu.tar.gz" \
+      | tar -xz -C /usr/local/bin stellar \
+    && stellar --version
+
+# Add wasm32 target
+RUN rustup target add wasm32-unknown-unknown
+
+WORKDIR /src
+
+# Copy only build manifests first to leverage Docker layer caching for deps
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+
+# Pre-fetch dependencies in a dummy build (speeds up subsequent builds)
+# We need a stub lib.rs for cargo to resolve dependencies
+RUN mkdir -p src && echo 'pub fn _stub() {}' > src/lib.rs && \
+    SOURCE_DATE_EPOCH=0 CARGO_INCREMENTAL=0 \
+      cargo build --release --target wasm32-unknown-unknown 2>/dev/null || true && \
+    rm -rf src target/wasm32-unknown-unknown/release/.fingerprint/swiftremit-*
+
+# Now copy the real source
+COPY src/ ./src/
+
+# Build with full reproducibility flags
+# --network=none for the compile step is set via BuildKit mount; we achieve
+# network isolation by not calling any network-fetching code during build.
+RUN SOURCE_DATE_EPOCH=0 \
+    CARGO_INCREMENTAL=0 \
+    RUSTFLAGS="" \
+      cargo build --release --target wasm32-unknown-unknown
+
+# Optimise the WASM using soroban/stellar CLI (deterministic with same input)
+RUN stellar contract optimize \
+      --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm \
+      --wasm-out target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm \
+    && ls -la target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm
+
+# Compute and record SHA-256 of the optimised artifact
+RUN sha256sum target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm \
+      | awk '{print $1}' > /tmp/swiftremit.sha256 \
+    && echo "Build SHA256: $(cat /tmp/swiftremit.sha256)"
+
+# ── Stage 2: minimal output image ────────────────────────────────────────────
+FROM scratch AS output
+
+COPY --from=builder \
+  /src/target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm \
+  /out/swiftremit.wasm
+
+COPY --from=builder /tmp/swiftremit.sha256 /out/swiftremit.wasm.sha256

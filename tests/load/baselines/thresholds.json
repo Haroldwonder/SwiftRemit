@@ -1,0 +1,42 @@
+{
+  "_comment": "Single source of truth for k6 thresholds. Consumed by load-test.yml CI step.",
+  "_environment": {
+    "runner": "ubuntu-latest (GitHub Actions)",
+    "api_instance": "2 vCPU / 2 GB",
+    "backend_instance": "2 vCPU / 2 GB",
+    "captured": "2026-07"
+  },
+  "scenarios": {
+    "remittance_create": {
+      "p95_ms": 800,
+      "p99_ms": 1200,
+      "error_rate_pct": 1,
+      "min_rps": 150
+    },
+    "remittance_list": {
+      "p95_ms": 400,
+      "p99_ms": 800,
+      "error_rate_pct": 1,
+      "min_rps": 300
+    },
+    "websocket": {
+      "connect_p95_ms": 200,
+      "error_rate_pct": 5
+    },
+    "soak": {
+      "p95_ms": 1000,
+      "error_rate_pct": 2,
+      "duration_minutes": 35
+    },
+    "spike": {
+      "p95_ms": 2000,
+      "error_rate_pct": 5,
+      "peak_vus": 500,
+      "baseline_vus": 50
+    }
+  },
+  "global": {
+    "http_req_p99_ms": 500,
+    "min_total_rps": 450
+  }
+}

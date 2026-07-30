@@ -23,6 +23,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 import { EventType, WebhookPayload, WebhookDeliveryRecord, WebhookDeliveryOptions, WebhookSignatureHeaders, WebhookSubscriber } from './types';
 import { IWebhookStore } from './store';
+import { tracedWebhookDelivery } from '../tracing/webhook-tracer';
 
 /** 24-hour grace window for secret rotation (milliseconds). */
 const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
@@ -223,11 +224,21 @@ export class WebhookDispatcher {
 
       this.logger.debug(`Attempting delivery ${attempt}/${this.options.maxRetries} to ${url}`);
 
-      const response = await axios.post(url, isFormEncoded ? serialized : payload, {
-        headers,
-        timeout: this.options.timeoutMs,
-        validateStatus: () => true, // Don't throw on any status
-      });
+      const response = await tracedWebhookDelivery(
+        {
+          eventType:    String(payload.event ?? 'unknown'),
+          targetUrl:    url,
+          remittanceId: String((payload as any).remittance_id ?? ''),
+          attemptNumber: attempt,
+        },
+        async (injectableHeaders) => {
+          return axios.post(url, isFormEncoded ? serialized : payload, {
+            headers: { ...headers, ...injectableHeaders },
+            timeout: this.options.timeoutMs,
+            validateStatus: () => true,
+          });
+        }
+      );
 
       const isSuccess = response.status >= 200 && response.status < 300;
 
