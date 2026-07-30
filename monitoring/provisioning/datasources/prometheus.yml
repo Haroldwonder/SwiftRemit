@@ -1,0 +1,19 @@
+# SR-104 — Grafana datasource provisioning.
+#
+# Provisioned from file so a fresh Grafana comes up wired to Prometheus with no
+# manual UI steps. Override the URL with PROMETHEUS_URL when Prometheus is not
+# the Compose service (e.g. a managed instance in staging/production).
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: swiftremit-prometheus
+    type: prometheus
+    access: proxy
+    url: ${PROMETHEUS_URL:-http://prometheus:9090}
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST

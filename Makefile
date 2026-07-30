@@ -1,7 +1,23 @@
-.PHONY: build test clean deploy install optimize check fmt
+.PHONY: build test clean deploy install optimize check fmt setup check-licenses helm-lint
 
 # Default target
 all: build test
+
+# Create the per-service .env files the Docker Compose stack reads (SR-102).
+# Copies each .env.example template to a gitignored .env when absent and fills
+# in working local values. Never overwrites an existing .env.
+setup:
+	@./scripts/setup-env.sh
+
+# Verify the LICENSE file, every package manifest, and all dependency licences
+# (SR-101).
+check-licenses:
+	@node scripts/check-manifest-licenses.js
+	@node scripts/check-dependency-licenses.js
+
+# Lint and render the Helm chart against every environment's values (SR-103).
+helm-lint:
+	@./scripts/helm-validate.sh
 
 # Install dependencies
 install:
@@ -145,6 +161,9 @@ help:
 	@echo "SwiftRemit Makefile Commands:"
 	@echo ""
 	@echo "Development:"
+	@echo "  make setup          - Create per-service .env files for docker compose"
+	@echo "  make check-licenses - Verify LICENSE, manifests and dependency licences"
+	@echo "  make helm-lint      - Lint and render the Helm chart for all environments"
 	@echo "  make install        - Install dependencies"
 	@echo "  make build          - Build the contract"
 	@echo "  make optimize       - Optimize the WASM binary"

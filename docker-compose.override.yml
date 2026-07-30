@@ -6,8 +6,6 @@
 #   # edit docker-compose.override.local.yml with real secrets
 #   docker compose -f docker-compose.yml -f docker-compose.override.local.yml up
 
-version: "3.9"
-
 services:
   postgres:
     environment:

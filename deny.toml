@@ -1,0 +1,52 @@
+# cargo-deny configuration — licence compatibility for the Rust workspace (SR-101).
+#
+# The crate itself is MIT (see LICENSE). Every dependency must carry a licence
+# that can lawfully be redistributed inside an MIT-licensed work, i.e. permissive
+# notice-only licences. Copyleft licences (GPL/AGPL/LGPL/MPL/SSPL) are rejected.
+#
+# Run locally with:  cargo deny check licenses
+
+[graph]
+all-features = true
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+
+# Permissive licences that are compatible with redistributing under MIT.
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-DFS-2016",
+  "Unicode-3.0",
+  "CC0-1.0",
+  "Unlicense",
+  "BSL-1.0",
+  "OpenSSL",
+]
+
+# No per-crate exceptions today. Adding one requires a written justification here
+# and sign-off that the licence remains MIT-redistributable.
+exceptions = []
+
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+multiple-versions = "allow"
+
+[advisories]
+version = 2
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

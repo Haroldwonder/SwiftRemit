@@ -22,6 +22,8 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        {{- toYaml (default .Values.podSecurityContext $svc.podSecurityContext) | nindent 8 }}
       containers:
         - name: api
           image: {{ include "swiftremit.image" (dict "global" .Values.global "image" $svc.image) }}
@@ -41,3 +43,19 @@ spec:
             {{- toYaml $svc.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml $svc.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml (default .Values.containerSecurityContext $svc.containerSecurityContext) | nindent 12 }}
+          {{- with $svc.writableVolumes }}
+          volumeMounts:
+            {{- range . }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+            {{- end }}
+          {{- end }}
+      {{- with $svc.writableVolumes }}
+      volumes:
+        {{- range . }}
+        - name: {{ .name }}
+          emptyDir: {}
+        {{- end }}
+      {{- end }}

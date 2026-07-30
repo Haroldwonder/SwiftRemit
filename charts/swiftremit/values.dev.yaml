@@ -4,6 +4,10 @@
 global:
   nodeEnv: development
 
+# A single replica per component in dev — a PDB would only block node drains.
+podDisruptionBudget:
+  enabled: false
+
 api:
   replicaCount: 1
   image:

@@ -380,6 +380,40 @@ cargo test
 - Soroban CLI (`soroban`)
 - See [`Cargo.toml`](Cargo.toml) for the exact `soroban-sdk` version this contract is built against
 
+### 🐳 Local Stack with Docker Compose
+
+The Compose stack reads a **`.env` per service** (`backend/.env`, `api/.env`,
+`frontend/.env`). Those files are gitignored; the tracked `.env.example` files are
+templates only and are never read at runtime — placeholders would otherwise start
+the services with dummy configuration, and editing an example to make things work
+locally risks committing a real secret into a tracked file.
+
+```bash
+# 1. Create the per-service .env files (idempotent — never overwrites an existing one)
+make setup            # or: ./scripts/setup-env.sh
+
+# 2. Start everything
+docker compose up --build
+```
+
+`make setup` copies each `.env.example` to `.env` and fills in working local
+values — the Compose Postgres URL and freshly generated local secrets. Contract
+specific values (`CONTRACT_ID`, `VITE_CONTRACT_ID`, `VITE_USDC_ISSUER`) stay
+empty until you deploy a contract; run `./setup-testnet.sh` to produce them.
+
+Each service validates its configuration at startup and **exits with a clear
+message** if a required variable is missing or still holds a `.env.example`
+placeholder, rather than failing later inside a query or an RPC call.
+
+| Service    | URL                     |
+| ---------- | ----------------------- |
+| Frontend   | http://localhost:5173   |
+| API        | http://localhost:3000   |
+| Backend    | http://localhost:3001   |
+| Grafana    | http://localhost:3003   |
+| Prometheus | http://localhost:9090   |
+| Jaeger     | http://localhost:16686  |
+
 ### 🚀 Complete Testnet Setup (Recommended)
 
 Get up and running with testnet XLM, USDC, and a full end-to-end flow:
@@ -785,7 +819,17 @@ schema version. A few of the most common:
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) for the full text.
+
+Every package manifest in the repository (`package.json`, `Cargo.toml`) declares
+`MIT`, and CI rejects any dependency whose licence cannot be redistributed under
+MIT. Run the checks locally with:
+
+```bash
+node scripts/check-manifest-licenses.js     # LICENSE present, manifests declare MIT
+node scripts/check-dependency-licenses.js   # npm dependency licences
+cargo deny --all-features check licenses    # Rust dependency licences (see deny.toml)
+```
 
 ## Support
 

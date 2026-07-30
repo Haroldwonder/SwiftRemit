@@ -1,4 +1,12 @@
-version: "3.9"
+# Local development stack.
+#
+# Each service reads its own .env file. Those files are gitignored — create them
+# once with `make setup` (or ./scripts/setup-env.sh), which copies the tracked
+# .env.example templates and fills in working local values.
+#
+# Never point env_file at a .env.example: the examples hold placeholders, so
+# services would start with dummy configuration, and editing an example to make
+# things work locally risks committing a real secret to a tracked file.
 
 services:
   postgres:
@@ -42,7 +50,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
       OTEL_SERVICE_NAME: swiftremit-backend
     env_file:
-      - ./backend/.env.example
+      - ./backend/.env
     volumes:
       - ./backend/src:/app/src
       - ./backend/migrations:/app/migrations
@@ -66,7 +74,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
       OTEL_SERVICE_NAME: swiftremit-api
     env_file:
-      - ./api/.env.example
+      - ./api/.env
     volumes:
       - ./api/src:/app/src
     depends_on:
@@ -86,7 +94,7 @@ services:
       VITE_API_URL: http://localhost:3000
       VITE_BACKEND_URL: http://localhost:3001
     env_file:
-      - ./frontend/.env.example
+      - ./frontend/.env
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
@@ -101,7 +109,9 @@ services:
       - "9090:9090"
     volumes:
       - ./backend/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./backend/monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      # Single source of truth for rules (SR-104) — see monitoring/.
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./monitoring/slo.yml:/etc/prometheus/slo.yml:ro
     command:
       - --config.file=/etc/prometheus/prometheus.yml
 
@@ -114,8 +124,13 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/provisioning/dashboards/swiftremit.yml:/etc/grafana/provisioning/dashboards/swiftremit.yml:ro
-      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards:ro
+      # Datasource and dashboard providers are provisioned from files; nothing
+      # here is hand-created in the Grafana UI (SR-104). The dashboard JSON must
+      # live outside /etc/grafana/provisioning/dashboards, or it would shadow the
+      # provider config that points at it.
+      - ./monitoring/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
 

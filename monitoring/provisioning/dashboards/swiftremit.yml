@@ -1,11 +1,22 @@
+# SR-104 — Grafana dashboard provisioning.
+#
+# Dashboards are files under monitoring/dashboards/ and are loaded from disk.
+# allowUiUpdates is false so an edit made in the UI cannot silently diverge from
+# the repository: change the JSON, commit it, and Grafana picks it up.
+#
+# The dashboard JSON is mounted at /var/lib/grafana/dashboards rather than under
+# /etc/grafana/provisioning/dashboards, which would shadow this provider file.
+
 apiVersion: 1
 
 providers:
   - name: SwiftRemit
     orgId: 1
+    folder: SwiftRemit
     type: file
     disableDeletion: false
     updateIntervalSeconds: 30
-    allowUiUpdates: true
+    allowUiUpdates: false
     options:
-      path: /etc/grafana/provisioning/dashboards
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

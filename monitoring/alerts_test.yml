@@ -1,0 +1,273 @@
+# SR-104 — synthetic firing tests for the SwiftRemit alerting rules.
+#
+# Each case feeds a hand-written series through the real rule files and asserts
+# that the alert fires (or does not) at a given evaluation time. This is what
+# proves an alert works without waiting for a real incident.
+#
+# Run with:  promtool test rules monitoring/alerts_test.yml
+# CI runs it in .github/workflows/monitoring.yml.
+
+rule_files:
+  - alerts.yml
+  - slo.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Contract paused ────────────────────────────────────────────────────────
+  - interval: 1m
+    name: contract paused pages after one minute
+    input_series:
+      - series: swiftremit_contract_paused
+        values: "0 0 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SwiftRemitContractPaused
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: SwiftRemitContractPaused
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: payments
+
+  - interval: 1m
+    name: an unpaused contract does not alert
+    input_series:
+      - series: swiftremit_contract_paused
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SwiftRemitContractPaused
+        exp_alerts: []
+
+  # ── Remittance stuck ───────────────────────────────────────────────────────
+  - interval: 1m
+    name: a remittance pending over an hour pages
+    input_series:
+      - series: swiftremit_oldest_pending_remittance_age_seconds
+        values: "3700+60x20"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SwiftRemitOldestPendingRemittanceStuck
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: SwiftRemitOldestPendingRemittanceStuck
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: payments
+      - eval_time: 15m
+        alertname: SwiftRemitOldestPendingRemittanceStuckWarning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: payments
+
+  - interval: 1m
+    name: a remittance pending 40 minutes warns but does not page
+    input_series:
+      - series: swiftremit_oldest_pending_remittance_age_seconds
+        values: "2400x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SwiftRemitOldestPendingRemittanceStuck
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: SwiftRemitOldestPendingRemittanceStuckWarning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: payments
+
+  # ── State divergence ───────────────────────────────────────────────────────
+  - interval: 1m
+    name: three consecutive divergent cycles page
+    input_series:
+      - series: reconciler_consecutive_divergent_cycles
+        values: "1 2 3 3 3 3 3 3 3 3 3"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SwiftRemitStateDivergence
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: SwiftRemitStateDivergence
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: payments
+
+  # ── Anchor circuit ─────────────────────────────────────────────────────────
+  - interval: 1m
+    name: an offline anchor pages and names itself
+    input_series:
+      - series: 'swiftremit_anchor_availability{anchor_id="anchor-1",status="offline"}'
+        values: "1x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SwiftRemitAnchorCircuitOpen
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: payments
+              anchor_id: anchor-1
+
+  - interval: 1m
+    name: an online anchor does not alert
+    input_series:
+      - series: 'swiftremit_anchor_availability{anchor_id="anchor-1",status="online"}'
+        values: "1x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SwiftRemitAnchorCircuitOpen
+        exp_alerts: []
+
+  # ── FX staleness and circuit ───────────────────────────────────────────────
+  - interval: 1m
+    name: FX rates over 15 minutes stale page
+    input_series:
+      - series: 'fx_rate_age_seconds{from="USD",to="NGN"}'
+        values: "1000x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SwiftRemitFxRateStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: backend
+      - eval_time: 10m
+        alertname: SwiftRemitFxRateStaleWarning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: backend
+
+  - interval: 1m
+    name: fresh FX rates do not alert
+    input_series:
+      - series: 'fx_rate_age_seconds{from="USD",to="NGN"}'
+        values: "30x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SwiftRemitFxRateStaleWarning
+        exp_alerts: []
+
+  - interval: 1m
+    name: an open FX circuit opens a ticket
+    input_series:
+      - series: 'swiftremit_circuit_open{provider="fx"}'
+        values: "1x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SwiftRemitFxProviderCircuitOpen
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: backend
+              provider: fx
+
+  # ── Dead-letter queue ──────────────────────────────────────────────────────
+  - interval: 1m
+    name: dead-letter depth escalates from ticket to page
+    input_series:
+      - series: swiftremit_webhook_dead_letter_count
+        values: "20x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SwiftRemitDeadLetterQueueGrowing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: backend
+      - eval_time: 15m
+        alertname: SwiftRemitDeadLetterQueueCritical
+        exp_alerts: []
+
+  - interval: 1m
+    name: a deep dead-letter queue pages
+    input_series:
+      - series: swiftremit_webhook_dead_letter_count
+        values: "80x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SwiftRemitDeadLetterQueueCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: backend
+
+  # ── Migrations ─────────────────────────────────────────────────────────────
+  - interval: 1m
+    name: a failed migration pages
+    input_series:
+      - series: swiftremit_failed_migrations
+        values: "0 0 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SwiftRemitMigrationFailed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: platform
+
+  # ── Connection pool ────────────────────────────────────────────────────────
+  - interval: 1m
+    name: a saturated pool pages, a merely busy pool does not
+    input_series:
+      - series: db_pool_waiting_connections
+        values: "4x15"
+      - series: db_pool_idle_connections
+        values: "0x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SwiftRemitDbPoolSaturated
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: platform
+      - eval_time: 10m
+        alertname: SwiftRemitDbPoolNearlyExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: platform
+
+  - interval: 1m
+    name: a pool with headroom does not alert
+    input_series:
+      - series: db_pool_waiting_connections
+        values: "0x15"
+      - series: db_pool_idle_connections
+        values: "8x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SwiftRemitDbPoolSaturated
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: SwiftRemitDbPoolNearlyExhausted
+        exp_alerts: []
+
+  # ── Settlement-time SLO ────────────────────────────────────────────────────
+  - interval: 1m
+    name: p95 settlement over 15 minutes breaches the SLO
+    input_series:
+      - series: swiftremit_settlement_seconds_p95
+        values: "1200x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: SwiftRemitSettlementTimeSLOBreached
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: payments
+              slo: settlement-time
+
+  - interval: 1m
+    name: p95 settlement inside the objective does not alert
+    input_series:
+      - series: swiftremit_settlement_seconds_p95
+        values: "300x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: SwiftRemitSettlementTimeSLOBreached
+        exp_alerts: []

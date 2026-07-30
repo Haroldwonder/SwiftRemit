@@ -1,0 +1,88 @@
+suite: horizontal pod autoscaler
+templates:
+  - hpa.yaml
+release:
+  name: swiftremit
+  namespace: swiftremit
+
+tests:
+  - it: renders one HPA per component with autoscaling enabled
+    set:
+      api.autoscaling.enabled: true
+      backend.autoscaling.enabled: true
+      frontend.autoscaling.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 3
+
+  - it: renders no HPA when every component has autoscaling disabled
+    set:
+      api.autoscaling.enabled: false
+      backend.autoscaling.enabled: false
+      frontend.autoscaling.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: skips only the components that opt out
+    set:
+      api.autoscaling.enabled: true
+      backend.autoscaling.enabled: false
+      frontend.autoscaling.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.name
+          value: swiftremit-swiftremit-api
+
+  - it: targets the matching deployment and carries the component label
+    documentIndex: 0
+    set:
+      api.autoscaling.enabled: true
+      backend.autoscaling.enabled: false
+      frontend.autoscaling.enabled: false
+    asserts:
+      - isKind:
+          of: HorizontalPodAutoscaler
+      - isAPIVersion:
+          of: autoscaling/v2
+      - equal:
+          path: spec.scaleTargetRef.kind
+          value: Deployment
+      - equal:
+          path: spec.scaleTargetRef.name
+          value: swiftremit-swiftremit-api
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: api
+
+  - it: propagates replica bounds and the CPU target from values
+    documentIndex: 0
+    set:
+      api.autoscaling.enabled: true
+      api.autoscaling.minReplicas: 4
+      api.autoscaling.maxReplicas: 25
+      api.autoscaling.targetCPUUtilizationPercentage: 55
+      backend.autoscaling.enabled: false
+      frontend.autoscaling.enabled: false
+    asserts:
+      - equal:
+          path: spec.minReplicas
+          value: 4
+      - equal:
+          path: spec.maxReplicas
+          value: 25
+      - equal:
+          path: spec.metrics[0].resource.target.averageUtilization
+          value: 55
+      - equal:
+          path: spec.metrics[0].resource.name
+          value: cpu
+
+  - it: matches the production value set
+    values:
+      - ../values.production.yaml
+    asserts:
+      - hasDocuments:
+          count: 3

@@ -1,0 +1,95 @@
+suite: ingress
+templates:
+  - ingress.yaml
+release:
+  name: swiftremit
+  namespace: swiftremit
+
+tests:
+  - it: renders nothing when the ingress is disabled
+    set:
+      ingress.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a single networking.k8s.io/v1 Ingress when enabled
+    set:
+      ingress.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Ingress
+      - isAPIVersion:
+          of: networking.k8s.io/v1
+      - equal:
+          path: metadata.name
+          value: swiftremit-swiftremit
+
+  - it: routes each path to the service named in values
+    set:
+      ingress.enabled: true
+    asserts:
+      - equal:
+          path: spec.ingressClassName
+          value: nginx
+      - equal:
+          path: spec.rules[0].host
+          value: swiftremit.example.com
+      - equal:
+          path: spec.rules[0].http.paths[0].path
+          value: /api
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.name
+          value: swiftremit-swiftremit-api
+      - equal:
+          path: spec.rules[0].http.paths[1].backend.service.name
+          value: swiftremit-swiftremit-backend
+      - equal:
+          path: spec.rules[0].http.paths[2].backend.service.name
+          value: swiftremit-swiftremit-frontend
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.name
+          value: http
+
+  - it: omits the tls block when no certificates are configured
+    set:
+      ingress.enabled: true
+      ingress.tls: []
+    asserts:
+      - notExists:
+          path: spec.tls
+
+  - it: renders TLS and annotations for the production value set
+    values:
+      - ../values.production.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.tls[0].secretName
+          value: swiftremit-prod-tls
+      - equal:
+          path: spec.tls[0].hosts[0]
+          value: swiftremit.example.com
+      - equal:
+          path: metadata.annotations["cert-manager.io/cluster-issuer"]
+          value: letsencrypt-prod
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/ssl-redirect"]
+          value: "true"
+
+  - it: renders the staging host and issuer for the staging value set
+    values:
+      - ../values.staging.yaml
+    asserts:
+      - equal:
+          path: spec.rules[0].host
+          value: staging.swiftremit.example.com
+      - equal:
+          path: spec.tls[0].secretName
+          value: swiftremit-staging-tls
+      - equal:
+          path: metadata.annotations["cert-manager.io/cluster-issuer"]
+          value: letsencrypt-staging

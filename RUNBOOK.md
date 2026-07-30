@@ -426,7 +426,7 @@ Recommended: run a scheduled job (weekly) to bump TTL on all active remittances 
 
 ---
 
-## 7. Rotate ADMIN_SECRET_KEY (Service-Level Key)
+## 8. Rotate ADMIN_SECRET_KEY (Service-Level Key)
 
 The `ADMIN_SECRET_KEY` environment variable holds the Stellar keypair used by `backend/src/stellar.ts` to sign Soroban transactions. Because it lives in an environment variable, a compromised key cannot be revoked without a service redeployment. Follow this procedure to rotate it safely.
 
@@ -500,7 +500,196 @@ Confirm the count reflects only the new key. Post a rotation notice in `#inciden
 
 ---
 
-## 8. Escalation Contacts and SLA Targets
+## 9. API Availability SLO Burn
+
+**Alerts:** `SwiftRemitAvailabilityBudgetBurnFast` (critical), `SwiftRemitAvailabilityBudgetBurnSlow` (warning), `SwiftRemitAvailabilityBudgetExhausted` (warning)
+
+**Objective:** 99.9% of API requests return a non-5xx status over a rolling 30 days (error budget: ~43 minutes per month).
+
+1. Identify what is failing:
+   ```promql
+   topk(5, sum by (route, status) (rate(swiftremit_http_requests_total{status=~"5.."}[5m])))
+   ```
+2. Check whether the errors are concentrated in one route. A single failing route usually means a downstream dependency — cross-check `swiftremit_anchor_availability`, `swiftremit_circuit_open` and `db_pool_waiting_connections`.
+3. If errors are spread across every route, look at the database first (`/health/db` on the backend) and then the most recent deploy.
+4. Roll back the most recent deploy if the burn started within 15 minutes of it.
+5. If the budget is exhausted, freeze non-essential deploys until the 30-day window rolls over and open a post-mortem.
+
+**Dashboard:** Grafana → SwiftRemit / API (latency, errors, error-budget burn).
+
+---
+
+## 10. API Latency SLO Burn
+
+**Alert:** `SwiftRemitLatencyBudgetBurnFast` (warning)
+
+**Objective:** 99% of API requests complete in under 500 ms over a rolling 30 days.
+
+1. Find the slow routes:
+   ```promql
+   histogram_quantile(0.95, sum by (le, route) (rate(swiftremit_http_request_duration_seconds_bucket[5m])))
+   ```
+2. Check connection-pool pressure — `db_pool_waiting_connections > 0` almost always shows up as latency before it shows up as errors. See [17. Database Connection Pool Saturation](#17-database-connection-pool-saturation).
+3. Check whether an upstream anchor or the FX provider is slow (`swiftremit_anchor_availability{status="degraded"}`, `swiftremit_circuit_open`).
+4. Scale the API deployment if CPU is saturated — the HPA targets 65% in production, so sustained saturation means the maximum replica count is too low.
+
+---
+
+## 11. Remittance Settlement Time SLO Breach
+
+**Alert:** `SwiftRemitSettlementTimeSLOBreached` (warning)
+
+**Objective:** 95% of remittances settle within 15 minutes.
+
+1. Confirm the breach is real and not a single outlier:
+   ```promql
+   swiftremit_settlement_seconds_p95
+   swiftremit_oldest_pending_remittance_age_seconds
+   ```
+2. Identify the corridor. Slow settlement is nearly always anchor-side — check [14. Anchor Unavailable or Circuit Open](#14-anchor-unavailable-or-circuit-open).
+3. Check the contract event indexer lag: a lagging indexer delays the settlement confirmation even when the chain has already settled.
+4. If a specific anchor is responsible, disable it for new remittances (`SEP24_ENABLED_<ANCHOR_ID>=false`) and let in-flight transactions drain.
+5. Notify support so senders whose transfers are late are told proactively.
+
+---
+
+## 12. Remittance Stuck in a Non-Terminal State
+
+**Alerts:** `SwiftRemitOldestPendingRemittanceStuck` (critical), `SwiftRemitOldestPendingRemittanceStuckWarning` (warning)
+
+Sender funds are in escrow and the recipient has not been paid. Treat the critical variant as P0.
+
+1. Find the stuck transactions:
+   ```sql
+   SELECT transaction_id, anchor_id, status, created_at, updated_at, message
+     FROM transactions
+    WHERE status NOT IN ('completed', 'refunded', 'error', 'expired')
+    ORDER BY created_at
+    LIMIT 20;
+   ```
+2. Group by `status` and `anchor_id` — one dominant pair points straight at the cause:
+   - `pending_anchor` → the anchor has not moved the transaction. See [14. Anchor Unavailable or Circuit Open](#14-anchor-unavailable-or-circuit-open).
+   - `submitted` → the Stellar transaction may not have been confirmed. Check the contract event indexer lag.
+   - `pending` with no anchor activity → check that background jobs are running. See [16. Background Job Failing or Stalled](#16-background-job-failing-or-stalled).
+3. Verify the contract is not paused (`swiftremit_contract_paused`). If it is, go to [2. Circuit Breaker: Multi-Admin Vote-to-Unpause](#2-circuit-breaker-multi-admin-vote-to-unpause).
+4. For transactions past `ANCHOR_TIMEOUT_HOURS`, the timeout job marks them `error` and they become refundable. Confirm that job ran.
+5. Refund only after confirming on-chain state with the reconciler — never refund while [13. On-Chain State Divergence](#13-on-chain-state-divergence) is firing.
+
+---
+
+## 13. On-Chain State Divergence
+
+**Alerts:** `SwiftRemitStateDivergence` (critical), `SwiftRemitReconcilerStalled` (warning), `SwiftRemitContractEventIndexerLag` (warning)
+
+The database and the contract disagree about remittance state. Balances shown to users may be wrong.
+
+1. **Stop all refunds and payouts.** Acting on a diverged view can pay out twice.
+2. Inspect the reconciler metrics:
+   ```promql
+   reconciler_divergences_total
+   reconciler_divergences_repaired_total
+   reconciler_consecutive_divergent_cycles
+   reconciler_ledger_gaps_detected_total
+   ```
+3. If `reconciler_ledger_gaps_detected_total` is climbing, the indexer missed ledgers — the reconciler backfills them; give it two cycles before intervening.
+4. If divergence persists after three cycles, the repair path is failing. Pull the reconciler logs and identify the specific remittance IDs.
+5. Treat the chain as the source of truth. Correct the database to match the contract, never the other way round.
+6. If the indexer is simply behind (`contract_event_indexer_lag_ledgers > 100`), check the Soroban RPC endpoint health and restart the indexer; no data is lost, it replays from the last indexed ledger.
+
+---
+
+## 14. Anchor Unavailable or Circuit Open
+
+**Alerts:** `SwiftRemitAnchorCircuitOpen` (critical), `SwiftRemitAnchorDegraded` (warning)
+
+1. Confirm which anchor and for how long:
+   ```promql
+   swiftremit_anchor_availability
+   ```
+2. Probe the anchor's SEP-24 endpoint directly and check its `stellar.toml` is still reachable.
+3. Check the anchor's own status page before assuming it is our side.
+4. Stop routing new remittances to the anchor:
+   ```bash
+   SEP24_ENABLED_<ANCHOR_ID>=false   # then restart the backend
+   ```
+5. Let in-flight remittances drain. They will age into [12. Remittance Stuck in a Non-Terminal State](#12-remittance-stuck-in-a-non-terminal-state) if the anchor stays down past `ANCHOR_TIMEOUT_HOURS`.
+6. Re-enable only after health probes report `online` for 15 minutes straight.
+
+---
+
+## 15. FX Rates Stale or Provider Circuit Open
+
+**Alerts:** `SwiftRemitFxRateStale` (critical), `SwiftRemitFxRateStaleWarning` (warning), `SwiftRemitFxProviderCircuitOpen` (warning)
+
+Quoting on a stale rate loses money on every transaction, so the critical variant is a page.
+
+1. Check the age of the freshest rate and the breaker state:
+   ```promql
+   max(fx_rate_age_seconds)
+   swiftremit_circuit_open{provider="fx"}
+   ```
+2. If the circuit is open, the primary provider is failing and quotes come from the secondary or from stale cache. The breaker half-opens automatically after 60 seconds.
+3. Verify the primary provider's API key and rate limits (`FX_API_KEY`). Expired keys look exactly like an outage.
+4. If both providers are down and rates exceed 15 minutes old, **stop accepting new remittances** rather than quoting on stale data.
+5. Once a provider recovers, confirm `fx_rate_age_seconds` drops below 300 before resuming.
+
+---
+
+## 16. Background Job Failing or Stalled
+
+**Alerts:** `SwiftRemitBackgroundJobStalled` (warning), `SwiftRemitKycPollFailureRateHigh` (warning)
+
+1. Identify the job:
+   ```promql
+   time() - max by (job_name) (swiftremit_job_last_run_timestamp)
+   swiftremit_job_failure_total
+   ```
+2. Check the scheduler is alive at all — if every job is stalled, the process died rather than one job failing.
+3. For KYC polling specifically, check anchor availability and KYC API throttling before assuming a bug.
+4. Restart the backend to restart the scheduler. Jobs are idempotent and resume from the database.
+5. If one job fails repeatedly while others run, pull its logs by `job_name` and open a ticket — do not silence the alert.
+
+---
+
+## 17. Database Connection Pool Saturation
+
+**Alerts:** `SwiftRemitDbPoolSaturated` (critical), `SwiftRemitDbPoolNearlyExhausted` (warning)
+
+1. Confirm the shape of the saturation:
+   ```promql
+   db_pool_active_connections
+   db_pool_idle_connections
+   db_pool_waiting_connections
+   ```
+2. Look for long-running queries holding connections:
+   ```sql
+   SELECT pid, now() - query_start AS duration, state, left(query, 120)
+     FROM pg_stat_activity
+    WHERE state <> 'idle'
+    ORDER BY duration DESC
+    LIMIT 20;
+   ```
+3. Cancel a runaway query with `SELECT pg_cancel_backend(<pid>);` — escalate to `pg_terminate_backend` only if cancelling does not work.
+4. A pool that is fully active with nothing long-running means genuine load: raise `DB_POOL_MAX` and scale the deployment.
+5. A pool that stays saturated after load drops means a connection leak — restart the service and open a ticket with the code path that leaked.
+
+---
+
+## 18. Accumulated Fees Above Threshold
+
+**Alert:** `SwiftRemitAccumulatedFeesThresholdExceeded` (warning)
+
+1. Confirm the figure against the database:
+   ```sql
+   SELECT COALESCE(SUM(amount_fee), 0) FROM transactions WHERE status = 'completed';
+   ```
+2. Compare against the on-chain accumulated fee balance. A mismatch is a divergence, not a treasury problem — go to [13. On-Chain State Divergence](#13-on-chain-state-divergence).
+3. If the figures agree, sweep the treasury following the fee-withdrawal procedure and record the ledger sequence.
+4. If the threshold no longer reflects real volume, raise it in `monitoring/alerts.yml` rather than muting the alert.
+
+---
+
+## 19. Escalation Contacts and SLA Targets
 
 | Severity | Definition | Response SLA | Resolution SLA | Escalation Path |
 |----------|-----------|-------------|----------------|-----------------|
@@ -510,14 +699,39 @@ Confirm the count reflects only the new key. Post a rotation notice in `#inciden
 | P3 | TTL warnings / non-critical degradation | 4 hours | 24 hours | On-call engineer |
 
 ## Prometheus alerting rules
-The repository includes `monitoring/alerts.yml` with the recommended Prometheus alerting rules for SwiftRemit backend health.
 
-- `SwiftRemitWebhookDeliveryFailureRateHigh`: alerts when webhook delivery failures exceed 10% over 10 minutes.
-- `SwiftRemitKycPollFailureRateHigh`: alerts when KYC poll failures exceed 20% of poll cycles over 5 minutes.
-- `SwiftRemitFxCacheMissRateHigh`: alerts when FX cache misses exceed 15% of FX cache lookups over 5 minutes.
-- `SwiftRemitAccumulatedFeesThresholdExceeded`: alerts when accumulated fees exceed the configured operational threshold.
+Alerting rules live in two files, both loaded by `backend/monitoring/prometheus.yml`:
 
-**Note:** These alerts are shipped in `monitoring/alerts.yml` and should be imported into the production Prometheus alertmanager configuration.
+- `monitoring/alerts.yml` — operational alerts, grouped by what they mean:
+  funds at risk, degraded dependencies, delivery and background work, infrastructure.
+- `monitoring/slo.yml` — SLO recording rules and error-budget burn alerts.
+
+Every alert carries a `severity` (`critical` pages, `warning` opens a ticket), a
+`team` label used for Alertmanager routing, and a `runbook_url` annotation that
+points at a section of this file. `scripts/check-alert-runbooks.js` fails CI if an
+alert points at a section that does not exist, so this index cannot drift.
+
+Rule behaviour is verified with synthetic series in `monitoring/alerts_test.yml`
+(`promtool test rules`), which is run by the `monitoring` GitHub Actions workflow.
+
+| Alert | Severity | Runbook |
+|-------|----------|---------|
+| `SwiftRemitContractPaused` | critical | [2. Circuit Breaker](#2-circuit-breaker-multi-admin-vote-to-unpause) |
+| `SwiftRemitOldestPendingRemittanceStuck` | critical | [12. Remittance Stuck](#12-remittance-stuck-in-a-non-terminal-state) |
+| `SwiftRemitStateDivergence` | critical | [13. State Divergence](#13-on-chain-state-divergence) |
+| `SwiftRemitAnchorCircuitOpen` | critical | [14. Anchor Unavailable](#14-anchor-unavailable-or-circuit-open) |
+| `SwiftRemitFxRateStale` | critical | [15. FX Rates Stale](#15-fx-rates-stale-or-provider-circuit-open) |
+| `SwiftRemitDeadLetterQueueCritical` | critical | [6. Replay Failed Webhook Deliveries](#6-replay-failed-webhook-deliveries) |
+| `SwiftRemitMigrationFailed` | critical | [5. Handle a Stuck Migration](#5-handle-a-stuck-migration) |
+| `SwiftRemitDbPoolSaturated` | critical | [17. Pool Saturation](#17-database-connection-pool-saturation) |
+| `SwiftRemitAvailabilityBudgetBurnFast` | critical | [9. API Availability SLO Burn](#9-api-availability-slo-burn) |
+| `SwiftRemitLatencyBudgetBurnFast` | warning | [10. API Latency SLO Burn](#10-api-latency-slo-burn) |
+| `SwiftRemitSettlementTimeSLOBreached` | warning | [11. Settlement Time SLO](#11-remittance-settlement-time-slo-breach) |
+| `SwiftRemitBackgroundJobStalled` | warning | [16. Background Job Stalled](#16-background-job-failing-or-stalled) |
+| `SwiftRemitAccumulatedFeesThresholdExceeded` | warning | [18. Accumulated Fees](#18-accumulated-fees-above-threshold) |
+
+Dashboards are provisioned from `monitoring/dashboards/` — see
+`monitoring/provisioning/`. They are never hand-created in the Grafana UI.
 
 **Escalation contacts:**
 
