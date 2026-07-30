@@ -206,9 +206,87 @@ export function parseProposal(val: xdr.ScVal): Proposal {
   };
 }
 
+// ─── Input validation ─────────────────────────────────────────────────────────
+
+/**
+ * Validate a remittance amount before building any transaction.
+ *
+ * Rules:
+ *  - Must be a `bigint` (rejects floats and strings that would silently round).
+ *  - Must be strictly greater than zero (zero amounts are contract-rejected anyway,
+ *    but catching it here gives a cleaner error message).
+ *  - Must not be negative.
+ *
+ * @throws {SwiftRemitError} with `ErrorCode.InvalidAmount` on any violation.
+ */
+export function validateAmount(amount: bigint): void {
+  if (typeof amount !== "bigint") {
+    throw new SwiftRemitError(
+      ErrorCode.InvalidAmount,
+      `Amount must be a bigint (e.g. toStroops(100)); received ${typeof amount}. ` +
+        `Passing a floating-point number can silently produce a wrong value.`
+    );
+  }
+  if (amount <= 0n) {
+    throw new SwiftRemitError(
+      ErrorCode.InvalidAmount,
+      `Amount must be greater than zero; received ${amount}.`
+    );
+  }
+}
+
+/**
+ * Validate a Stellar/Soroban address before building any transaction.
+ *
+ * Rules:
+ *  - Must be a non-empty string.
+ *  - Must start with "G" (Stellar public-key prefix) or "C" (contract address prefix).
+ *  - Must be exactly 56 characters long (StrKey encoding of a 32-byte key).
+ *  - Must consist only of valid Base-32 characters (A-Z, 2-7).
+ *
+ * We intentionally do NOT call `Address.fromString` here because that throws an
+ * opaque XDR error; we want a clear, actionable message.
+ *
+ * @throws {SwiftRemitError} with `ErrorCode.InvalidAddress` on any violation.
+ */
+export function validateAddress(address: string): void {
+  if (typeof address !== "string" || address.length === 0) {
+    throw new SwiftRemitError(
+      ErrorCode.InvalidAddress,
+      `Address must be a non-empty string; received ${JSON.stringify(address)}.`
+    );
+  }
+  // Stellar public key = 56 characters, starts with G.
+  // Contract address  = 56 characters, starts with C.
+  if (address.length !== 56) {
+    throw new SwiftRemitError(
+      ErrorCode.InvalidAddress,
+      `Address must be exactly 56 characters long; received ${address.length} characters: "${address}".`
+    );
+  }
+  if (address[0] !== "G" && address[0] !== "C") {
+    throw new SwiftRemitError(
+      ErrorCode.InvalidAddress,
+      `Address must start with "G" (account) or "C" (contract); received "${address[0]}".`
+    );
+  }
+  // StrKey alphabet: A-Z and 2-7 (RFC 4648 Base32, uppercase, no padding)
+  if (!/^[A-Z2-7]{56}$/.test(address)) {
+    throw new SwiftRemitError(
+      ErrorCode.InvalidAddress,
+      `Address contains invalid characters. A Stellar StrKey must use only [A-Z2-7]: "${address}".`
+    );
+  }
+}
+
 // ─── Native → ScVal ──────────────────────────────────────────────────────────
 
+/**
+ * Convert a Stellar address string to an ScVal, with pre-validation.
+ * Throws a clear `SwiftRemitError(InvalidAddress)` instead of an opaque XDR error.
+ */
 export function addressToScVal(address: string): xdr.ScVal {
+  validateAddress(address);
   return nativeToScVal(Address.fromString(address), { type: "address" });
 }
 

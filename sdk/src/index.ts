@@ -57,6 +57,10 @@ export {
   optionToScVal,
   bytesNToScVal,
   stringToScVal,
+  /** Validate a bigint amount before passing to any transaction-building function. */
+  validateAmount,
+  /** Validate a Stellar address string before passing to any transaction-building function. */
+  validateAddress,
 } from "./convert.js";
 
 /** Stellar network passphrases for convenience. */
@@ -96,9 +100,34 @@ export function estimateStellarFee(operationCount = 1, baseFeeStroops = STELLAR_
   return (baseFeeStroops * operationCount) / XLM_STROOPS;
 }
 
-/** Convert a human-readable USDC amount to stroops. */
+/** Convert a human-readable USDC amount to stroops.
+ *
+ * @param usdc - A non-negative, non-fractional number (e.g. 100 for 100 USDC).
+ *   Passing a float (e.g. 1.999_999_999) will throw — use an integer or round
+ *   explicitly before calling this function.
+ * @throws {RangeError} if `usdc` is negative.
+ * @throws {RangeError} if `usdc` is not a safe integer after scaling
+ *   (i.e. would lose precision via floating-point arithmetic).
+ */
 export function toStroops(usdc: number): bigint {
-  return BigInt(Math.round(usdc * Number(USDC_MULTIPLIER)));
+  if (usdc < 0) {
+    throw new RangeError(`toStroops: usdc must be non-negative; received ${usdc}.`);
+  }
+  const scaled = usdc * Number(USDC_MULTIPLIER);
+  if (!Number.isInteger(scaled)) {
+    throw new RangeError(
+      `toStroops: "${usdc}" USDC does not map to a whole number of stroops ` +
+        `(result: ${scaled}). Use a value with at most 7 decimal places, ` +
+        `or round explicitly: Math.round(${usdc} * 1e7).`
+    );
+  }
+  if (!Number.isSafeInteger(scaled)) {
+    throw new RangeError(
+      `toStroops: "${usdc}" USDC exceeds safe integer range after scaling. ` +
+        `Use a BigInt-based computation for very large amounts.`
+    );
+  }
+  return BigInt(scaled);
 }
 
 /** Convert stroops to a human-readable USDC amount. */
