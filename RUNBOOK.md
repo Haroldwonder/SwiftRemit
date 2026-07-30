@@ -532,3 +532,41 @@ The repository includes `monitoring/alerts.yml` with the recommended Prometheus 
 - Slack: `#incidents` (P0/P1), `#engineering` (P2/P3)
 - GitHub: tag issues with `incident` label and severity (`P0`–`P3`)
 - Post-mortems: required for all P0 incidents within 48 hours of resolution
+
+---
+
+## Admin Key Rotation
+
+See [docs/KEY_MANAGEMENT_POLICY.md](docs/KEY_MANAGEMENT_POLICY.md) for the full rotation policy (SR-111).  
+Rehearsal script: `scripts/rehearse-key-rotation.sh`
+
+All mainnet admin keys must be stored on hardware wallets (Ledger/Trezor) or HSMs. Rotate at minimum quarterly and before every mainnet upgrade.
+
+**Summary of the 6-step rotation procedure:**
+
+1. **Generate** a new keypair on a hardware wallet — never on an internet-connected device.
+2. **Propose** the new admin address with `propose_admin --new_admin $NEW_ADMIN_ADDRESS` (signed by current admin).
+3. **Accept** the proposal with `accept_admin` (signed by the new admin from their hardware wallet).
+4. **Verify** the new key is active: `is_admin --address $NEW_ADMIN_ADDRESS` and `get_admin_list`.
+5. **Remove** the old key with `remove_admin --admin_to_remove $OLD_ADMIN_ADDRESS` — only after Step 4 succeeds and admin count exceeds the multisig threshold.
+6. **Confirm** the final admin count with `get_admin_count`; post the transaction hash in `#incidents`.
+
+---
+
+## Key Compromise Response
+
+See [docs/KEY_MANAGEMENT_POLICY.md](docs/KEY_MANAGEMENT_POLICY.md) Section 5 for the full playbook (SR-111).  
+Rehearsal script: `scripts/rehearse-compromise-response.sh`  
+**Target RTO: 2 hours** from detection to service restoration.
+
+Treat any suspected compromise as confirmed until proven otherwise. Use out-of-band Signal/Telegram for all coordination — do not rely on Slack during an active incident.
+
+| Time | Action |
+|------|--------|
+| T+0 | `emergency_pause` from any remaining admin |
+| T+15 min | Convene key holders on out-of-band channel |
+| T+30 min | `propose_operation` + `approve_operation` to remove compromised key (M ≥ 2) |
+| T+1 h | `propose_admin` / `accept_admin` to add replacement key |
+| T+2 h | `vote_unpause` to quorum; verify `get_admin_list` and `health()` |
+| T+4 h | Notify users and regulators per compliance requirements |
+| T+24 h | Publish post-mortem (GitHub issue: `incident`, `P0`, `post-mortem`) |

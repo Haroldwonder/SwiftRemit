@@ -1,0 +1,156 @@
+name: Audit Freeze
+
+# SR-109: Enforces the audit freeze rules during the external security audit window.
+#
+# Rules enforced:
+#   1. cargo test must pass — no regressions during the audit.
+#   2. cargo clippy must pass with no warnings.
+#   3. No new `pub fn` may be added to src/lib.rs without a matching README entry
+#      (reuses scripts/check_readme_functions.sh).
+#
+# Triggers on all pushes and PRs to audit/* branches and main, so every proposed
+# change during the audit window is gated.
+
+on:
+  push:
+    branches:
+      - main
+      - 'sr-109-**'
+      - 'audit/**'
+  pull_request:
+    branches:
+      - main
+      - 'sr-109-**'
+      - 'audit/**'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  audit-freeze:
+    name: Audit Freeze Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # ── Step 1: Build ───────────────────────────────────────────────────────
+      - name: Build contract (native)
+        run: cargo build --locked
+
+      - name: Build contract (WASM target)
+        run: cargo build --target wasm32-unknown-unknown --release --locked
+
+      # ── Step 2: Tests ───────────────────────────────────────────────────────
+      - name: Run contract tests
+        run: cargo test --locked 2>&1 | tee /tmp/test-output.txt
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: /tmp/test-output.txt
+          retention-days: 14
+
+      # ── Step 3: Clippy ──────────────────────────────────────────────────────
+      - name: Clippy (warnings as errors)
+        run: cargo clippy --locked -- -D warnings
+
+      # ── Step 4: README / ABI sync check ─────────────────────────────────────
+      - name: Check README function list is in sync
+        run: |
+          chmod +x scripts/check_readme_functions.sh
+          bash scripts/check_readme_functions.sh
+
+      # ── Step 5: Audit freeze summary ────────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## 🔒 Audit Freeze Status" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Checks" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Check | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Contract build (native) | See steps above |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Contract build (WASM) | See steps above |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Unit tests | See steps above |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Clippy (no warnings) | See steps above |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| README ↔ lib.rs function sync | See steps above |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Audit freeze active** — no new public functions may be added to" >> "$GITHUB_STEP_SUMMARY"
+          echo "> \`src/lib.rs\` without a matching entry in \`README.md\` and auditor" >> "$GITHUB_STEP_SUMMARY"
+          echo "> agreement. See \`docs/audit/\` for audit package." >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Separate job: detect new pub fn additions ─────────────────────────────
+  pub-fn-diff:
+    name: Detect New Public Functions
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for new pub fn additions vs base branch
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+
+          # Count pub fn in base
+          BASE_COUNT=$(git show "${BASE}:src/lib.rs" 2>/dev/null | grep -c '^\s*pub fn ' || echo 0)
+          # Count pub fn in HEAD
+          HEAD_COUNT=$(grep -c '^\s*pub fn ' src/lib.rs || echo 0)
+
+          echo "Base pub fn count: $BASE_COUNT"
+          echo "HEAD pub fn count: $HEAD_COUNT"
+
+          if [ "$HEAD_COUNT" -gt "$BASE_COUNT" ]; then
+            DIFF=$((HEAD_COUNT - BASE_COUNT))
+            echo ""
+            echo "⚠️  WARNING: $DIFF new public function(s) detected during audit freeze."
+            echo ""
+            echo "New pub fn entries in this PR:"
+            git diff "${BASE}" HEAD -- src/lib.rs | grep '^\+\s*pub fn ' || true
+            echo ""
+            echo "ACTION REQUIRED: Confirm with the external auditor before merging."
+            echo "Add a matching entry to README.md and update docs/audit/AUDIT_SCOPE.md."
+
+            # Write to summary
+            echo "## ⚠️ New Public Functions Detected" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "$DIFF new \`pub fn\` addition(s) detected vs base branch." >> "$GITHUB_STEP_SUMMARY"
+            echo "Confirm with auditor before merging during the audit freeze window." >> "$GITHUB_STEP_SUMMARY"
+
+            # Fail the check
+            exit 1
+          else
+            echo "✅ No new public functions added. Audit freeze intact."
+            echo "## ✅ No New Public Functions" >> "$GITHUB_STEP_SUMMARY"
+            echo "Audit freeze is intact — public API surface unchanged." >> "$GITHUB_STEP_SUMMARY"
+          fi

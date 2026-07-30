@@ -104,6 +104,9 @@ const EXEMPT_PATHS = new Set([
   // Sub-routers — validation is inside the router module itself
   'USE /api/docs',
   'USE /api/compliance',
+  // AML/CTF sub-router (SR-112) — every route inside routes/aml.ts carries a
+  // validateRequest / validateQuery / validateParams schema from schemas/aml.ts.
+  'USE /api/aml',
   // Anchor KYC webhook — receives payloads from third-party anchors over the
   // webhookLimiter; body validation is delegated to handleKycWebhook handler.
   'POST /webhooks/kyc/:anchor_id',

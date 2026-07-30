@@ -1,5 +1,4 @@
 import express, { Request, Response, NextFunction } from 'express';
-import express, { Request, Response, NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -39,6 +38,9 @@ import { remittanceEventEmitter } from './remittance/events';
 import { handleKycWebhook } from './kyc-webhook-handler';
 import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
 import { createComplianceRouter } from './routes/compliance';
+import { createAmlRouter } from './routes/aml';
+import { TransactionMonitoringService } from './aml/transaction-monitoring';
+import { TravelRuleService } from './aml/travel-rule';
 import { validateRequest, validateQuery, validateParams } from './middleware/validate';
 import {
   RemittanceCreateSchema,
@@ -143,6 +145,9 @@ app.get('/metrics', async (req: Request, res: Response) => {
 // API documentation
 app.use('/api/docs', docsRouter);
 app.use('/api/compliance', createComplianceRouter(pool));
+// AML/CTF controls (SR-112). Rate-limited as an admin surface — these endpoints
+// expose screening results and the alert queue.
+app.use('/api/aml', adminLimiter, createAmlRouter(pool));
 
 function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const userId = (req.headers['x-user-id'] as string) || '';
@@ -741,9 +746,9 @@ app.post('/api/remittance', authMiddleware, validateRequest(RemittanceCreateSche
 
     await pool.query(
       `INSERT INTO transactions
-         (transaction_id, anchor_id, kind, status, amount_in, memo, created_at, updated_at)
-       VALUES ($1, $2, 'withdrawal', 'pending_user_transfer_start', $3, $4, NOW(), NOW())`,
-      [remittanceId, agent, amount, sanitizedMemo]
+         (transaction_id, anchor_id, kind, status, amount_in, sender_address, memo, created_at, updated_at)
+       VALUES ($1, $2, 'withdrawal', 'pending_user_transfer_start', $3, $4, $5, NOW(), NOW())`,
+      [remittanceId, agent, amount, sender, sanitizedMemo]
     );
 
     // Auto-flag for compliance if amount exceeds any configured threshold
@@ -751,6 +756,59 @@ app.post('/api/remittance', authMiddleware, validateRequest(RemittanceCreateSche
       const { autoFlagIfAboveThreshold } = await import('./routes/compliance');
       await autoFlagIfAboveThreshold(pool, remittanceId, parseFloat(amount), 'USD');
     } catch { /* compliance tables may not exist in all environments */ }
+
+    // AML/CTF controls (SR-112). Both run best-effort: a monitoring or
+    // travel-rule failure must not silently drop the transfer, but it must be
+    // logged loudly because an un-monitored transfer is a compliance gap.
+    const amlCorridor =
+      typeof fromCurrency === 'string' && typeof toCurrency === 'string' && fromCurrency && toCurrency
+        ? `${fromCurrency.toUpperCase()}/${toCurrency.toUpperCase()}`
+        : null;
+    const amlAmount = parseFloat(amount);
+
+    try {
+      const monitoring = new TransactionMonitoringService(pool);
+      const evaluation = await monitoring.evaluateTransfer({
+        transactionId: remittanceId,
+        senderAddress: sender,
+        amount: amlAmount,
+        currency: (toCurrency || 'USDC').toUpperCase(),
+        corridor: amlCorridor,
+        createdAt: new Date(),
+      });
+      if (evaluation.hits.length) {
+        logger.warn('AML monitoring raised alerts for remittance', {
+          remittance_id: remittanceId,
+          rules: evaluation.hits.map((h) => h.ruleCode),
+          alert_ids: evaluation.alertIds,
+        });
+      }
+    } catch (error) {
+      logger.error('AML transaction monitoring failed', error);
+    }
+
+    try {
+      const travelRule = new TravelRuleService(pool);
+      const assessment = await travelRule.assess({
+        transactionId: remittanceId,
+        jurisdiction: process.env.HOME_JURISDICTION || 'DEFAULT',
+        amount: amlAmount,
+        currency: (toCurrency || 'USDC').toUpperCase(),
+        // Transfers are denominated in USDC, so the face value is the
+        // USD-equivalent used for the threshold comparison.
+        amountUsd: amlAmount,
+        beneficiary: { name: agent, accountIdentifier: agent },
+        originator: { name: sender, accountIdentifier: sender },
+      });
+      if (assessment.required && assessment.missing.length) {
+        logger.warn('Travel-rule data incomplete for remittance', {
+          remittance_id: remittanceId,
+          missing: assessment.missing,
+        });
+      }
+    } catch (error) {
+      logger.error('Travel-rule assessment failed', error);
+    }
 
     return res.status(201).json({
       success: true,

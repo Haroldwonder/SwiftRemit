@@ -13,6 +13,9 @@ import { AnchorHealthChecker } from './anchor-health-checker';
 import { getMetricsService } from './metrics';
 import { runTracked } from './job-tracker';
 import { AdminAuditLogService } from './audit-service';
+import { SanctionsScreeningService } from './aml/sanctions-screening';
+import { TravelRuleService } from './aml/travel-rule';
+import { RetentionService } from './aml/retention';
 import crypto from 'crypto';
 
 const verifier = new AssetVerifier();
@@ -85,7 +88,72 @@ export async function startBackgroundJobs() {
     if (!ran) console.log('retire-webhook-secrets: skipped (another instance holds the lock)');
   });
 
+  // ── AML/CTF jobs (SR-112) ──────────────────────────────────────────────
+
+  // Rescreen subjects whose periodic sanctions/PEP screening is due — hourly,
+  // so a newly published list designation is picked up the same day.
+  cron.schedule('15 * * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'aml-periodic-rescreening', async () => {
+      await runTracked(pool, 'aml-periodic-rescreening', runPeriodicRescreening);
+    });
+    if (!ran) console.log('aml-periodic-rescreening: skipped (another instance holds the lock)');
+  });
+
+  // Retry pending / failed travel-rule transmissions every 10 minutes.
+  cron.schedule('*/10 * * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'aml-travel-rule-transmit', async () => {
+      await runTracked(pool, 'aml-travel-rule-transmit', transmitTravelRulePending);
+    });
+    if (!ran) console.log('aml-travel-rule-transmit: skipped (another instance holds the lock)');
+  });
+
+  // Enforce the data-retention schedule nightly at 03:30 UTC.
+  cron.schedule('30 3 * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'aml-data-retention', async () => {
+      await runTracked(pool, 'aml-data-retention', enforceDataRetention);
+    });
+    if (!ran) console.log('aml-data-retention: skipped (another instance holds the lock)');
+  });
+
   console.log('Background jobs scheduled');
+}
+
+// ─── AML/CTF job bodies (SR-112) ────────────────────────────────────────────
+
+async function runPeriodicRescreening() {
+  const service = new SanctionsScreeningService(pool);
+  const summary = await service.runPeriodicRescreening(
+    parseInt(process.env.AML_RESCREEN_BATCH_SIZE || '200', 10),
+  );
+  console.log(
+    `aml-periodic-rescreening: screened=${summary.screened} hits=${summary.hits} errors=${summary.errors}`,
+  );
+}
+
+async function transmitTravelRulePending() {
+  const service = new TravelRuleService(pool);
+  const summary = await service.transmitPending(
+    parseInt(process.env.TRAVEL_RULE_BATCH_SIZE || '100', 10),
+  );
+  console.log(
+    `aml-travel-rule-transmit: transmitted=${summary.transmitted} failed=${summary.failed}`,
+  );
+}
+
+async function enforceDataRetention() {
+  const service = new RetentionService(pool);
+  const results = await service.enforceAll();
+  for (const result of results) {
+    if (!result.succeeded) {
+      console.error(`aml-data-retention: ${result.entity} FAILED — ${result.error}`);
+    } else if (result.skippedReason) {
+      console.log(`aml-data-retention: ${result.entity} skipped (${result.skippedReason})`);
+    } else {
+      console.log(
+        `aml-data-retention: ${result.entity} ${result.action} ${result.rowsAffected} row(s) older than ${result.cutoff.toISOString()}`,
+      );
+    }
+  }
 }
 
 async function revalidateStaleAssets() {
