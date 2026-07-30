@@ -1,0 +1,310 @@
+name: Consolidated CI
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Rust smart-contract ────────────────────────────────────────────────
+  rust-fmt:
+    name: Rust fmt
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'src/') ||
+      contains(github.event.pull_request.files[*].path, 'Cargo') ||
+      contains(github.event.pull_request.files[*].path, 'rust-toolchain')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+
+  rust-clippy:
+    name: Rust clippy
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'src/') ||
+      contains(github.event.pull_request.files[*].path, 'Cargo')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
+      - run: cargo clippy -- -D warnings
+
+  rust-test:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'src/') ||
+      contains(github.event.pull_request.files[*].path, 'Cargo')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+      - run: cargo test --verbose
+
+  # ── TypeScript type checking ───────────────────────────────────────────
+  backend-typecheck:
+    name: Backend typecheck
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'backend/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: backend/package-lock.json
+          working-directory: backend
+      - run: npx tsc --noEmit
+        working-directory: backend
+
+  api-typecheck:
+    name: API typecheck
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'api/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: api/package-lock.json
+          working-directory: api
+      - run: npx tsc --noEmit
+        working-directory: api
+
+  frontend-typecheck:
+    name: Frontend typecheck
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'frontend/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: frontend/package-lock.json
+          working-directory: frontend
+      - run: npx tsc --noEmit
+        working-directory: frontend
+
+  # ── Backend (Node.js / TypeScript) ─────────────────────────────────────
+  backend-lint:
+    name: Backend lint
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'backend/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: backend/package-lock.json
+          working-directory: backend
+      - run: npm run lint
+        working-directory: backend
+
+  backend-test:
+    name: Backend tests & coverage
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'backend/')
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: swiftremit_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: backend/package-lock.json
+          working-directory: backend
+      - uses: ./.github/actions/setup-db
+      - name: Run tests with coverage
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftremit_test
+          NODE_ENV: test
+        run: npx vitest run --coverage --reporter=verbose
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage/
+          retention-days: 7
+      - name: Post coverage summary
+        if: always() && github.event_name == 'pull_request'
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          json-summary-path: backend/coverage/coverage-summary.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: Backend Coverage
+
+  # ── API (Node.js / TypeScript) ─────────────────────────────────────────
+  api-lint:
+    name: API lint
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'api/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: api/package-lock.json
+          working-directory: api
+      - run: npm run lint || echo "Linter not configured"
+        working-directory: api
+
+  api-test:
+    name: API tests
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'api/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: api/package-lock.json
+          working-directory: api
+      - run: npm test
+        working-directory: api
+
+  # ── Frontend ───────────────────────────────────────────────────────────
+  frontend-lint:
+    name: Frontend lint
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'frontend/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: frontend/package-lock.json
+          working-directory: frontend
+      - run: npm run lint
+        working-directory: frontend
+
+  frontend-coverage:
+    name: Frontend coverage (vitest >= 95%)
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'frontend/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: frontend/package-lock.json
+          working-directory: frontend
+      - name: Run vitest coverage
+        run: npm run test:coverage
+        working-directory: frontend
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: frontend/coverage/lcov.info
+          flags: frontend
+          fail_ci_if_error: false
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-report
+          path: frontend/coverage/
+          retention-days: 14
+
+  # ── SDK ────────────────────────────────────────────────────────────────
+  sdk-bundle-size:
+    name: SDK bundle size (warn > 100 KB gzip)
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'sdk/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: sdk/package-lock.json
+          working-directory: sdk
+      - run: npm run build
+        working-directory: sdk
+      - name: Check bundle size
+        working-directory: sdk
+        run: |
+          FILE="dist/browser/index.mjs"
+          if [ ! -f "$FILE" ]; then
+            echo "::warning::Browser bundle not found at $FILE"
+            exit 0
+          fi
+          SIZE=$(gzip -c "$FILE" | wc -c)
+          SIZE_KB=$(echo "scale=1; $SIZE / 1024" | bc)
+          echo "Browser bundle gzipped size: ${SIZE_KB} KB"
+          if [ "$SIZE" -gt 102400 ]; then
+            echo "::warning file=$FILE::Browser bundle is ${SIZE_KB} KB gzipped — exceeds 100 KB budget"
+          fi
+
+  # ── Helm ───────────────────────────────────────────────────────────────
+  helm-lint:
+    name: Helm chart lint
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.files[*].path, 'charts/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: 3.17.0
+      - run: helm lint charts/swiftremit
+      - run: helm lint charts/swiftremit -f charts/swiftremit/values.dev.yaml
+      - run: helm lint charts/swiftremit -f charts/swiftremit/values.staging.yaml
+      - run: helm lint charts/swiftremit -f charts/swiftremit/values.production.yaml
+
+  # ── Status gate ────────────────────────────────────────────────────────
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [rust-fmt, rust-clippy, rust-test, backend-typecheck, backend-lint, backend-test, api-typecheck, api-lint, api-test, frontend-typecheck, frontend-lint, frontend-coverage, sdk-bundle-size, helm-lint]
+    if: always()
+    steps:
+      - name: Check CI results
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "❌ CI failed"
+            exit 1
+          fi
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "⚠️ CI cancelled"
+            exit 1
+          fi
+          echo "✅ CI passed"

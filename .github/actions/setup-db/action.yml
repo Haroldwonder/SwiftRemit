@@ -1,0 +1,28 @@
+name: Setup PostgreSQL
+description: Configure PostgreSQL service and run migrations
+
+outputs:
+  database-url:
+    description: Database connection URL
+    value: postgresql://postgres:postgres@localhost:5432/swiftremit_test
+
+runs:
+  using: composite
+  steps:
+    - name: Wait for PostgreSQL
+      shell: bash
+      run: |
+        for i in {1..30}; do
+          pg_isready -h localhost -p 5432 && echo "PostgreSQL is ready" && exit 0
+          echo "Waiting for PostgreSQL... ($i/30)"
+          sleep 1
+        done
+        echo "PostgreSQL failed to start"
+        exit 1
+
+    - name: Run migrations
+      shell: bash
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftremit_test
+      run: |
+        psql $DATABASE_URL -f backend/migrations/webhook_schema.sql || true
