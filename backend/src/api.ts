@@ -30,6 +30,7 @@ import helmet from 'helmet';
 import cors from 'cors';
 import { getPool } from './database';
 import { getFxRateCache } from './fx-rate-cache';
+import { getFailoverFxService } from './fx-provider';
 import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
 import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
@@ -56,6 +57,11 @@ const metricsService = getMetricsService(pool);
 
 fxRateCache.setMetricsObserver((from, to, stalenessSeconds) => {
   metricsService.setFxRateStalenessMetric(from, to, stalenessSeconds);
+});
+getFailoverFxService().setMetricsObserver({
+  onProviderFailure: provider => metricsService.recordFxProviderFailure(provider),
+  onFailover: () => metricsService.recordFxProviderFailover(),
+  onRateRejected: (_pair, reason) => metricsService.recordFxRateRejected(reason),
 });
 
 // ─── Security & parsing middleware ───────────────────────────────────────────
