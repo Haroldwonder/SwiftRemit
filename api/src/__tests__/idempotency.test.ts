@@ -17,6 +17,10 @@ describe('Idempotency Key Support (Issue #878)', () => {
     app.use(express.json());
     app.use(idempotencyMiddleware);
 
+    app.post('/api/echo', (_req, res) => {
+      res.json({ success: true });
+    });
+
     app.post('/api/remittances', (req, res) => {
       callCount++;
       res.json({
@@ -36,10 +40,18 @@ describe('Idempotency Key Support (Issue #878)', () => {
   });
 
   describe('Idempotency-Key header handling', () => {
-    it('should accept POST without Idempotency-Key', async () => {
+    // SR-049 changed this contract: a money-moving POST without a key is now
+    // rejected, because a retry without one risks a duplicate transfer.
+    it('should reject a money-moving POST without Idempotency-Key', async () => {
       const response = await request(app).post('/api/remittances').send({ amount: 100 });
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('IDEMPOTENCY_KEY_REQUIRED');
+      expect(callCount).toBe(0);
+    });
+
+    it('should still allow a non-money-moving POST without Idempotency-Key', async () => {
+      const response = await request(app).post('/api/echo').send({ hello: 'world' });
       expect(response.status).toBe(200);
-      expect(callCount).toBe(1);
     });
 
     it('should cache response for duplicate Idempotency-Key', async () => {
@@ -59,7 +71,10 @@ describe('Idempotency Key Support (Issue #878)', () => {
       expect(callCount).toBe(1); // Should only call handler once
     });
 
-    it('should return same response body from cache', async () => {
+    // This previously asserted the two bodies were EQUAL — i.e. it enshrined the
+    // bug SR-049 fixes. Reusing a key with amount 200 replayed the amount-100
+    // response and the second transfer silently never happened.
+    it('should reject the same key with a different body', async () => {
       const response1 = await request(app)
         .post('/api/remittances')
         .set('Idempotency-Key', idempotencyKey)
@@ -70,7 +85,10 @@ describe('Idempotency Key Support (Issue #878)', () => {
         .set('Idempotency-Key', idempotencyKey)
         .send({ amount: 200 }); // Different payload
 
-      expect(response1.body).toEqual(response2.body);
+      expect(response1.status).toBe(200);
+      expect(response2.status).toBe(409);
+      expect(response2.body.error.code).toBe('IdempotencyConflict');
+      expect(callCount).toBe(1);
     });
 
     it('should return Idempotency-Key in response header', async () => {
