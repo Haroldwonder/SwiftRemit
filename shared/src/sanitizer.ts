@@ -90,7 +90,7 @@ export function sanitizeForHtmlEmail(input: unknown): string {
     whiteList: EMAIL_WHITELIST,
     stripIgnoreTag: true,
     stripIgnoreTagBody: ['script', 'style', 'iframe', 'object', 'embed', 'form'],
-    onTagAttr(_tag, name, value) {
+    onTagAttr(_tag, _name, value) {
       // Block any attribute value that begins with a javascript: URL scheme
       // even after case-folding and whitespace insertion tricks.
       const normalised = value.replace(/[\s\0]/g, '').toLowerCase();

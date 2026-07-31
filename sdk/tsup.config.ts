@@ -12,6 +12,18 @@ export default defineConfig([
     outDir: "dist",
     treeshake: true,
   },
+  // Testing utilities: exposed to consumers as `@swiftremit/sdk/testing`
+  // (see the "./testing" entry in package.json#exports).
+  {
+    entry: { "testing/index": "src/testing/index.ts" },
+    format: ["cjs", "esm"],
+    dts: true,
+    clean: false,
+    sourcemap: true,
+    target: "node18",
+    outDir: "dist",
+    treeshake: true,
+  },
   // Browser: minified IIFE (UMD-compatible) with explicit global name
   // Global exposed as `window.SwiftRemitSDK` when loaded via <script> tag / CDN.
   {

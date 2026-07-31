@@ -10,6 +10,22 @@ export function setFxRateEventBus(emitter: EventEmitter): void {
   _fxRateEvents = emitter;
 }
 
+export interface FxRateResponse {
+  from: string;
+  to: string;
+  rate: number;
+  timestamp: Date;
+  provider: string;
+  cached: boolean;
+  /** True when the rate is served from a stale cache entry due to a provider error (e.g. 429) */
+  stale?: boolean;
+  /** Age in seconds of a stale rate served during provider fallback */
+  stale_age_seconds?: number;
+  /** Identifies which provider served this rate */
+  fx_rate_source?: string;
+  /** Age in seconds of the rate at the time it was served */
+  stalenessSeconds?: number;
+}
 
 export interface FxRateCacheOptions {
   ttlSeconds?: number;

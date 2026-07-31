@@ -18,7 +18,6 @@
 import { Router, Request, Response } from 'express';
 import { ErrorResponse } from '../types';
 import { RemittanceStore } from '../db/remittanceStore';
-import { createRemittanceSchema, validateRequest } from '../schemas/requestValidation';
 import { generateReceiptPdf } from '../services/receiptGenerator';
 import { requireAuth } from '../middleware/auth.js';
 
@@ -274,7 +273,7 @@ export function createRemittancesRouter(options: RemittancesRouterOptions = {}):
    *       503:
    *         description: Remittance store not configured
    */
-  router.get('/:id/receipt', requireAuth, async (req: Request, res: Response) => {
+  router.get('/:id/receipt', requireAuth, async (req: Request<{ id: string }>, res: Response) => {
     const { id } = req.params;
 
     if (!remittanceStore) {

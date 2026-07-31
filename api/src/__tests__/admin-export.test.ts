@@ -3,10 +3,10 @@ import { Pool } from 'pg';
 
 // Mock the streaming CSV function
 async function* mockStreamRemittancesCsv(
-  pool: Pool,
-  fromDate?: Date,
-  toDate?: Date,
-  status?: string
+  _pool: Pool,
+  _fromDate?: Date,
+  _toDate?: Date,
+  _status?: string
 ): AsyncGenerator<string> {
   yield 'id,sender,recipient,agent,amount,fee,currency,status,corridor,created_at,updated_at,memo\n';
   yield '1,sender1,recipient1,agent1,1000,25,USD,Completed,US-MX,2026-01-01T00:00:00Z,2026-01-02T00:00:00Z,\n';
@@ -15,7 +15,6 @@ async function* mockStreamRemittancesCsv(
 
 describe('Admin Remittance Export CSV', () => {
   let mockResponse: any;
-  let mockRequest: any;
 
   beforeEach(() => {
     mockResponse = {
@@ -24,11 +23,6 @@ describe('Admin Remittance Export CSV', () => {
       end: vi.fn(),
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),
-    };
-
-    mockRequest = {
-      headers: { 'x-api-key': 'valid-key' },
-      query: {},
     };
 
     process.env.ADMIN_API_KEY = 'valid-key';

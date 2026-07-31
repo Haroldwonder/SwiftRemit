@@ -88,7 +88,7 @@ describe("subscribeToRemittanceEvents", () => {
   });
 
   it("calls callback with typed events", async () => {
-    const received: Array<{ type: string; remittanceId: bigint }> = [];
+    const received: Array<{ type: string; remittanceId: bigint | undefined }> = [];
 
     mockGetEvents
       .mockResolvedValueOnce({
@@ -109,7 +109,7 @@ describe("subscribeToRemittanceEvents", () => {
   });
 
   it("filters by remittanceId", async () => {
-    const received: bigint[] = [];
+    const received: Array<bigint | undefined> = [];
 
     mockGetEvents
       .mockResolvedValueOnce({

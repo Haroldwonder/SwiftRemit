@@ -39,13 +39,13 @@ class StubRemittanceStore implements RemittanceStore {
   }
 
   async queryWithCursor(
-    cursor: string | null,
+    _cursor: string | null,
     limit: number,
     agentId?: string,
     status?: RemittanceStatus,
     fromDate?: Date,
     toDate?: Date,
-    corridor?: string,
+    _corridor?: string,
     minAmount?: number,
     maxAmount?: number,
   ): Promise<PaginatedResult<Remittance>> {

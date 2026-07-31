@@ -17,7 +17,7 @@ import { PactV3, MatchersV3 } from '@pact-foundation/pact';
 import path from 'path';
 import { describe, it, expect } from 'vitest';
 
-const { like, eachLike, string, integer, bool, boolean: boolM } = MatchersV3;
+const { like, eachLike, string, integer, boolean: boolM } = MatchersV3;
 
 const PACT_DIR = path.resolve(__dirname, '../../../../../pacts');
 
@@ -54,7 +54,7 @@ describe('SwiftRemitAPI→Backend — Pact consumer contract (SR-062)', () => {
   describe('POST /internal/audit-log', () => {
     it('writes an audit log entry and returns 201', async () => {
       await provider.addInteraction({
-        state: 'backend audit log service is ready',
+        states: [{ description: 'backend audit log service is ready' }],
         uponReceiving: 'API writes simulate-upgrade audit entry',
         withRequest: {
           method: 'POST',
@@ -93,7 +93,7 @@ describe('SwiftRemitAPI→Backend — Pact consumer contract (SR-062)', () => {
   describe('GET /internal/audit-log', () => {
     it('returns paginated audit entries filtered by action', async () => {
       await provider.addInteraction({
-        state: 'audit log has simulate_upgrade entries',
+        states: [{ description: 'audit log has simulate_upgrade entries' }],
         uponReceiving: 'API queries audit log for simulate_upgrade',
         withRequest: {
           method: 'GET',
@@ -132,7 +132,7 @@ describe('SwiftRemitAPI→Backend — Pact consumer contract (SR-062)', () => {
   describe('POST /internal/toml-cache/invalidate', () => {
     it('invalidates the stellar.toml cache for a domain', async () => {
       await provider.addInteraction({
-        state: 'TOML cache is populated',
+        states: [{ description: 'TOML cache is populated' }],
         uponReceiving: 'API requests TOML cache invalidation for moneygram.stellar.org',
         withRequest: {
           method: 'POST',
@@ -157,7 +157,7 @@ describe('SwiftRemitAPI→Backend — Pact consumer contract (SR-062)', () => {
 
     it('returns 400 for missing domain field', async () => {
       await provider.addInteraction({
-        state: 'backend validation is active',
+        states: [{ description: 'backend validation is active' }],
         uponReceiving: 'API TOML invalidation request without domain',
         withRequest: {
           method: 'POST',
@@ -183,7 +183,7 @@ describe('SwiftRemitAPI→Backend — Pact consumer contract (SR-062)', () => {
   describe('GET /internal/webhooks/:id/status', () => {
     it('returns delivery status for a webhook', async () => {
       await provider.addInteraction({
-        state: 'webhook delivery wh-001 exists',
+        states: [{ description: 'webhook delivery wh-001 exists' }],
         uponReceiving: 'API queries webhook delivery status for wh-001',
         withRequest: {
           method: 'GET',
@@ -210,7 +210,7 @@ describe('SwiftRemitAPI→Backend — Pact consumer contract (SR-062)', () => {
 
     it('returns 404 for unknown webhook', async () => {
       await provider.addInteraction({
-        state: 'webhook delivery wh-unknown does not exist',
+        states: [{ description: 'webhook delivery wh-unknown does not exist' }],
         uponReceiving: 'API queries status for non-existent webhook',
         withRequest: {
           method: 'GET',
@@ -235,7 +235,7 @@ describe('SwiftRemitAPI→Backend — Pact consumer contract (SR-062)', () => {
   describe('POST /internal/settlements/simulate', () => {
     it('returns a simulation report for valid input', async () => {
       await provider.addInteraction({
-        state: 'backend settlement simulator is ready',
+        states: [{ description: 'backend settlement simulator is ready' }],
         uponReceiving: 'API requests settlement simulation',
         withRequest: {
           method: 'POST',

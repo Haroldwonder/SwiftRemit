@@ -1,7 +1,7 @@
 import {
   Keypair,
   Contract,
-  SorobanRpc,
+  rpc as SorobanRpc,
   TransactionBuilder,
   Networks,
   Address,
@@ -12,6 +12,10 @@ const server = new SorobanRpc.Server(
   process.env.HORIZON_URL || 'https://soroban-testnet.stellar.org'
 );
 
+export interface KycOnChainResult {
+  success: boolean;
+  error?: string;
+}
 
 /**
  * Call set_kyc_approved on the Soroban contract.
@@ -75,7 +79,7 @@ export async function setKycApprovedOnChain(
 
     return { success: true };
   } catch (err) {
-    
+    const message = err instanceof Error ? err.message : String(err);
     return { success: false, error: message };
   }
 }

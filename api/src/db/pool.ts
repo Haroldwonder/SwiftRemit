@@ -7,26 +7,44 @@
  * Issue #1134: SR-064 — Add a database connection pool health gate and readiness probe
  */
 import { Pool, PoolConfig, PoolClient } from 'pg';
+import { createRequire } from 'module';
 
 // ─── Prometheus Gauge/Histogram helpers ──────────────────────────────────────
 // We write a thin metrics facade that emits prom-client-style metrics only if
 // prom-client is available; if not, metrics are no-ops (keeps the module
 // dependency-free for environments that don't use Prometheus).
+//
+// prom-client is an *optional* peer: it is deliberately not a declared
+// dependency, so the surface we need is described structurally rather than
+// with `typeof import('prom-client')` (which would fail to compile whenever the
+// package is absent).
 
-let promClient: typeof import('prom-client') | null = null;
+interface PromGauge {
+  set(value: number): void;
+}
+
+interface PromHistogram {
+  observe(value: number): void;
+}
+
+interface PromClientLike {
+  Gauge: new (config: { name: string; help: string }) => PromGauge;
+  Histogram: new (config: { name: string; help: string; buckets: number[] }) => PromHistogram;
+}
+
+let promClient: PromClientLike | null = null;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  promClient = require('prom-client');
+  promClient = createRequire(import.meta.url)('prom-client') as PromClientLike;
 } catch {
   // prom-client not installed — metrics will be no-ops
 }
 
-function makeGauge(name: string, help: string) {
+function makeGauge(name: string, help: string): PromGauge {
   if (!promClient) return { set: () => {} };
   return new promClient.Gauge({ name, help });
 }
 
-function makeHistogram(name: string, help: string, buckets: number[]) {
+function makeHistogram(name: string, help: string, buckets: number[]): PromHistogram {
   if (!promClient) return { observe: () => {} };
   return new promClient.Histogram({ name, help, buckets });
 }

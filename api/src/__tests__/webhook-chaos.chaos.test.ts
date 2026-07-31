@@ -204,7 +204,7 @@ describe('Webhook chaos tests — Toxiproxy fault injection', () => {
       .spyOn(globalThis, 'setTimeout')
       .mockImplementation((fn, delay, ...args) => {
         if (typeof delay === 'number' && delay > 0) delays.push(delay);
-        return origSetTimeout(fn as TimerHandler, 0, ...args);
+        return origSetTimeout(fn, 0, ...args);
       });
 
     await addToxic({

@@ -18,7 +18,7 @@ describe('Rate Limit Headers (Issue #1133)', () => {
     app.use('/api/', limiter);
     app.use(addRateLimitHeaders);
 
-    app.get('/api/test', (req, res) => {
+    app.get('/api/test', (_req, res) => {
       res.json({ success: true, message: 'OK' });
     });
   });
@@ -196,7 +196,7 @@ describe('Rate Limit Tiers (Issue #1133)', () => {
     // Mount only the tiered limiter (no addRateLimitHeaders fallback) so
     // we can verify the limiter itself sets the correct max.
     app.use('/api/keyed', perKeyLimiter);
-    app.get('/api/keyed/test', (req, res) => {
+    app.get('/api/keyed/test', (_req, res) => {
       res.json({ success: true });
     });
 

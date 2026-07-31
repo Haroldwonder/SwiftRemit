@@ -101,7 +101,7 @@ export function createAgentsRouter(): Router {
    * GET /api/agents/:id
    * Retrieve an agent profile by stellar_address.
    */
-  router.get('/:id', (req: Request, res: Response) => {
+  router.get('/:id', (req: Request<{ id: string }>, res: Response) => {
     const agent = agentStore.get(req.params.id);
     if (!agent) {
       return sendError(res, 404, 'Agent not found', 'AGENT_NOT_FOUND');
@@ -113,7 +113,7 @@ export function createAgentsRouter(): Router {
    * PUT /api/agents/:id/payout-address
    * Update the payout address for an agent. Requires admin API key.
    */
-  router.put('/:id/payout-address', (req: Request, res: Response) => {
+  router.put('/:id/payout-address', (req: Request<{ id: string }>, res: Response) => {
     if (!isAdminAuthorized(req)) {
       return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
     }

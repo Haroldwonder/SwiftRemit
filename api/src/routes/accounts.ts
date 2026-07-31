@@ -75,7 +75,7 @@ export function createAccountsRouter(): Router {
    *       404:
    *         description: Account not found on the network
    */
-  router.get('/:address/stellar-fees', requireAuth, async (req: Request, res: Response) => {
+  router.get('/:address/stellar-fees', requireAuth, async (req: Request<{ address: string }>, res: Response) => {
     const { address } = req.params;
     const operationsStr = (req.query.operations as string | undefined) ?? '1';
 

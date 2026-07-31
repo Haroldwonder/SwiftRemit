@@ -17,7 +17,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import express, { Application } from 'express';
 import { createAdminRouter, simulateUpgradeRateLimiter } from '../routes/admin';
-import { AdminConfirmationService } from '../admin-confirmation';
 
 // ── Test constants ──────────────────────────────────────────────────────────
 

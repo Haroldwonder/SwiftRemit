@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { timingSafeEqual } from 'crypto';
-import { AnchorProvider, AnchorListResponse, AnchorDetailResponse } from '../types/anchor';
+import { AnchorProvider, AnchorDetailResponse } from '../types/anchor';
 import { ErrorResponse } from '../types';
 import {
   AnchorStore,
@@ -41,7 +41,7 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === 'string');
 }
 
-function isAnchorProvider(value: unknown): value is AnchorProvider {
+function isAnchorProvider(value: unknown): value is AnchorProvider & Record<string, unknown> {
   if (!isRecord(value)) {
     return false;
   }
@@ -62,7 +62,9 @@ function isAnchorProvider(value: unknown): value is AnchorProvider {
   );
 }
 
-function isAnchorUpdatePayload(value: unknown): value is Partial<AnchorProvider> {
+function isAnchorUpdatePayload(
+  value: unknown,
+): value is Partial<AnchorProvider> & Record<string, unknown> {
   if (!isRecord(value)) {
     return false;
   }
@@ -190,7 +192,7 @@ router.post('/admin', adminAuth, async (req: Request, res: Response) => {
       return sendError(res, 400, 'Invalid anchor payload', 'INVALID_ANCHOR_PAYLOAD');
     }
 
-    const sanitizedBody = sanitizeObject(req.body as Record<string, unknown>) as AnchorProvider;
+    const sanitizedBody: AnchorProvider = sanitizeObject(req.body);
     const store = getStore();
 
     // ── Stellar TOML validation (SR-060) ───────────────────────────────────
@@ -245,13 +247,13 @@ router.post('/admin', adminAuth, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/admin/:id', adminAuth, async (req: Request, res: Response) => {
+router.put('/admin/:id', adminAuth, async (req: Request<{ id: string }>, res: Response) => {
   try {
     if (!isAnchorUpdatePayload(req.body)) {
       return sendError(res, 400, 'Invalid anchor update payload', 'INVALID_ANCHOR_PAYLOAD');
     }
 
-    const sanitizedUpdate = sanitizeObject(req.body as Record<string, unknown>) as Partial<AnchorProvider>;
+    const sanitizedUpdate: Partial<AnchorProvider> = sanitizeObject(req.body);
     const anchor = await getStore().update(req.params.id, sanitizedUpdate);
     if (!anchor) {
       return sendError(
@@ -279,7 +281,7 @@ router.put('/admin/:id', adminAuth, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/admin/:id/deactivate', adminAuth, async (req: Request, res: Response) => {
+router.post('/admin/:id/deactivate', adminAuth, async (req: Request<{ id: string }>, res: Response) => {
   try {
     const anchor = await getStore().deactivate(req.params.id);
     if (!anchor) {
@@ -308,7 +310,7 @@ router.post('/admin/:id/deactivate', adminAuth, async (req: Request, res: Respon
   }
 });
 
-router.delete('/admin/:id', adminAuth, async (req: Request, res: Response) => {
+router.delete('/admin/:id', adminAuth, async (req: Request<{ id: string }>, res: Response) => {
   try {
     const deleted = await getStore().delete(req.params.id);
     if (!deleted) {
@@ -339,7 +341,7 @@ router.delete('/admin/:id', adminAuth, async (req: Request, res: Response) => {
  * GET /api/anchors/:id
  * Returns details for a specific anchor provider
  */
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', async (req: Request<{ id: string }>, res: Response) => {
   try {
     const { id } = req.params;
     const anchor = await getStore().getById(id);

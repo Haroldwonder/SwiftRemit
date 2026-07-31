@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { currencyCodeSchema, countryCodeSchema, validateRequest } from '../schemas/requestValidation';
+import { currencyCodeSchema, countryCodeSchema } from '../schemas/requestValidation';
 
 const router = Router();
 
@@ -79,7 +79,7 @@ export default router;
  * GET /api/limits/:currency/:country
  * Returns the corridor-specific daily limit for a currency/country pair.
  */
-router.get('/:currency/:country', (req: Request, res: Response) => {
+router.get('/:currency/:country', (req: Request<{ currency: string; country: string }>, res: Response) => {
   const currency = req.params.currency.toUpperCase();
   const country = req.params.country.toUpperCase();
 

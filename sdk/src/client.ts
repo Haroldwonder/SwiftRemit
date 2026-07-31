@@ -67,6 +67,25 @@ import {
   parseProposal,
   validateAmount,
   validateAddress,
+  u32ToScVal,
+  boolToScVal,
+  roleToScVal,
+  verificationStatusToScVal,
+  pauseReasonToScVal,
+  feeStrategyToScVal,
+  parseFeeStrategy,
+  feeCorridorToScVal,
+  parseFeeCorridor,
+  parseEscrow,
+  parseAssetVerification,
+  parsePauseRecord,
+  parseRateLimitConfig,
+  parseRateLimitStatus,
+  parseTransactionRecord,
+  parseMigrationSnapshot,
+  batchSettlementEntryToScVal,
+  adminOperationTypeToScVal,
+  parsePendingOperation,
 } from "./convert.js";
 
 /** Maximum number of entries allowed in a single batch remittance call. */
@@ -2018,8 +2037,26 @@ export class SwiftRemitClient {
 
             const typeSymbol = xdr.ScVal.fromXDR(e.topic[0].toXDR());
             const type = scValToNative(typeSymbol) as RemittanceEventType;
-            const idVal = xdr.ScVal.fromXDR(e.topic[1].toXDR());
-            const remittanceId = BigInt(scValToNative(idVal));
+
+            // Not every contract event carries a remittance id in topic[1]
+            // (e.g. admin_added, token_whitelisted, proposal_created), so this
+            // is parsed defensively and left undefined when absent.
+            let remittanceId: bigint | undefined;
+            const idTopic = e.topic[1];
+            if (idTopic) {
+              try {
+                const native = scValToNative(xdr.ScVal.fromXDR(idTopic.toXDR()));
+                if (
+                  typeof native === "bigint" ||
+                  typeof native === "number" ||
+                  typeof native === "string"
+                ) {
+                  remittanceId = BigInt(native);
+                }
+              } catch {
+                remittanceId = undefined;
+              }
+            }
 
             if (
               options.remittanceId !== undefined &&

@@ -34,11 +34,11 @@ router.get('/', swaggerUi.setup(openApiSpec, {
 }));
 
 // Serve raw OpenAPI spec
-router.get('/openapi.json', (req: Request, res: Response) => {
+router.get('/openapi.json', (_req: Request, res: Response) => {
   res.json(openApiSpec);
 });
 
-router.get('/openapi.yaml', (req: Request, res: Response) => {
+router.get('/openapi.yaml', (_req: Request, res: Response) => {
   res.type('text/yaml');
   res.send(yaml.dump(openApiSpec));
 });

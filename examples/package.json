@@ -4,7 +4,7 @@
   "description": "Client examples for interacting with SwiftRemit smart contract",
   "main": "client-example.js",
   "scripts": {
-    "test": "node client-example.js",
+    "test": "node --test",
     "example": "node client-example.js"
   },
   "keywords": [

@@ -32,7 +32,7 @@ export function createRateLimitMiddleware(options?: Partial<Options>) {
     standardHeaders: 'draft-7', // RFC 6585: RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset
     legacyHeaders: false,   // Disable X-RateLimit-* headers
     // Add Retry-After header on 429 responses (RFC 6585 + all RateLimit-* headers)
-    handler: (req: Request, res: Response) => {
+    handler: (_req: Request, res: Response) => {
       const resetTime = new Date(Date.now() + windowMs);
       const retryAfterSeconds = Math.ceil(windowMs / 1000);
 
@@ -89,7 +89,7 @@ export function getRateLimitTiers(): Record<string, RateLimitTier> {
  * Express-rate-limit already adds these headers, but this middleware ensures
  * they're always present even if the rate limiter doesn't fire.
  */
-export function addRateLimitHeaders(req: Request, res: Response, next: NextFunction) {
+export function addRateLimitHeaders(_req: Request, res: Response, next: NextFunction) {
   // If headers are already set by express-rate-limit, don't override
   if (!res.getHeader('RateLimit-Limit')) {
     const tiers = getRateLimitTiers();

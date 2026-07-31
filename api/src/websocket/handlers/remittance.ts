@@ -68,7 +68,7 @@ function userCanAccessRemittance(socket: Socket, remittanceId: string): boolean 
  *
  * Called once per connection from the main WebSocket setup.
  */
-export function registerRemittanceHandlers(io: Server, socket: Socket): void {
+export function registerRemittanceHandlers(_io: Server, socket: Socket): void {
   // ── remittance:join ────────────────────────────────────────────────────────
   socket.on('remittance:join', (payload: JoinRoomPayload, ack?: AckCallback) => {
     const remittanceId =

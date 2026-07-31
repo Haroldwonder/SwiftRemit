@@ -2,8 +2,6 @@
  * Analytics query guards: bounded time range and response caching.
  * SR-055
  */
-import { Request, Response, NextFunction } from 'express';
-
 export const MAX_RANGE_DAYS = 90;
 export const VALID_GRANULARITIES = ['hour', 'day', 'week', 'month'] as const;
 export const CACHE_TTL_MS = 60_000; // 1 minute

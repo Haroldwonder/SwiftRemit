@@ -59,7 +59,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
   describe('GET /health', () => {
     it('returns service health status', async () => {
       await provider.addInteraction({
-        state: 'service is running',
+        states: [{ description: 'service is running' }],
         uponReceiving: 'SDK health probe',
         withRequest: { method: 'GET', path: '/health' },
         willRespondWith: {
@@ -84,7 +84,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
   describe('GET /api/currencies', () => {
     it('returns a list of supported currencies', async () => {
       await provider.addInteraction({
-        state: 'currencies exist',
+        states: [{ description: 'currencies exist' }],
         uponReceiving: 'SDK request for all currencies',
         withRequest: { method: 'GET', path: '/api/currencies' },
         willRespondWith: {
@@ -114,7 +114,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
   describe('GET /api/currencies/:code', () => {
     it('returns a single currency', async () => {
       await provider.addInteraction({
-        state: 'USD currency exists',
+        states: [{ description: 'USD currency exists' }],
         uponReceiving: 'SDK request for USD currency',
         withRequest: { method: 'GET', path: '/api/currencies/USD' },
         willRespondWith: {
@@ -135,7 +135,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
 
     it('returns 404 for an unknown code', async () => {
       await provider.addInteraction({
-        state: 'XYZ currency does not exist',
+        states: [{ description: 'XYZ currency does not exist' }],
         uponReceiving: 'SDK request for unknown currency XYZ',
         withRequest: { method: 'GET', path: '/api/currencies/XYZ' },
         willRespondWith: {
@@ -156,7 +156,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
   describe('GET /api/anchors', () => {
     it('returns available anchors', async () => {
       await provider.addInteraction({
-        state: 'anchors exist',
+        states: [{ description: 'anchors exist' }],
         uponReceiving: 'SDK request for anchor list',
         withRequest: { method: 'GET', path: '/api/anchors' },
         willRespondWith: {
@@ -183,7 +183,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
 
     it('filters anchors by currency', async () => {
       await provider.addInteraction({
-        state: 'anchors exist',
+        states: [{ description: 'anchors exist' }],
         uponReceiving: 'SDK request for USD anchors',
         withRequest: { method: 'GET', path: '/api/anchors', query: { currency: 'USD' } },
         willRespondWith: {
@@ -209,7 +209,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
   describe('GET /api/anchors/:id', () => {
     it('returns a single anchor by id', async () => {
       await provider.addInteraction({
-        state: 'anchor anchor-1 exists',
+        states: [{ description: 'anchor anchor-1 exists' }],
         uponReceiving: 'SDK request for anchor anchor-1',
         withRequest: { method: 'GET', path: '/api/anchors/anchor-1' },
         willRespondWith: {
@@ -237,7 +237,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
 
     it('returns 404 for unknown anchor', async () => {
       await provider.addInteraction({
-        state: 'anchor unknown-anchor does not exist',
+        states: [{ description: 'anchor unknown-anchor does not exist' }],
         uponReceiving: 'SDK request for non-existent anchor',
         withRequest: { method: 'GET', path: '/api/anchors/unknown-anchor' },
         willRespondWith: {
@@ -257,7 +257,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
   describe('GET /api/remittances', () => {
     it('returns paginated remittances for authenticated SDK caller', async () => {
       await provider.addInteraction({
-        state: 'user has remittances',
+        states: [{ description: 'user has remittances' }],
         uponReceiving: 'SDK authenticated request for remittances',
         withRequest: {
           method: 'GET',
@@ -295,7 +295,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
 
     it('returns 401 when no token provided', async () => {
       await provider.addInteraction({
-        state: 'no auth token provided',
+        states: [{ description: 'no auth token provided' }],
         uponReceiving: 'SDK unauthenticated remittances request',
         withRequest: { method: 'GET', path: '/api/remittances' },
         willRespondWith: {
@@ -315,7 +315,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
   describe('GET /api/limits', () => {
     it('returns corridor daily limits', async () => {
       await provider.addInteraction({
-        state: 'limits are configured',
+        states: [{ description: 'limits are configured' }],
         uponReceiving: 'SDK request for daily limits',
         withRequest: { method: 'GET', path: '/api/limits' },
         willRespondWith: {
@@ -343,7 +343,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
   describe('POST /api/auth/login', () => {
     it('returns access token for valid credentials', async () => {
       await provider.addInteraction({
-        state: 'admin user exists',
+        states: [{ description: 'admin user exists' }],
         uponReceiving: 'SDK login request',
         withRequest: {
           method: 'POST',
@@ -380,7 +380,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
   describe('POST /api/auth/refresh', () => {
     it('issues a new access token using a refresh cookie', async () => {
       await provider.addInteraction({
-        state: 'valid refresh token exists',
+        states: [{ description: 'valid refresh token exists' }],
         uponReceiving: 'SDK token refresh request',
         withRequest: {
           method: 'POST',
@@ -411,7 +411,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
     it('returns agent profile for a valid stellar address', async () => {
       const agentAddr = 'GAGENT1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
       await provider.addInteraction({
-        state: 'agent exists',
+        states: [{ description: 'agent exists' }],
         uponReceiving: 'SDK request for agent profile',
         withRequest: { method: 'GET', path: `/api/agents/${agentAddr}` },
         willRespondWith: {
@@ -440,7 +440,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
   describe('GET /api/settlements', () => {
     it('returns settlement simulation result', async () => {
       await provider.addInteraction({
-        state: 'settlements data exists',
+        states: [{ description: 'settlements data exists' }],
         uponReceiving: 'SDK settlement simulation request',
         withRequest: { method: 'GET', path: '/api/settlements' },
         willRespondWith: {
@@ -461,7 +461,7 @@ describe('SwiftRemitSDK — Pact consumer contract (SR-062)', () => {
     it('returns XLM balance and fee estimate', async () => {
       const addr = 'GACCOUNT1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
       await provider.addInteraction({
-        state: 'Stellar account exists',
+        states: [{ description: 'Stellar account exists' }],
         uponReceiving: 'SDK request for account balance',
         withRequest: { method: 'GET', path: `/api/accounts/${addr}` },
         willRespondWith: {

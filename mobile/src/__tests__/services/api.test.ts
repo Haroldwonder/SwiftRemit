@@ -5,27 +5,38 @@
  * interceptor, so we mock axios.create to return our controlled mock object.
  */
 import * as SecureStore from 'expo-secure-store';
+import axios from 'axios';
 
 // ── Axios mock ─────────────────────────────────────────────────────────────
-const mockGet = jest.fn();
-const mockPost = jest.fn();
-const requestInterceptorUse = jest.fn();
+// The mock instance has to be built *inside* the factory: ES import statements
+// are hoisted above every `const` in this file, so `src/services/api.ts` (and
+// with it `axios.create()`) runs before any module-scope variable here has been
+// initialised. The instance is read back off the mocked module afterwards.
+jest.mock('axios', () => {
+  const instance = {
+    get: jest.fn(),
+    post: jest.fn(),
+    put: jest.fn(),
+    delete: jest.fn(),
+    interceptors: {
+      request: { use: jest.fn() },
+      response: { use: jest.fn() },
+    },
+  };
+  return {
+    __esModule: true,
+    default: {
+      create: jest.fn(() => instance),
+      post: jest.fn(),
+      isAxiosError: jest.fn(() => false),
+      __instance: instance,
+    },
+  };
+});
 
-const mockHttp = {
-  get: mockGet,
-  post: mockPost,
-  interceptors: {
-    request: { use: requestInterceptorUse },
-    response: { use: jest.fn() },
-  },
-};
-
-jest.mock('axios', () => ({
-  __esModule: true,
-  default: {
-    create: jest.fn(() => mockHttp),
-  },
-}));
+const mockHttp = (axios as unknown as { __instance: Record<string, jest.Mock> }).__instance;
+const mockGet = mockHttp.get;
+const mockPost = mockHttp.post;
 
 // ── SecureStore is mocked globally in setup.ts ─────────────────────────────
 const mockGetItemAsync = SecureStore.getItemAsync as jest.Mock;
@@ -56,16 +67,35 @@ describe('api.ts — authService', () => {
     expect(mockDeleteItemAsync).toHaveBeenCalledWith('wallet_address');
   });
 
+  // getStoredWallet reads two keys since SR-093: `last_active` (to enforce the
+  // inactivity window) and then `wallet_address`, so these stub by key rather
+  // than by call order.
+  const stubSecureStore = (values: Record<string, string | null>) =>
+    mockGetItemAsync.mockImplementation((key: string) =>
+      Promise.resolve(values[key] ?? null),
+    );
+
   it('returns the stored wallet address', async () => {
-    mockGetItemAsync.mockResolvedValueOnce('GABCD');
+    stubSecureStore({ wallet_address: 'GABCD' });
     const wallet = await authService.getStoredWallet();
     expect(wallet).toBe('GABCD');
   });
 
   it('returns null when no wallet address is stored', async () => {
-    mockGetItemAsync.mockResolvedValueOnce(null);
+    stubSecureStore({});
     const wallet = await authService.getStoredWallet();
     expect(wallet).toBeNull();
+  });
+
+  it('clears the session and returns null once the inactivity window lapses', async () => {
+    stubSecureStore({
+      wallet_address: 'GABCD',
+      last_active: String(Date.now() - 16 * 60 * 1000),
+    });
+    const wallet = await authService.getStoredWallet();
+    expect(wallet).toBeNull();
+    expect(mockDeleteItemAsync).toHaveBeenCalledWith('auth_token');
+    expect(mockDeleteItemAsync).toHaveBeenCalledWith('wallet_address');
   });
 });
 

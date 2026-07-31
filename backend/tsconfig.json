@@ -4,13 +4,21 @@
     "module": "commonjs",
     "lib": ["ES2022"],
     "outDir": "./dist",
-    "rootDir": "./src",
+    // Sources reach into ../shared/src (thin re-export shims live in src/) and
+    // ../api/src, so the compilation root has to be the repo root rather than
+    // ./src.  Emitted layout is therefore dist/backend/src/** — see "main".
+    "rootDir": "..",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node"
+    "moduleResolution": "node",
+    // Restrict ambient @types to what the backend actually uses.  Without this
+    // every @types package hoisted to the monorepo root is loaded, and
+    // @types/jsdom drags in lib.dom — which shadows Node's setTimeout/
+    // setInterval with the browser overloads that return `number`.
+    "types": ["node", "vitest/globals"]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "src/openapi-generator.ts", "src/schemas/openapi.ts"]

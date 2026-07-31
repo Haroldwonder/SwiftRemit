@@ -153,12 +153,16 @@ async function generateOrGetSigningKey(): Promise<string> {
 }
 
 async function invalidateAllSigningKeys(): Promise<void> {
-  // In production, call native code to delete all HSM-backed signing keys
-  // For now, we clear any stored references
-  const allKeys = await SecureStore.getItemAsync(KEYSTORE_PREFIX);
-  if (allKeys) {
-    await SecureStore.deleteItemAsync(KEYSTORE_PREFIX);
-  }
+  // In production, call native code to delete all HSM-backed signing keys.
+  // For now, we clear any stored references.
+  //
+  // The delete is unconditional on purpose: gating it behind a
+  // `getItemAsync(KEYSTORE_PREFIX)` read meant invalidation silently did
+  // nothing, because nothing is ever written at the bare prefix key — the
+  // stored handles are `${KEYSTORE_PREFIX}${timestamp}`. Deleting a key that
+  // does not exist is a no-op in expo-secure-store, so the guard bought
+  // nothing and cost us the security guarantee.
+  await SecureStore.deleteItemAsync(KEYSTORE_PREFIX);
 }
 
 // ── Main authentication flow ────────────────────────────────────────────────

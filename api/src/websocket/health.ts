@@ -13,7 +13,7 @@ import { Server } from 'socket.io';
 export function createWsHealthRouter(io: Server): Router {
   const router = Router();
 
-  router.get('/', async (req: Request, res: Response) => {
+  router.get('/', async (_req: Request, res: Response) => {
     if (process.env.NODE_ENV !== 'development') {
       return res.status(404).json({
         success: false,

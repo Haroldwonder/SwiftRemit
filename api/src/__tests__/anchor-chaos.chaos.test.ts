@@ -21,7 +21,7 @@
  *   ANCHOR_TOML_VALIDATION_DISABLED — Set to 'true' in unit-test runs
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import axios, { AxiosError } from 'axios';
 import { newDb } from 'pg-mem';
 import { PostgresRemittanceStore } from '../db/remittanceStore';
@@ -49,9 +49,10 @@ async function createAnchorProxy() {
 }
 
 async function clearToxics() {
+  type ToxiproxyProxyMap = Record<string, { toxics: Array<{ name: string }> }>;
   const resp = await axios
-    .get<Record<string, { toxics: Array<{ name: string }> }>>(`${TOXIPROXY_URL}/proxies`)
-    .catch(() => ({ data: {} }));
+    .get<ToxiproxyProxyMap>(`${TOXIPROXY_URL}/proxies`)
+    .catch(() => ({ data: {} as ToxiproxyProxyMap }));
   const proxy = resp.data[PROXY_NAME];
   if (!proxy) return;
   for (const t of proxy.toxics ?? []) {
@@ -186,7 +187,7 @@ describe('Anchor chaos — timeouts and malformed responses (SR-061)', () => {
   // ── ECONNREFUSED ──────────────────────────────────────────────────────────
 
   it('fail-closed: anchor ECONNREFUSED leaves remittance in Pending', async () => {
-    const r = await store.create({
+    await store.create({
       id:        'anchor-chaos-econnrefused',
       sender_id: 'GSENDER021',
       agent_id:  'GAGENT021',
@@ -220,7 +221,7 @@ describe('Anchor chaos — timeouts and malformed responses (SR-061)', () => {
   // ── Anchor timeout ────────────────────────────────────────────────────────
 
   it('fail-closed: anchor timeout leaves remittance in Pending', async () => {
-    const r = await store.create({
+    await store.create({
       id:        'anchor-chaos-timeout',
       sender_id: 'GSENDER022',
       agent_id:  'GAGENT022',
@@ -256,7 +257,7 @@ describe('Anchor chaos — timeouts and malformed responses (SR-061)', () => {
   // ── HTTP 500 ──────────────────────────────────────────────────────────────
 
   it('fail-closed: anchor HTTP 500 leaves remittance in Pending', async () => {
-    const r = await store.create({
+    await store.create({
       id:        'anchor-chaos-500',
       sender_id: 'GSENDER023',
       agent_id:  'GAGENT023',
@@ -282,7 +283,7 @@ describe('Anchor chaos — timeouts and malformed responses (SR-061)', () => {
   // ── Malformed JSON ────────────────────────────────────────────────────────
 
   it('fail-closed: malformed anchor response leaves remittance in Pending', async () => {
-    const r = await store.create({
+    await store.create({
       id:        'anchor-chaos-malformed',
       sender_id: 'GSENDER024',
       agent_id:  'GAGENT024',
@@ -310,7 +311,7 @@ describe('Anchor chaos — timeouts and malformed responses (SR-061)', () => {
   // ── Partial / truncated response ──────────────────────────────────────────
 
   it('fail-closed: truncated anchor response leaves remittance in Pending', async () => {
-    const r = await store.create({
+    await store.create({
       id:        'anchor-chaos-partial',
       sender_id: 'GSENDER025',
       agent_id:  'GAGENT025',
@@ -364,7 +365,7 @@ describe('Anchor chaos — timeouts and malformed responses (SR-061)', () => {
   // ── Recovery ──────────────────────────────────────────────────────────────
 
   it('recovery: anchor quote succeeds after fault is removed', async () => {
-    const r = await store.create({
+    await store.create({
       id:        'anchor-chaos-recovery',
       sender_id: 'GSENDER026',
       agent_id:  'GAGENT026',

@@ -63,7 +63,9 @@ export function buildCursorWhereClause(cursor?: string | null): { where: string;
  */
 export function getNextCursor<T extends { id: number | string }>(
   items: T[],
-  limit: number,
+  // The over-fetched page size (requestedLimit + 1). Kept for call-site symmetry
+  // with the query builder; the cursor decision only needs `requestedLimit`.
+  _limit: number,
   requestedLimit: number,
 ): string | null {
   if (items.length <= requestedLimit) {

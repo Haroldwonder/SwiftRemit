@@ -2,7 +2,7 @@ import { FC, useState, useEffect } from 'react'
 import { getAddress, signTransaction } from '@stellar/freighter-api'
 import {
   Contract,
-  SorobanRpc,
+  rpc as SorobanRpc,
   TransactionBuilder,
   Networks,
   nativeToScVal,

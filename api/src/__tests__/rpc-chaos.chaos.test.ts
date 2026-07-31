@@ -25,7 +25,7 @@
  *   RPC_TARGET_URL    — Real RPC mock server (default: http://localhost:3002)
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import axios, { AxiosError } from 'axios';
 import { newDb } from 'pg-mem';
 import { PostgresRemittanceStore } from '../db/remittanceStore';
@@ -36,7 +36,6 @@ const TOXIPROXY_URL = process.env.TOXIPROXY_URL ?? 'http://localhost:8474';
 const RPC_PROXY_PORT = process.env.RPC_PROXY_PORT ?? '9091';
 const RPC_TARGET_URL = process.env.RPC_TARGET_URL ?? 'http://localhost:3002';
 const USE_TOXIPROXY = !!process.env.TOXIPROXY_URL;
-const SKIP_CHAOS = !process.env.TOXIPROXY_URL && !process.env.CI;
 
 const PROXY_NAME = 'rpc-target';
 const PROXIED_RPC = `http://localhost:${RPC_PROXY_PORT}/rpc`;
@@ -141,15 +140,6 @@ async function buildStore() {
   return store;
 }
 
-function skipMsg() {
-  if (SKIP_CHAOS) {
-    console.log(
-      '[rpc-chaos] Skipping Toxiproxy tests — TOXIPROXY_URL not set and not in CI.',
-    );
-  }
-  return SKIP_CHAOS;
-}
-
 // ── Suites ───────────────────────────────────────────────────────────────────
 
 describe('RPC chaos — Soroban RPC unavailability (SR-061)', () => {
@@ -194,7 +184,7 @@ describe('RPC chaos — Soroban RPC unavailability (SR-061)', () => {
   // ── ECONNREFUSED ──────────────────────────────────────────────────────────
 
   it('fail-closed: RPC ECONNREFUSED leaves remittance in Pending — no money movement', async () => {
-    const remittance = await store.create({
+    await store.create({
       id: 'rpc-chaos-econnrefused',
       sender_id: 'GSENDER002',
       agent_id: 'GAGENT002',
@@ -230,7 +220,7 @@ describe('RPC chaos — Soroban RPC unavailability (SR-061)', () => {
   // ── 503 Service Unavailable ───────────────────────────────────────────────
 
   it('fail-closed: RPC 503 leaves remittance in Pending', async () => {
-    const remittance = await store.create({
+    await store.create({
       id: 'rpc-chaos-503',
       sender_id: 'GSENDER003',
       agent_id: 'GAGENT003',
@@ -267,7 +257,7 @@ describe('RPC chaos — Soroban RPC unavailability (SR-061)', () => {
   // ── Timeout ───────────────────────────────────────────────────────────────
 
   it('fail-closed: RPC timeout leaves remittance in Pending', async () => {
-    const remittance = await store.create({
+    await store.create({
       id: 'rpc-chaos-timeout',
       sender_id: 'GSENDER004',
       agent_id: 'GAGENT004',
@@ -304,7 +294,7 @@ describe('RPC chaos — Soroban RPC unavailability (SR-061)', () => {
   // ── Malformed JSON ────────────────────────────────────────────────────────
 
   it('fail-closed: malformed RPC response leaves remittance in Pending', async () => {
-    const remittance = await store.create({
+    await store.create({
       id: 'rpc-chaos-malformed',
       sender_id: 'GSENDER005',
       agent_id: 'GAGENT005',
@@ -334,7 +324,7 @@ describe('RPC chaos — Soroban RPC unavailability (SR-061)', () => {
   // ── Recovery ──────────────────────────────────────────────────────────────
 
   it('recovery: remittance completes successfully after RPC fault is removed', async () => {
-    const remittance = await store.create({
+    await store.create({
       id: 'rpc-chaos-recovery',
       sender_id: 'GSENDER006',
       agent_id: 'GAGENT006',

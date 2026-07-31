@@ -21,7 +21,7 @@
  */
 
 import {
-  describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi,
+  describe, it, expect, beforeAll, afterAll, beforeEach, vi,
 } from 'vitest';
 import { createServer, Server as HttpServer } from 'http';
 import { Server as SocketIOServer, Socket as ServerSocket } from 'socket.io';
@@ -49,9 +49,10 @@ async function createWsProxy(targetPort: number) {
 }
 
 async function clearToxics() {
+  type ToxiproxyProxyMap = Record<string, { toxics: Array<{ name: string }> }>;
   const resp = await axios
-    .get<Record<string, { toxics: Array<{ name: string }> }>>(`${TOXIPROXY_URL}/proxies`)
-    .catch(() => ({ data: {} }));
+    .get<ToxiproxyProxyMap>(`${TOXIPROXY_URL}/proxies`)
+    .catch(() => ({ data: {} as ToxiproxyProxyMap }));
   const proxy = resp.data[PROXY_NAME];
   if (!proxy) return;
   for (const t of proxy.toxics ?? []) {

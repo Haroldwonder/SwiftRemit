@@ -14,7 +14,7 @@ describe('Corridor Analytics (Issue #876)', () => {
 
     // Mock pool with basic implementation
     const mockPool = {
-      query: async (sql: string, params?: unknown[]) => {
+      query: async (sql: string, _params?: unknown[]) => {
         // Time-series mock data
         if (sql.includes('DATE_TRUNC')) {
           return {

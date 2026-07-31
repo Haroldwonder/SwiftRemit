@@ -1,11 +1,7 @@
-import { Pool, QueryResult } from 'pg';
+import { Pool } from 'pg';
 import { AnchorProvider } from '../types/anchor';
 
 type AnchorStatus = AnchorProvider['status'];
-
-type Queryable = {
-  query(text: string, params?: any[]): Promise<QueryResult<any>>;
-};
 
 type AnchorRow = {
   id: string;

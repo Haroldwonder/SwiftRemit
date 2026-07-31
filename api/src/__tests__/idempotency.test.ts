@@ -21,7 +21,7 @@ describe('Idempotency Key Support (Issue #878)', () => {
       res.json({ success: true });
     });
 
-    app.post('/api/remittances', (req, res) => {
+    app.post('/api/remittances', (_req, res) => {
       callCount++;
       res.json({
         success: true,

@@ -5,7 +5,10 @@
     "moduleResolution": "bundler",
     "lib": ["ES2022"],
     "outDir": "./dist",
-    "rootDir": "./src",
+    // Sources reach into ../shared/src (thin re-export shims live in src/), so
+    // the compilation root has to be the repo root rather than ./src.
+    // Emitted layout is therefore dist/api/src/**.
+    "rootDir": "..",
     "strict": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,

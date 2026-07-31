@@ -22,6 +22,20 @@ import { LocaleTemplates, SupportedLocale, TemplateKey, TemplateParams } from '.
 
 export { SupportedLocale, TemplateKey, TemplateParams };
 
+// SEP-24 lifecycle e-mail templates live alongside the i18n push templates.
+// Two separate PRs each introduced a "notification-templates" module — one as a
+// file, one as this directory — so both APIs are surfaced from here.
+export {
+  renderNotification,
+  supportedLocales,
+} from './sep24';
+export type {
+  NotificationEventType,
+  NotificationTemplate,
+  NotificationPayload,
+  RenderedNotification,
+} from './sep24';
+
 const TEMPLATES: Record<SupportedLocale, LocaleTemplates> = { en, es, fr, pt };
 
 export const SUPPORTED_LOCALES: SupportedLocale[] = ['en', 'es', 'fr', 'pt'];

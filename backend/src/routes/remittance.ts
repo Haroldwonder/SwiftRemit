@@ -43,7 +43,7 @@ export function createRemittanceRouter(pool: Pool): Router {
   });
 
   // POST /api/remittance
-  router.post('/', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/remittance', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { sender, agent, amount, fee, expiry, memo } = req.body;
       const fromCurrency = typeof req.body.fromCurrency === 'string' ? req.body.fromCurrency : req.body.from_currency;
@@ -112,7 +112,7 @@ export function createRemittanceRouter(pool: Pool): Router {
   });
 
   // GET /api/remittance/:remittanceId
-  router.get('/:remittanceId', async (req: Request, res: Response) => {
+  router.get('/remittance/:remittanceId', async (req: Request, res: Response) => {
     try {
       const { remittanceId } = req.params;
       const result = await pool.query(
@@ -137,8 +137,8 @@ export function createRemittanceRouter(pool: Pool): Router {
     }
   });
 
-  // POST /api/simulate-settlement — kept in remittance router; mounted at /api/simulate-settlement
-  router.post('/', async (req: Request, res: Response) => {
+  // POST /api/simulate-settlement
+  router.post('/simulate-settlement', async (req: Request, res: Response) => {
     try {
       const { remittanceId } = req.body;
       if (remittanceId === undefined || remittanceId === null || !Number.isInteger(remittanceId) || remittanceId <= 0) {
@@ -152,8 +152,8 @@ export function createRemittanceRouter(pool: Pool): Router {
     }
   });
 
-  // GET /api/events — mounted at /api/events
-  router.get('/', async (req: Request, res: Response) => {
+  // GET /api/events
+  router.get('/events', async (req: Request, res: Response) => {
     try {
       const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
       const offset = parseInt(req.query.offset as string) || 0;

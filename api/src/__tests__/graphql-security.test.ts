@@ -16,7 +16,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import express, { Application } from 'express';
-import { createGraphQLRouter, resetGraphQLRateLimit } from '../routes/graphql';
+import {
+  createGraphQLRouter,
+  resetGraphQLRateLimit,
+  GraphQLRouterOptions,
+} from '../routes/graphql';
 import { RemittanceStore } from '../graphql/resolvers';
 import {
   DEFAULT_MAX_COMPLEXITY,
@@ -73,7 +77,7 @@ const stubPool = {
       },
     ],
   }),
-} as unknown as Parameters<typeof createGraphQLRouter>[0]['pool'];
+} as unknown as GraphQLRouterOptions['pool'];
 
 let app: Application;
 const ORIGINAL_ENV = process.env.NODE_ENV;

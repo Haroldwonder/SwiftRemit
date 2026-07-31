@@ -136,7 +136,7 @@ export class StructuredLogger {
       level,
       context: this.context,
       message,
-      ...(data && { data: redact(data) }),
+      ...(data ? { data: redact(data) } : {}),
     };
     return JSON.stringify(logEntry);
   }
@@ -154,7 +154,10 @@ export class StructuredLogger {
       error instanceof Error
         ? { name: error.name, message: error.message, stack: error.stack }
         : error;
-    console.error(this.formatMessage('ERROR', message, { ...data, error: errorData }));
+    // `data` is `unknown`; only object-shaped values contribute own enumerable
+    // properties, so anything else is dropped rather than spread element-wise.
+    const extra = data && typeof data === 'object' ? data : {};
+    console.error(this.formatMessage('ERROR', message, { ...extra, error: errorData }));
   }
 
   debug(message: string, data?: unknown): void {

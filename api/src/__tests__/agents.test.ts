@@ -13,7 +13,6 @@ import { agentStore } from '../routes/agents';
 
 const ADMIN_KEY = 'test-admin-key';
 const VALID_ADDRESS = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
-const VALID_ADDRESS_2 = 'GBVNNPOFVV2YNXSQXDJPBVNUAEDBBZV7YOYPNRHMCJVLQOLHQGVMKHB2';
 
 describe('POST /api/agents', () => {
   beforeEach(() => agentStore.clear());

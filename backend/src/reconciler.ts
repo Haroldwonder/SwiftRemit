@@ -20,7 +20,7 @@ import cron from 'node-cron';
 import { Pool } from 'pg';
 import {
   Contract,
-  SorobanRpc,
+  rpc as SorobanRpc,
   TransactionBuilder,
   Keypair,
   nativeToScVal,

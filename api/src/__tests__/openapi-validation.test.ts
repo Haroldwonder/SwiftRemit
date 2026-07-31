@@ -116,7 +116,10 @@ describe('OpenAPI spec — route existence against live app (Issue #881)', () =>
       app = createApp();
     } catch (err) {
       initError = err instanceof Error ? err : new Error(String(err));
-      // Skip these tests if app creation fails
+      // Skip these tests if app creation fails, but never swallow the reason.
+      console.warn(
+        `[openapi-validation] app init failed — route checks skipped: ${initError.message}`,
+      );
     }
   });
 

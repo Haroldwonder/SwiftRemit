@@ -43,12 +43,6 @@ describe('Cursor Pagination', () => {
   });
 
   it('should compute next cursor from result set', () => {
-    const items = [
-      { id: 1, name: 'a' },
-      { id: 2, name: 'b' },
-      { id: 3, name: 'c' },
-    ];
-    
     const limit = 2;
     const requestedLimit = 2;
     

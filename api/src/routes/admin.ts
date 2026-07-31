@@ -1,10 +1,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { timingSafeEqual } from 'crypto';
-import { createHash } from 'crypto';
+import { timingSafeEqual, createHash, createHmac } from 'crypto';
 import { ErrorResponse } from '../types';
 import { Pool } from 'pg';
 import { AdminConfirmationService, HighRiskOperation } from '../admin-confirmation';
-import { Readable } from 'stream';
 import axios from 'axios';
 import { createRateLimitMiddleware } from '../middleware/rateLimitHeaders';
 
@@ -12,6 +10,12 @@ import { createRateLimitMiddleware } from '../middleware/rateLimitHeaders';
 
 /** Maximum allowed JSON body size for simulate-upgrade (bytes). */
 const SIMULATE_UPGRADE_MAX_BODY_BYTES = 1024; // 1 KB
+
+/** Name of the server-side cursor used by the CSV export stream. */
+const CSV_EXPORT_CURSOR = 'swiftremit_remittance_export_cursor';
+
+/** Number of rows pulled from the export cursor per round-trip. */
+const CSV_EXPORT_BATCH_SIZE = 500;
 
 /**
  * Optional WASM hash allowlist.  When WASM_HASH_ALLOWLIST is set in the
@@ -93,7 +97,7 @@ function isAdminAuthorized(req: Request): boolean {
  */
 export async function validateAdminKey(key: string): Promise<boolean> {
   try {
-    const { getSecretsManager } = await import('../../secrets-manager.js');
+    const { getSecretsManager } = await import('../secrets-manager');
     const sm = getSecretsManager();
     const adminKey = await sm.getSecret({ secretId: 'ADMIN_API_KEY', required: false });
     if (adminKey && typeof adminKey === 'string' && key.length === adminKey.length) {
@@ -371,53 +375,73 @@ async function* streamRemittancesCsv(
   
   yield headers.map(escapeCsvField).join(',') + '\n';
 
+  // Build the WHERE clause and the positional parameters together so the $n
+  // placeholders can never drift out of sync with the params array.
+  const params: (Date | string)[] = [];
+  const conditions: string[] = [];
+  if (fromDate) {
+    params.push(fromDate);
+    conditions.push(`created_at >= $${params.length}`);
+  }
+  if (toDate) {
+    params.push(toDate);
+    conditions.push(`created_at <= $${params.length}`);
+  }
+  if (status) {
+    params.push(status);
+    conditions.push(`status = $${params.length}`);
+  }
+
   const query = `
     SELECT id, sender, recipient, agent, amount, fee, currency, status, corridor, created_at, updated_at, memo
     FROM remittances
-    WHERE 1=1
-      ${fromDate ? 'AND created_at >= $1' : ''}
-      ${toDate ? `AND created_at <= ${fromDate ? '$2' : '$1'}` : ''}
-      ${status ? `AND status = ${toDate ? '$3' : fromDate ? '$2' : '$1'}` : ''}
+    ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
     ORDER BY created_at ASC
   `;
 
-  const params: (Date | string)[] = [];
-  if (fromDate) params.push(fromDate);
-  if (toDate) params.push(toDate);
-  if (status) params.push(status);
-
   const client = await pool.connect();
+  let inTransaction = false;
   try {
-    const query_text = `
-      SELECT id, sender, recipient, agent, amount, fee, currency, status, corridor, created_at, updated_at, memo
-      FROM remittances
-      ${fromDate || toDate || status ? 'WHERE' : ''}
-      ${fromDate ? 'created_at >= $1' : ''}
-      ${toDate ? (fromDate ? 'AND' : '') + ' created_at <= $' + (params.length + 1) : ''}
-      ${status ? (fromDate || toDate ? 'AND' : '') + ' status = $' + (params.length + 1) : ''}
-      ORDER BY created_at ASC
-    `;
+    // Server-side cursor: rows are fetched in bounded batches so an export of
+    // an arbitrarily large table never materialises in memory at once.
+    await client.query('BEGIN');
+    inTransaction = true;
+    await client.query(`DECLARE ${CSV_EXPORT_CURSOR} NO SCROLL CURSOR FOR ${query}`, params);
 
-    const stream = client.query(query_text, params);
-    
-    for await (const row of stream) {
-      const csvRow = [
-        row.id,
-        row.sender,
-        row.recipient,
-        row.agent,
-        row.amount,
-        row.fee,
-        row.currency,
-        row.status,
-        row.corridor,
-        row.created_at,
-        row.updated_at,
-        row.memo || '',
-      ];
-      yield csvRow.map(escapeCsvField).join(',') + '\n';
+    for (;;) {
+      const batch = await client.query(
+        `FETCH FORWARD ${CSV_EXPORT_BATCH_SIZE} FROM ${CSV_EXPORT_CURSOR}`
+      );
+      if (batch.rows.length === 0) break;
+
+      for (const row of batch.rows) {
+        const csvRow = [
+          row.id,
+          row.sender,
+          row.recipient,
+          row.agent,
+          row.amount,
+          row.fee,
+          row.currency,
+          row.status,
+          row.corridor,
+          row.created_at,
+          row.updated_at,
+          row.memo || '',
+        ];
+        yield csvRow.map(escapeCsvField).join(',') + '\n';
+      }
+
+      if (batch.rows.length < CSV_EXPORT_BATCH_SIZE) break;
     }
+
+    await client.query('COMMIT');
+    inTransaction = false;
   } finally {
+    if (inTransaction) {
+      // Covers both thrown errors and a consumer abandoning the generator.
+      await client.query('ROLLBACK').catch(() => {});
+    }
     client.release();
   }
 }
@@ -844,7 +868,7 @@ export function createAdminRouter(): Router {
     * POST /api/admin/actions/:id/confirm
     * Second admin confirms a pending high-risk action.
     */
-  router.post('/actions/:id/confirm', async (req: Request, res: Response) => {
+  router.post('/actions/:id/confirm', async (req: Request<{ id: string }>, res: Response) => {
     if (!isAdminAuthorized(req)) {
       return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
     }
@@ -1064,10 +1088,9 @@ export function createAdminRouter(): Router {
 
       // Re-deliver the webhook
       const payloadStr = JSON.stringify(entry.payload);
-      const timestamp = Date.now().toString();
-      const signature = require('crypto')
-        .createHmac('sha256', webhook.secret || '')
-        .update(`${timestamp}.${payloadStr}`)
+      const signatureTimestamp = Date.now().toString();
+      const signature = createHmac('sha256', webhook.secret || '')
+        .update(`${signatureTimestamp}.${payloadStr}`)
         .digest('hex');
 
       let delivered = false;
@@ -1078,7 +1101,7 @@ export function createAdminRouter(): Router {
           headers: {
             'Content-Type': 'application/json',
             'x-webhook-signature': signature,
-            'x-webhook-timestamp': timestamp,
+            'x-webhook-timestamp': signatureTimestamp,
             'x-webhook-id': `replay_${Date.now()}`,
             'User-Agent': 'SwiftRemit-Webhook/1.0',
           },
