@@ -53,9 +53,22 @@ const FULL_SCHEMA_SQL = `
     total_transactions INTEGER,
     verified BOOLEAN NOT NULL DEFAULT false,
     enabled BOOLEAN NOT NULL DEFAULT true,
+    toml_validated_at TIMESTAMP,
+    toml_signing_key VARCHAR(56),
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
   );
+`;
+
+/**
+ * Idempotent ALTER that adds the TOML-tracking columns to pre-existing tables
+ * (those created before SR-060 ran initializeSchema).  Safe to run on a fresh
+ * table because of IF NOT EXISTS.
+ */
+const ADD_TOML_COLUMNS_SQL = `
+  ALTER TABLE anchors
+    ADD COLUMN IF NOT EXISTS toml_validated_at TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS toml_signing_key  VARCHAR(56);
 `;
 
 function mapAnchorRow(row: AnchorRow): AnchorProvider {
@@ -107,6 +120,8 @@ export interface AnchorStore {
   update(id: string, updates: AnchorUpdateInput): Promise<AnchorProvider | null>;
   deactivate(id: string): Promise<AnchorProvider | null>;
   delete(id: string): Promise<boolean>;
+  /** Record the result of a stellar.toml validation for a given anchor. */
+  recordTomlValidation(id: string, signingKey: string): Promise<void>;
 }
 
 export class PostgresAnchorStore implements AnchorStore {
@@ -114,6 +129,20 @@ export class PostgresAnchorStore implements AnchorStore {
 
   async initializeSchema(): Promise<void> {
     await this.db.query(FULL_SCHEMA_SQL);
+    // Idempotently add TOML-tracking columns on tables that pre-date SR-060.
+    await this.db.query(ADD_TOML_COLUMNS_SQL);
+  }
+
+  /**
+   * Seed the database from the DEFAULT_ANCHORS catalogue and return the count
+   * of rows that were inserted or updated.  This is the only place at runtime
+   * where the TypeScript array in defaultAnchors.ts is consulted — all other
+   * reads go through the database (SR-060).
+   */
+  async seedFromDefaults(): Promise<number> {
+    const { DEFAULT_ANCHORS } = await import('../data/defaultAnchors.js');
+    await this.seed(DEFAULT_ANCHORS);
+    return DEFAULT_ANCHORS.length;
   }
 
   async seed(anchors: AnchorProvider[]): Promise<void> {
@@ -315,6 +344,17 @@ export class PostgresAnchorStore implements AnchorStore {
     );
 
     return result.rows[0] ? mapAnchorRow(result.rows[0] as AnchorRow) : null;
+  }
+
+  async recordTomlValidation(id: string, signingKey: string): Promise<void> {
+    await this.db.query(
+      `UPDATE anchors
+          SET toml_signing_key   = $2,
+              toml_validated_at  = NOW(),
+              updated_at         = NOW()
+        WHERE id = $1`,
+      [id, signingKey],
+    );
   }
 
   async delete(id: string): Promise<boolean> {

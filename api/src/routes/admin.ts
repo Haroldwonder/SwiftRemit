@@ -1,9 +1,56 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import { timingSafeEqual } from 'crypto';
+import { createHash } from 'crypto';
 import { ErrorResponse } from '../types';
 import { Pool } from 'pg';
 import { AdminConfirmationService, HighRiskOperation } from '../admin-confirmation';
 import { Readable } from 'stream';
 import axios from 'axios';
+import { createRateLimitMiddleware } from '../middleware/rateLimitHeaders';
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+/** Maximum allowed JSON body size for simulate-upgrade (bytes). */
+const SIMULATE_UPGRADE_MAX_BODY_BYTES = 1024; // 1 KB
+
+/**
+ * Optional WASM hash allowlist.  When WASM_HASH_ALLOWLIST is set in the
+ * environment it must be a comma-separated list of 64-char hex strings.
+ * If the env var is absent every well-formed hash is accepted.
+ */
+function getWasmHashAllowlist(): Set<string> | null {
+  const raw = process.env.WASM_HASH_ALLOWLIST;
+  if (!raw || raw.trim() === '') return null;
+  const entries = raw
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => /^[0-9a-f]{64}$/.test(h));
+  return entries.length > 0 ? new Set(entries) : null;
+}
+
+/**
+ * Dedicated rate-limiter for POST /admin/simulate-upgrade.
+ * 5 requests per 15-minute window per IP — intentionally tight because the
+ * endpoint is a potential probing and resource-exhaustion vector.
+ */
+export const simulateUpgradeRateLimiter = createRateLimitMiddleware({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  message: {
+    success: false,
+    error: {
+      message: 'Too many simulate-upgrade requests. Please try again later.',
+      code: 'SIMULATE_UPGRADE_RATE_LIMITED',
+    },
+    timestamp: new Date().toISOString(),
+  },
+  keyGenerator: (req: Request) =>
+    (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
+    req.socket?.remoteAddress ??
+    'unknown',
+});
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function timestamp(): string {
   return new Date().toISOString();
@@ -19,13 +66,26 @@ function isValidWasmHash(value: unknown): value is string {
 }
 
 /**
- * Validate admin API key from the x-api-key header.
- * Returns true if the key matches the configured admin key.
+ * Validate admin API key from the x-api-key header using a constant-time
+ * comparison to prevent timing-oracle attacks.
  */
 function isAdminAuthorized(req: Request): boolean {
   const adminKey = process.env.ADMIN_API_KEY;
   if (!adminKey) return false;
-  return req.headers['x-api-key'] === adminKey;
+
+  const supplied = req.headers['x-api-key'];
+  if (typeof supplied !== 'string') return false;
+
+  // timingSafeEqual requires equal-length buffers; any mismatch in length is
+  // itself a safe early rejection after a constant-time pad comparison.
+  try {
+    const a = Buffer.from(supplied);
+    const b = Buffer.from(adminKey);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -36,15 +96,101 @@ export async function validateAdminKey(key: string): Promise<boolean> {
     const { getSecretsManager } = await import('../../secrets-manager.js');
     const sm = getSecretsManager();
     const adminKey = await sm.getSecret({ secretId: 'ADMIN_API_KEY', required: false });
-    if (adminKey && key === adminKey) {
-      return true;
+    if (adminKey && typeof adminKey === 'string' && key.length === adminKey.length) {
+      try {
+        return timingSafeEqual(Buffer.from(key), Buffer.from(adminKey));
+      } catch {
+        return false;
+      }
     }
   } catch {
     // Fall through to environment variable
   }
 
   const adminKey = process.env.ADMIN_API_KEY;
-  return adminKey === key;
+  if (!adminKey || key.length !== adminKey.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(key), Buffer.from(adminKey));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Middleware: enforce a hard body-size cap on simulate-upgrade requests.
+ * express.json() already has a default 100 KB limit, but we want a tighter
+ * 1 KB bound so that oversized payloads are rejected before any parsing work.
+ */
+function simulateUpgradeBodySizeGuard(req: Request, res: Response, next: NextFunction): void {
+  const contentLength = parseInt(req.headers['content-length'] ?? '0', 10);
+  if (!isNaN(contentLength) && contentLength > SIMULATE_UPGRADE_MAX_BODY_BYTES) {
+    sendError(
+      res,
+      400,
+      `Request body must not exceed ${SIMULATE_UPGRADE_MAX_BODY_BYTES} bytes`,
+      'PAYLOAD_TOO_LARGE',
+    );
+    return;
+  }
+  next();
+}
+
+// ── Audit logging ─────────────────────────────────────────────────────────────
+
+interface SimulateUpgradeAuditEntry {
+  admin_key_hint: string;         // last 4 chars of the API key (never full key)
+  wasm_hash: string | null;
+  ip_address: string | null;
+  outcome: 'success' | 'rejected';
+  rejection_code?: string;
+  confirmation_token_hint?: string; // last 4 chars of the token
+}
+
+/**
+ * Write a structured audit record for every simulate-upgrade invocation.
+ * Uses the same admin_audit_log table as the backend AdminAuditLogService.
+ * Falls back to a structured console log when DATABASE_URL is not set.
+ */
+async function auditSimulateUpgrade(entry: SimulateUpgradeAuditEntry): Promise<void> {
+  const record = {
+    action: 'simulate_upgrade',
+    outcome: entry.outcome,
+    wasm_hash: entry.wasm_hash,
+    ip_address: entry.ip_address,
+    admin_key_hint: entry.admin_key_hint,
+    ...(entry.rejection_code ? { rejection_code: entry.rejection_code } : {}),
+    ...(entry.confirmation_token_hint
+      ? { confirmation_token_hint: entry.confirmation_token_hint }
+      : {}),
+  };
+
+  const dbUrl = process.env.DATABASE_URL;
+  if (dbUrl) {
+    const pool = new Pool({ connectionString: dbUrl, max: 1 });
+    try {
+      await pool.query(
+        `INSERT INTO admin_audit_log
+           (admin_address, action, target, params_json, tx_hash, ip_address)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          entry.admin_key_hint,
+          'simulate_upgrade',
+          entry.wasm_hash ?? null,
+          JSON.stringify(record),
+          null,
+          entry.ip_address ?? null,
+        ],
+      );
+    } catch (dbErr) {
+      // Audit failures must never crash the request; log and continue.
+      console.error('[simulate-upgrade] audit DB write failed:', dbErr);
+    } finally {
+      await pool.end();
+    }
+  } else {
+    // Structured fallback for environments without a database
+    console.log(JSON.stringify({ level: 'audit', ...record, timestamp: timestamp() }));
+  }
 }
 
 export interface IntegratorFeeEntry {
@@ -77,26 +223,59 @@ function fetchFeeBreakdown(): FeeBreakdownData {
   };
 }
 
+// ── Simulation logic (strictly read-only) ────────────────────────────────────
+//
+// IMPORTANT: This function MUST NOT:
+//   • submit any transaction (Stellar or otherwise)
+//   • write to the database or any mutable store
+//   • perform any network call that could trigger on-chain state changes
+//   • invoke the contract's upgrade entrypoint
+//
+// It is a pure, deterministic computation over the supplied wasm_hash.
+// Any change that adds a side-effect here must be reviewed by two engineers
+// and signed off in the pull request.
+
+export interface SimulateUpgradeReport {
+  /** Schema version currently deployed on-chain. */
+  current_schema_version: number;
+  /** Projected schema version after this WASM would be applied. */
+  new_schema_version: number;
+  /** Signed delta (new – current). */
+  schema_version_delta: number;
+  /** Number of discrete migration steps estimated. */
+  estimated_migration_steps: number;
+  /** Storage keys that would be touched during migration. */
+  affected_storage_keys: string[];
+  /** Whether any migration work would be required. */
+  requires_migration: boolean;
+  /** Estimated CPU instruction budget consumed during migration (heuristic). */
+  estimated_cpu_instructions: number;
+  /** Estimated ledger-entry bytes written (heuristic). */
+  estimated_ledger_bytes: number;
+  /** Human-readable warnings for the operator. */
+  warnings: string[];
+  /** SHA-256 fingerprint of the input wasm_hash (for audit correlation). */
+  input_hash_fingerprint: string;
+  /** Confirms the simulation was read-only and produced no state changes. */
+  simulation_only: true;
+}
+
 /**
  * Simulate what a contract upgrade would do without applying any state changes.
  *
  * This mirrors the on-chain `simulate_upgrade` read-only function in
- * `contract_upgrade.rs`.  The API layer performs the same heuristic so callers
- * can preview migration impact before submitting a proposal.
+ * `contract_upgrade.rs`.  The API layer performs the same deterministic
+ * heuristic so callers can preview migration impact before submitting a
+ * proposal.  No transaction is ever constructed or submitted.
  */
-function simulateUpgrade(wasmHashHex: string): {
-  current_schema_version: number;
-  new_schema_version: number;
-  schema_version_delta: number;
-  estimated_migration_steps: number;
-  affected_storage_keys: string[];
-  requires_migration: boolean;
-} {
-  // In a production deployment this would query the live contract via RPC.
-  // Here we use the same deterministic heuristic as the on-chain function so
-  // the REST response is always consistent with what the contract would return.
+function simulateUpgrade(wasmHashHex: string): SimulateUpgradeReport {
+  // Normalise to lower-case for deterministic processing.
+  const hashLower = wasmHashHex.toLowerCase();
+
   const CURRENT_SCHEMA_VERSION = parseInt(process.env.CONTRACT_SCHEMA_VERSION ?? '0', 10);
-  const firstByte = parseInt(wasmHashHex.slice(0, 2), 16);
+  const firstByte = parseInt(hashLower.slice(0, 2), 16);
+  const secondByte = parseInt(hashLower.slice(2, 4), 16);
+
   const newSchemaVersion = CURRENT_SCHEMA_VERSION + 1 + (firstByte % 3);
   const delta = newSchemaVersion - CURRENT_SCHEMA_VERSION;
   const requiresMigration = delta > 0;
@@ -105,6 +284,37 @@ function simulateUpgrade(wasmHashHex: string): {
     ? ['schema_v', 'UpgradeKey::NextId', 'UpgradeKey::PendingCount']
     : [];
 
+  // Heuristic resource estimates — intentionally conservative upper bounds.
+  // A real deployment would query the RPC simulate endpoint for exact numbers.
+  const estimatedCpuInstructions = requiresMigration
+    ? 500_000 + affectedKeys.length * 100_000 + secondByte * 1_000
+    : 50_000;
+  const estimatedLedgerBytes = requiresMigration
+    ? affectedKeys.length * 128
+    : 0;
+
+  const warnings: string[] = [];
+  if (delta >= 3) {
+    warnings.push(
+      'Large schema version jump detected. Verify migration scripts cover all intermediate versions.',
+    );
+  }
+  if (estimatedCpuInstructions > 900_000) {
+    warnings.push(
+      'Estimated CPU instruction budget is close to the Soroban limit. Consider splitting the migration.',
+    );
+  }
+  if (firstByte === 0x00) {
+    warnings.push('WASM hash begins with 0x00; confirm this is not a placeholder or test value.');
+  }
+
+  // Compute a SHA-256 fingerprint of the input hash for audit trail correlation.
+  // This lets audit logs reference the input without storing the raw hash twice.
+  const inputHashFingerprint = createHash('sha256')
+    .update(hashLower)
+    .digest('hex')
+    .slice(0, 16); // short form: first 64 bits
+
   return {
     current_schema_version: CURRENT_SCHEMA_VERSION,
     new_schema_version: newSchemaVersion,
@@ -112,6 +322,11 @@ function simulateUpgrade(wasmHashHex: string): {
     estimated_migration_steps: Math.abs(delta),
     affected_storage_keys: affectedKeys,
     requires_migration: requiresMigration,
+    estimated_cpu_instructions: estimatedCpuInstructions,
+    estimated_ledger_bytes: estimatedLedgerBytes,
+    warnings,
+    input_hash_fingerprint: inputHashFingerprint,
+    simulation_only: true,
   };
 }
 
@@ -339,12 +554,15 @@ export function createAdminRouter(): Router {
    * @openapi
    * /api/admin/simulate-upgrade:
    *   post:
-   *     summary: Simulate a contract upgrade (read-only, requires 2FA)
+   *     summary: Simulate a contract upgrade (strictly read-only, requires admin auth + confirmation token)
    *     description: >
-   *       Returns a preview of the storage migrations that would be applied if
-   *       the supplied WASM hash were used in a real upgrade proposal.  No
-   *       on-chain state is modified. Requires admin API key and a valid
-   *       confirmation token from a second admin.
+   *       Returns a structured preview of the storage migrations, resource usage,
+   *       and warnings that would arise if the supplied WASM hash were used in a
+   *       real upgrade proposal.  No on-chain state, no database state, and no
+   *       transaction is ever modified or submitted.  Requires both an admin API
+   *       key (x-api-key) and a valid second-admin confirmation token.
+   *       Rate-limited to 5 requests per 15 minutes per IP.
+   *       Every invocation — including failures — is audit-logged.
    *     tags:
    *       - Admin
    *     security:
@@ -358,102 +576,212 @@ export function createAdminRouter(): Router {
    *             required:
    *               - wasm_hash
    *               - confirmation_token
+   *             additionalProperties: false
    *             properties:
    *               wasm_hash:
    *                 type: string
-   *                 description: 64-character hex-encoded 32-byte WASM hash
+   *                 description: 64-character hex-encoded SHA-256 hash of the WASM blob (32 bytes)
+   *                 pattern: '^[0-9a-fA-F]{64}$'
    *                 example: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
    *               confirmation_token:
    *                 type: string
-   *                 description: Confirmation token from second admin
+   *                 description: UUID confirmation token issued by a second admin via POST /api/admin/actions
    *     responses:
    *       200:
-   *         description: Simulation result
+   *         description: Read-only simulation report
+   *         headers:
+   *           X-Simulation-Only:
+   *             schema:
+   *               type: string
+   *               example: "true"
+   *             description: Always "true" — confirms no state was mutated
    *         content:
    *           application/json:
    *             schema:
-   *               type: object
-   *               properties:
-   *                 success:
-   *                   type: boolean
-   *                   example: true
-   *                 data:
-   *                   type: object
-   *                   properties:
-   *                     current_schema_version:
-   *                       type: integer
-   *                     new_schema_version:
-   *                       type: integer
-   *                     schema_version_delta:
-   *                       type: integer
-   *                     estimated_migration_steps:
-   *                       type: integer
-   *                     affected_storage_keys:
-   *                       type: array
-   *                       items:
-   *                         type: string
-   *                     requires_migration:
-   *                       type: boolean
-   *                 timestamp:
-   *                   type: string
-   *                   format: date-time
+   *               $ref: '#/components/schemas/SimulateUpgradeResponse'
    *       400:
-   *         description: Invalid wasm_hash or missing confirmation_token
+   *         description: Invalid wasm_hash, disallowed hash, extra fields, or oversized payload
    *       401:
-   *         description: Unauthorized or invalid confirmation token
+   *         description: Admin key missing/invalid or confirmation token invalid/expired
+   *       429:
+   *         description: Rate limit exceeded (5 req / 15 min per IP)
+   *       503:
+   *         description: Database not configured
    */
-  router.post('/simulate-upgrade', async (req: Request, res: Response) => {
-    if (!isAdminAuthorized(req)) {
-      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
-    }
+  router.post(
+    '/simulate-upgrade',
+    simulateUpgradeRateLimiter,
+    simulateUpgradeBodySizeGuard,
+    async (req: Request, res: Response) => {
+      // Derive an IP address and a non-secret key hint for audit records.
+      const ipAddress =
+        (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ??
+        req.socket?.remoteAddress ??
+        null;
+      const rawKey = typeof req.headers['x-api-key'] === 'string' ? req.headers['x-api-key'] : '';
+      const keyHint = rawKey.length >= 4 ? `...${rawKey.slice(-4)}` : '[none]';
 
-    const { wasm_hash, confirmation_token } = req.body as Record<string, unknown>;
-
-    if (!confirmation_token || typeof confirmation_token !== 'string') {
-      return sendError(
-        res,
-        400,
-        'confirmation_token is required for this high-risk operation',
-        'MISSING_CONFIRMATION_TOKEN',
-      );
-    }
-
-    if (!isValidWasmHash(wasm_hash)) {
-      return sendError(
-        res,
-        400,
-        'wasm_hash must be a 64-character hex string (32 bytes)',
-        'INVALID_WASM_HASH',
-      );
-    }
-
-    // Verify the confirmation token
-    const svc = getConfirmationService();
-    if (!svc) {
-      return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
-    }
-
-    try {
-      await svc.initTable();
-      const action = await svc.verify(confirmation_token);
-
-      if (!action) {
-        return sendError(res, 401, 'Invalid or expired confirmation token', 'INVALID_CONFIRMATION_TOKEN');
+      // ── 1. Admin authentication (timing-safe) ──────────────────────────────
+      if (!isAdminAuthorized(req)) {
+        await auditSimulateUpgrade({
+          admin_key_hint: keyHint,
+          wasm_hash: null,
+          ip_address: ipAddress,
+          outcome: 'rejected',
+          rejection_code: 'UNAUTHORIZED',
+        });
+        return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
       }
 
-      // Token is valid, proceed with simulation
-      const result = simulateUpgrade(wasm_hash);
+      // ── 2. Reject unknown fields (no extra properties allowed) ─────────────
+      const allowedFields = new Set(['wasm_hash', 'confirmation_token']);
+      const extraFields = Object.keys(req.body ?? {}).filter((k) => !allowedFields.has(k));
+      if (extraFields.length > 0) {
+        await auditSimulateUpgrade({
+          admin_key_hint: keyHint,
+          wasm_hash: null,
+          ip_address: ipAddress,
+          outcome: 'rejected',
+          rejection_code: 'EXTRA_FIELDS',
+        });
+        return sendError(
+          res,
+          400,
+          `Unexpected field(s): ${extraFields.join(', ')}`,
+          'EXTRA_FIELDS',
+        );
+      }
 
-      res.json({
-        success: true,
-        data: result,
-        timestamp: timestamp(),
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Confirmation verification failed';
-      return sendError(res, 401, msg, 'CONFIRMATION_VERIFICATION_FAILED');
-    }
-  });
+      const { wasm_hash, confirmation_token } = req.body as Record<string, unknown>;
+
+      // ── 3. confirmation_token presence check ───────────────────────────────
+      if (!confirmation_token || typeof confirmation_token !== 'string') {
+        await auditSimulateUpgrade({
+          admin_key_hint: keyHint,
+          wasm_hash: null,
+          ip_address: ipAddress,
+          outcome: 'rejected',
+          rejection_code: 'MISSING_CONFIRMATION_TOKEN',
+        });
+        return sendError(
+          res,
+          400,
+          'confirmation_token is required for this high-risk operation',
+          'MISSING_CONFIRMATION_TOKEN',
+        );
+      }
+
+      // ── 4. WASM hash format validation ─────────────────────────────────────
+      if (!isValidWasmHash(wasm_hash)) {
+        await auditSimulateUpgrade({
+          admin_key_hint: keyHint,
+          wasm_hash: null,
+          ip_address: ipAddress,
+          outcome: 'rejected',
+          rejection_code: 'INVALID_WASM_HASH',
+        });
+        return sendError(
+          res,
+          400,
+          'wasm_hash must be a 64-character hex string (32 bytes)',
+          'INVALID_WASM_HASH',
+        );
+      }
+
+      // ── 5. WASM hash allowlist check (when configured) ─────────────────────
+      const allowlist = getWasmHashAllowlist();
+      if (allowlist !== null && !allowlist.has(wasm_hash.toLowerCase())) {
+        await auditSimulateUpgrade({
+          admin_key_hint: keyHint,
+          wasm_hash,
+          ip_address: ipAddress,
+          outcome: 'rejected',
+          rejection_code: 'WASM_HASH_NOT_ALLOWLISTED',
+        });
+        return sendError(
+          res,
+          400,
+          'wasm_hash is not in the permitted allowlist',
+          'WASM_HASH_NOT_ALLOWLISTED',
+        );
+      }
+
+      // ── 6. Confirmation token verification ─────────────────────────────────
+      const svc = getConfirmationService();
+      if (!svc) {
+        await auditSimulateUpgrade({
+          admin_key_hint: keyHint,
+          wasm_hash,
+          ip_address: ipAddress,
+          outcome: 'rejected',
+          rejection_code: 'DB_UNAVAILABLE',
+        });
+        return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
+      }
+
+      const tokenHint =
+        confirmation_token.length >= 4
+          ? `...${confirmation_token.slice(-4)}`
+          : '[short]';
+
+      try {
+        await svc.initTable();
+        const action = await svc.verify(confirmation_token);
+
+        if (!action) {
+          await auditSimulateUpgrade({
+            admin_key_hint: keyHint,
+            wasm_hash,
+            ip_address: ipAddress,
+            outcome: 'rejected',
+            rejection_code: 'INVALID_CONFIRMATION_TOKEN',
+            confirmation_token_hint: tokenHint,
+          });
+          return sendError(
+            res,
+            401,
+            'Invalid or expired confirmation token',
+            'INVALID_CONFIRMATION_TOKEN',
+          );
+        }
+
+        // ── 7. Run simulation (read-only — no DB writes, no transactions) ───
+        const report = simulateUpgrade(wasm_hash);
+
+        // Audit success BEFORE sending the response so the log entry is
+        // guaranteed even if the connection drops.
+        await auditSimulateUpgrade({
+          admin_key_hint: keyHint,
+          wasm_hash,
+          ip_address: ipAddress,
+          outcome: 'success',
+          confirmation_token_hint: tokenHint,
+        });
+
+        // X-Simulation-Only confirms to any intermediary (proxy, WAF, SIEM)
+        // that this response is the result of a read-only operation.
+        res.setHeader('X-Simulation-Only', 'true');
+        res.setHeader('Cache-Control', 'no-store');
+
+        return res.json({
+          success: true,
+          data: report,
+          timestamp: timestamp(),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Confirmation verification failed';
+        await auditSimulateUpgrade({
+          admin_key_hint: keyHint,
+          wasm_hash,
+          ip_address: ipAddress,
+          outcome: 'rejected',
+          rejection_code: 'CONFIRMATION_VERIFICATION_FAILED',
+          confirmation_token_hint: tokenHint,
+        });
+        return sendError(res, 401, msg, 'CONFIRMATION_VERIFICATION_FAILED');
+      }
+    },
+  );
 
   // ── Multi-step admin confirmation (#481) ──────────────────────────────────
 

@@ -9,6 +9,7 @@ import {
 } from '../db/anchorStore';
 import { encodeCursor, decodeCursor } from '../services/cursor-pagination';
 import { sanitizeObject } from '../utils/sanitize.js';
+import { fetchAnchorToml } from '../utils/anchor-toml-validator.js';
 
 type RouterOptions = {
   store?: AnchorStore;
@@ -190,14 +191,50 @@ router.post('/admin', adminAuth, async (req: Request, res: Response) => {
     }
 
     const sanitizedBody = sanitizeObject(req.body as Record<string, unknown>) as AnchorProvider;
-    const anchor = await getStore().create(sanitizedBody);
-    const response: AnchorDetailResponse = {
+    const store = getStore();
+
+    // ── Stellar TOML validation (SR-060) ───────────────────────────────────
+    // Fetch stellar.toml for the anchor's domain to confirm the anchor
+    // serves a valid SIGNING_KEY + NETWORK_PASSPHRASE before we persist it.
+    //
+    // An anchor whose TOML is unreachable or malformed is rejected with 422 —
+    // it cannot be created in any status, active or otherwise, because we
+    // cannot verify its identity without a valid TOML.
+    //
+    // Set ANCHOR_TOML_VALIDATION_DISABLED=true in test/CI environments where
+    // live network calls are unavailable.
+    if (process.env.ANCHOR_TOML_VALIDATION_DISABLED !== 'true') {
+      let tomlSigningKey: string;
+      try {
+        const tomlData = await fetchAnchorToml(sanitizedBody.domain);
+        tomlSigningKey = tomlData.SIGNING_KEY as string;
+      } catch (tomlErr) {
+        const msg = tomlErr instanceof Error ? tomlErr.message : String(tomlErr);
+        return sendError(
+          res,
+          422,
+          `stellar.toml validation failed for domain '${sanitizedBody.domain}': ${msg}`,
+          'ANCHOR_TOML_INVALID',
+        );
+      }
+
+      // TOML is valid — persist anchor and record the signing key for auditing.
+      const created = await store.create(sanitizedBody);
+      await store.recordTomlValidation(created.id, tomlSigningKey);
+      return res.status(201).json({
+        success: true,
+        data: created,
+        timestamp: timestamp(),
+      } satisfies AnchorDetailResponse);
+    }
+
+    // TOML validation disabled (test/CI path) — create without network call.
+    const anchor = await store.create(sanitizedBody);
+    return res.status(201).json({
       success: true,
       data: anchor,
       timestamp: timestamp(),
-    };
-
-    res.status(201).json(response);
+    } satisfies AnchorDetailResponse);
   } catch (error) {
     return sendError(
       res,
