@@ -59,6 +59,6 @@
     "eslint-plugin-react-hooks": "^4.6.2",
     "jest": "^29.7.0",
     "jest-expo": "~53.0.1",
-    "typescript": "~5.8.3"
+    "typescript": "~7.0.2"
   }
 }
