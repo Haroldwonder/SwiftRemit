@@ -19,6 +19,16 @@ const CSP_DIRECTIVES = [
 // Enforcement CSP header value.
 const CSP = CSP_DIRECTIVES.join('; ')
 
+// Dev-server CSP — Vite's HMR client and React Fast Refresh inject inline
+// <script> tags and rely on eval-based transforms, so script-src needs
+// 'unsafe-inline'/'unsafe-eval' here. Production (built HTML + vercel.json)
+// keeps the strict script-src 'self' from CSP_DIRECTIVES above.
+const CSP_DEV = CSP_DIRECTIVES.map((directive) =>
+  directive === "script-src 'self'"
+    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+    : directive
+).join('; ')
+
 // Report-Only CSP header — used in staging to catch violations without
 // blocking the page.  Switch from report-only to enforcement once no
 // violations have appeared in staging for 48 hours.
@@ -45,6 +55,11 @@ function cspHtmlPlugin(reportOnly = false) {
 
   return {
     name: 'csp-html-meta',
+    // Build only — the dev server sets its own (relaxed) CSP via
+    // server.headers above. Running this in dev too would inject the strict
+    // production script-src as a <meta> tag, and CSP header + meta tag are
+    // enforced as an intersection, silently overriding the relaxed header.
+    apply: 'build',
     transformIndexHtml(html) {
       const metaTag = `<meta http-equiv="${headerName}" content="${cspValue}">`
       return html.replace('<head>', `<head>\n    ${metaTag}`)
@@ -65,8 +80,9 @@ export default defineConfig(({ mode }) => {
 
     server: {
       headers: {
-        // Dev server: enforce CSP so developers see violations early.
-        'Content-Security-Policy': CSP,
+        // Dev server: enforce CSP so developers see violations early, with
+        // script-src relaxed for Vite's own HMR/Fast-Refresh inline scripts.
+        'Content-Security-Policy': CSP_DEV,
       },
     },
 

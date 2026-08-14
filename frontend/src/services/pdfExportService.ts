@@ -65,7 +65,6 @@ export function generateBulkPDF(
   dateRange?: { from: Date; to: Date }
 ): void {
   const doc = new jsPDF();
-  const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 15;
   let yPos = margin;
@@ -87,7 +86,7 @@ export function generateBulkPDF(
 
   // Table header
   doc.setFontSize(11);
-  doc.setFont(undefined, 'bold');
+  doc.setFont('helvetica', 'bold');
   const headers = ['ID', 'Amount', 'Asset', 'Status', 'Timestamp'];
   const colWidths = [40, 25, 20, 30, 40];
   let xPos = margin;
@@ -98,7 +97,7 @@ export function generateBulkPDF(
   });
 
   yPos += 10;
-  doc.setFont(undefined, 'normal');
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
 
   // Table rows

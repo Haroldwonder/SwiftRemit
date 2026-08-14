@@ -291,7 +291,7 @@ describe('Issue #898: Dispute Resolution UI for Admins', () => {
   it('should display confirmation modal before resolution', async () => {
     const TestComponent = () => {
       const [showConfirm, setShowConfirm] = React.useState(false);
-      const [outcome, setOutcome] = React.useState('sender');
+      const [outcome] = React.useState('sender');
 
       const openConfirm = () => setShowConfirm(true);
 

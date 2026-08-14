@@ -68,7 +68,7 @@ export default function TransactionDetailScreen() {
     }
   }
 
-  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#1A56DB" /></View>;
+  if (loading) return <View style={styles.center}><ActivityIndicator testID="loading-indicator" size="large" color="#1A56DB" /></View>;
   if (!remittance) return <View style={styles.center}><Text>Transfer not found.</Text></View>;
 
   const stepIndex = STATUS_STEPS.indexOf(remittance.status as RemittanceStatus);

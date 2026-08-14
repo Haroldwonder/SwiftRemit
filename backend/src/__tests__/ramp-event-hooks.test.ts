@@ -13,14 +13,14 @@ function makeEvent(status: RampOrderStatus): RampOrderEvent {
   return {
     orderId:    'ord-1',
     provider:   'moonpay',
+    direction:  'on_ramp',
     status,
     fiatAmount: 100,
     fiatCurrency: 'USD',
     cryptoAmount: 50,
     cryptoCurrency: 'USDC',
     walletAddress: 'GABC',
-    createdAt:  new Date().toISOString(),
-    updatedAt:  new Date().toISOString(),
+    timestamp:  new Date(),
     raw: {},
   };
 }

@@ -486,7 +486,7 @@ describe('Issue #897: 2FA Settings Page for Admin Users', () => {
 
   it('should enforce 2FA requirement for admin operations', async () => {
     const TestComponent = () => {
-      const [twoFaVerified, setTwoFaVerified] = React.useState(false);
+      const [twoFaVerified] = React.useState(false);
       const [canAccessAdmin, setCanAccessAdmin] = React.useState(false);
 
       const handleAdminAccess = () => {
@@ -517,7 +517,7 @@ describe('Issue #897: 2FA Settings Page for Admin Users', () => {
     expect(btn.disabled).toBe(true);
 
     // Simulate 2FA verification
-    const { rerender } = render(
+    render(
       <div>
         <div>2FA Verified: Yes</div>
         <button disabled={false} data-testid="admin-btn-enabled">
@@ -532,7 +532,7 @@ describe('Issue #897: 2FA Settings Page for Admin Users', () => {
 
   it('should display warning when 2FA codes expire', async () => {
     const TestComponent = () => {
-      const [codesExpiring, setCodesExpiring] = React.useState(true);
+      const [codesExpiring] = React.useState(true);
 
       return (
         <div>

@@ -103,14 +103,14 @@ function TestNavigator({ initialState }: { initialState?: object }) {
 
 describe('AppNavigator — deep links and screen transitions', () => {
   it('renders the Home screen on initial load', async () => {
-    const { getByText } = render(<TestNavigator />);
+    const { getByText } = await render(<TestNavigator />);
     await waitFor(() => {
       expect(getByText('HomeStub')).toBeTruthy();
     });
   });
 
   it('navigates from Home to SendMoney screen', async () => {
-    const { getByTestId, getByText } = render(<TestNavigator />);
+    const { getByTestId, getByText } = await render(<TestNavigator />);
     await waitFor(() => expect(getByText('HomeStub')).toBeTruthy());
 
     await act(async () => {
@@ -123,7 +123,7 @@ describe('AppNavigator — deep links and screen transitions', () => {
   });
 
   it('navigates from Home to TransactionDetail and passes remittanceId param', async () => {
-    const { getByTestId, getByText } = render(<TestNavigator />);
+    const { getByTestId, getByText } = await render(<TestNavigator />);
     await waitFor(() => expect(getByText('HomeStub')).toBeTruthy());
 
     await act(async () => {
@@ -137,7 +137,7 @@ describe('AppNavigator — deep links and screen transitions', () => {
   });
 
   it('navigates from Home to KycStatus via stack push', async () => {
-    const { getByTestId, getByText } = render(<TestNavigator />);
+    const { getByTestId, getByText } = await render(<TestNavigator />);
     await waitFor(() => expect(getByText('HomeStub')).toBeTruthy());
 
     await act(async () => {
@@ -150,7 +150,7 @@ describe('AppNavigator — deep links and screen transitions', () => {
   });
 
   it('goes back from SendMoney to Home', async () => {
-    const { getByTestId, getByText } = render(<TestNavigator />);
+    const { getByTestId, getByText } = await render(<TestNavigator />);
     await waitFor(() => expect(getByText('HomeStub')).toBeTruthy());
 
     await act(async () => { fireEvent.press(getByTestId('go-send')); });
@@ -182,7 +182,7 @@ describe('AppNavigator — deep link: initialState simulation', () => {
       index: 1,
     };
 
-    const { getByText } = render(<TestNavigator initialState={initialState} />);
+    const { getByText } = await render(<TestNavigator initialState={initialState} />);
     await waitFor(() => {
       expect(getByText('SendMoneyStub')).toBeTruthy();
     });
@@ -203,7 +203,7 @@ describe('AppNavigator — deep link: initialState simulation', () => {
       index: 1,
     };
 
-    const { getByText, getByTestId } = render(<TestNavigator initialState={initialState} />);
+    const { getByText, getByTestId } = await render(<TestNavigator initialState={initialState} />);
     await waitFor(() => {
       expect(getByText('TransactionDetailStub')).toBeTruthy();
       expect(getByTestId('detail-id').props.children).toBe('deep-rm-99');
@@ -222,7 +222,7 @@ describe('AppNavigator — deep link: initialState simulation', () => {
       index: 1,
     };
 
-    const { getByText } = render(<TestNavigator initialState={initialState} />);
+    const { getByText } = await render(<TestNavigator initialState={initialState} />);
     await waitFor(() => {
       expect(getByText('KycStatusStub')).toBeTruthy();
     });

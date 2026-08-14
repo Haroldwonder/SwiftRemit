@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import React from 'react';
 import ErrorBoundary from './ErrorBoundary';
 
 /** Helper component that throws on render when triggered */

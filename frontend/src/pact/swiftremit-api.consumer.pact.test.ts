@@ -10,7 +10,7 @@
 
 import { PactV3, MatchersV3 } from '@pact-foundation/pact';
 import path from 'path';
-import { describe, it, beforeAll, afterAll } from 'vitest';
+import { describe, it } from 'vitest';
 import { expect } from 'vitest';
 
 const { like, eachLike, string, integer, boolean: booleanMatcher } = MatchersV3;
@@ -49,7 +49,7 @@ describe('SwiftRemit API — Pact consumer contract', () => {
   describe('GET /api/currencies', () => {
     it('returns a paginated list of supported currencies', async () => {
       await provider.addInteraction({
-        state: 'currencies exist',
+        states: [{ description: 'currencies exist' }],
         uponReceiving: 'a request for all currencies',
         withRequest: {
           method: 'GET',
@@ -83,7 +83,7 @@ describe('SwiftRemit API — Pact consumer contract', () => {
 
     it('returns 400 for invalid limit parameter', async () => {
       await provider.addInteraction({
-        state: 'currencies exist',
+        states: [{ description: 'currencies exist' }],
         uponReceiving: 'a currencies request with an invalid limit',
         withRequest: {
           method: 'GET',
@@ -115,7 +115,7 @@ describe('SwiftRemit API — Pact consumer contract', () => {
   describe('GET /api/currencies/:code', () => {
     it('returns a single currency by code', async () => {
       await provider.addInteraction({
-        state: 'USD currency exists',
+        states: [{ description: 'USD currency exists' }],
         uponReceiving: 'a request for the USD currency',
         withRequest: {
           method: 'GET',
@@ -145,7 +145,7 @@ describe('SwiftRemit API — Pact consumer contract', () => {
 
     it('returns 404 for an unknown currency code', async () => {
       await provider.addInteraction({
-        state: 'XYZ currency does not exist',
+        states: [{ description: 'XYZ currency does not exist' }],
         uponReceiving: 'a request for an unknown currency code',
         withRequest: {
           method: 'GET',
@@ -175,7 +175,7 @@ describe('SwiftRemit API — Pact consumer contract', () => {
   describe('POST /api/auth/login', () => {
     it('returns an access token for valid credentials', async () => {
       await provider.addInteraction({
-        state: 'admin user exists',
+        states: [{ description: 'admin user exists' }],
         uponReceiving: 'a login request with valid credentials',
         withRequest: {
           method: 'POST',
@@ -206,7 +206,7 @@ describe('SwiftRemit API — Pact consumer contract', () => {
   describe('GET /api/anchors', () => {
     it('returns a list of available anchors', async () => {
       await provider.addInteraction({
-        state: 'anchors exist',
+        states: [{ description: 'anchors exist' }],
         uponReceiving: 'a request for available anchors',
         withRequest: {
           method: 'GET',
@@ -238,7 +238,7 @@ describe('SwiftRemit API — Pact consumer contract', () => {
   describe('GET /api/remittances (authenticated)', () => {
     it('returns remittances for an authenticated user', async () => {
       await provider.addInteraction({
-        state: 'user has remittances',
+        states: [{ description: 'user has remittances' }],
         uponReceiving: 'an authenticated request to list remittances',
         withRequest: {
           method: 'GET',
@@ -270,7 +270,7 @@ describe('SwiftRemit API — Pact consumer contract', () => {
 
     it('returns 401 for unauthenticated requests', async () => {
       await provider.addInteraction({
-        state: 'no auth token provided',
+        states: [{ description: 'no auth token provided' }],
         uponReceiving: 'an unauthenticated request to list remittances',
         withRequest: {
           method: 'GET',

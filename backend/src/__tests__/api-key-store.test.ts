@@ -26,7 +26,7 @@ import {
 function makePool(rows: object[][] = []) {
   let call = 0;
   return {
-    query: vi.fn(async () => {
+    query: vi.fn(async (_sql: string, _params: string[]) => {
       const r = rows[call] ?? [];
       call++;
       return { rows: r, rowCount: r.length };

@@ -71,8 +71,8 @@ const AgentPanel: FC<AgentPanelProps> = ({ walletAddress, contractId }) => {
   const [agentKey, setAgentKey] = useState(walletAddress || '')
   const [proofInputs, setProofInputs] = useState<Record<number, string>>({})
   const [loading, setLoading] = useState<Record<number, string | null>>({})
-  const [results, setResults] = useState<Record<number, { type: string; txHash: string }>>({})
-  const [errors, setErrors] = useState<Record<number, string | null>>({})
+  const [results, setResults] = useState<Record<number, { type: string; txHash: string } | undefined>>({})
+  const [errors, setErrors] = useState<Record<number | 'wallet', string | null>>({ wallet: null })
   const [walletConnected, setWalletConnected] = useState(!!walletAddress)
 
   useEffect(() => {
@@ -240,9 +240,9 @@ const AgentPanel: FC<AgentPanelProps> = ({ walletAddress, contractId }) => {
 
           {results[r.id] && (
             <div className="success" style={{ marginTop: 8 }}>
-              {results[r.id].type === 'confirm'
-                ? `✓ Payout confirmed — tx: ${results[r.id].txHash}`
-                : `✓ Marked as failed — tx: ${results[r.id].txHash}`}
+              {results[r.id]!.type === 'confirm'
+                ? `✓ Payout confirmed — tx: ${results[r.id]!.txHash}`
+                : `✓ Marked as failed — tx: ${results[r.id]!.txHash}`}
             </div>
           )}
 

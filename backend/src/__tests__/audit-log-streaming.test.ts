@@ -322,8 +322,8 @@ describe('Audit-log export streaming and load (Feature D)', () => {
       `/api/admin/audit-log/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
     );
 
-    const clientCalls = mockClient.query.mock.calls.map(([sql]: [string]) =>
-      (sql as string).toUpperCase().slice(0, 10).trim()
+    const clientCalls = mockClient.query.mock.calls.map((call: any[]) =>
+      (call[0] as string).toUpperCase().slice(0, 10).trim()
     );
     expect(clientCalls).toContain('BEGIN');
     expect(clientCalls).toContain('DECLARE');

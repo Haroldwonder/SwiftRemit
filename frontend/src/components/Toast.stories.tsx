@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import React, { useState } from 'react';
 import { ToastContainer, useToast } from './Toast';
 import type { ToastType } from './Toast';
 

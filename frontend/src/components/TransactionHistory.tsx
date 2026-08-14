@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import type { TransactionProgressStatus } from './TransactionStatusTracker';
 import { SkeletonTable } from './SkeletonLoader';
 import './TransactionHistory.css';
@@ -247,16 +247,6 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
     return () => window.removeEventListener('popstate', syncFromUrl);
   }, [isControlled, onPageChange]);
 
-  // Derive unique status/asset options from data
-  const statusOptions = useMemo(
-    () => Array.from(new Set(transactions.map(t => t.status))).sort(),
-    [transactions],
-  );
-  const assetOptions = useMemo(
-    () => Array.from(new Set(transactions.map(t => t.asset))).sort(),
-    [transactions],
-  );
-
   // Apply filters
   const filtered = useMemo(() => {
     const q = debouncedSearch.toLowerCase();
@@ -312,16 +302,6 @@ export const TransactionHistory: React.FC<TransactionHistoryProps> = ({
   const toggleExpanded = (id: string) =>
     setExpandedId(current => (current === id ? null : id));
 
-  const clearFilters = () => {
-    setSearchText('');
-    setFilterStatus('');
-    setFilterAsset('');
-    setFilterDateFrom('');
-    setFilterDateTo('');
-  };
-
-  const hasActiveFilters =
-    searchText || filterStatus || filterAsset || filterDateFrom || filterDateTo;
   const hasTransactions = transactions.length > 0;
   const hasFilteredTransactions = filtered.length > 0;
   const isEmptyState = !hasFilteredTransactions && !isLoading;

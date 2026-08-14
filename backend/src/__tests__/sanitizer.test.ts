@@ -36,7 +36,7 @@ import {
   createRemittanceSchema,
   memoSchema,
   validateRequest,
-} from '../../api/src/schemas/requestValidation';
+} from '../../../api/src/schemas/requestValidation';
 
 import { redact, createLogger } from '../../../shared/src/logger';
 

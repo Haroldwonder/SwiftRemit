@@ -35,7 +35,6 @@ const AnchorManagement: FC = () => {
   const [form, setForm] = useState<AnchorForm>(EMPTY_FORM)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [healthStatus, setHealthStatus] = useState<Record<string, boolean>>({})
 
   useEffect(() => { fetchAnchors() }, [])
 

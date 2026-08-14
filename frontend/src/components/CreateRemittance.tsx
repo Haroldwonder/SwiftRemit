@@ -1,6 +1,4 @@
 import { FC, useState, FormEvent } from 'react'
-import { signTransaction } from '@stellar/freighter-api'
-import * as StellarSdk from '@stellar/stellar-sdk'
 
 interface CreateRemittanceProps {
   walletAddress: string
@@ -17,7 +15,7 @@ interface RemittanceResult {
   memo: string | null
 }
 
-const CreateRemittance: FC<CreateRemittanceProps> = ({ walletAddress, contractId, whitelistedTokens = [] }) => {
+const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTokens = [] }) => {
   const [agentAddress, setAgentAddress] = useState('')
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
@@ -40,9 +38,6 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ walletAddress, contractId
       if (!selectedToken) {
         throw new Error('Please select a token')
       }
-
-      // Convert amount to stroops (7 decimals for USDC)
-      const amountInStroops = Math.floor(parseFloat(amount) * 10000000)
 
       // This is a placeholder - you'll need to implement actual contract interaction
       // using Stellar SDK and the contract's WASM interface

@@ -182,7 +182,7 @@ const RemittanceList: FC<RemittanceListProps> = ({ walletAddress, contractId }) 
 
   const handleConfirmCancel = async (): Promise<void> => {
     if (!confirmDialog) return
-    const { id, amount } = confirmDialog
+    const { id } = confirmDialog
     setCancelling(true)
     setCancelErrors(prev => ({ ...prev, [id]: '' }))
 

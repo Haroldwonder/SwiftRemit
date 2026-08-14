@@ -38,17 +38,16 @@ describe('TransactionDetailScreen', () => {
   });
 
   // ── Loading state ──────────────────────────────────────────────────────
-  it('shows a loading spinner while fetching', () => {
+  it('shows a loading spinner while fetching', async () => {
     mockGetById.mockReturnValue(new Promise(() => {}));
-    const { UNSAFE_getByType } = render(<TransactionDetailScreen />);
-    const { ActivityIndicator } = require('react-native');
-    expect(UNSAFE_getByType(ActivityIndicator)).toBeTruthy();
+    const { getByTestId } = await render(<TransactionDetailScreen />);
+    expect(getByTestId('loading-indicator')).toBeTruthy();
   });
 
   // ── Not-found / error state ────────────────────────────────────────────
   it('shows "Transfer not found" when the API resolves to null', async () => {
     mockGetById.mockResolvedValue(null);
-    const { getByText } = render(<TransactionDetailScreen />);
+    const { getByText } = await render(<TransactionDetailScreen />);
     await waitFor(() => {
       expect(getByText('Transfer not found.')).toBeTruthy();
     });
@@ -56,7 +55,7 @@ describe('TransactionDetailScreen', () => {
 
   it('shows "Transfer not found" when the API rejects', async () => {
     mockGetById.mockRejectedValue(new Error('404'));
-    const { getByText } = render(<TransactionDetailScreen />);
+    const { getByText } = await render(<TransactionDetailScreen />);
     await waitFor(() => {
       expect(getByText('Transfer not found.')).toBeTruthy();
     });
@@ -65,7 +64,7 @@ describe('TransactionDetailScreen', () => {
   // ── Populated state ────────────────────────────────────────────────────
   it('renders all remittance detail rows after loading', async () => {
     mockGetById.mockResolvedValue(SAMPLE);
-    const { getByText } = render(<TransactionDetailScreen />);
+    const { getByText } = await render(<TransactionDetailScreen />);
     await waitFor(() => {
       expect(getByText('rm-abc-123')).toBeTruthy();
     });
@@ -76,7 +75,7 @@ describe('TransactionDetailScreen', () => {
 
   it('renders the progress stepper', async () => {
     mockGetById.mockResolvedValue(SAMPLE);
-    const { getByText } = render(<TransactionDetailScreen />);
+    const { getByText } = await render(<TransactionDetailScreen />);
     await waitFor(() => {
       expect(getByText('Transfer Details')).toBeTruthy();
     });
@@ -84,7 +83,7 @@ describe('TransactionDetailScreen', () => {
 
   it('calls getById with the route remittanceId param', async () => {
     mockGetById.mockResolvedValue(SAMPLE);
-    render(<TransactionDetailScreen />);
+    await render(<TransactionDetailScreen />);
     await waitFor(() => {
       expect(mockGetById).toHaveBeenCalledWith('rm-abc-123');
     });
@@ -92,7 +91,7 @@ describe('TransactionDetailScreen', () => {
 
   it('does not show memo row when memo is null', async () => {
     mockGetById.mockResolvedValue({ ...SAMPLE, memo: null });
-    const { queryByText } = render(<TransactionDetailScreen />);
+    const { queryByText } = await render(<TransactionDetailScreen />);
     await waitFor(() => {
       expect(queryByText('Rent payment')).toBeNull();
     });
@@ -100,7 +99,7 @@ describe('TransactionDetailScreen', () => {
 
   it('formats the status with spaces instead of underscores', async () => {
     mockGetById.mockResolvedValue({ ...SAMPLE, status: 'pending_user_transfer_start' });
-    const { getByText } = render(<TransactionDetailScreen />);
+    const { getByText } = await render(<TransactionDetailScreen />);
     await waitFor(() => {
       expect(getByText('pending user transfer start')).toBeTruthy();
     });
