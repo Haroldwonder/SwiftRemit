@@ -32,17 +32,16 @@ describe('KycStatusScreen', () => {
   });
 
   // ── Loading state ──────────────────────────────────────────────────────
-  it('shows a spinner while loading', () => {
+  it('shows a spinner while loading', async () => {
     mockGetStatus.mockReturnValue(new Promise(() => {}));
-    const { UNSAFE_getByType } = render(<KycStatusScreen />);
-    const { ActivityIndicator } = require('react-native');
-    expect(UNSAFE_getByType(ActivityIndicator)).toBeTruthy();
+    const { getByTestId } = await render(<KycStatusScreen />);
+    expect(getByTestId('loading-indicator')).toBeTruthy();
   });
 
   // ── Error state (not logged in) ────────────────────────────────────────
   it('shows "Not logged in" when no wallet is stored', async () => {
     mockGetItemAsync.mockResolvedValue(null);
-    const { getByText } = render(<KycStatusScreen />);
+    const { getByText } = await render(<KycStatusScreen />);
     await waitFor(() => {
       expect(getByText('Not logged in')).toBeTruthy();
     });
@@ -50,7 +49,7 @@ describe('KycStatusScreen', () => {
 
   it('shows error text when the API rejects', async () => {
     mockGetStatus.mockRejectedValue(new Error('Network error'));
-    const { getByText } = render(<KycStatusScreen />);
+    const { getByText } = await render(<KycStatusScreen />);
     await waitFor(() => {
       expect(getByText('Failed to load KYC status.')).toBeTruthy();
     });
@@ -59,35 +58,35 @@ describe('KycStatusScreen', () => {
   // ── Approved state ─────────────────────────────────────────────────────
   it('shows "Verified" badge for approved status', async () => {
     mockGetStatus.mockResolvedValue(makeStatus('approved'));
-    const { getByText } = render(<KycStatusScreen />);
+    const { getByText } = await render(<KycStatusScreen />);
     await waitFor(() => expect(getByText('Verified')).toBeTruthy());
     expect(getByText('Your identity is verified. You can send money.')).toBeTruthy();
   });
 
   it('does not render the re-submit button for approved status', async () => {
     mockGetStatus.mockResolvedValue(makeStatus('approved'));
-    const { queryByText } = render(<KycStatusScreen />);
+    const { queryByText } = await render(<KycStatusScreen />);
     await waitFor(() => expect(queryByText('Start / Re-submit Verification')).toBeNull());
   });
 
   // ── Pending state ──────────────────────────────────────────────────────
   it('shows "Under Review" badge for pending status', async () => {
     mockGetStatus.mockResolvedValue(makeStatus('pending'));
-    const { getByText } = render(<KycStatusScreen />);
+    const { getByText } = await render(<KycStatusScreen />);
     await waitFor(() => expect(getByText('Under Review')).toBeTruthy());
   });
 
   // ── Not-started state ──────────────────────────────────────────────────
   it('shows "Not Started" badge and a re-submit button for not_started', async () => {
     mockGetStatus.mockResolvedValue(makeStatus('not_started'));
-    const { getByText } = render(<KycStatusScreen />);
+    const { getByText } = await render(<KycStatusScreen />);
     await waitFor(() => expect(getByText('Not Started')).toBeTruthy());
     expect(getByText('Start / Re-submit Verification')).toBeTruthy();
   });
 
   it('opens the KYC URL when the re-submit button is pressed', async () => {
     mockGetStatus.mockResolvedValue(makeStatus('not_started'));
-    const { getByText } = render(<KycStatusScreen />);
+    const { getByText } = await render(<KycStatusScreen />);
     await waitFor(() => expect(getByText('Start / Re-submit Verification')).toBeTruthy());
     fireEvent.press(getByText('Start / Re-submit Verification'));
     expect(Linking.openURL).toHaveBeenCalledWith('https://swiftremit.app/kyc');
@@ -98,7 +97,7 @@ describe('KycStatusScreen', () => {
     mockGetStatus.mockResolvedValue(
       makeStatus('denied', { rejection_reason: 'Document unclear' })
     );
-    const { getByText } = render(<KycStatusScreen />);
+    const { getByText } = await render(<KycStatusScreen />);
     await waitFor(() => expect(getByText('Denied')).toBeTruthy());
     expect(getByText('Reason: Document unclear')).toBeTruthy();
     expect(getByText('Start / Re-submit Verification')).toBeTruthy();
@@ -107,7 +106,7 @@ describe('KycStatusScreen', () => {
   // ── Expired state ──────────────────────────────────────────────────────
   it('shows "Expired" badge and a re-submit button for expired status', async () => {
     mockGetStatus.mockResolvedValue(makeStatus('expired'));
-    const { getByText } = render(<KycStatusScreen />);
+    const { getByText } = await render(<KycStatusScreen />);
     await waitFor(() => expect(getByText('Expired')).toBeTruthy());
     expect(getByText('Start / Re-submit Verification')).toBeTruthy();
   });
@@ -117,7 +116,7 @@ describe('KycStatusScreen', () => {
     mockGetStatus.mockResolvedValue(
       makeStatus('pending', { fields_needed: ['id_front', 'selfie'] })
     );
-    const { getByText } = render(<KycStatusScreen />);
+    const { getByText } = await render(<KycStatusScreen />);
     await waitFor(() => expect(getByText('Required fields:')).toBeTruthy());
     expect(getByText('• id_front')).toBeTruthy();
     expect(getByText('• selfie')).toBeTruthy();

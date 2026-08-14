@@ -66,7 +66,7 @@ describe('ThemeToggle', () => {
   it('should prevent FOUC with early theme application', () => {
     localStorage.setItem('theme', 'dark');
 
-    const { container } = render(<ThemeToggle />);
+    render(<ThemeToggle />);
 
     // Check that theme attribute is set before the component fully renders
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');

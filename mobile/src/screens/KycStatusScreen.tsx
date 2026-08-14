@@ -67,7 +67,7 @@ export default function KycStatusScreen() {
   }, []);
 
   if (loading) {
-    return <View style={styles.center}><ActivityIndicator size="large" color="#1A56DB" /></View>;
+    return <View style={styles.center}><ActivityIndicator testID="loading-indicator" size="large" color="#1A56DB" /></View>;
   }
 
   if (error || !status) {

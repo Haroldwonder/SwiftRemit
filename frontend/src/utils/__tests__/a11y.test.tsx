@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { SkipToContentLink, handleKeyboardNavigation, useAriaLive } from '../a11y';
@@ -13,7 +13,7 @@ describe('a11y utilities', () => {
     });
 
     it('should focus main content on click', () => {
-      const { container } = render(
+      render(
         <>
           <SkipToContentLink />
           <main id="main-content" tabIndex={-1}>

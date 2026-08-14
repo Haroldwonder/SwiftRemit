@@ -3,7 +3,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { TransactionStatusTracker } from '../TransactionStatusTracker';
-import type { TransactionProgressStatus } from '../TransactionStatusTracker';
 
 expect.extend(toHaveNoViolations);
 
@@ -595,7 +594,7 @@ describe('TransactionStatusTracker', () => {
     it('updates polling interval when prop changes', () => {
       const onRefresh = vi.fn().mockResolvedValue(undefined);
 
-      const { rerender, unmount } = render(
+      const { unmount } = render(
         <TransactionStatusTracker
           currentStatus="processing"
           onRefresh={onRefresh}

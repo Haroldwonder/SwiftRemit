@@ -343,7 +343,6 @@ export class WebhookDispatcher {
           delivery.attempt + 1,
           delivery,
           subscriber.content_type,
-          subscriber
         );
       }
     } catch (error) {

@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { Pool } from 'pg';
 import {
   runReconciliationCycle,
   reconcileLedgerGaps,
@@ -51,7 +52,7 @@ const {
 // Mock get_remittance (on-chain call)
 // ---------------------------------------------------------------------------
 const { getRemittanceMock } = vi.hoisted(() => ({
-  getRemittanceMock: vi.fn<[number], Promise<{ id: number; status: string; amount: string; sender: string; agent: string } | null>>(),
+  getRemittanceMock: vi.fn<(id: number) => Promise<{ id: number; status: string; amount: string; sender: string; agent: string } | null>>(),
 }));
 
 vi.mock('../reconciler', async (importOriginal) => {
@@ -100,8 +101,8 @@ vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@stellar/stellar-sdk')>();
   return {
     ...actual,
-    SorobanRpc: {
-      ...actual.SorobanRpc,
+    rpc: {
+      ...actual.rpc,
       Server: vi.fn().mockImplementation(() => ({
         getEvents: vi.fn().mockResolvedValue({ events: [] }),
         simulateTransaction: vi.fn(),

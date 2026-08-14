@@ -24,10 +24,6 @@ const WebhookSubscriptions: FC = () => {
   const [form, setForm] = useState<WebhookForm>(EMPTY_FORM)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-  const [historyId, setHistoryId] = useState<string | null>(null)
-  const [history, setHistory] = useState<any[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const [testResult, setTestResult] = useState<Record<string, any>>({})
 
   useEffect(() => { fetchSubscriptions() }, [])
 

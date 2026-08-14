@@ -41,8 +41,6 @@ const mockMatchMedia = (width: number) => {
 };
 
 describe('Mobile Responsive Layout', () => {
-  const VALID_RECIPIENT = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWNA';
-
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset window size
@@ -100,7 +98,7 @@ describe('Mobile Responsive Layout', () => {
     });
 
     it('should hide unnecessary columns on mobile', () => {
-      render(<TransactionHistory />);
+      render(<TransactionHistory transactions={[]} />);
 
       // On mobile, detail columns should be hidden or collapsed
       const table = screen.queryByRole('table');
@@ -197,7 +195,7 @@ describe('Mobile Responsive Layout', () => {
     });
 
     it('should use two-column layout on tablet', () => {
-      render(<TransactionHistory />);
+      render(<TransactionHistory transactions={[]} />);
 
       const table = screen.queryByRole('table');
       if (table) {
@@ -206,7 +204,7 @@ describe('Mobile Responsive Layout', () => {
     });
 
     it('should display all core columns on tablet', () => {
-      render(<TransactionHistory />);
+      render(<TransactionHistory transactions={[]} />);
 
       const table = screen.queryByRole('table');
       if (table) {
@@ -226,7 +224,7 @@ describe('Mobile Responsive Layout', () => {
     });
 
     it('should optimize grid for tablet screen', () => {
-      render(<TransactionHistory />);
+      render(<TransactionHistory transactions={[]} />);
 
       // Content should fit within 768px width
       const html = document.documentElement;
@@ -266,7 +264,7 @@ describe('Mobile Responsive Layout', () => {
     });
 
     it('should handle transaction history on 375px', () => {
-      render(<TransactionHistory />);
+      render(<TransactionHistory transactions={[]} />);
 
       const container = screen.getByTestId?.('container') || document.body;
       expect(container.offsetWidth).toBeLessThanOrEqual(375);
@@ -278,7 +276,7 @@ describe('Mobile Responsive Layout', () => {
       // Verify no horizontal scroll needed
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(375 + 1);
 
-      rerender(<TransactionHistory />);
+      rerender(<TransactionHistory transactions={[]} />);
 
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(375 + 1);
     });

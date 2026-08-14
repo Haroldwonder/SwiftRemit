@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
-import { useToast, ToastContainer, type ToastMessage } from '../Toast';
+import { useToast, ToastContainer } from '../Toast';
 
 // Mock Socket.io
 const mockSocket = {
@@ -364,7 +364,7 @@ describe('Issue #899: Real-time Toast Notifications for WebSocket Events', () =>
       );
     };
 
-    const { rerender } = render(<TestComponent />);
+    render(<TestComponent />);
 
     // Trigger socket event
     const callback = mockSocket.on.mock.calls.find(

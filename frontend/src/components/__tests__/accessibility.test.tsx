@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { AnchorSelector } from '../AnchorSelector';
@@ -31,7 +31,7 @@ describe('WCAG 2.1 AA Accessibility Audit', () => {
     });
 
     it('should support keyboard navigation', () => {
-      const { container, getByRole } = render(
+      const { getByRole } = render(
         <AnchorSelector onSelect={vi.fn()} currencies={['USD']} />
       );
 
@@ -70,11 +70,8 @@ describe('WCAG 2.1 AA Accessibility Audit', () => {
     it('should have no accessibility violations', async () => {
       const { container } = render(
         <TransactionStatusTracker
-          status="pending"
+          currentStatus="processing"
           transactionId="tx-123"
-          amount={100}
-          asset="USDC"
-          recipient="test@example.com"
         />
       );
       const results = await axe(container);
@@ -82,13 +79,10 @@ describe('WCAG 2.1 AA Accessibility Audit', () => {
     });
 
     it('should have semantic status information', () => {
-      const { container, getByRole } = render(
+      const { container } = render(
         <TransactionStatusTracker
-          status="completed"
+          currentStatus="completed"
           transactionId="tx-123"
-          amount={100}
-          asset="USDC"
-          recipient="test@example.com"
         />
       );
 

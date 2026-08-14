@@ -51,8 +51,9 @@ export function useFeePreview(
       return;
     }
 
+    const quoteExpiresAt = feeData.quoteExpiresAt;
     const updateExpiry = () => {
-      const seconds = Math.max(0, Math.ceil((new Date(feeData.quoteExpiresAt).getTime() - Date.now()) / 1000));
+      const seconds = Math.max(0, Math.ceil((new Date(quoteExpiresAt).getTime() - Date.now()) / 1000));
       setSecondsUntilExpiry(seconds);
       if (seconds === 0) setRequiresRequote(true);
     };

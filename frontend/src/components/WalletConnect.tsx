@@ -1,5 +1,5 @@
 import { FC, useState } from 'react'
-import { isConnected, getPublicKey, requestAccess } from '@stellar/freighter-api'
+import { isConnected, getAddress, requestAccess } from '@stellar/freighter-api'
 
 interface WalletConnectProps {
   walletAddress: string | null
@@ -15,17 +15,20 @@ const WalletConnect: FC<WalletConnectProps> = ({ walletAddress, setWalletAddress
     setError(null)
 
     try {
-      const connected = await isConnected()
-      
-      if (!connected) {
+      const connectedResponse = await isConnected()
+
+      if (!connectedResponse.isConnected) {
         setError('Freighter wallet not found. Please install it.')
         setLoading(false)
         return
       }
 
       await requestAccess()
-      const publicKey = await getPublicKey()
-      setWalletAddress(publicKey)
+      const addressResponse = await getAddress()
+      if (addressResponse.error) {
+        throw new Error(addressResponse.error.message || 'Failed to get address')
+      }
+      setWalletAddress(addressResponse.address)
     } catch (err) {
       setError((err instanceof Error ? err.message : 'Failed to connect wallet') || 'Failed to connect wallet')
     } finally {

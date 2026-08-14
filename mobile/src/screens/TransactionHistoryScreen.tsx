@@ -66,7 +66,7 @@ export default function TransactionHistoryScreen() {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#1A56DB" />
+        <ActivityIndicator testID="loading-indicator" size="large" color="#1A56DB" />
       </View>
     );
   }

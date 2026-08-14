@@ -97,9 +97,9 @@ fxRateCache.setMetricsObserver((from, to, stalenessSeconds) => {
 });
 
 getFailoverFxService().setMetricsObserver({
-  onProviderFailure: (provider: string) => metricsService.recordFxProviderFailure(provider),
+  onProviderFailure: (provider) => metricsService.recordFxProviderFailure(provider),
   onFailover: () => metricsService.recordFxProviderFailover(),
-  onRateRejected: (_pair: string, reason: string) => metricsService.recordFxRateRejected(reason),
+  onRateRejected: (_pair, reason) => metricsService.recordFxRateRejected(reason),
 });
 
 // Publish the FX provider circuit-breaker state (SR-104). Seeded closed so the
@@ -402,7 +402,7 @@ app.delete('/api/developers/keys/:key_id', adminLimiter, async (req: Request, re
 
   try {
     const revoked = await apiKeyStore.revoke({
-      keyId:     key_id,
+      keyId:     key_id as string,
       ownerId,
       ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() ?? req.socket.remoteAddress ?? undefined,
     });

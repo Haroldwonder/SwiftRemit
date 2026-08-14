@@ -3,7 +3,6 @@ import {
   SecretsManager,
   getSecretsManager,
   _setSecretsManagerInstance,
-  hashApiKey,
 } from '../../../shared/src/secrets-manager';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

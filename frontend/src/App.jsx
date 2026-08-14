@@ -7,6 +7,7 @@ import RemittanceList from './components/RemittanceList'
 import AgentPanel from './components/AgentPanel'
 import ErrorBoundary from './components/ErrorBoundary'
 import CorridorAnalytics from './components/CorridorAnalytics'
+import { LanguageSelector } from './components/LanguageSelector'
 
 function App() {
   const { t } = useTranslation()
