@@ -9,7 +9,9 @@
   "env": {
     "VITE_NETWORK": "testnet",
     "VITE_HORIZON_URL": "https://horizon-testnet.stellar.org",
-    "VITE_SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org"
+    "VITE_SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org",
+    "VITE_CONTRACT_ID": "CTESTNETPLACEHOLDERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "VITE_USDC_ISSUER": "GTESTNETPLACEHOLDERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
   },
   "headers": [
     {
