@@ -46,7 +46,7 @@ jobs:
 
       - name: Run changesets action
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           # When a changeset is present this creates/updates a "Version Packages" PR.
           # When that PR is merged, this step publishes to npm automatically.
