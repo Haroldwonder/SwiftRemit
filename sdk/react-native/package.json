@@ -4,12 +4,21 @@
   "description": "React Native wrapper for the SwiftRemit TypeScript SDK",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "jest"
   },
-  "keywords": ["stellar", "soroban", "swiftremit", "react-native", "remittance"],
+  "keywords": [
+    "stellar",
+    "soroban",
+    "swiftremit",
+    "react-native",
+    "remittance"
+  ],
   "license": "MIT",
   "publishConfig": {
     "access": "public",
@@ -18,7 +27,7 @@
   "peerDependencies": {
     "@stellar/stellar-sdk": ">=14.0.0",
     "react": ">=18.0.0",
-    "react-native": ">=0.72.0"
+    "react-native": "^0.87.0"
   },
   "dependencies": {
     "@swiftremit/sdk": "*"
