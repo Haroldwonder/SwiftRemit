@@ -23,11 +23,11 @@
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^14.5.0",
-    "i18next": "^26.3.4",
+    "i18next": "^26.4.0",
     "jspdf": "^2.5.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-i18next": "^17.0.11"
+    "react-i18next": "^17.0.12"
   },
   "devDependencies": {
     "@pact-foundation/pact": "^13.1.0",
@@ -41,7 +41,7 @@
     "@storybook/test": "^8.6.12",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^14.1.2",
-    "@testing-library/user-event": "^14.5.1",
+    "@testing-library/user-event": "^14.6.5",
     "@types/jest-axe": "^3.5.9",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
