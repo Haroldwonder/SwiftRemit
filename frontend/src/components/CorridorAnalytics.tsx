@@ -58,16 +58,26 @@ const CorridorAnalytics: FC = () => {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true)
     setError(null)
     fetch(`${API_BASE}/api/analytics/corridors?range=${range}`)
       .then((r) => r.json())
       .then((json: { success?: boolean; data?: AnalyticsData; error?: { message: string } }) => {
+        if (cancelled) return;
         if (json.success) setData(json.data || null)
         else setError(json.error?.message ?? 'Unknown error')
       })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false))
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setError(e.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true;
+    }
   }, [range])
 
   const corridors = data?.corridors ?? []

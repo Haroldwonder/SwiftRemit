@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useToast } from './Toast';
 import './VerificationBadge.css';
 
 export enum VerificationStatus {
@@ -30,7 +31,7 @@ interface VerificationBadgeProps {
 export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
   assetCode,
   issuer,
-  apiUrl = 'http://localhost:3000',
+  apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000',
   onWarning,
   showDetails = true,
 }) => {
@@ -39,6 +40,10 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [showWarningModal, setShowWarningModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState('');
+  const [submittingReport, setSubmittingReport] = useState(false);
+  const { showToast } = useToast();
 
   useEffect(() => {
     fetchVerification();
@@ -130,10 +135,17 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
   };
 
   const handleReportSuspicious = async () => {
-    try {
-      const reason = prompt('Please describe why you think this asset is suspicious:');
-      if (!reason) return;
+    setShowReportModal(true);
+  };
 
+  const handleSubmitReport = async () => {
+    if (!reportReason.trim()) {
+      showToast('Please provide a reason for your report', 'warning');
+      return;
+    }
+
+    setSubmittingReport(true);
+    try {
       const response = await fetch(`${apiUrl}/api/verification/report`, {
         method: 'POST',
         headers: {
@@ -142,19 +154,23 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
         body: JSON.stringify({
           assetCode,
           issuer,
-          reason,
+          reason: reportReason,
         }),
       });
 
       if (response.ok) {
-        alert('Report submitted successfully. Thank you for helping keep the community safe!');
+        showToast('Report submitted successfully. Thank you for helping keep the community safe!', 'success');
+        setShowReportModal(false);
+        setReportReason('');
         fetchVerification(); // Refresh data
       } else {
-        alert('Failed to submit report. Please try again.');
+        showToast('Failed to submit report. Please try again.', 'error');
       }
     } catch (err) {
       console.error('Report error:', err);
-      alert('Failed to submit report. Please try again.');
+      showToast('Failed to submit report. Please try again.', 'error');
+    } finally {
+      setSubmittingReport(false);
     }
   };
 
@@ -313,6 +329,65 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
               </button>
               <button className="btn-secondary" onClick={() => setShowWarningModal(false)}>
                 I Understand
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Report Suspicious Modal */}
+      {showReportModal && (
+        <div className="modal-overlay" onClick={() => setShowReportModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Report Suspicious Asset</h2>
+              <button className="modal-close" onClick={() => setShowReportModal(false)}>
+                ×
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p style={{ marginBottom: '16px' }}>
+                Please describe why you think this asset is suspicious:
+              </p>
+              <textarea
+                value={reportReason}
+                onChange={(e) => setReportReason(e.target.value)}
+                placeholder="Describe your concerns about this asset..."
+                style={{
+                  width: '100%',
+                  minHeight: '120px',
+                  padding: '12px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                  resize: 'vertical',
+                }}
+              />
+            </div>
+
+            <div className="modal-footer">
+              <button
+                className="btn-report"
+                onClick={handleSubmitReport}
+                disabled={submittingReport}
+                style={{
+                  opacity: submittingReport ? 0.6 : 1,
+                  cursor: submittingReport ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {submittingReport ? 'Submitting...' : 'Submit Report'}
+              </button>
+              <button
+                className="btn-close"
+                onClick={() => {
+                  setShowReportModal(false);
+                  setReportReason('');
+                }}
+                disabled={submittingReport}
+              >
+                Cancel
               </button>
             </div>
           </div>
