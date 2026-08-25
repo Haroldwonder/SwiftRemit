@@ -59,7 +59,7 @@ export const AnchorSelector: React.FC<AnchorSelectorProps> = ({
   selectedAnchorId,
   currency,
   currencies,
-  apiUrl = 'http://localhost:3000',
+  apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000',
 }) => {
   // Normalise to array; single `currency` prop is backward-compatible
   const activeCurrencies = currencies ?? (currency ? [currency] : []);

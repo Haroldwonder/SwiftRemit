@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENV_FILE = path.join(HERE, '..', '.env');
+const SRC_DIR = path.join(HERE, '..', 'src');
 
 const isProduction =
   process.argv.includes('--production') || process.env.NODE_ENV === 'production';
@@ -116,6 +117,53 @@ if (errors.length > 0) {
       '\nDo not point Docker Compose at a .env.example — see SR-102.\n',
   );
   process.exit(1);
+}
+
+// SR-179: Check for apiUrl prop defaults that don't reference VITE_API_URL
+if (fs.existsSync(SRC_DIR)) {
+  const apiUrlViolations = [];
+  
+  function checkDirectory(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        checkDirectory(fullPath);
+      } else if (entry.name.match(/\.(tsx?|jsx?)$/)) {
+        const content = fs.readFileSync(fullPath, 'utf8');
+        // Look for apiUrl prop defaults that hardcode localhost instead of using VITE_API_URL
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          // Match patterns like: apiUrl = 'http://localhost:3000' or apiUrl = "http://localhost:3000"
+          const hardcodeMatch = line.match(/apiUrl\s*=\s*['"]http:\/\/localhost:\d+['"]/);
+          if (hardcodeMatch && !line.includes('import.meta.env.VITE_API_URL')) {
+            apiUrlViolations.push({
+              file: path.relative(SRC_DIR, fullPath),
+              line: i + 1,
+              content: line.trim()
+            });
+          }
+        }
+      }
+    }
+  }
+  
+  checkDirectory(SRC_DIR);
+  
+  if (apiUrlViolations.length > 0) {
+    console.error(
+      `\n✗ SR-179: Found ${apiUrlViolations.length} component(s) with hardcoded apiUrl default instead of using VITE_API_URL\n`
+    );
+    for (const violation of apiUrlViolations) {
+      console.error(`  - ${violation.file}:${violation.line}`);
+      console.error(`    ${violation.content}\n`);
+    }
+    console.error(
+      'Change the default to: apiUrl = import.meta.env.VITE_API_URL || \'http://localhost:3000\'\n'
+    );
+    process.exit(1);
+  }
 }
 
 console.log('✓ frontend environment configuration looks usable');

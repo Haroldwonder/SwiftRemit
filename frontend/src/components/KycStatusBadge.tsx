@@ -100,7 +100,7 @@ const KYC_GUIDANCE_MAP: Record<KycStatus, KycGuidance> = {
 
 export const KycStatusBadge: React.FC<KycStatusBadgeProps> = ({
   userId,
-  apiUrl = 'http://localhost:3000',
+  apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000',
   showDetails = true,
   pollingIntervalMs = 30_000,
   anchorKycPortalUrl = 'https://anchor.example.com/kyc',
