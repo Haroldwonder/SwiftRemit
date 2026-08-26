@@ -1,4 +1,5 @@
 import { FC, useState, useEffect, FormEvent } from 'react'
+import { ConfirmDialog } from './ConfirmDialog'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
@@ -35,6 +36,7 @@ const AnchorManagement: FC = () => {
   const [form, setForm] = useState<AnchorForm>(EMPTY_FORM)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Anchor | null>(null)
 
   useEffect(() => { fetchAnchors() }, [])
 
@@ -114,6 +116,20 @@ const AnchorManagement: FC = () => {
   return (
     <div className="panel" role="main" aria-label="Anchor Management">
       <h2>Anchor Management</h2>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete Anchor"
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => {
+          if (deleteTarget) handleDelete(deleteTarget.id)
+          setDeleteTarget(null)
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label htmlFor="anchor-name">Anchor Name</label>
@@ -161,7 +177,7 @@ const AnchorManagement: FC = () => {
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button onClick={() => handleEdit(anchor)}>Edit</button>
-                  <button onClick={() => handleDelete(anchor.id)} style={{ color: '#e53e3e' }}>Delete</button>
+                  <button onClick={() => setDeleteTarget(anchor)} style={{ color: '#e53e3e' }}>Delete</button>
                 </div>
               </div>
             </li>

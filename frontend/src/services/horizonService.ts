@@ -15,20 +15,32 @@ export interface SettlementCompletedEvent extends RemittanceCompletedEvent {
   asset: string;
 }
 
+export interface FetchEventResult {
+  event: SettlementCompletedEvent | null;
+  /** True when the initial narrow window found nothing but a wider fallback was not attempted or also came up empty. */
+  possiblyOutOfRange: boolean;
+}
+
 /**
  * Service for fetching Soroban contract events via Soroban RPC
  */
 export class HorizonService {
   private server: rpc.Server;
   private contractId: string;
+  /** Number of ledgers to look back in the primary search window (~24h at 5s/ledger) */
+  private lookbackLedgers: number;
+  /** Wider fallback window multiplier applied when the primary window finds nothing */
+  private fallbackMultiplier: number;
   /** Last successfully fetched fee per remittance ID (fallback cache) */
   private feeCache = new Map<number, string>();
 
-  constructor(rpcUrl?: string, contractId?: string) {
+  constructor(rpcUrl?: string, contractId?: string, options?: { lookbackLedgers?: number; fallbackMultiplier?: number }) {
     this.server = new rpc.Server(
       rpcUrl || import.meta.env.VITE_HORIZON_URL || 'https://soroban-testnet.stellar.org'
     );
     this.contractId = contractId || import.meta.env.VITE_CONTRACT_ID || '';
+    this.lookbackLedgers = options?.lookbackLedgers ?? 17280;
+    this.fallbackMultiplier = options?.fallbackMultiplier ?? 7;
   }
 
   private parseScVal(val: xdr.ScVal): string {
@@ -47,13 +59,13 @@ export class HorizonService {
     }
   }
 
-  private async getStartLedger(): Promise<number> {
+  private async getStartLedger(lookback?: number): Promise<number> {
     const { sequence } = await this.server.getLatestLedger();
-    return Math.max(1, sequence - 17280);
+    return Math.max(1, sequence - (lookback ?? this.lookbackLedgers));
   }
 
-  private async fetchContractEvents(): Promise<rpc.Api.EventResponse[]> {
-    const startLedger = await this.getStartLedger();
+  private async fetchContractEvents(lookback?: number): Promise<rpc.Api.EventResponse[]> {
+    const startLedger = await this.getStartLedger(lookback);
     const response = await this.server.getEvents({
       startLedger,
       filters: [{ type: 'contract', contractIds: [this.contractId] }],
@@ -63,47 +75,66 @@ export class HorizonService {
   }
 
   /**
-   * Fetch the completed event for a given remittance ID
+   * Fetch the completed event for a given remittance ID.
+   * Returns a result object distinguishing between "not found" and "possibly out of range".
    */
-  async fetchCompletedEvent(remittanceId: number): Promise<SettlementCompletedEvent | null> {
+  async fetchCompletedEvent(remittanceId: number): Promise<FetchEventResult> {
     if (!this.contractId) {
       throw new Error('Contract ID not configured. Set VITE_CONTRACT_ID in environment variables.');
     }
 
     try {
+      // Primary search: within the standard lookback window
       const events = await this.fetchContractEvents();
-
-      for (const event of events) {
-        if (
-          event.topic.length >= 2 &&
-          this.parseScVal(event.topic[0]) === 'settle' &&
-          this.parseScVal(event.topic[1]) === 'complete'
-        ) {
-          const vec = event.value.switch().name === 'scvVec' ? event.value.vec()! : [];
-          if (vec.length < 8) continue;
-
-          if (this.parseScVal(vec[3]) === remittanceId.toString()) {
-            const fee = await this.fetchRemittanceFee(remittanceId);
-            return {
-              remittanceId: remittanceId.toString(),
-              sender: this.parseScVal(vec[4]),
-              agent: this.parseScVal(vec[5]),
-              asset: this.parseScVal(vec[6]),
-              amount: this.parseScVal(vec[7]),
-              fee,
-              timestamp: event.ledgerClosedAt,
-              transactionHash: event.txHash,
-              ledgerSequence: event.ledger,
-            };
-          }
-        }
+      const match = this.findSettleCompleteEvent(events, remittanceId);
+      if (match) {
+        match.fee = await this.fetchRemittanceFee(remittanceId);
+        return { event: match, possiblyOutOfRange: false };
       }
 
-      return null;
+      // Fallback: widen the search window
+      const widerLookback = this.lookbackLedgers * this.fallbackMultiplier;
+      const widerEvents = await this.fetchContractEvents(widerLookback);
+      const widerMatch = this.findSettleCompleteEvent(widerEvents, remittanceId);
+      if (widerMatch) {
+        widerMatch.fee = await this.fetchRemittanceFee(remittanceId);
+        return { event: widerMatch, possiblyOutOfRange: false };
+      }
+
+      // Not found in either window — could be genuinely missing or older than the fallback
+      return { event: null, possiblyOutOfRange: true };
     } catch (error) {
       console.error('Error fetching completed event from RPC:', error);
       throw new Error(`Failed to fetch completed event: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  private findSettleCompleteEvent(events: rpc.Api.EventResponse[], remittanceId: number): SettlementCompletedEvent | null {
+    for (const event of events) {
+      if (
+        event.topic.length >= 2 &&
+        this.parseScVal(event.topic[0]) === 'settle' &&
+        this.parseScVal(event.topic[1]) === 'complete'
+      ) {
+        const vec = event.value.switch().name === 'scvVec' ? event.value.vec()! : [];
+        if (vec.length < 8) continue;
+
+        if (this.parseScVal(vec[3]) === remittanceId.toString()) {
+          return {
+            remittanceId: remittanceId.toString(),
+            sender: this.parseScVal(vec[4]),
+            agent: this.parseScVal(vec[5]),
+            asset: this.parseScVal(vec[6]),
+            amount: this.parseScVal(vec[7]),
+            fee: '0', // fee fetched separately below
+            timestamp: event.ledgerClosedAt,
+            transactionHash: event.txHash,
+            ledgerSequence: event.ledger,
+          };
+        }
+      }
+    }
+    return null;
   }
 
   /**

@@ -10,3 +10,5 @@ export type { TransactionHistoryItem } from './TransactionHistory';
 export { KycStatusBadge } from './KycStatusBadge';
 export { ToastContainer, useToast } from './Toast';
 export type { ToastMessage, ToastType, UseToastReturn } from './Toast';
+export { ConfirmDialog } from './ConfirmDialog';
+export type { ConfirmDialogProps } from './ConfirmDialog';

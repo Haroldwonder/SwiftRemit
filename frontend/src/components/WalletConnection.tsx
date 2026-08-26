@@ -154,7 +154,7 @@ export const WalletConnection: React.FC<WalletConnectionProps> = ({
       );
 
       if (FreighterService.isNetworkMismatch(connectedNetwork, defaultNetwork)) {
-        localStorage.removeItem('walletSession');
+        localStorage.removeItem(STORAGE_KEY);
         setConnected(false);
         setPublicKey('');
         setNetworkWarning(

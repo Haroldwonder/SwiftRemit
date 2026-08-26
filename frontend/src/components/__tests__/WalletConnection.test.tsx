@@ -198,6 +198,22 @@ describe('WalletConnection', () => {
       expect(screen.queryByText(/warning/i)).not.toBeInTheDocument();
     });
 
+    it('clears the correct STORAGE_KEY on network mismatch, not a stale key', async () => {
+      vi.mocked(freighterApi.isConnected).mockResolvedValue({ isConnected: true });
+      vi.mocked(freighterApi.getAddress).mockResolvedValue({ address: MOCK_PUBLIC_KEY });
+      vi.mocked(freighterApi.getNetwork).mockResolvedValue({ network: 'PUBLIC', networkPassphrase: 'Public Global Stellar Network ; September 2015' });
+
+      render(<WalletConnection defaultNetwork="Testnet" />);
+
+      fireEvent.click(screen.getByRole('button', { name: /connect/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/warning/i)).toBeInTheDocument();
+      });
+
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+
     it('clears network warning on disconnect', async () => {
       vi.mocked(freighterApi.isConnected).mockResolvedValue({ isConnected: true });
       vi.mocked(freighterApi.getAddress).mockResolvedValue({ address: MOCK_PUBLIC_KEY });

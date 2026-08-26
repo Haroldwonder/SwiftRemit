@@ -226,3 +226,89 @@
     text-align: left;
   }
 }
+
+/* Validation status banner */
+.proof-validation-status {
+  padding: 10px 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.proof-validation-pending {
+  background: var(--color-neutral-200, #edf2f7);
+  color: var(--color-text-primary, #2d3748);
+}
+
+.proof-validation-valid {
+  background: #c6f6d5;
+  color: #22543d;
+}
+
+.proof-validation-invalid {
+  background: #fed7d7;
+  color: #9b2c2c;
+}
+
+.proof-validation-out_of_range {
+  background: #fefcbf;
+  color: #744210;
+}
+
+.proof-hash-row {
+  align-items: flex-start;
+}
+
+.proof-hash-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.proof-hash-hex {
+  word-break: break-all;
+  font-size: 0.85em;
+}
+
+.copy-button {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border-primary, #e2e8f0);
+  border-radius: 4px;
+  background: var(--color-bg-secondary, #fff);
+  cursor: pointer;
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
+.copy-button:hover {
+  background: var(--color-neutral-200, #edf2f7);
+}
+
+.proof-hash-tooltip {
+  cursor: help;
+  font-size: 0.85em;
+}
+
+.file-upload-label {
+  display: inline-block;
+  padding: 10px 20px;
+  background: var(--color-secondary, #3182ce);
+  color: var(--color-text-light, #fff);
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 16px;
+}
+
+.file-upload-label input[type="file"] {
+  display: none;
+}
+
+.proof-upload-hash {
+  font-size: 0.85em;
+  color: var(--color-text-secondary, #718096);
+}
+
+.proof-upload-hash code {
+  word-break: break-all;
+}

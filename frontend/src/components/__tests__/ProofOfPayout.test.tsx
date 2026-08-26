@@ -43,7 +43,10 @@ describe('ProofOfPayout', () => {
   });
 
   it('should display event data when fetch is successful', async () => {
-    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue(mockEventData);
+    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
+      event: mockEventData,
+      possiblyOutOfRange: false,
+    });
 
     render(<ProofOfPayout remittanceId={42} />);
 
@@ -71,7 +74,10 @@ describe('ProofOfPayout', () => {
   });
 
   it('should display error when no event is found', async () => {
-    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue(null);
+    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
+      event: null,
+      possiblyOutOfRange: false,
+    });
 
     render(<ProofOfPayout remittanceId={42} />);
 
@@ -80,8 +86,26 @@ describe('ProofOfPayout', () => {
     });
   });
 
+  it('should display out-of-range message when event is possibly out of search window', async () => {
+    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
+      event: null,
+      possiblyOutOfRange: true,
+    });
+
+    render(<ProofOfPayout remittanceId={42} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Event not found within the search window/)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/possibly out of search range/)).toBeInTheDocument();
+  });
+
   it('should display Stellar Expert link with correct URL', async () => {
-    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue(mockEventData);
+    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
+      event: mockEventData,
+      possiblyOutOfRange: false,
+    });
 
     render(<ProofOfPayout remittanceId={42} />);
 
@@ -96,7 +120,10 @@ describe('ProofOfPayout', () => {
   });
 
   it('should truncate long addresses correctly', async () => {
-    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue(mockEventData);
+    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
+      event: mockEventData,
+      possiblyOutOfRange: false,
+    });
 
     render(<ProofOfPayout remittanceId={42} />);
 
@@ -107,9 +134,12 @@ describe('ProofOfPayout', () => {
 
   it('should format amounts correctly from stroops', async () => {
     vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
-      ...mockEventData,
-      amount: '100000000', // 10 USDC
-      fee: '1000000', // 0.1 USDC
+      event: {
+        ...mockEventData,
+        amount: '100000000', // 10 USDC
+        fee: '1000000', // 0.1 USDC
+      },
+      possiblyOutOfRange: false,
     });
 
     render(<ProofOfPayout remittanceId={42} />);
@@ -121,7 +151,10 @@ describe('ProofOfPayout', () => {
   });
 
   it('should format timestamp correctly', async () => {
-    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue(mockEventData);
+    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
+      event: mockEventData,
+      possiblyOutOfRange: false,
+    });
 
     render(<ProofOfPayout remittanceId={42} />);
 
@@ -133,7 +166,10 @@ describe('ProofOfPayout', () => {
   });
 
   it('should not display camera when onRelease is not provided', async () => {
-    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue(mockEventData);
+    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
+      event: mockEventData,
+      possiblyOutOfRange: false,
+    });
 
     render(<ProofOfPayout remittanceId={42} />);
 
@@ -147,7 +183,10 @@ describe('ProofOfPayout', () => {
   });
 
   it('should display camera when onRelease callback is provided', async () => {
-    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue(mockEventData);
+    vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
+      event: mockEventData,
+      possiblyOutOfRange: false,
+    });
     const mockOnRelease = vi.fn();
 
     // Mock getUserMedia
@@ -176,15 +215,18 @@ describe('ProofOfPayout', () => {
 
     it('has no a11y violations when proof data is displayed', async () => {
       vi.mocked(horizonServiceModule.horizonService.fetchCompletedEvent).mockResolvedValue({
-        remittanceId: '42',
-        transactionHash: 'abc123',
-        amount: '100',
-        fee: '1',
-        asset: 'USDC',
-        sender: 'GSENDER',
-        agent: 'GAGENT',
-        ledgerSequence: 1000,
-        timestamp: '2026-01-01T00:00:00Z',
+        event: {
+          remittanceId: '42',
+          transactionHash: 'abc123',
+          amount: '100',
+          fee: '1',
+          asset: 'USDC',
+          sender: 'GSENDER',
+          agent: 'GAGENT',
+          ledgerSequence: 1000,
+          timestamp: '2026-01-01T00:00:00Z',
+        },
+        possiblyOutOfRange: false,
       });
       const { container } = render(<ProofOfPayout remittanceId={42} />);
       await waitFor(() => expect(screen.queryByText(/loading/i)).not.toBeInTheDocument());

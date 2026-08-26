@@ -8,7 +8,7 @@ interface ProofOfPayoutProps {
   onRelease?: (remittanceId: number, proofImage: string) => Promise<void>;
 }
 
-type ProofValidationStatus = 'pending' | 'valid' | 'invalid';
+type ProofValidationStatus = 'pending' | 'valid' | 'invalid' | 'out_of_range';
 
 /** Convert an arbitrary string to a hex representation of its UTF-8 bytes */
 function toHex(value: string): string {
@@ -58,13 +58,16 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
       setValidationStatus('pending');
 
       try {
-        const data = await horizonService.fetchCompletedEvent(remittanceId);
+        const result = await horizonService.fetchCompletedEvent(remittanceId);
 
-        if (data) {
-          setEventData(data);
+        if (result.event) {
+          setEventData(result.event);
           // Validate: transaction hash must be non-empty and 64 hex chars
-          const isValid = /^[0-9a-fA-F]{64}$/.test(data.transactionHash);
+          const isValid = /^[0-9a-fA-F]{64}$/.test(result.event.transactionHash);
           setValidationStatus(isValid ? 'valid' : 'invalid');
+        } else if (result.possiblyOutOfRange) {
+          setError('Event not found within the search window. It may be older than the maximum lookback period.');
+          setValidationStatus('out_of_range');
         } else {
           setError('No completed event found for this remittance ID');
           setValidationStatus('invalid');
@@ -207,6 +210,7 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
     pending: '⏳ Validating proof…',
     valid: '✅ Proof valid',
     invalid: '❌ Proof invalid',
+    out_of_range: '⚠️ Event possibly out of search range',
   };
 
   return (
@@ -219,6 +223,16 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
         </div>
       )}
 
+      {!isLoading && validationStatus !== 'pending' && (
+        <div
+          className={`proof-validation-status proof-validation-${validationStatus}`}
+          role="status"
+          aria-live="polite"
+        >
+          {validationLabel[validationStatus]}
+        </div>
+      )}
+
       {error && (
         <div className="error-state">
           <p className="error-message">{error}</p>
@@ -227,14 +241,6 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
 
       {!isLoading && !error && eventData && (
         <div className="payout-details">
-          {/* Validation status banner */}
-          <div
-            className={`proof-validation-status proof-validation-${validationStatus}`}
-            role="status"
-            aria-live="polite"
-          >
-            {validationLabel[validationStatus]}
-          </div>
 
           <div className="detail-section">
             <h3>Transaction Details</h3>

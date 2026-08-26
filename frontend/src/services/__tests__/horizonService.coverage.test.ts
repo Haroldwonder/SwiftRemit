@@ -54,7 +54,7 @@ describe('HorizonService.parseScVal (via fetchCompletedEvent)', () => {
       ],
     }));
     const result = await service.fetchCompletedEvent(1);
-    expect(result).toBeNull();
+    expect(result.event).toBeNull();
   });
 
   it('handles numeric _value in ScVal', async () => {
@@ -71,7 +71,7 @@ describe('HorizonService.parseScVal (via fetchCompletedEvent)', () => {
       ],
     }));
     const result = await service.fetchCompletedEvent(1);
-    expect(result).toBeNull(); // '42' !== 'complete', so no match
+    expect(result.event).toBeNull(); // '42' !== 'complete', so no match
   });
 
   it('handles nested object _value in ScVal', async () => {
@@ -90,7 +90,7 @@ describe('HorizonService.parseScVal (via fetchCompletedEvent)', () => {
     const result = await service.fetchCompletedEvent(1);
     // 'settle' extracted from nested object, 'complete' matches — but value array
     // is empty so remittanceId won't match → null
-    expect(result).toBeNull();
+    expect(result.event).toBeNull();
   });
 });
 
@@ -182,8 +182,8 @@ describe('HorizonService.fetchRemittanceFee fallback', () => {
     });
 
     const result = await service.fetchCompletedEvent(7);
-    expect(result).not.toBeNull();
-    expect(result?.fee).toBe('0');
+    expect(result.event).not.toBeNull();
+    expect(result.event?.fee).toBe('0');
   });
 
   it('returns "0" when fetchRemittanceFee itself throws', async () => {
@@ -227,7 +227,7 @@ describe('HorizonService.fetchRemittanceFee fallback', () => {
     });
 
     const result = await service.fetchCompletedEvent(8);
-    expect(result).not.toBeNull();
-    expect(result?.fee).toBe('0');
+    expect(result.event).not.toBeNull();
+    expect(result.event?.fee).toBe('0');
   });
 });
