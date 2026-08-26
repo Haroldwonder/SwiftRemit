@@ -132,7 +132,15 @@ enum DataKey {
     IntegratorFeeBps,
 
     /// Total accumulated integrator fees awaiting withdrawal (instance storage)
+    /// Kept for backward-compatibility / migration reads; new accrual uses
+    /// IntegratorBalance(Address) for per-integrator tracking (#1263).
     AccumulatedIntegratorFees,
+
+    /// Per-integrator accrued fee balance (persistent storage) (#1263)
+    IntegratorBalance(Address),
+
+    /// Optional integrator address recorded at remittance creation (#1263)
+    RemittanceIntegrator(u64),
 
     /// Contract pause status for emergency halts (instance storage)
     Paused,
@@ -680,6 +688,46 @@ pub fn get_accumulated_integrator_fees(env: &Env) -> i128 {
         .instance()
         .get(&DataKey::AccumulatedIntegratorFees)
         .unwrap_or(0)
+}
+
+// ── Per-integrator balance (#1263) ────────────────────────────────────────────
+
+/// Returns the accrued fee balance for a specific integrator.
+pub fn get_integrator_balance(env: &Env, integrator: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::IntegratorBalance(integrator.clone()))
+        .unwrap_or(0)
+}
+
+/// Adds `amount` to the integrator's accrued balance (saturating on overflow).
+pub fn add_integrator_balance(env: &Env, integrator: &Address, amount: i128) {
+    let current = get_integrator_balance(env, integrator);
+    let updated = current.saturating_add(amount);
+    env.storage()
+        .persistent()
+        .set(&DataKey::IntegratorBalance(integrator.clone()), &updated);
+}
+
+/// Resets the integrator's accrued balance to zero (called after withdrawal).
+pub fn clear_integrator_balance(env: &Env, integrator: &Address) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::IntegratorBalance(integrator.clone()), &0i128);
+}
+
+/// Stores the integrator address for a remittance (set at creation time).
+pub fn set_remittance_integrator(env: &Env, remittance_id: u64, integrator: &Address) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::RemittanceIntegrator(remittance_id), integrator);
+}
+
+/// Returns the integrator address for a remittance, if one was set.
+pub fn get_remittance_integrator(env: &Env, remittance_id: u64) -> Option<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::RemittanceIntegrator(remittance_id))
 }
 
 /// Checks if a settlement hash exists for duplicate detection.

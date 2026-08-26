@@ -487,9 +487,9 @@ soroban contract invoke \
   --fee_bps 250
 ```
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for complete deployment instructions.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for complete deployment instructions.
 
-For production readiness assessment, see [PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md).
+For production readiness assessment, see [docs/PRODUCTION_READINESS_REPORT.md](docs/PRODUCTION_READINESS_REPORT.md).
 
 ## Staging Environment
 
@@ -574,10 +574,12 @@ SwiftRemit uses environment variables for configuration. This allows you to easi
 
 ### Documentation
 
-- **[CONFIGURATION.md](CONFIGURATION.md)**: Complete configuration reference with all variables, validation rules, and examples
-- **[MIGRATION.md](MIGRATION.md)**: Migration guide for existing developers
-- **[RUNBOOK.md](RUNBOOK.md)**: Operational runbook — emergency pause/unpause, admin key rotation, stuck migrations, webhook replay, storage TTL extension
-- **[PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md)**: Current production readiness status — what's complete, what's pending, and known risks before mainnet
+- **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**: Complete configuration reference with all variables, validation rules, and examples
+- **[docs/MIGRATION.md](docs/MIGRATION.md)**: Migration guide for existing developers
+- **[docs/RUNBOOK.md](docs/RUNBOOK.md)**: Operational runbook — emergency pause/unpause, admin key rotation, stuck migrations, webhook replay, storage TTL extension
+- **[docs/PRODUCTION_READINESS_REPORT.md](docs/PRODUCTION_READINESS_REPORT.md)**: Current production readiness status — what's complete, what's pending, and known risks before mainnet
+
+📚 **Full documentation index:** [docs/README.md](docs/README.md)
 
 ## Remittance Lifecycle — Sequence Diagram
 
@@ -836,7 +838,7 @@ cargo deny --all-features check licenses    # Rust dependency licences (see deny
 For issues and questions:
 - GitHub Issues: [Create an issue](https://github.com/yourusername/swiftremit/issues)
 - Stellar Discord: https://discord.gg/stellar
-- Documentation: See [DEPLOYMENT.md](DEPLOYMENT.md)
+- Documentation: See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
 ## Contributing
 

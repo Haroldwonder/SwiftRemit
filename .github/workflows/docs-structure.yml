@@ -1,0 +1,25 @@
+name: Docs structure check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*.md'
+      - 'docs/**'
+      - 'scripts/check-root-markdown.sh'
+  pull_request:
+    branches: [main]
+    paths:
+      - '*.md'
+      - 'docs/**'
+      - 'scripts/check-root-markdown.sh'
+
+jobs:
+  root-markdown:
+    name: Root markdown allowlist (SR-115)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce root-level markdown allowlist
+        run: bash scripts/check-root-markdown.sh
