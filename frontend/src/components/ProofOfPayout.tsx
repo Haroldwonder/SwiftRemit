@@ -39,7 +39,7 @@ function deriveProofHash(event: SettlementCompletedEvent): string {
 export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRelease }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [isReleasing, setIsReleasing] = useState(false);
   const [eventData, setEventData] = useState<SettlementCompletedEvent | null>(null);
@@ -89,7 +89,9 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
         const mediaStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment' },
         });
-        setStream(mediaStream);
+        // Keep the ref in sync so the cleanup closure always has access to the
+        // live stream, regardless of when it runs.
+        streamRef.current = mediaStream;
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
         }
@@ -103,8 +105,12 @@ export const ProofOfPayout: React.FC<ProofOfPayoutProps> = ({ remittanceId, onRe
     }
 
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+      // Use the ref — not the state variable — so the cleanup always sees the
+      // most-recently-acquired stream even if the component unmounts before the
+      // async startCamera resolves and before React schedules a re-render.
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
       }
     };
   }, [onRelease]);
