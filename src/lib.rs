@@ -517,10 +517,13 @@ impl SwiftRemitContract {
         idempotency_key: Option<String>,
         settlement_config: Option<SettlementConfig>,
         recipient_hash: Option<BytesN<32>>,
+        integrator: Option<Address>,
     ) -> Result<u64, ContractError> {
         if crate::storage::is_migration_in_progress(&env) {
             return Err(ContractError::MigrationInProgress);
         }
+        // #1264: Block new escrow creation while the circuit-breaker is active.
+        validate_not_paused(&env)?;
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
 
         // Enforce minimum agent reputation threshold (#591)
@@ -620,6 +623,11 @@ impl SwiftRemitContract {
         set_remittance_counter(&env, remittance_id);
         storage::record_sender_volume(&env, &sender, amount, env.ledger().timestamp())?;
 
+        // #1263: Record integrator so confirm_payout can accrue fees to their balance.
+        if let Some(ref intg) = integrator {
+            storage::set_remittance_integrator(&env, remittance_id, intg);
+        }
+
         // Store recipient hash if provided (Task 7.1)
         if let Some(ref hash) = recipient_hash {
             recipient_verification::store_recipient_hash(&env, remittance_id, hash)?;
@@ -671,6 +679,8 @@ impl SwiftRemitContract {
         from_country: Option<String>,
         to_country: Option<String>,
     ) -> Result<u64, ContractError> {
+        // #1264: Block new corridor-remittance creation while the circuit-breaker is active.
+        validate_not_paused(&env)?;
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
 
         sender.require_auth();
@@ -773,6 +783,8 @@ impl SwiftRemitContract {
         if crate::storage::is_migration_in_progress(&env) {
             return Err(ContractError::MigrationInProgress);
         }
+        // #1264: Block batch escrow creation while the circuit-breaker is active.
+        validate_not_paused(&env)?;
 
         // Validate batch size
         let batch_size = entries.len();
@@ -1024,6 +1036,16 @@ impl SwiftRemitContract {
         // Update accumulated fees with overflow protection and automatic flush
         safe_add_accumulated_fee(&env, remittance.fee)?;
 
+        // #1263: Accrue a portion of the platform fee to the integrator balance if one
+        // was recorded at creation time. We credit 10% of the platform fee (rounded down)
+        // to the integrator; the remaining 90% stays in the platform accumulated_fees pot.
+        if let Some(intg) = storage::get_remittance_integrator(&env, remittance_id) {
+            let integrator_share = remittance.fee / 10; // 10% of platform fee
+            if integrator_share > 0 {
+                storage::add_integrator_balance(&env, &intg, integrator_share);
+            }
+        }
+
         // Update analytics: move volume from in-flight to completed
         storage::sub_processing_volume(&env, remittance.amount)?;
         storage::add_completed_volume(&env, remittance.amount)?;
@@ -1066,6 +1088,9 @@ impl SwiftRemitContract {
     }
 
     pub fn mark_failed(env: Env, remittance_id: u64) -> Result<(), ContractError> {
+        // #1264: Prevent agents from transitioning remittances to Failed while paused.
+        // Funds remain safely escrowed; the sender retains their cancel/expiry exit paths.
+        validate_not_paused(&env)?;
         let mut remittance = get_remittance(&env, remittance_id)?;
         crate::storage::require_agent_authorized(&env, &remittance.agent)?;
 
@@ -1117,6 +1142,8 @@ impl SwiftRemitContract {
         remittance_id: u64,
         evidence_hash: BytesN<32>,
     ) -> Result<(), ContractError> {
+        // #1264 PAUSE POLICY: raise_dispute is intentionally allowed while paused —
+        // senders must retain the ability to contest a failure even during an incident.
         let mut remittance = get_remittance(&env, remittance_id)?;
         remittance.sender.require_auth();
 
@@ -1147,6 +1174,8 @@ impl SwiftRemitContract {
         remittance_id: u64,
         in_favour_of_sender: bool,
     ) -> Result<(), ContractError> {
+        // #1264 PAUSE POLICY: resolve_dispute is intentionally allowed while paused —
+        // admin must be able to unblock user funds regardless of circuit-breaker state.
         let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
 
@@ -1229,6 +1258,8 @@ impl SwiftRemitContract {
         if amount <= 0 {
             return Err(ContractError::InvalidAmount);
         }
+        // #1264: Partial payouts are a form of settlement; block while paused.
+        validate_not_paused(&env)?;
 
         let mut remittance = get_remittance(&env, remittance_id)?;
         crate::storage::require_agent_authorized(&env, &remittance.agent)?;
@@ -1364,6 +1395,9 @@ impl SwiftRemitContract {
     ///
     /// Requires authentication from the sender address who created the remittance.
     pub fn cancel_remittance(env: Env, remittance_id: u64) -> Result<(), ContractError> {
+        // #1264 PAUSE POLICY: cancel_remittance is intentionally allowed while paused.
+        // Senders must retain the ability to exit their positions during an incident;
+        // blocking cancellations would trap user funds.
         // Centralized validation before business logic (returns remittance to avoid re-read)
         let mut remittance = validate_cancel_remittance_request(&env, remittance_id)?;
 
@@ -1417,6 +1451,8 @@ impl SwiftRemitContract {
         env: Env,
         remittance_ids: Vec<u64>,
     ) -> Result<Vec<u64>, ContractError> {
+        // #1264 PAUSE POLICY: process_expired_remittances is intentionally allowed while
+        // paused — expiry-based refunds are a user exit path and must remain available.
         if remittance_ids.len() > get_max_expired_batch_size(&env) {
             return Err(ContractError::InvalidBatchSize);
         }
@@ -1509,6 +1545,8 @@ impl SwiftRemitContract {
     ///
     /// Requires authentication from the contract admin.
     pub fn withdraw_fees(env: Env, to: Address) -> Result<(), ContractError> {
+        // #1264: Block fee withdrawal while paused — prevents draining funds during an incident.
+        validate_not_paused(&env)?;
         // Centralized validation before business logic (returns fees to avoid re-read)
         let fees = validate_withdraw_fees_request(&env, &to)?;
 
@@ -1548,23 +1586,31 @@ impl SwiftRemitContract {
     /// # Authorization
     ///
     /// Requires authentication from the integrator address.
+    /// Withdraws the caller's own accumulated integrator fees (#1263).
+    ///
+    /// Each integrator only has access to the balance accrued from remittances
+    /// they originated. Passing any other integrator address is rejected.
     pub fn withdraw_integrator_fees(
         env: Env,
         integrator: Address,
         to: Address,
     ) -> Result<(), ContractError> {
-        let fees = storage::get_accumulated_integrator_fees(&env);
+        // #1264: Block fee withdrawal while paused.
+        validate_not_paused(&env)?;
+        // Auth: only the integrator themselves may withdraw their own balance.
+        integrator.require_auth();
+
+        // #1263: Use per-integrator balance, not the shared global counter.
+        let fees = storage::get_integrator_balance(&env, &integrator);
         if fees <= 0 {
             return Err(ContractError::NoFeesToWithdraw);
         }
-
-        integrator.require_auth();
 
         let usdc_token = get_usdc_token(&env)?;
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&env.current_contract_address(), &to, &fees);
 
-        storage::set_accumulated_integrator_fees(&env, 0);
+        storage::clear_integrator_balance(&env, &integrator);
 
         emit_integrator_fees_withdrawn(&env, integrator, to, usdc_token, fees);
 
@@ -2120,6 +2166,8 @@ impl SwiftRemitContract {
         recipient: Address,
         amount: i128,
     ) -> Result<u64, ContractError> {
+        // #1264: Block new escrow creation while the circuit-breaker is active.
+        validate_not_paused(&env)?;
         sender.require_auth();
 
         if amount <= 0 {
@@ -2163,6 +2211,8 @@ impl SwiftRemitContract {
     }
 
     pub fn release_escrow(env: Env, transfer_id: u64) -> Result<(), ContractError> {
+        // #1264: Block escrow release while paused.
+        validate_not_paused(&env)?;
         let mut escrow = get_escrow(&env, transfer_id)?;
 
         let caller = get_admin(&env)?;
@@ -2189,6 +2239,8 @@ impl SwiftRemitContract {
     }
 
     pub fn refund_escrow(env: Env, transfer_id: u64) -> Result<(), ContractError> {
+        // #1264 PAUSE POLICY: refund_escrow is intentionally allowed while paused —
+        // senders must be able to reclaim their own escrow during an incident.
         let mut escrow = get_escrow(&env, transfer_id)?;
 
         escrow.sender.require_auth();
@@ -2233,6 +2285,8 @@ impl SwiftRemitContract {
         env: Env,
         transfer_ids: Vec<u64>,
     ) -> Result<Vec<u64>, ContractError> {
+        // #1264 PAUSE POLICY: process_expired_escrows is intentionally allowed while
+        // paused — expiry refunds are a user exit path and must remain available.
         if transfer_ids.len() > get_max_expired_batch_size(&env) {
             return Err(ContractError::InvalidBatchSize);
         }
@@ -2647,6 +2701,7 @@ impl SwiftRemitContract {
         agent: Address,
         remittance_ids: Vec<u64>,
     ) -> Result<Vec<u64>, ContractError> {
+        // #1264 PAUSE POLICY: pause is enforced inside confirm_payout → validate_confirm_payout_request.
         let batch_size = remittance_ids.len();
         if batch_size == 0 || batch_size > MAX_BATCH_SIZE {
             return Err(ContractError::InvalidBatchSize);

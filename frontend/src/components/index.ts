@@ -12,3 +12,5 @@ export { ToastContainer, useToast } from './Toast';
 export type { ToastMessage, ToastType, UseToastReturn } from './Toast';
 export { ConfirmDialog } from './ConfirmDialog';
 export type { ConfirmDialogProps } from './ConfirmDialog';
+export { AgentAnalytics } from './AgentAnalytics';
+export type { } from './AgentAnalytics';

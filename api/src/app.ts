@@ -15,6 +15,7 @@ import { createRemittancesRouter, RemittancesRouterOptions } from './routes/remi
 import { createAdminRouter } from './routes/admin';
 import { createAnalyticsRouter } from './routes/analytics';
 import { createAgentsRouter } from './routes/agents';
+import { createAgentAnalyticsRouter } from './routes/agent-analytics';
 import { createAuthRouter } from './routes/auth';
 import { createAccountsRouter } from './routes/accounts';
 import { getApiMetrics } from './metrics';
@@ -277,6 +278,11 @@ export function createApp(options: AppOptions = {}): Application {
 
   // Agents — registration and management (Issue #880)
   apiRouter.use('/agents', createAgentsRouter());
+
+  // Agent analytics — earnings and performance metrics (Issue #947)
+  if (analyticsPool) {
+    app.use('/api/agents/:id/analytics', createAgentAnalyticsRouter(analyticsPool));
+  }
 
   // Accounts — Stellar fee estimation and XLM balance (Issue #949)
   apiRouter.use('/accounts', createAccountsRouter());
