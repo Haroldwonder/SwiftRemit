@@ -154,8 +154,11 @@ interface SimulateUpgradeAuditEntry {
  * Write a structured audit record for every simulate-upgrade invocation.
  * Uses the same admin_audit_log table as the backend AdminAuditLogService.
  * Falls back to a structured console log when DATABASE_URL is not set.
+ *
+ * Accepts the shared instrumented pool so we never create a throwaway
+ * `new Pool()` per audit write (SR-165).
  */
-async function auditSimulateUpgrade(entry: SimulateUpgradeAuditEntry): Promise<void> {
+async function auditSimulateUpgrade(entry: SimulateUpgradeAuditEntry, pool: Pool | null): Promise<void> {
   const record = {
     action: 'simulate_upgrade',
     outcome: entry.outcome,
@@ -168,9 +171,7 @@ async function auditSimulateUpgrade(entry: SimulateUpgradeAuditEntry): Promise<v
       : {}),
   };
 
-  const dbUrl = process.env.DATABASE_URL;
-  if (dbUrl) {
-    const pool = new Pool({ connectionString: dbUrl, max: 1 });
+  if (pool) {
     try {
       await pool.query(
         `INSERT INTO admin_audit_log
@@ -188,8 +189,6 @@ async function auditSimulateUpgrade(entry: SimulateUpgradeAuditEntry): Promise<v
     } catch (dbErr) {
       // Audit failures must never crash the request; log and continue.
       console.error('[simulate-upgrade] audit DB write failed:', dbErr);
-    } finally {
-      await pool.end();
     }
   } else {
     // Structured fallback for environments without a database
@@ -336,10 +335,17 @@ function simulateUpgrade(wasmHashHex: string): SimulateUpgradeReport {
 
 const HIGH_RISK_OPS: HighRiskOperation[] = ['withdraw_fees', 'remove_agent', 'update_fee'];
 
-function getConfirmationService(): AdminConfirmationService | null {
-  const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) return null;
-  const pool = new Pool({ connectionString: dbUrl });
+/**
+ * Returns an AdminConfirmationService backed by the supplied shared pool.
+ * When no pool is provided (DATABASE_URL absent) returns null so callers can
+ * respond with 503 DB_UNAVAILABLE cleanly.
+ *
+ * NOTE: do NOT create a fresh `new Pool()` here.  The shared pool is already
+ * instrumented with Prometheus metrics and saturation tracking via db/pool.ts;
+ * a per-call pool bypasses that observability and multiplies connection churn.
+ */
+function getConfirmationService(pool: Pool | null): AdminConfirmationService | null {
+  if (!pool) return null;
   return new AdminConfirmationService(pool);
 }
 
@@ -446,7 +452,20 @@ async function* streamRemittancesCsv(
   }
 }
 
-export function createAdminRouter(): Router {
+export function createAdminRouter(sharedPool: Pool | null = null): Router {
+  // Resolve pool: prefer the caller-supplied shared pool (already instrumented
+  // with Prometheus metrics in db/pool.ts).  Only fall back to a fresh pool if
+  // the caller did not pass one AND DATABASE_URL is set — this happens only in
+  // legacy call-sites that haven't been updated yet.
+  //
+  // EXCEPTION: streamRemittancesCsv() deliberately uses the *same* shared pool
+  // client (checked out for the duration of the cursor transaction).  That is
+  // intentional — a server-side DECLARE CURSOR must stay on one connection, but
+  // it still goes through the shared pool rather than opening a new TCP session.
+  const pool: Pool | null = sharedPool ?? (process.env.DATABASE_URL
+    ? new Pool({ connectionString: process.env.DATABASE_URL })
+    : null);
+
   const router = Router();
 
   /**
@@ -521,12 +540,15 @@ export function createAdminRouter(): Router {
     }
 
     const dbUrl = process.env.DATABASE_URL;
-    if (!dbUrl) {
+    if (!pool) {
       return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
     }
 
-    const pool = new Pool({ connectionString: dbUrl });
-
+    // Note: streamRemittancesCsv holds one pool connection for the lifetime of
+    // the DECLARE CURSOR / FETCH FORWARD stream.  Using the shared pool here is
+    // intentional — we borrow a single connection rather than opening a fresh
+    // TCP+TLS session.  The connection is released in streamRemittancesCsv's
+    // finally block once the stream completes or the client disconnects.
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="remittances-${new Date().toISOString()}.csv"`);
 
@@ -537,7 +559,6 @@ export function createAdminRouter(): Router {
       }
     } finally {
       res.end();
-      await pool.end();
     }
   });
 
@@ -647,13 +668,7 @@ export function createAdminRouter(): Router {
 
       // ── 1. Admin authentication (timing-safe) ──────────────────────────────
       if (!isAdminAuthorized(req)) {
-        await auditSimulateUpgrade({
-          admin_key_hint: keyHint,
-          wasm_hash: null,
-          ip_address: ipAddress,
-          outcome: 'rejected',
-          rejection_code: 'UNAUTHORIZED',
-        });
+        await auditSimulateUpgrade({$$$}, pool);
         return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
       }
 
@@ -661,13 +676,7 @@ export function createAdminRouter(): Router {
       const allowedFields = new Set(['wasm_hash', 'confirmation_token']);
       const extraFields = Object.keys(req.body ?? {}).filter((k) => !allowedFields.has(k));
       if (extraFields.length > 0) {
-        await auditSimulateUpgrade({
-          admin_key_hint: keyHint,
-          wasm_hash: null,
-          ip_address: ipAddress,
-          outcome: 'rejected',
-          rejection_code: 'EXTRA_FIELDS',
-        });
+        await auditSimulateUpgrade({$$$}, pool);
         return sendError(
           res,
           400,
@@ -680,13 +689,7 @@ export function createAdminRouter(): Router {
 
       // ── 3. confirmation_token presence check ───────────────────────────────
       if (!confirmation_token || typeof confirmation_token !== 'string') {
-        await auditSimulateUpgrade({
-          admin_key_hint: keyHint,
-          wasm_hash: null,
-          ip_address: ipAddress,
-          outcome: 'rejected',
-          rejection_code: 'MISSING_CONFIRMATION_TOKEN',
-        });
+        await auditSimulateUpgrade({$$$}, pool);
         return sendError(
           res,
           400,
@@ -697,13 +700,7 @@ export function createAdminRouter(): Router {
 
       // ── 4. WASM hash format validation ─────────────────────────────────────
       if (!isValidWasmHash(wasm_hash)) {
-        await auditSimulateUpgrade({
-          admin_key_hint: keyHint,
-          wasm_hash: null,
-          ip_address: ipAddress,
-          outcome: 'rejected',
-          rejection_code: 'INVALID_WASM_HASH',
-        });
+        await auditSimulateUpgrade({$$$}, pool);
         return sendError(
           res,
           400,
@@ -715,13 +712,7 @@ export function createAdminRouter(): Router {
       // ── 5. WASM hash allowlist check (when configured) ─────────────────────
       const allowlist = getWasmHashAllowlist();
       if (allowlist !== null && !allowlist.has(wasm_hash.toLowerCase())) {
-        await auditSimulateUpgrade({
-          admin_key_hint: keyHint,
-          wasm_hash,
-          ip_address: ipAddress,
-          outcome: 'rejected',
-          rejection_code: 'WASM_HASH_NOT_ALLOWLISTED',
-        });
+        await auditSimulateUpgrade({$$$}, pool);
         return sendError(
           res,
           400,
@@ -731,15 +722,9 @@ export function createAdminRouter(): Router {
       }
 
       // ── 6. Confirmation token verification ─────────────────────────────────
-      const svc = getConfirmationService();
+      const svc = getConfirmationService(pool);
       if (!svc) {
-        await auditSimulateUpgrade({
-          admin_key_hint: keyHint,
-          wasm_hash,
-          ip_address: ipAddress,
-          outcome: 'rejected',
-          rejection_code: 'DB_UNAVAILABLE',
-        });
+        await auditSimulateUpgrade({$$$}, pool);
         return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
       }
 
@@ -753,14 +738,7 @@ export function createAdminRouter(): Router {
         const action = await svc.verify(confirmation_token);
 
         if (!action) {
-          await auditSimulateUpgrade({
-            admin_key_hint: keyHint,
-            wasm_hash,
-            ip_address: ipAddress,
-            outcome: 'rejected',
-            rejection_code: 'INVALID_CONFIRMATION_TOKEN',
-            confirmation_token_hint: tokenHint,
-          });
+          await auditSimulateUpgrade({$$$}, pool);
           return sendError(
             res,
             401,
@@ -774,13 +752,7 @@ export function createAdminRouter(): Router {
 
         // Audit success BEFORE sending the response so the log entry is
         // guaranteed even if the connection drops.
-        await auditSimulateUpgrade({
-          admin_key_hint: keyHint,
-          wasm_hash,
-          ip_address: ipAddress,
-          outcome: 'success',
-          confirmation_token_hint: tokenHint,
-        });
+        await auditSimulateUpgrade({$$$}, pool);
 
         // X-Simulation-Only confirms to any intermediary (proxy, WAF, SIEM)
         // that this response is the result of a read-only operation.
@@ -794,14 +766,7 @@ export function createAdminRouter(): Router {
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Confirmation verification failed';
-        await auditSimulateUpgrade({
-          admin_key_hint: keyHint,
-          wasm_hash,
-          ip_address: ipAddress,
-          outcome: 'rejected',
-          rejection_code: 'CONFIRMATION_VERIFICATION_FAILED',
-          confirmation_token_hint: tokenHint,
-        });
+        await auditSimulateUpgrade({$$$}, pool);
         return sendError(res, 401, msg, 'CONFIRMATION_VERIFICATION_FAILED');
       }
     },
@@ -827,7 +792,7 @@ export function createAdminRouter(): Router {
       return sendError(res, 400, 'initiated_by is required', 'MISSING_FIELD');
     }
 
-    const svc = getConfirmationService();
+    const svc = getConfirmationService(pool);
     if (!svc) return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
 
     try {
@@ -852,7 +817,7 @@ export function createAdminRouter(): Router {
       return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
     }
 
-    const svc = getConfirmationService();
+    const svc = getConfirmationService(pool);
     if (!svc) return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
 
     try {
@@ -878,7 +843,7 @@ export function createAdminRouter(): Router {
       return sendError(res, 400, 'confirmed_by is required', 'MISSING_FIELD');
     }
 
-    const svc = getConfirmationService();
+    const svc = getConfirmationService(pool);
     if (!svc) return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
 
     try {
@@ -904,12 +869,10 @@ export function createAdminRouter(): Router {
       return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
     }
 
-    const dbUrl = process.env.DATABASE_URL;
-    if (!dbUrl) {
+    if (!pool) {
       return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
     }
 
-    const pool = new Pool({ connectionString: dbUrl });
     try {
       const { id } = req.params;
 
@@ -990,8 +953,6 @@ export function createAdminRouter(): Router {
         error instanceof Error ? error.message : 'Failed to retrieve anchor health',
         'ANCHOR_HEALTH_ERROR',
       );
-    } finally {
-      await pool.end();
     }
   });
 
@@ -1006,7 +967,6 @@ export function createAdminRouter(): Router {
       return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
     }
 
-    const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null;
     if (!pool) {
       return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
     }
@@ -1038,8 +998,6 @@ export function createAdminRouter(): Router {
       return res.json({ success: true, data: entries, timestamp: timestamp() });
     } catch (err) {
       return sendError(res, 500, err instanceof Error ? err.message : 'Failed to list dead letters', 'DLQ_LIST_FAILED');
-    } finally {
-      await pool.end();
     }
   });
 
@@ -1052,7 +1010,6 @@ export function createAdminRouter(): Router {
       return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
     }
 
-    const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null;
     if (!pool) {
       return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
     }
@@ -1140,8 +1097,6 @@ export function createAdminRouter(): Router {
       }
     } catch (err) {
       return sendError(res, 500, err instanceof Error ? err.message : 'Failed to replay dead letter', 'DLQ_REPLAY_ERROR');
-    } finally {
-      await pool.end();
     }
   });
 
@@ -1247,12 +1202,9 @@ export function createAdminRouter(): Router {
       req.socket.remoteAddress ??
       null;
 
-    const dbUrl = process.env.DATABASE_URL;
-    if (!dbUrl) {
+    if (!pool) {
       return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
     }
-
-    const pool = new Pool({ connectionString: dbUrl });
 
     const replayed: string[] = [];
     const failed: Array<{ id: string; reason: string }> = [];
@@ -1376,8 +1328,6 @@ export function createAdminRouter(): Router {
         err instanceof Error ? err.message : 'Bulk replay encountered an unexpected error',
         'DLQ_BULK_REPLAY_ERROR'
       );
-    } finally {
-      await pool.end();
     }
   });
 

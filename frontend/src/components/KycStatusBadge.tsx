@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import './KycStatusBadge.css';
 
@@ -113,6 +113,40 @@ export const KycStatusBadge: React.FC<KycStatusBadgeProps> = ({
   const [showModal, setShowModal] = useState(false);
   const [showGuidanceModal, setShowGuidanceModal] = useState(false);
 
+  // Refs for focus management
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const detailsModalRef = useRef<HTMLDivElement>(null);
+  const guidanceModalRef = useRef<HTMLDivElement>(null);
+
+  // Move focus into the modal on open, restore to trigger on close
+  useEffect(() => {
+    if (showModal) {
+      detailsModalRef.current?.focus();
+    } else {
+      triggerRef.current?.focus();
+    }
+  }, [showModal]);
+
+  useEffect(() => {
+    if (showGuidanceModal) {
+      guidanceModalRef.current?.focus();
+    } else if (!showModal) {
+      triggerRef.current?.focus();
+    }
+  }, [showGuidanceModal, showModal]);
+
+  // Close modals on Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showGuidanceModal) setShowGuidanceModal(false);
+        else if (showModal) setShowModal(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showModal, showGuidanceModal]);
+
   useEffect(() => {
     fetchKycStatus();
   }, [apiUrl, userId]);
@@ -191,7 +225,9 @@ export const KycStatusBadge: React.FC<KycStatusBadgeProps> = ({
         onClick={handleClick}
         role="button"
         tabIndex={0}
+        ref={triggerRef}
         aria-label={`KYC status ${status.overall_status}`}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); } }}
       >
         <span className="kyc-badge-icon">{badgeIcon}</span>
         <span className="kyc-badge-text">{badgeText}</span>
@@ -199,11 +235,19 @@ export const KycStatusBadge: React.FC<KycStatusBadgeProps> = ({
       </div>
 
       {showModal && (
-        <div className="kyc-modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="kyc-modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="kyc-modal-overlay" onClick={() => setShowModal(false)} aria-hidden="true">
+          <div
+            className="kyc-modal-content"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="kyc-details-modal-title"
+            ref={detailsModalRef}
+            tabIndex={-1}
+          >
             <div className="kyc-modal-header">
-              <h2>{t('kyc.statusDetails')}</h2>
-              <button className="kyc-modal-close" onClick={() => setShowModal(false)}>
+              <h2 id="kyc-details-modal-title">{t('kyc.statusDetails')}</h2>
+              <button className="kyc-modal-close" onClick={() => setShowModal(false)} aria-label={t('kyc.closeModal')}>
                 ×
               </button>
             </div>
@@ -294,11 +338,20 @@ export const KycStatusBadge: React.FC<KycStatusBadgeProps> = ({
       )}
 
       {showGuidanceModal && status && (
-        <div className="kyc-modal-overlay" onClick={() => setShowGuidanceModal(false)}>
-          <div className="kyc-modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
+        <div className="kyc-modal-overlay" onClick={() => setShowGuidanceModal(false)} aria-hidden="true">
+          <div
+            className="kyc-modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '600px' }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="kyc-guidance-modal-title"
+            ref={guidanceModalRef}
+            tabIndex={-1}
+          >
             <div className="kyc-modal-header">
-              <h2>KYC Status Guidance</h2>
-              <button className="kyc-modal-close" onClick={() => setShowGuidanceModal(false)}>
+              <h2 id="kyc-guidance-modal-title">KYC Status Guidance</h2>
+              <button className="kyc-modal-close" onClick={() => setShowGuidanceModal(false)} aria-label="Close guidance modal">
                 ×
               </button>
             </div>

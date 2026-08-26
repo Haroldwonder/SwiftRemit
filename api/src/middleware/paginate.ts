@@ -1,8 +1,15 @@
 /**
- * Cursor pagination middleware for Express routes.
- * Applies createCursorPagination to any list endpoint.
+ * Shared cursor-pagination primitives for Express list endpoints (SR-051).
  *
- * SR-051
+ * These utilities are the canonical building blocks for keyset/cursor
+ * pagination across this service.  Any list route that needs paginated
+ * output — GET /anchors, GET /admin/webhooks/dlq, analytics list endpoints,
+ * etc. — should import `parsePaginationParams` and `buildCursorEnvelope`
+ * from here rather than rolling its own query-string parsing.
+ *
+ * Note: the former routes/paginatedRemittances.ts demo stub has been removed
+ * (SR-164).  The real, working cursor-paginated remittances endpoint lives in
+ * routes/remittances.ts and is mounted at /api/remittances.
  */
 import { Request, Response, NextFunction } from 'express';
 

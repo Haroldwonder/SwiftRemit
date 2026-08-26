@@ -39,6 +39,10 @@
 
 import { Router, Request, Response } from 'express';
 import { ErrorResponse } from '../types';
+import { requireAuth } from '../middleware/auth';
+
+/** Maximum number of remittances accepted in a single simulate request (SR-166). */
+const MAX_SIMULATE_ITEMS = 500;
 
 export interface SimulateRemittanceInput {
   id: number;
@@ -125,13 +129,26 @@ export function computeNetSettlements(
 
 const router = Router();
 
-router.post('/simulate', (req: Request, res: Response) => {
+router.post('/simulate', requireAuth, (req: Request, res: Response) => {
   const { remittances } = req.body as { remittances?: unknown };
 
   if (!Array.isArray(remittances)) {
     const err: ErrorResponse = {
       success: false,
       error: { message: '`remittances` must be an array', code: 'INVALID_INPUT' },
+      timestamp: new Date().toISOString(),
+    };
+    return res.status(400).json(err);
+  }
+
+  // SR-166: cap array length to prevent O(n) CPU/memory abuse
+  if (remittances.length > MAX_SIMULATE_ITEMS) {
+    const err: ErrorResponse = {
+      success: false,
+      error: {
+        message: `remittances array must not exceed ${MAX_SIMULATE_ITEMS} items`,
+        code: 'BATCH_TOO_LARGE',
+      },
       timestamp: new Date().toISOString(),
     };
     return res.status(400).json(err);
@@ -165,6 +182,30 @@ router.post('/simulate', (req: Request, res: Response) => {
         error: {
           message: 'sender and agent must be valid Stellar addresses (G... 56 characters)',
           code: 'INVALID_INPUT',
+        },
+        timestamp: new Date().toISOString(),
+      };
+      return res.status(400).json(err);
+    }
+
+    // SR-166: reject non-finite or negative amount/fee values
+    if (!Number.isFinite(item.amount) || item.amount < 0) {
+      const err: ErrorResponse = {
+        success: false,
+        error: {
+          message: 'amount must be a finite non-negative number (in stroops)',
+          code: 'INVALID_AMOUNT',
+        },
+        timestamp: new Date().toISOString(),
+      };
+      return res.status(400).json(err);
+    }
+    if (!Number.isFinite(item.fee) || item.fee < 0) {
+      const err: ErrorResponse = {
+        success: false,
+        error: {
+          message: 'fee must be a finite non-negative number (in stroops)',
+          code: 'INVALID_FEE',
         },
         timestamp: new Date().toISOString(),
       };
