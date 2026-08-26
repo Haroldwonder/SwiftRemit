@@ -26,6 +26,8 @@ import { createRateLimitMiddleware, addRateLimitHeaders } from './middleware/rat
 import { createGraphQLRouter } from './routes/graphql';
 import { createLivenessRouter, createReadinessRouter } from './routes/health';
 import { initPool, getPool } from './db/pool';
+import { errorHandler, correlationMiddleware } from './middleware/errorHandler';
+import { createVersionedRouter, deprecationMiddleware } from './middleware/versioning';
 
 type AppOptions = {
   anchorStore?: AnchorStore;
@@ -126,6 +128,10 @@ export function createApp(options: AppOptions = {}): Application {
   app.use(express.json());
   app.use(cookieParser());
 
+  // SR-057: Attach correlation ID to every request for support/debug tracing.
+  // Mounted before all routes so the ID is available to errorHandler as well.
+  app.use(correlationMiddleware);
+
   // Request instrumentation (SR-104) — mounted before the rate limiter so
   // shed requests are counted too. Feeds the API latency and error-rate panels.
   const apiMetrics = getApiMetrics();
@@ -180,9 +186,7 @@ export function createApp(options: AppOptions = {}): Application {
     });
   });
 
-  // API routes
-  app.use('/api/currencies', currenciesRouter);
-  app.use('/api/limits', limitsRouter);
+
   // ── Anchor catalogue bootstrap (SR-060) ─────────────────────────────────
   // When no explicit store is injected (production path) and DATABASE_URL is
   // set, spin up a PostgresAnchorStore, ensure the schema exists, and seed
@@ -218,8 +222,19 @@ export function createApp(options: AppOptions = {}): Application {
   // traffic.  Tests (no DATABASE_URL, injected store) get a no-op Promise.
   (app as any).__anchorBootstrap = anchorBootstrapPromise;
 
-  app.use(
-    '/api/anchors',
+  // SR-056: Build a dedicated sub-router that holds all /api/* routes, then
+  // mount it with createVersionedRouter so:
+  //   - /v1/api/... is the canonical, versioned surface
+  //   - /api/...    remains as a deprecated alias (Deprecation + Link headers)
+  const apiRouter = express.Router();
+
+  // SR-056: Emit Deprecation/Sunset headers for individually deprecated routes.
+  apiRouter.use(deprecationMiddleware);
+
+  apiRouter.use('/currencies', currenciesRouter);
+  apiRouter.use('/limits', limitsRouter);
+
+  apiRouter.use('/anchors',
     createAnchorsRouter({
       // Pass a getter so every request picks up storeContainer.store after
       // the async bootstrap has populated it.
@@ -233,43 +248,49 @@ export function createApp(options: AppOptions = {}): Application {
     }),
   );
 
-  // Settlement simulation — authenticated, read-only, no state changes (Issues #420, SR-166)
-  app.use('/api/settlements', settlementsRouter);
+  // Settlement simulation — read-only, no state changes (Issue #420)
+  apiRouter.use('/settlements', settlementsRouter);
 
-  // Remittances — cursor-based pagination (Issues #472, #531)
-  app.use('/api/remittances', createRemittancesRouter({
+  // Remittances — cursor-based pagination (Issues #472, #531); SR-160: pool
+  // passed so failed outbound webhooks are persisted to webhook_dead_letters.
+  apiRouter.use('/remittances', createRemittancesRouter({
     remittanceStore: options.remittanceStore,
+    pool: pool ?? undefined,
   }));
 
   // Admin utilities — read-only operations (simulate-upgrade, etc.)
-  app.use('/api/admin', createAdminRouter(pool));
+  apiRouter.use('/admin', createAdminRouter());
 
   // Corridor analytics (Issue #482)
   const analyticsPool = pool ?? (process.env.DATABASE_URL
     ? new Pool({ connectionString: process.env.DATABASE_URL, max: 5 })
     : null);
   if (analyticsPool) {
-    app.use('/api/analytics', createAnalyticsRouter(analyticsPool, options.anchorAdminApiKey ?? process.env.ANALYTICS_ADMIN_API_KEY));
+    apiRouter.use('/analytics', createAnalyticsRouter(analyticsPool, options.anchorAdminApiKey ?? process.env.ANALYTICS_ADMIN_API_KEY));
   }
 
   // API documentation
-  app.use('/api/docs', docsRouter);
+  apiRouter.use('/docs', docsRouter);
 
   // Auth — JWT login / refresh / logout (Issue #883)
-  app.use('/api/auth', createAuthRouter());
+  apiRouter.use('/auth', createAuthRouter());
 
   // Agents — registration and management (Issue #880)
-  app.use('/api/agents', createAgentsRouter());
+  apiRouter.use('/agents', createAgentsRouter());
 
   // Accounts — Stellar fee estimation and XLM balance (Issue #949)
-  app.use('/api/accounts', createAccountsRouter());
+  apiRouter.use('/accounts', createAccountsRouter());
 
   // GraphQL — authenticated, depth/complexity limited (SR-050). The router
   // existed but was never mounted, so the endpoint was unreachable.
-  app.use('/api/graphql', createGraphQLRouter({
+  apiRouter.use('/graphql', createGraphQLRouter({
     pool: analyticsPool ?? undefined,
     remittanceStore: options.remittanceStore,
   }));
+
+  // SR-056: Mount versioned (/v1/api/...) and unversioned-alias (/api/...)
+  // together so consumers can migrate to the versioned surface at their pace.
+  createVersionedRouter(app, apiRouter);
 
   // WebSocket health endpoint (development only — guarded inside the router)
   if (options.io) {
@@ -290,22 +311,9 @@ export function createApp(options: AppOptions = {}): Application {
   });
 
   // Global error handler
-  app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-    console.error('Unhandled error:', err);
-
-    const errorResponse: ErrorResponse = {
-      success: false,
-      error: {
-        message: process.env.NODE_ENV === 'production' 
-          ? 'Internal server error' 
-          : err.message,
-        code: 'INTERNAL_SERVER_ERROR',
-      },
-      timestamp: new Date().toISOString(),
-    };
-
-    res.status(500).json(errorResponse);
-  });
+  // SR-057: Central error handler — must be last. Replaces the old inline
+  // handler that emitted a different envelope shape and had no correlation ID.
+  app.use(errorHandler);
 
   return app;
 }
