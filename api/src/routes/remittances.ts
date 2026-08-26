@@ -16,10 +16,12 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { Pool } from 'pg';
 import { ErrorResponse } from '../types';
 import { RemittanceStore } from '../db/remittanceStore';
 import { generateReceiptPdf } from '../services/receiptGenerator';
 import { requireAuth } from '../middleware/auth.js';
+import { deliverWebhook, WebhookPayload } from '../services/webhook';
 
 export type RemittanceStatus = 'Pending' | 'Processing' | 'Completed' | 'Cancelled' | 'Failed' | 'Disputed';
 
@@ -52,6 +54,8 @@ export interface RemittanceFilter {
 
 export type RemittancesRouterOptions = {
   remittanceStore?: RemittanceStore;
+  /** Postgres pool used for persisting DLQ entries to webhook_dead_letters */
+  pool?: Pool;
 };
 
 function timestamp(): string {
@@ -67,7 +71,60 @@ function sendError(res: Response, status: number, message: string, code: string)
  */
 export function createRemittancesRouter(options: RemittancesRouterOptions = {}): Router {
   const router = Router();
-  const { remittanceStore } = options;
+  const { remittanceStore, pool } = options;
+
+  /**
+   * Fire an outbound webhook for a remittance status change.
+   *
+   * - Attempts delivery with exponential backoff via deliverWebhook().
+   * - When all retries are exhausted the failed entry is persisted to the
+   *   webhook_dead_letters Postgres table so the admin DLQ replay endpoints
+   *   in admin.ts can surface and re-drive it.
+   */
+  async function fireStatusChangeWebhook(
+    remittance: Remittance,
+    webhookEndpoint: string,
+  ): Promise<void> {
+    const payload: WebhookPayload = {
+      event: 'remittance.status_changed',
+      txId: String(remittance.id),
+      status: remittance.status,
+      amount: remittance.amount,
+      currency: remittance.token ?? 'USDC',
+      timestamp: new Date().toISOString(),
+      metadata: {
+        sender: remittance.sender,
+        agent: remittance.agent,
+        fee: remittance.fee,
+      },
+    };
+
+    const result = await deliverWebhook(webhookEndpoint, payload);
+
+    // Persist to DB when delivery ultimately fails so the admin DLQ endpoints
+    // manage a single, consistent source of truth for failed webhooks.
+    if (result.dlq && pool) {
+      try {
+        await pool.query(
+          `INSERT INTO webhook_dead_letters
+             (delivery_id, event_type, payload, last_error, attempts, created_at)
+           VALUES ($1, $2, $3, $4, $5, NOW())
+           ON CONFLICT (delivery_id) DO NOTHING`,
+          [
+            `remittance-${remittance.id}-${Date.now()}`,
+            payload.event,
+            JSON.stringify(payload),
+            result.lastError ?? 'Unknown delivery error',
+            result.attempts,
+          ],
+        );
+      } catch (dbErr) {
+        // Log the DB write failure but do not surface it to the caller —
+        // the DLQ persists best-effort; the in-memory getDLQ() is still valid.
+        console.error('[webhook-dlq] Failed to persist DLQ entry to DB:', dbErr);
+      }
+    }
+  }
 
   /**
    * @openapi
@@ -233,6 +290,144 @@ export function createRemittancesRouter(options: RemittancesRouterOptions = {}):
       }
       throw error;
     }
+  });
+
+  /**
+   * @openapi
+   * /api/remittances/{id}/status:
+   *   patch:
+   *     summary: Update the status of a remittance and fire outbound webhook
+   *     description: >
+   *       Updates a remittance's status in the store and delivers an outbound
+   *       webhook to the caller-supplied endpoint with exponential backoff.
+   *       Failed deliveries are persisted to the webhook_dead_letters table
+   *       so they can be replayed via the admin DLQ endpoints (SR-160).
+   *     tags:
+   *       - Remittances
+   *     parameters:
+   *       - name: id
+   *         in: path
+   *         required: true
+   *         description: Remittance ID
+   *         schema:
+   *           type: string
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - status
+   *               - webhook_endpoint
+   *             properties:
+   *               status:
+   *                 type: string
+   *                 enum: [Pending, Processing, Completed, Cancelled, Failed, Disputed]
+   *               webhook_endpoint:
+   *                 type: string
+   *                 format: uri
+   *                 description: URL to deliver the status-change webhook to
+   *     responses:
+   *       200:
+   *         description: Status updated; webhook delivery outcome included
+   *       400:
+   *         description: Invalid status or request body
+   *       401:
+   *         description: Unauthorized
+   *       403:
+   *         description: Forbidden
+   *       404:
+   *         description: Remittance not found
+   *       503:
+   *         description: Store not configured
+   */
+  router.patch('/:id/status', requireAuth, async (req: Request<{ id: string }>, res: Response) => {
+    const { id } = req.params;
+    const { status: newStatus, webhook_endpoint } = req.body as {
+      status?: string;
+      webhook_endpoint?: string;
+    };
+
+    if (!newStatus || !VALID_STATUSES.includes(newStatus as RemittanceStatus)) {
+      return sendError(
+        res,
+        400,
+        `status must be one of: ${VALID_STATUSES.join(', ')}`,
+        'INVALID_STATUS',
+      );
+    }
+
+    if (!webhook_endpoint || typeof webhook_endpoint !== 'string') {
+      return sendError(res, 400, 'webhook_endpoint is required', 'MISSING_WEBHOOK_ENDPOINT');
+    }
+
+    try {
+      // Basic URL validation to avoid SSRF with obviously bad values
+      new URL(webhook_endpoint);
+    } catch {
+      return sendError(res, 400, 'webhook_endpoint must be a valid URL', 'INVALID_WEBHOOK_ENDPOINT');
+    }
+
+    if (!remittanceStore) {
+      return sendError(res, 503, 'Remittance store not configured', 'SERVICE_UNAVAILABLE');
+    }
+
+    const remittance = await remittanceStore.getById(id);
+    if (!remittance) {
+      return sendError(res, 404, `Remittance ${id} not found`, 'NOT_FOUND');
+    }
+
+    const auth = req.auth!;
+    const isAdmin = auth.role === 'admin';
+
+    // Non-admins may only update remittances they are the agent for
+    if (!isAdmin && auth.userId !== remittance.agent_id) {
+      return sendError(res, 403, 'You do not have permission to update this remittance', 'FORBIDDEN');
+    }
+
+    // Persist the status change
+    const savedRemittance = await remittanceStore.updateStatus(id, newStatus as RemittanceStatus);
+    if (!savedRemittance) {
+      return sendError(res, 404, `Remittance ${id} not found`, 'NOT_FOUND');
+    }
+
+    // Map store Remittance to route Remittance shape for the webhook payload
+    const routeRemittance: Remittance = {
+      id: Number(savedRemittance.id),
+      sender: savedRemittance.sender_id,
+      agent: savedRemittance.agent_id,
+      amount: savedRemittance.amount,
+      fee: savedRemittance.fee,
+      status: savedRemittance.status as RemittanceStatus,
+      created_at: savedRemittance.created_at,
+      updated_at: savedRemittance.updated_at,
+    };
+
+    // Deliver webhook — errors are caught inside; the route always responds
+    let webhookResult;
+    try {
+      await fireStatusChangeWebhook(routeRemittance, webhook_endpoint);
+      webhookResult = { delivered: true };
+    } catch (webhookErr) {
+      // deliverWebhook handles its own retry / DLQ logic; this catch is a
+      // last-resort guard so a webhook error never prevents the HTTP response.
+      console.error('[webhook] Unexpected error during delivery:', webhookErr);
+      webhookResult = {
+        delivered: false,
+        error: webhookErr instanceof Error ? webhookErr.message : String(webhookErr),
+      };
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        id,
+        status: newStatus,
+        webhook: webhookResult,
+      },
+      timestamp: timestamp(),
+    });
   });
 
   /**
