@@ -233,7 +233,7 @@ export function createApp(options: AppOptions = {}): Application {
     }),
   );
 
-  // Settlement simulation — read-only, no state changes (Issue #420)
+  // Settlement simulation — authenticated, read-only, no state changes (Issues #420, SR-166)
   app.use('/api/settlements', settlementsRouter);
 
   // Remittances — cursor-based pagination (Issues #472, #531)
@@ -242,7 +242,7 @@ export function createApp(options: AppOptions = {}): Application {
   }));
 
   // Admin utilities — read-only operations (simulate-upgrade, etc.)
-  app.use('/api/admin', createAdminRouter());
+  app.use('/api/admin', createAdminRouter(pool));
 
   // Corridor analytics (Issue #482)
   const analyticsPool = pool ?? (process.env.DATABASE_URL
