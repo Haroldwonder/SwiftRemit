@@ -27,13 +27,6 @@ export interface OptimisticEntry {
   submittedAt: string;
 }
 
-interface CorridorLimits {
-  min: number;
-  max: number;
-  dailyLimit: number;
-  dailyRemaining: number;
-}
-
 interface SendMoneyFlowProps {
   assets?: string[];
   /** Stellar public key of the sender (for wallet-based submission) */
@@ -84,8 +77,8 @@ const ASSET_ISSUERS: Partial<Record<string, string>> = {
   EURC: import.meta.env.VITE_EURC_ISSUER,
 };
 
-/** Threshold at which we show the "approaching limit" warning (90%) */
-const APPROACHING_THRESHOLD = 0.9;
+/** Threshold at which we show the "approaching limit" warning (90%) — kept for future use */
+// const APPROACHING_THRESHOLD = 0.9;
 
 function isValidRecipient(input: string, senderAddress?: string): boolean {
   const trimmed = input.trim();
@@ -185,9 +178,6 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   const [isComplete, setIsComplete] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [limitStatus, setLimitStatus] = useState<DailyLimitStatus | null>(null);
-  const [limitsLoading] = useState(false);
-  const [limitsError] = useState<string | null>(null);
-  const [limits] = useState<CorridorLimits | null>(null);
   const [fxFetchedAt, setFxFetchedAt] = useState<number | null>(null);
   const [fxSecondsLeft, setFxSecondsLeft] = useState<number | null>(null);
   const [fxExpired, setFxExpired] = useState(false);
@@ -228,11 +218,6 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   });
 
   const parsedAmount = useMemo(() => Number(amount), [amount]);
-
-  const isApproachingLimit = useMemo(() => {
-    if (!limits || !parsedAmount) return false;
-    return parsedAmount >= limits.dailyRemaining * APPROACHING_THRESHOLD;
-  }, [limits, parsedAmount]);
 
   // Fetch daily limit status when asset is selected
   useEffect(() => {
@@ -391,31 +376,6 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
     }
   };
 
-  const renderLimitsInfo = () => {
-    if (!asset) return null;
-    if (limitsLoading) return <p className="flow-limits-loading">{t('sendMoney.limits.loading')}</p>;
-    if (limitsError) return <p className="flow-limits-error">{t('sendMoney.limits.error')}</p>;
-    if (!limits) return null;
-
-    return (
-      <div className="flow-limits" aria-live="polite">
-        <span className="flow-limits-range">
-          {t('sendMoney.limits.min', { value: limits.min, asset })}
-          {' · '}
-          {t('sendMoney.limits.max', { value: limits.max, asset })}
-        </span>
-        <span className="flow-limits-daily">
-          {t('sendMoney.limits.dailyRemaining', { value: limits.dailyRemaining, asset })}
-        </span>
-        {isApproachingLimit && (
-          <span className="flow-limits-warning" role="alert">
-            {t('sendMoney.limits.approachingLimit')}
-          </span>
-        )}
-      </div>
-    );
-  };
-
   const renderStepContent = () => {
     if (step === 1) {
       return (
@@ -432,7 +392,6 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
               placeholder="0.00"
             />
           </label>
-          {renderLimitsInfo()}
         </>
       );
     }
