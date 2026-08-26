@@ -38,6 +38,13 @@ function remittanceFromScVal(val: unknown): Remittance {
   const native = val as Record<string, unknown>
   const statusRaw = native['status'] as Record<string, unknown>
   const statusKey = Object.keys(statusRaw)[0] as RemittanceStatus
+
+  // Extract memo: the contract stores it as an Option<String> (Some(text) or None/undefined).
+  // scValToNative converts a Soroban Option<String> to either a string value or undefined/null.
+  const rawMemo = native['memo']
+  const memo: string | null =
+    rawMemo != null && rawMemo !== '' ? String(rawMemo) : null
+
   return {
     id: Number(native['id'] as number),
     sender: (native['sender'] as { toString(): string }).toString(),
@@ -45,7 +52,7 @@ function remittanceFromScVal(val: unknown): Remittance {
     amount: Number(BigInt(native['amount'] as number)) / STROOPS_PER_USDC,
     fee: Number(BigInt(native['fee'] as number)) / STROOPS_PER_USDC,
     status: statusKey,
-    memo: null,
+    memo,
   }
 }
 
