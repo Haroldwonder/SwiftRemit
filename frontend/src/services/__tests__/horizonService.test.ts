@@ -98,13 +98,14 @@ describe('HorizonService', () => {
 
       const result = await horizonService.fetchCompletedEvent(42);
 
-      expect(result).not.toBeNull();
-      expect(result?.remittanceId).toBe('42');
-      expect(result?.sender).toBe('SENDER_ADDRESS_123');
-      expect(result?.agent).toBe('AGENT_ADDRESS_456');
-      expect(result?.amount).toBe('10000000');
-      expect(result?.fee).toBe('50000');
-      expect(result?.transactionHash).toBe('abc123def456');
+      expect(result.event).not.toBeNull();
+      expect(result.event?.remittanceId).toBe('42');
+      expect(result.event?.sender).toBe('SENDER_ADDRESS_123');
+      expect(result.event?.agent).toBe('AGENT_ADDRESS_456');
+      expect(result.event?.amount).toBe('10000000');
+      expect(result.event?.fee).toBe('50000');
+      expect(result.event?.transactionHash).toBe('abc123def456');
+      expect(result.possiblyOutOfRange).toBe(false);
     });
 
     it('should return null when no matching event is found', async () => {
@@ -120,7 +121,8 @@ describe('HorizonService', () => {
 
       const result = await horizonService.fetchCompletedEvent(999);
 
-      expect(result).toBeNull();
+      expect(result.event).toBeNull();
+      expect(result.possiblyOutOfRange).toBe(true);
     });
 
     it('should throw error when contract ID is not configured', async () => {

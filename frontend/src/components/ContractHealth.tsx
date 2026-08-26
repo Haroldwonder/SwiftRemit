@@ -1,4 +1,5 @@
 import { FC, useState, useEffect, useCallback } from 'react'
+import { ConfirmDialog } from './ConfirmDialog'
 
 const AUTO_REFRESH_MS = 60_000
 
@@ -32,6 +33,7 @@ const ContractHealth: FC<ContractHealthProps> = ({ walletAddress, contractId, on
   const [withdrawing, setWithdrawing] = useState(false)
   const [withdrawResult, setWithdrawResult] = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
+  const [showWithdrawConfirm, setShowWithdrawConfirm] = useState(false)
 
   const fetchHealth = useCallback(async (): Promise<void> => {
     if (!contractId) return
@@ -128,7 +130,7 @@ const ContractHealth: FC<ContractHealthProps> = ({ walletAddress, contractId, on
 
       {walletAddress && health && health.accumulated_fees > 0 && (
         <button
-          onClick={handleWithdraw}
+          onClick={() => setShowWithdrawConfirm(true)}
           disabled={withdrawing}
           style={{
             marginTop: '12px',
@@ -143,6 +145,19 @@ const ContractHealth: FC<ContractHealthProps> = ({ walletAddress, contractId, on
           {withdrawing ? 'Withdrawing…' : 'Withdraw Fees'}
         </button>
       )}
+
+      <ConfirmDialog
+        open={showWithdrawConfirm}
+        title="Withdraw Accumulated Fees"
+        message={`You are about to withdraw ${(health?.accumulated_fees ?? 0 / 10_000_000).toFixed(2)} USDC in accumulated protocol fees. This will initiate an on-chain transaction. Continue?`}
+        confirmLabel="Withdraw Fees"
+        danger
+        onConfirm={() => {
+          setShowWithdrawConfirm(false)
+          handleWithdraw()
+        }}
+        onCancel={() => setShowWithdrawConfirm(false)}
+      />
 
       {withdrawResult && (
         <p style={{ color: '#388e3c', marginTop: '8px', fontSize: '0.9em' }}>

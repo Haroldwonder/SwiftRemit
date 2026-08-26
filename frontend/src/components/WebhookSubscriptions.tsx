@@ -1,4 +1,5 @@
 import { FC, useState, useEffect, FormEvent } from 'react'
+import { ConfirmDialog } from './ConfirmDialog'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
@@ -17,6 +18,12 @@ interface WebhookSubscription extends WebhookForm {
 const EMPTY_FORM: WebhookForm = { url: '', events: [], secret: '' }
 const ALL_EVENTS = ['remittance.created', 'remittance.completed', 'remittance.cancelled', 'payout.confirmed', 'dispute.raised', 'dispute.resolved']
 
+function generateRandomSecret(): string {
+  const array = new Uint8Array(32)
+  crypto.getRandomValues(array)
+  return Array.from(array, b => b.toString(16).padStart(2, '0')).join('')
+}
+
 const WebhookSubscriptions: FC = () => {
   const [subscriptions, setSubscriptions] = useState<WebhookSubscription[]>([])
   const [loading, setLoading] = useState(true)
@@ -24,6 +31,7 @@ const WebhookSubscriptions: FC = () => {
   const [form, setForm] = useState<WebhookForm>(EMPTY_FORM)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [rotateTarget, setRotateTarget] = useState<string | null>(null)
 
   useEffect(() => { fetchSubscriptions() }, [])
 
@@ -50,10 +58,11 @@ const WebhookSubscriptions: FC = () => {
     try {
       const method = editingId ? 'PUT' : 'POST'
       const url = editingId ? `${API_URL}/api/webhooks/${editingId}` : `${API_URL}/api/webhooks`
+      const payload = { url: form.url, events: form.events, secret: form.secret }
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setForm(EMPTY_FORM)
@@ -80,9 +89,29 @@ const WebhookSubscriptions: FC = () => {
     setEditingId(subscription.id)
   }
 
+  async function handleRotateSecret(subId: string): Promise<void> {
+    setLoading(true)
+    await fetch(`${API_URL}/api/webhooks/${subId}/rotate-secret`, { method: 'POST' })
+    await fetchSubscriptions()
+  }
+
   return (
     <div className="panel" role="main" aria-label="Webhook Subscriptions">
       <h2>Webhook Subscriptions</h2>
+
+      <ConfirmDialog
+        open={rotateTarget !== null}
+        title="Rotate Secret"
+        message="Rotate secret? This will invalidate the previous secret after 24 hours."
+        confirmLabel="Rotate"
+        danger
+        onConfirm={() => {
+          if (rotateTarget) handleRotateSecret(rotateTarget)
+          setRotateTarget(null)
+        }}
+        onCancel={() => setRotateTarget(null)}
+      />
+
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label htmlFor="webhook-url">Webhook URL</label>
@@ -111,6 +140,31 @@ const WebhookSubscriptions: FC = () => {
             </div>
           ))}
         </div>
+        <div className="form-group">
+          <label htmlFor="webhook-secret">Signing Secret (HMAC)</label>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              id="webhook-secret"
+              type="password"
+              value={form.secret}
+              onChange={(e) => setForm({ ...form, secret: e.target.value })}
+              placeholder={editingId ? 'Leave blank to keep current secret' : 'Enter or generate a secret'}
+              style={{ flex: 1 }}
+            />
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, secret: generateRandomSecret() })}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              Generate
+            </button>
+          </div>
+          {!editingId && (
+            <small style={{ color: '#666' }}>
+              Used by consumers to verify HMAC signatures on incoming webhook payloads.
+            </small>
+          )}
+        </div>
         <button type="submit" className="btn-primary" disabled={saving}>
           {saving ? 'Saving…' : editingId ? 'Update Webhook' : 'Add Webhook'}
         </button>
@@ -134,13 +188,7 @@ const WebhookSubscriptions: FC = () => {
                   )}
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button onClick={async () => {
-                    if (confirm('Rotate secret? This will invalidate the previous secret after 24 hours.')) {
-                      setLoading(true);
-                      await fetch(`${API_URL}/api/webhooks/${sub.id}/rotate-secret`, { method: 'POST' });
-                      await fetchSubscriptions();
-                    }
-                  }}>Rotate Secret</button>
+                  <button onClick={() => setRotateTarget(sub.id)}>Rotate Secret</button>
                   <button onClick={() => handleEdit(sub)}>Edit</button>
                 </div>
               </div>
