@@ -12,6 +12,12 @@ import { Router, Request, Response } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { Pool } from 'pg';
 import { ErrorResponse } from '../types';
+import {
+  getCached,
+  setCache,
+  buildCacheKey,
+  CACHE_TTL_MS,
+} from '../middleware/analyticsGuard';
 
 export interface CorridorStat {
   source_currency: string;
@@ -63,9 +69,7 @@ const VALID_INTERVALS: Record<string, { pg: string; label: string }> = {
   '1h': { pg: '1 hour', label: '1h' },
   '1d': { pg: '1 day', label: '1d' },
   '1w': { pg: '1 week', label: '1w' },
-};
-
-function timestamp(): string {
+};function timestamp(): string {
   return new Date().toISOString();
 }
 
@@ -101,6 +105,14 @@ export function createAnalyticsRouter(pool: Pool, adminApiKey?: string): Router 
 
     if (!VALID_RANGES[rangeParam]) {
       return sendError(res, 400, `range must be one of: ${Object.keys(VALID_RANGES).join(', ')}`, 'INVALID_RANGE');
+    }
+
+    // SR-055: Check cache before hitting the DB — corridors aggregate across
+    // all of contract_events, making repeated queries expensive.
+    const cacheKey = buildCacheKey(req.path, { range: rangeParam });
+    const cached = getCached(cacheKey);
+    if (cached !== null) {
+      return res.json(cached);
     }
 
     const interval = VALID_RANGES[rangeParam];
@@ -169,6 +181,9 @@ export function createAnalyticsRouter(pool: Pool, adminApiKey?: string): Router 
         timestamp: timestamp(),
       };
 
+      // SR-055: Store in cache so subsequent identical requests skip the DB.
+      setCache(cacheKey, response, CACHE_TTL_MS);
+
       return res.json(response);
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -201,6 +216,13 @@ export function createAnalyticsRouter(pool: Pool, adminApiKey?: string): Router 
 
     if (!VALID_INTERVALS[interval]) {
       return sendError(res, 400, `interval must be one of: ${Object.keys(VALID_INTERVALS).join(', ')}`, 'INVALID_INTERVAL');
+    }
+
+    // SR-055: Check cache before hitting the DB.
+    const cacheKey = buildCacheKey(req.path, { corridor, interval, range });
+    const cached = getCached(cacheKey);
+    if (cached !== null) {
+      return res.json(cached);
     }
 
     try {
@@ -255,6 +277,9 @@ export function createAnalyticsRouter(pool: Pool, adminApiKey?: string): Router 
         },
         timestamp: timestamp(),
       };
+
+      // SR-055: Store in cache so subsequent identical requests skip the DB.
+      setCache(cacheKey, response, CACHE_TTL_MS);
 
       return res.json(response);
     } catch (err) {
