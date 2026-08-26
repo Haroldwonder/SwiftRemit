@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useToast } from './Toast';
 import './VerificationBadge.css';
 
@@ -44,6 +44,50 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
   const [reportReason, setReportReason] = useState('');
   const [submittingReport, setSubmittingReport] = useState(false);
   const { showToast } = useToast();
+
+  // Refs for focus management
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const detailsModalRef = useRef<HTMLDivElement>(null);
+  const warningModalRef = useRef<HTMLDivElement>(null);
+  const reportModalRef = useRef<HTMLDivElement>(null);
+
+  // Move focus into each modal on open, restore to trigger on close
+  useEffect(() => {
+    if (showModal) {
+      detailsModalRef.current?.focus();
+    } else if (!showWarningModal && !showReportModal) {
+      triggerRef.current?.focus();
+    }
+  }, [showModal]);
+
+  useEffect(() => {
+    if (showWarningModal) {
+      warningModalRef.current?.focus();
+    } else if (!showModal && !showReportModal) {
+      triggerRef.current?.focus();
+    }
+  }, [showWarningModal]);
+
+  useEffect(() => {
+    if (showReportModal) {
+      reportModalRef.current?.focus();
+    } else if (!showModal && !showWarningModal) {
+      triggerRef.current?.focus();
+    }
+  }, [showReportModal]);
+
+  // Close the top-most open modal on Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showReportModal) setShowReportModal(false);
+        else if (showModal) setShowModal(false);
+        else if (showWarningModal) setShowWarningModal(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showModal, showWarningModal, showReportModal]);
 
   useEffect(() => {
     fetchVerification();
@@ -194,7 +238,9 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
         onClick={handleBadgeClick}
         role="button"
         tabIndex={0}
+        ref={triggerRef}
         aria-label={`Asset verification status: ${getBadgeText()}`}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleBadgeClick(); } }}
       >
         <span className="badge-icon">{getBadgeIcon()}</span>
         <span className="badge-text">{getBadgeText()}</span>
@@ -205,11 +251,19 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
 
       {/* Details Modal */}
       {showModal && verification && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => setShowModal(false)} aria-hidden="true">
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vb-details-modal-title"
+            ref={detailsModalRef}
+            tabIndex={-1}
+          >
             <div className="modal-header">
-              <h2>Asset Verification Details</h2>
-              <button className="modal-close" onClick={() => setShowModal(false)}>
+              <h2 id="vb-details-modal-title">Asset Verification Details</h2>
+              <button className="modal-close" onClick={() => setShowModal(false)} aria-label="Close asset verification details">
                 ×
               </button>
             </div>
@@ -292,10 +346,18 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
 
       {/* Warning Modal for Suspicious Assets */}
       {showWarningModal && verification?.status === VerificationStatus.Suspicious && (
-        <div className="modal-overlay warning-modal">
-          <div className="modal-content warning-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay warning-modal" aria-hidden="true">
+          <div
+            className="modal-content warning-content"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vb-warning-modal-title"
+            ref={warningModalRef}
+            tabIndex={-1}
+          >
             <div className="modal-header warning-header">
-              <h2>⚠ Asset Warning</h2>
+              <h2 id="vb-warning-modal-title">⚠ Asset Warning</h2>
             </div>
 
             <div className="modal-body">
@@ -337,11 +399,19 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
 
       {/* Report Suspicious Modal */}
       {showReportModal && (
-        <div className="modal-overlay" onClick={() => setShowReportModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => setShowReportModal(false)} aria-hidden="true">
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vb-report-modal-title"
+            ref={reportModalRef}
+            tabIndex={-1}
+          >
             <div className="modal-header">
-              <h2>Report Suspicious Asset</h2>
-              <button className="modal-close" onClick={() => setShowReportModal(false)}>
+              <h2 id="vb-report-modal-title">Report Suspicious Asset</h2>
+              <button className="modal-close" onClick={() => setShowReportModal(false)} aria-label="Close report modal">
                 ×
               </button>
             </div>
