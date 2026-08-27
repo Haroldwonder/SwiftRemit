@@ -1,6 +1,6 @@
 # SwiftRemit
 
-[![Soroban Contract CI](https://github.com/Haroldwonder/SwiftRemit/actions/workflows/contract-ci.yml/badge.svg)](https://github.com/Haroldwonder/SwiftRemit/actions/workflows/contract-ci.yml)
+[![Soroban Contract CI](https://github.com/topsonDev/SwiftRemit/actions/workflows/contract-ci.yml/badge.svg)](https://github.com/topsonDev/SwiftRemit/actions/workflows/contract-ci.yml)
 
 Production-ready Soroban smart contract for USDC remittance platform on Stellar blockchain.
 
