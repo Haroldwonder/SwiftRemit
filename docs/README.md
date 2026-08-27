@@ -91,9 +91,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 
 | Document | Description |
 |---|---|
-| [ANCHOR_QUICKSTART.md](ANCHOR_QUICKSTART.md) | SEP-24 anchor quick-start |
-| [ANCHOR_SELECTION.md](ANCHOR_SELECTION.md) | Anchor selection guide |
-| [STELLAR_WALLETS_KIT.md](STELLAR_WALLETS_KIT.md) | Stellar Wallets Kit React integration guide |
+| [ANCHOR_QUICKSTART.md](ANCHOR_QUICKSTART.md) | Anchor provider selection (SEP-24) |
 | [MOBILE_FEATURE_PARITY.md](MOBILE_FEATURE_PARITY.md) | Mobile feature parity status |
 
 ### Design
@@ -103,8 +101,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 | [design/login-ui.md](design/login-ui.md) | Login UI design |
 | [design/landing-page.md](design/landing-page.md) | Landing page design |
 | [design/settings-ui.md](design/settings-ui.md) | Settings UI design |
-| [design/color-palette.md](design/color-palette.md) | Color palette |
-| [UI_DESIGN.md](UI_DESIGN.md) | UI design overview |
+| [design/ui-design-links.md](design/ui-design-links.md) | UI design Figma links |
 
 ---
 
