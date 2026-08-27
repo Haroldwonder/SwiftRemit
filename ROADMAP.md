@@ -1,6 +1,6 @@
 # Roadmap
 
-Tracked as **SR-005** in [ISSUES.md](https://github.com/Haroldwonder/SwiftRemit/blob/main/ISSUES.md).
+Tracked as **SR-005** in [ISSUES.md](https://github.com/richardiyamura/SwiftRemit/blob/main/ISSUES.md).
 
 Every checked item below links to the code that implements it. Every unchecked item has
 no implementation in `src/` yet.

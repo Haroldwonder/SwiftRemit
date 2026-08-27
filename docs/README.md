@@ -36,7 +36,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 
 | Document | Description |
 |---|---|
-| [TRANSACTION_CONTROLLER.md](TRANSACTION_CONTROLLER.md) | Transaction controller design |
+| [transaction-controller.md](transaction-controller.md) | Transaction controller service — architecture, API reference, quick start |
 | [TRANSACTION_STATE_MACHINE.md](TRANSACTION_STATE_MACHINE.md) | Remittance lifecycle state machine |
 | [FEE_SERVICE.md](FEE_SERVICE.md) | Fee calculation service — architecture, API, and refactor history |
 | [ASSET_VERIFICATION.md](ASSET_VERIFICATION.md) | Asset verification system |
@@ -85,7 +85,6 @@ that used to live at the repository root has been moved or deleted (SR-115).
 | [implementation/ABUSE_PROTECTION.md](implementation/ABUSE_PROTECTION.md) | Abuse protection implementation |
 | [implementation/PROOF_OF_PAYOUT.md](implementation/PROOF_OF_PAYOUT.md) | Proof-of-payout implementation |
 | [implementation/CURRENCY_API.md](implementation/CURRENCY_API.md) | Currency API implementation |
-| [implementation/TRANSACTION_CONTROLLER_IMPL.md](implementation/TRANSACTION_CONTROLLER_IMPL.md) | Transaction controller implementation notes |
 
 ### Integrations & SDKs
 

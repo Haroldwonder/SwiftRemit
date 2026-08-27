@@ -43,7 +43,7 @@ Before you begin, ensure you have the following installed:
 
 3. Add the upstream repository:
    ```bash
-   git remote add upstream https://github.com/Haroldwonder/SwiftRemit.git
+   git remote add upstream https://github.com/richardiyamura/SwiftRemit.git
    ```
 
 ## Development Environment Setup
@@ -460,7 +460,7 @@ troubleshooting section.
 
 1. Push your branch to your fork
 
-2. Go to the [SwiftRemit repository](https://github.com/Haroldwonder/SwiftRemit)
+2. Go to the [SwiftRemit repository](https://github.com/richardiyamura/SwiftRemit)
 
 3. Click "New Pull Request"
 
