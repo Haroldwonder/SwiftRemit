@@ -542,7 +542,22 @@ impl SwiftRemitContract {
             return Err(ContractError::TokenNotWhitelisted);
         }
 
+        // SR-124: Reject tokens that have been flagged as suspicious by the
+        // off-chain verification service. Tokens with no verification record at all
+        // (AssetNotFound) are not blocked — only an explicit Suspicious flag blocks.
+        if let Some((asset_code, issuer)) = storage::get_token_asset_info(&env, &token_address) {
+            if let Ok(verification) = get_asset_verification(&env, &asset_code, &issuer) {
+                if verification.status == VerificationStatus::Suspicious {
+                    return Err(ContractError::SuspiciousAsset);
+                }
+            }
+        }
+
         sender.require_auth();
+
+        // SR-123: Apply abuse-protection sliding-window rate limit and cooldown for Transfer.
+        check_rate_limit(&env, &sender, ActionType::Transfer)?;
+        check_cooldown(&env, &sender, ActionType::Transfer)?;
 
         let default_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
         let default_country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
@@ -589,6 +604,9 @@ impl SwiftRemitContract {
 
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&sender, &env.current_contract_address(), &amount);
+
+        // SR-123: Record the Transfer action for cooldown tracking (only after funds locked).
+        record_action(&env, &sender, ActionType::Transfer);
 
         let counter = get_remittance_counter(&env)?;
         let remittance_id = counter.checked_add(1).ok_or(ContractError::Overflow)?;
@@ -1002,6 +1020,12 @@ impl SwiftRemitContract {
         // Check rate limit for sender
         check_settlement_rate_limit(&env, &remittance.sender)?;
 
+        // SR-123: Apply abuse-protection per-action sliding-window rate limit and cooldown
+        // for Settlement. This complements the simpler storage::check_settlement_rate_limit
+        // above with the more sophisticated per-action, decaying-cooldown mechanism.
+        check_rate_limit(&env, &remittance.agent, ActionType::Settlement)?;
+        check_cooldown(&env, &remittance.agent, ActionType::Settlement)?;
+
         // Enforce per-agent daily withdrawal cap
         storage::check_and_record_agent_withdrawal(&env, &remittance.agent, remittance.amount)?;
 
@@ -1053,6 +1077,9 @@ impl SwiftRemitContract {
         // Update remittance status via validated transition
         crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
         set_remittance(&env, remittance_id, &remittance);
+
+        // SR-123: Record the Settlement action for cooldown tracking.
+        record_action(&env, &remittance.agent, ActionType::Settlement);
 
         // Update last settlement time for rate limiting
         set_last_settlement_time(&env, &remittance.sender, current_time);
@@ -1106,7 +1133,8 @@ impl SwiftRemitContract {
         // Refunding here would leave the contract unable to honour that payout.
         let was_processing = remittance.status == RemittanceStatus::Processing;
         let original_amount = remittance.amount;
-        remittance.status = RemittanceStatus::Failed;
+        // SR-125: Route status mutation through the canonical state machine.
+        crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Failed)?;
         remittance.failed_at = Some(env.ledger().timestamp());
         set_remittance(&env, remittance_id, &remittance);
 
@@ -1157,7 +1185,8 @@ impl SwiftRemitContract {
             return Err(ContractError::DisputeWindowExpired);
         }
 
-        remittance.status = RemittanceStatus::Disputed;
+        // SR-125: Route status mutation through the canonical state machine.
+        crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Disputed)?;
         remittance.dispute_evidence = MaybeBytes32::Some(evidence_hash.clone());
         set_remittance(&env, remittance_id, &remittance);
 
@@ -1200,7 +1229,8 @@ impl SwiftRemitContract {
                 &remittance.sender,
                 &escrow_remaining,
             );
-            remittance.status = RemittanceStatus::Cancelled;
+            // SR-125: Route status mutation through the canonical state machine.
+            crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Cancelled)?;
         } else {
             // Honour the fee quoted at creation rather than re-pricing, and pay
             // the agent only the part of their net entitlement not already sent.
@@ -1219,7 +1249,8 @@ impl SwiftRemitContract {
             if retained > 0 {
                 crate::fee_management::safe_add_accumulated_fee(&env, retained)?;
             }
-            remittance.status = RemittanceStatus::Completed;
+            // SR-125: Route status mutation through the canonical state machine.
+            crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
         }
 
         set_remittance(&env, remittance_id, &remittance);
@@ -1403,6 +1434,10 @@ impl SwiftRemitContract {
 
         remittance.sender.require_auth();
 
+        // SR-123: Apply abuse-protection rate limit and cooldown for Cancellation.
+        check_rate_limit(&env, &remittance.sender, ActionType::Cancellation)?;
+        check_cooldown(&env, &remittance.sender, ActionType::Cancellation)?;
+
         let usdc_token = get_usdc_token(&env)?;
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(
@@ -1411,11 +1446,15 @@ impl SwiftRemitContract {
             &remittance.amount,
         );
 
-        remittance.status = RemittanceStatus::Cancelled;
+        // SR-125: Route status mutation through the canonical state machine.
+        crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Cancelled)?;
         // Fix #378: zero out the amount field so querying the remittance after
         // cancellation does not return a stale USDC balance.
         remittance.amount = 0;
         set_remittance(&env, remittance_id, &remittance);
+
+        // SR-123: Record the cancellation action for cooldown tracking.
+        record_action(&env, &remittance.sender, ActionType::Cancellation);
 
         // Event: Remittance cancelled - Fires when sender cancels a pending remittance and receives full refund
         // Used by off-chain systems to track cancellations and update transaction status
@@ -2524,11 +2563,17 @@ impl SwiftRemitContract {
     /// - Overflow: Arithmetic overflow in calculations
     pub fn batch_settle_with_netting(
         env: Env,
+        agent: Address,
         entries: Vec<BatchSettlementEntry>,
     ) -> Result<BatchSettlementResult, ContractError> {
         if is_paused(&env) {
             return Err(ContractError::ContractPaused);
         }
+
+        // SR-122: Require caller authentication. batch_settle_with_netting is an
+        // admin-only reconciliation path; only a registered, Settler-role agent or
+        // the contract admin may invoke it.
+        agent.require_auth();
 
         // Validate batch size
         let batch_size = entries.len();
@@ -2537,6 +2582,13 @@ impl SwiftRemitContract {
         }
         if batch_size > MAX_BATCH_SIZE {
             return Err(ContractError::InvalidAmount);
+        }
+
+        // SR-122: Validate the caller is either admin or a registered Settler-role agent.
+        let is_admin_caller = storage::is_admin(&env, &agent);
+        if !is_admin_caller {
+            crate::storage::require_agent_authorized(&env, &agent)?;
+            require_role_settler(&env, &agent)?;
         }
 
         // Load all remittances and validate
@@ -2558,8 +2610,15 @@ impl SwiftRemitContract {
             // Load and validate remittance
             let remittance = get_remittance(&env, remittance_id)?;
 
-            // Verify remittance is pending
-            if remittance.status != RemittanceStatus::Pending {
+            // SR-122: Enforce that only the assigned agent (or admin) may settle each entry.
+            if !is_admin_caller && remittance.agent != agent {
+                return Err(ContractError::Unauthorized);
+            }
+
+            // Verify remittance is pending or processing
+            if remittance.status != RemittanceStatus::Pending
+                && remittance.status != RemittanceStatus::Processing
+            {
                 return Err(ContractError::InvalidStatus);
             }
 
@@ -2576,8 +2635,8 @@ impl SwiftRemitContract {
                 }
             }
 
-            // Address type is guaranteed valid by the Soroban SDK runtime; no further
-            // address validation is required or possible at the contract level.
+            // SR-122: Enforce per-agent daily withdrawal cap for each entry.
+            storage::check_and_record_agent_withdrawal(&env, &remittance.agent, remittance.amount)?;
 
             remittances.push_back(remittance);
         }
@@ -2665,9 +2724,18 @@ impl SwiftRemitContract {
 
         for i in 0..remittances.len() {
             let mut remittance = remittances.get_unchecked(i);
-            remittance.status = RemittanceStatus::Completed;
-            set_remittance(&env, remittance.id, &remittance);
+            // SR-122 / SR-125: set settlement hash before status change (optimistic lock),
+            // then route the status update through the canonical state machine.
             set_settlement_hash(&env, remittance.id);
+            // Transition through Processing if still Pending, then to Completed.
+            if remittance.status == RemittanceStatus::Pending {
+                crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Processing)?;
+                storage::add_processing_volume(&env, remittance.amount)?;
+            }
+            crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
+            storage::sub_processing_volume(&env, remittance.amount)?;
+            storage::add_completed_volume(&env, remittance.amount)?;
+            set_remittance(&env, remittance.id, &remittance);
             settled_ids.push_back(remittance.id);
 
             // Emit individual remittance completion event
@@ -3109,6 +3177,9 @@ impl SwiftRemitContract {
     /// * `reputation_score` - Score from 0-100
     /// * `trustline_count` - Number of trustlines
     /// * `has_toml` - Whether asset has valid stellar.toml
+    /// * `token_contract` - Optional token contract address to associate with this record.
+    ///   When provided, `create_remittance` can look up the verification status by token
+    ///   address so that suspicious-asset checks are automatically enforced (SR-124).
     ///
     /// # Returns
     ///
@@ -3127,6 +3198,7 @@ impl SwiftRemitContract {
         reputation_score: u32,
         trustline_count: u64,
         has_toml: bool,
+        token_contract: Option<Address>,
     ) -> Result<(), ContractError> {
         let admin = get_admin(&env)?;
         admin.require_auth();
@@ -3146,6 +3218,12 @@ impl SwiftRemitContract {
         };
 
         set_asset_verification(&env, &verification);
+
+        // SR-124: If the admin supplies the token contract address, record the reverse
+        // mapping so create_remittance can look up this record by token address.
+        if let Some(ref token_addr) = token_contract {
+            storage::set_token_asset_info(&env, token_addr, &asset_code, &issuer);
+        }
 
         Ok(())
     }

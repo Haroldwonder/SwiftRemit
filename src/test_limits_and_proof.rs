@@ -327,7 +327,7 @@ fn test_batch_netting_opposing_flow_scenario_one() {
     entries.push_back(BatchSettlementEntry { remittance_id: id2 });
     entries.push_back(BatchSettlementEntry { remittance_id: id3 });
 
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
     assert_eq!(result.settled_ids.len(), 3);
     assert_eq!(contract.get_accumulated_fees(), expected_fees);
 }
@@ -359,7 +359,7 @@ fn test_batch_netting_opposing_flow_scenario_two() {
     entries.push_back(BatchSettlementEntry { remittance_id: id3 });
     entries.push_back(BatchSettlementEntry { remittance_id: id4 });
 
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
     assert_eq!(result.settled_ids.len(), 4);
     assert_eq!(contract.get_accumulated_fees(), expected_fees);
 }
@@ -397,7 +397,7 @@ fn test_batch_netting_opposing_flow_scenario_three() {
     entries.push_back(BatchSettlementEntry { remittance_id: id4 });
     entries.push_back(BatchSettlementEntry { remittance_id: id5 });
 
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
     assert_eq!(result.settled_ids.len(), 5);
     assert_eq!(contract.get_accumulated_fees(), expected_fees);
 }

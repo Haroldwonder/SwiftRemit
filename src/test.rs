@@ -3051,7 +3051,7 @@ contract.register_agent(&sender_b, &None);
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
 
     // Execute batch settlement with netting
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
 
     assert!(result.is_ok());
     let settled = result.unwrap();
@@ -3101,7 +3101,7 @@ contract.register_agent(&sender_b, &None);
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
 
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
 
     assert!(result.is_ok());
 
@@ -3186,7 +3186,7 @@ contract.register_agent(&party_c, &None);
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id3 });
 
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
 
     assert!(result.is_ok());
 
@@ -3227,7 +3227,7 @@ contract.register_agent(&sender_b, &None);
     entries1.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
 
     let fees_before = contract.get_accumulated_fees();
-    let result1 = contract.batch_settle_with_netting(&entries1);
+    let result1 = contract.batch_settle_with_netting(&admin, &entries1);
     assert!(result1.is_ok());
     let fees_after_batch1 = contract.get_accumulated_fees();
     let fees_batch1 = fees_after_batch1 - fees_before;
@@ -3240,7 +3240,7 @@ contract.register_agent(&sender_b, &None);
     entries2.push_back(crate::BatchSettlementEntry { remittance_id: id3 });
     entries2.push_back(crate::BatchSettlementEntry { remittance_id: id4 });
 
-    let result2 = contract.batch_settle_with_netting(&entries2);
+    let result2 = contract.batch_settle_with_netting(&admin, &entries2);
     assert!(result2.is_ok());
     let fees_after_batch2 = contract.get_accumulated_fees();
     let fees_batch2 = fees_after_batch2 - fees_after_batch1;
@@ -3294,8 +3294,8 @@ fn test_simulate_settlement_nonexistent() {
     contract.whitelist_token(&admin, &token.address);
     contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
 
-    let entries = Vec::new(&env, &0, &0, &admin);
-    contract.batch_settle_with_netting(&entries, &0, &0, &admin);
+    let entries = Vec::new(&env);
+    contract.batch_settle_with_netting(&admin, &entries);
 }
 
 #[test]
@@ -3325,7 +3325,7 @@ contract.register_agent(&agent, &None);
         entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
     }
 
-    contract.batch_settle_with_netting(&entries);
+    contract.batch_settle_with_netting(&admin, &entries);
 }
 
 #[test]
@@ -3371,7 +3371,7 @@ contract.register_agent(&agent, &None);
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id }); // Duplicate
 
-    contract.batch_settle_with_netting(&entries);
+    contract.batch_settle_with_netting(&admin, &entries);
 }
 
 #[test]
@@ -3414,7 +3414,7 @@ contract.register_agent(&agent, &None);
     let mut entries = Vec::new(&env);
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
 
-    contract.batch_settle_with_netting(&entries);
+    contract.batch_settle_with_netting(&admin, &entries);
 }
 
 #[test]
@@ -3474,7 +3474,7 @@ contract.register_agent(&agent, &None);
     let mut entries = Vec::new(&env);
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
 
-    contract.batch_settle_with_netting(&entries);
+    contract.batch_settle_with_netting(&admin, &entries);
 }
 
 #[test]
@@ -3535,7 +3535,7 @@ contract.register_agent(&sender_b, &None);
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id3 });
 
     let fees_before = contract.get_accumulated_fees();
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
     assert!(result.is_ok());
 
     let fees_after = contract.get_accumulated_fees();
@@ -3637,7 +3637,7 @@ contract.register_agent(&agent, &None);
         entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
     }
 
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
     assert!(result.is_ok());
 
     let settled = result.unwrap();
@@ -3697,7 +3697,7 @@ contract.register_agent(&party_b, &None);
         entries.push_back(crate::BatchSettlementEntry { remittance_id: id });
     }
 
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
     assert!(result.is_ok());
 
     // All 10 remittances should be settled
@@ -3749,7 +3749,7 @@ contract.register_agent(&party_b, &None);
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id4 });
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id5 });
 
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
     assert!(result.is_ok());
 
     // Calculate expected fees
@@ -5273,7 +5273,7 @@ contract.register_agent(&sender_a, &None);
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
     entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
 
-    contract.batch_settle_with_netting(&entries);
+    contract.batch_settle_with_netting(&admin, &entries);
 
     // Check events - should have exactly two settlement completion events (one per remittance)
     let events = env.events().all();
@@ -5601,7 +5601,7 @@ contract.register_agent(&agent1, &None);
     entries.push_back(BatchSettlementEntry { remittance_id: id2 });
     entries.push_back(BatchSettlementEntry { remittance_id: id3 });
 
-    contract.batch_settle_with_netting(&entries);
+    contract.batch_settle_with_netting(&admin, &entries);
 
     // Counter should be 3 (one per settlement)
     assert_eq!(contract.get_total_settlements_count(), 3);
@@ -5932,7 +5932,7 @@ contract.register_agent(&agent, &None);
         });
     }
 
-    let result = contract.batch_settle_with_netting(&entries);
+    let result = contract.batch_settle_with_netting(&admin, &entries);
     assert_eq!(result.settled_ids.len(), 100);
 }
 
@@ -5957,7 +5957,7 @@ fn test_batch_settle_exceed_max_size() {
         });
     }
 
-    contract.batch_settle_with_netting(&entries);
+    contract.batch_settle_with_netting(&admin, &entries);
 }
 
 

@@ -368,6 +368,11 @@ enum DataKey {
 
     /// Seconds that must elapse between governance approval and execution (instance storage).
     GovernanceTimelockSeconds,
+
+    // === Asset Verification Token Mapping ===
+    /// Maps a whitelisted token contract Address → (asset_code, issuer) so that
+    /// create_remittance can look up on-chain verification status by token address.
+    TokenAssetInfo(Address),
 }
 
 /// Checks if the contract has an admin configured.
@@ -1224,6 +1229,31 @@ pub fn get_all_whitelisted_tokens(env: &Env) -> Vec<Address> {
         .instance()
         .get(&DataKey::WhitelistedTokensList)
         .unwrap_or(Vec::new(env))
+}
+
+/// Associates a token contract address with its (asset_code, issuer) tuple so that
+/// create_remittance can resolve the asset-verification record by token address.
+/// Called by set_asset_verification when the admin registers verification data.
+pub fn set_token_asset_info(
+    env: &Env,
+    token: &Address,
+    asset_code: &soroban_sdk::String,
+    issuer: &Address,
+) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::TokenAssetInfo(token.clone()), &(asset_code.clone(), issuer.clone()));
+}
+
+/// Retrieves the (asset_code, issuer) tuple for a token contract address.
+/// Returns None if no mapping has been registered.
+pub fn get_token_asset_info(
+    env: &Env,
+    token: &Address,
+) -> Option<(soroban_sdk::String, Address)> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TokenAssetInfo(token.clone()))
 }
 
 // === Settlement Event Emission Tracking ===
