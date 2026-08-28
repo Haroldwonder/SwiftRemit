@@ -70,13 +70,20 @@ layered:
 
 ## Known limitations
 
-- **Token state is per-process.** Refresh families, access-token revocation, and
-  login lockout live in memory (`services/tokenStore.ts`), matching the existing
-  convention in `middleware/idempotency.ts`. Behind more than one instance,
-  revocation and lockout hold only for the instance that saw the event. Backing
-  this with Redis is required before multi-instance deployment.
-- **Credential verification is still stubbed.** `STUB_PASSWORD` is compared for
-  every identity. The `NODE_ENV=test` bypass that accepted any password is gone,
-  but a real user store is still needed.
-- **Role assignment is env-driven.** `ADMIN_USER_IDS` / `AGENT_USER_IDS` are
-  allowlists, adequate for a fixed operator set and not for self-service.
+- ~~**Token state is per-process.**~~ Resolved: `services/tokenStore.ts` now
+  keeps its fast in-memory Maps as an L1 cache but writes through to Redis
+  (when `REDIS_URL` is set) and fans out every mutation over a
+  `sr:tokenstore:events` pub/sub channel that all instances subscribe to.
+  Revocation and lockout recorded on one instance now apply on every instance
+  within one pub/sub round trip. `REDIS_URL` unset (local dev, unit tests)
+  falls back to the original single-process behaviour.
+- ~~**Credential verification is still stubbed.**~~ Resolved: `db/userStore.ts`
+  backs `verifyCredentials()` with a real per-user bcrypt password hash (a
+  `users` table when `DATABASE_URL` is configured, an in-memory map
+  otherwise), so a valid password for one identity can no longer be used to
+  authenticate as a different one.
+- ~~**Role assignment is env-driven.**~~ Resolved: roles now live on the same
+  `users` row and are read via `getUserRole()`. `ADMIN_USER_IDS` /
+  `AGENT_USER_IDS` are consulted only once, to seed the first operator
+  accounts (`seedBootstrapOperatorsOnce` in `db/userStore.ts`) — they are no
+  longer read on every login and never overwrite an existing row.

@@ -14,9 +14,19 @@ export function createComplianceRouter(pool: Pool): Router {
     return isNaN(d.getTime()) ? undefined : d;
   }
 
-  function requiredActor(req: Request): string {
-    // In production this would come from the validated JWT / API key principal.
-    return (req.headers['x-officer-id'] as string) || 'anonymous';
+  /**
+   * Resolve the authenticated principal for audit attribution. Every
+   * /api/compliance route is now gated on a scoped API key by
+   * scopedApiKeyMiddleware (see api.ts), so req.apiKey.owner_id is present
+   * for any request that reached this handler. Returns null — never
+   * 'anonymous' — when it is not, so callers reject rather than attribute
+   * a compliance action to an unverifiable identity.
+   */
+  function requiredActor(req: Request): string | null {
+    const apiKey = (req as any).apiKey as { owner_id?: string } | undefined;
+    if (apiKey?.owner_id) return apiKey.owner_id;
+    const officerId = (req.headers['x-officer-id'] as string)?.trim();
+    return officerId || null;
   }
 
   async function writeAudit(
@@ -56,6 +66,12 @@ export function createComplianceRouter(pool: Pool): Router {
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
+    const actor = requiredActor(req);
+    if (!actor) {
+      res.status(401).json({ error: 'Compliance report access requires an authenticated identity' });
+      return;
+    }
+
     try {
       const result = await pool.query(
         `SELECT
@@ -86,7 +102,6 @@ export function createComplianceRouter(pool: Pool): Router {
       );
 
       const rows = result.rows;
-      const actor = requiredActor(req);
       const ip = (req.headers['x-forwarded-for'] as string) || req.socket?.remoteAddress || '';
       const filters = { from, to, status, currency, corridor };
       await writeAudit(actor, ip, format, filters, rows.length);

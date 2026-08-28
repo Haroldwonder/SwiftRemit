@@ -4,9 +4,25 @@ const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // 96 bits for GCM
 const PREFIX = 'enc:v1:';
 
-// Default key for development/test environment if ENCRYPTION_KEY is not set
-const DEFAULT_KEY_HEX = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
+/**
+ * Derived deterministically at module load so tests never need to set
+ * ENCRYPTION_KEY, without shipping a literal, publicly-visible key that
+ * every column would silently fall back to in a misconfigured deployment
+ * (see SR-131). Never used outside NODE_ENV=test.
+ */
+const TEST_ONLY_KEY = crypto.createHash('sha256').update('swiftremit-test-fixture-key-do-not-use').digest();
 
+/**
+ * Resolve the AES-256 master key from ENCRYPTION_KEY.
+ *
+ * There is no fallback key outside test. Before this change, an unset
+ * ENCRYPTION_KEY silently fell back to a literal hex constant committed to
+ * this file — anyone who had read the source already knew the "encryption"
+ * key, so a misconfigured deploy would encrypt every PII column with zero
+ * real confidentiality while application code treated it as protected.
+ * Failing closed here mirrors env-guard.ts's treatment of other required
+ * secrets and backend/src/index.ts's fail-fast startup behaviour.
+ */
 function getMasterKey(): Buffer {
   const envKey = process.env.ENCRYPTION_KEY;
   if (envKey) {
@@ -16,7 +32,15 @@ function getMasterKey(): Buffer {
     // Hash key if it's arbitrary string length
     return crypto.createHash('sha256').update(envKey).digest();
   }
-  return Buffer.from(DEFAULT_KEY_HEX, 'hex');
+
+  if (process.env.NODE_ENV === 'test') {
+    return TEST_ONLY_KEY;
+  }
+
+  throw new Error(
+    'ENCRYPTION_KEY is not set. Refusing to encrypt/decrypt with a known fallback key — ' +
+      'set ENCRYPTION_KEY (64 hex chars, sourced from the secrets manager) before starting this service.',
+  );
 }
 
 /**

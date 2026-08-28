@@ -48,6 +48,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # VULNERABILITY_EXCEPTIONS.md: "Exceptions reaching their expiration
+      # date automatically fail CI builds until renewed or patched." Runs
+      # ahead of cargo audit/deny so a stale deny.toml [advisories] entry
+      # blocks the build instead of silently suppressing a finding forever.
+      - name: Fail if any exception in deny.toml has expired
+        run: node scripts/check-exception-expiry.js
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: taiki-e/install-action@v2
@@ -59,6 +70,9 @@ jobs:
 
       - name: Audit Rust dependencies (cargo audit)
         run: cargo audit
+
+      - name: Check Rust advisory exceptions (cargo deny)
+        run: cargo deny --all-features check advisories
 
   # ─── Licence compatibility (SR-101) ─────────────────────────────────────────
   manifest-licenses:

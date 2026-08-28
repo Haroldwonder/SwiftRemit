@@ -45,9 +45,10 @@ import { getAnchorCircuitBreaker } from './anchor-circuit-breaker';
 import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
 import { AdminAuditLogService } from './admin-audit-log';
-import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
+import { apiKeyRateLimiter, scopedApiKeyMiddleware, initApiKeyMiddleware } from './middleware/api-key-rate-limit';
 import {
   ApiKeyStore,
+  ApiKeyRecord,
   ALL_SCOPES,
   ApiKeyScope,
   RateLimitTier,
@@ -66,6 +67,7 @@ import { createWebhooksRouter }     from './routes/webhooks';
 import { createComplianceRouter }   from './routes/compliance';
 import { createAmlRouter }          from './routes/aml';
 import { createDeviceRouter }       from './routes/devices';
+import { privacyRouter }            from './routes/privacy';
 import docsRouter                   from './routes/docs';
 
 // ─── App & shared services ───────────────────────────────────────────────────
@@ -77,6 +79,18 @@ const logger = createLogger('api');
 const fxRateCache    = getFxRateCache();
 const metricsService = getMetricsService(pool);
 
+/**
+ * Resolve the authenticated principal for audit attribution.
+ * Prefers the verified API-key owner (attached by scopedApiKeyMiddleware)
+ * over the client-supplied x-user-id header, which cannot be trusted for
+ * attribution since any caller can set it.
+ */
+function resolveActor(req: Request): string {
+  const apiKey = (req as any).apiKey as ApiKeyRecord | undefined;
+  if (apiKey?.owner_id) return apiKey.owner_id;
+  return (req.headers['x-user-id'] as string) || 'unknown';
+}
+
 async function logAdminAction(
   req: Request,
   action: string,
@@ -85,7 +99,7 @@ async function logAdminAction(
 ) {
   const auditService = new AdminAuditLogService(pool);
   await auditService.log({
-    admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+    admin_address: resolveActor(req),
     action,
     target,
     params_json: params,
@@ -192,6 +206,14 @@ app.use('/api/kyc/config', adminLimiter);
 app.use('/api/',           apiKeyRateLimiter);
 app.use('/api/',           publicLimiter);
 
+// Scoped API-key auth + per-tier rate limiting (SR-043). Runs ahead of every
+// router below so /api/admin, /api/aml, /api/compliance and /api/devices —
+// previously reachable with no authentication at all — now require a key
+// carrying the scope declared in ROUTE_SCOPES. Registered at the app root
+// (not under '/api/') so req.path matches the full paths ROUTE_SCOPES expects.
+initApiKeyMiddleware(pool);
+app.use(scopedApiKeyMiddleware);
+
 // ─── Metrics (excluded from rate limiting) ───────────────────────────────────
 
 app.get('/metrics', async (_req: Request, res: Response) => {
@@ -215,6 +237,11 @@ app.use('/health',           createHealthRouter(pool));
 app.use('/api/docs',         docsRouter);
 app.use('/api/compliance',   createComplianceRouter(pool));
 app.use('/api/devices',      createDeviceRouter(pool));
+// GDPR consent / SAR / rectification / erasure endpoints (previously never
+// mounted anywhere — see the privacy-API finding). Each handler enforces its
+// own ownership check (self or admin:* scope) since these act on a specific
+// data subject rather than a fixed resource class.
+app.use('/api/v1/privacy',   adminLimiter, privacyRouter);
 // AML/CTF controls (SR-112). Rate-limited as an admin surface — these endpoints
 // expose screening results and the alert queue.
 app.use('/api/aml',          adminLimiter, createAmlRouter(pool));

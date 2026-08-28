@@ -20,6 +20,7 @@ import { AdminAuditLogService } from './admin-audit-log';
 import { SanctionsScreeningService } from './aml/sanctions-screening';
 import { TravelRuleService } from './aml/travel-rule';
 import { RetentionService } from './aml/retention';
+import { purgeExpiredPersonalData } from './privacy/retention-service';
 import { createLogger } from './correlation-id';
 import { DeviceTokenService } from './device-token-service';
 import crypto from 'crypto';
@@ -169,6 +170,18 @@ export async function startBackgroundJobs() {
     if (!ran) console.log('aml-data-retention: skipped (another instance holds the lock)');
   });
 
+  // Purge/anonymize expired GDPR personal data nightly at 03:45 UTC (SR-131).
+  // Previously this only ran via a manual POST /api/v1/privacy/purge-expired
+  // call that itself never received a live pool, so audit-log IP
+  // anonymization, transient KYC upload purge, and revoked-consent purge
+  // never executed in any environment.
+  cron.schedule('45 3 * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'privacy-data-purge', async () => {
+      await runTracked(pool, 'privacy-data-purge', purgeExpiredData);
+    });
+    if (!ran) console.log('privacy-data-purge: skipped (another instance holds the lock)');
+  });
+
   console.log('Background jobs scheduled');
 }
 
@@ -208,6 +221,17 @@ async function enforceDataRetention() {
       );
     }
   }
+}
+
+async function purgeExpiredData() {
+  const report = await purgeExpiredPersonalData(pool);
+  if (report.errors.length > 0) {
+    for (const error of report.errors) console.error(`privacy-data-purge: ${error}`);
+  }
+  console.log(
+    `privacy-data-purge: audit_ips_anonymized=${report.auditLogsAnonymized} ` +
+      `transient_kyc_purged=${report.transientKycPurged} revoked_consents_purged=${report.revokedConsentsPurged}`,
+  );
 }
 
 async function revalidateStaleAssets() {

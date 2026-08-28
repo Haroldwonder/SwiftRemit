@@ -422,6 +422,19 @@ export async function getAnchorsAdminApiKey(): Promise<string | undefined> {
   return getSecretsManager().getSecret({ secretId: 'ANCHORS_ADMIN_API_KEY', required: false });
 }
 
+/**
+ * ENCRYPTION_KEY — AES-256 master key backing column-level PII encryption
+ * (backend/src/privacy/encryption.ts). Optional here because the encryption
+ * module itself fails closed outside NODE_ENV=test when it is missing (see
+ * SR-131); routing it through the same rotation/validation path as the other
+ * secrets means a plaintext env fallback in production still throws via
+ * getSecret's PRODUCTION SECURITY VIOLATION guard rather than degrading
+ * silently.
+ */
+export async function getEncryptionKey(): Promise<string | undefined> {
+  return getSecretsManager().getSecret({ secretId: 'ENCRYPTION_KEY', required: false });
+}
+
 // ── Named helpers — api service ───────────────────────────────────────────────
 
 export async function getAdminApiKey(): Promise<string | undefined> {

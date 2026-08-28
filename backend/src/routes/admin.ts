@@ -57,7 +57,7 @@ export function createAdminRouter(pool: Pool): Router {
   ): Promise<void> {
     const auditService = new AdminAuditLogService(pool);
     await auditService.log({
-      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+      admin_address: resolveActor(req),
       action,
       target,
       params_json: params,
@@ -77,7 +77,7 @@ export function createAdminRouter(pool: Pool): Router {
       const subscriber = await getWebhookSubscriberById(id);
       const auditService = new AdminAuditLogService(pool);
       await auditService.log({
-        admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+        admin_address: resolveActor(req),
         action: 'rotate_webhook_secret',
         target: id,
         params_json: null,

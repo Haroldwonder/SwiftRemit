@@ -93,14 +93,25 @@ export async function scopedApiKeyMiddleware(
   next: NextFunction,
 ): Promise<void> {
   const plaintext = extractKeyFromRequest(req);
+  const required = requiredScopeForRoute(req.method, req.path);
 
-  // No API key — let the request continue (public / IP-limited routes)
+  // No API key — reject when this route is scope-protected (admin/aml/
+  // compliance/devices). Everything else falls through to the outer
+  // IP-based limiter as before.
   if (!plaintext) {
+    if (required !== null) {
+      res.status(401).json({ error: 'This endpoint requires an authenticated API key' });
+      return;
+    }
     return next();
   }
 
   if (!_store) {
     // Store not initialised (test environments that skip initApiKeyMiddleware)
+    if (required !== null) {
+      res.status(401).json({ error: 'API key store unavailable' });
+      return;
+    }
     return next();
   }
 
@@ -113,8 +124,6 @@ export async function scopedApiKeyMiddleware(
   }
 
   // ── 2. Scope check ─────────────────────────────────────────────────────────
-  const required = requiredScopeForRoute(req.method, req.path);
-
   if (required !== null && !ApiKeyStore.hasScope(record, required)) {
     res.status(403).json({
       error: 'Insufficient scope',
