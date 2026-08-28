@@ -7,13 +7,13 @@ This project uses a consolidated CI/CD workflow structure that eliminates duplic
 - **Concurrency groups** (prevent workflow spam on force-pushes)
 
 ## Toolchain Versions
-All toolchain versions are defined in `.github/config/versions.yml`:
+Standard toolchain versions used across workflows:
 - Node.js: 20
 - Rust: stable
-- PostgreSQL: 15
+- PostgreSQL: 15-alpine (CI), 16-alpine (local docker-compose)
 - Helm: 3.17.0
 
-Update this single file to change versions across all workflows.
+When updating versions, search for version strings across `.github/workflows/` and update all references consistently.
 
 ## Composite Actions
 Shared setup logic is extracted to `.github/actions/`:
@@ -78,8 +78,7 @@ Starts PostgreSQL and runs migrations.
 ## Independent Workflows
 These run on dedicated schedules and are NOT consolidated:
 
-- **security-audit.yml** — Scheduled security scans (runs daily)
-- **dependency-security.yml** — Dependency checks (scheduled)
+- **dependency-security.yml** — Consolidated dependency & security audit (npm audit + cargo audit), runs on push/PR to main and weekly on Monday at 6 AM UTC
 - **container-security.yml** — Container image scans (on release)
 - **deploy-staging.yml** — Deploy to staging (manual trigger)
 - **deploy-mainnet.yml** — Deploy to mainnet (manual trigger)
@@ -111,40 +110,66 @@ This ensures:
 
 ## Path Filtering
 
-Jobs use GitHub's native path filtering to optimize run time. Examples:
+Jobs use GitHub's native path filtering combined with dorny/paths-filter for efficient change detection:
 
 ```yaml
-if: |
-  github.event_name == 'push' ||
-  contains(github.event.pull_request.files[*].path, 'backend/')
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+
+  backend-test:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.backend == 'true'
 ```
 
 This means:
 - All jobs run on push to main (full suite)
 - PR jobs run only if those paths changed
-- Exceptions can be added (e.g., `.github/workflows/**` triggers CI re-test)
+- Path changes are detected once and reused across all jobs
 
 ## Adding New Jobs
 
 1. **Add to existing workflow** if it matches an existing category (Rust, Node, etc.)
 2. **Use composite actions** for any setup (setup-rust, setup-node, setup-db)
-3. **Add path filtering** using `if:` conditions
+3. **Add path filtering** in the changes job and reference the output in your job's `if:` condition
 4. **Update this document** with the new job's purpose
 5. **Set concurrency group** if multiple runs could interfere
 
 Example:
 ```yaml
-mobile-test:
-  name: Mobile tests
-  runs-on: ubuntu-latest
-  if: contains(github.event.pull_request.files[*].path, 'mobile/')
-  steps:
-    - uses: actions/checkout@v4
-    - uses: ./.github/actions/setup-node
-      with:
-        cache-dependency-path: package-lock.json
-    - run: npm test
-      working-directory: mobile
+jobs:
+  changes:
+    outputs:
+      mobile: ${{ steps.filter.outputs.mobile }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            mobile:
+              - 'mobile/**'
+
+  mobile-test:
+    name: Mobile tests
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.mobile == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: package-lock.json
+      - run: npm test
+        working-directory: mobile
 ```
 
 ## Migrating Old Workflows
@@ -190,10 +215,10 @@ Example (after consolidation):
 2. Action uses `shell: bash` (not `run:` outside composite)
 3. Inputs/outputs are correctly defined
 
-**Version sync issues?** Always:
-1. Update `.github/config/versions.yml` first
-2. Verify all workflows reference the correct path/input
-3. Avoid hardcoding versions in jobs (use composite actions)
+**Version sync issues?** 
+1. Search for the version string across `.github/workflows/*.yml`
+2. Update all occurrences consistently
+3. Avoid hardcoding versions in jobs when possible (use composite actions)
 
 ## Metrics & Monitoring
 

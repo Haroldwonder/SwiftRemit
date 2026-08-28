@@ -44,7 +44,7 @@ jobs:
 
       - uses: azure/setup-helm@v4
         with:
-          version: v3.15.2
+          version: v3.17.0
 
       - name: helm lint
         run: helm lint charts/swiftremit --strict -f charts/swiftremit/values.${{ matrix.environment }}.yaml
@@ -95,7 +95,7 @@ jobs:
 
       - uses: azure/setup-helm@v4
         with:
-          version: v3.15.2
+          version: v3.17.0
 
       - name: Install helm-unittest
         run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false

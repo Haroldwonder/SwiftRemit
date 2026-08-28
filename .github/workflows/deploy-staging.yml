@@ -47,8 +47,9 @@ jobs:
       - name: Build & push backend image
         uses: docker/build-push-action@v6
         with:
-          context: ./backend
+          context: .
           file: ./backend/Dockerfile
+          target: runtime
           push: true
           tags: |
             ghcr.io/${{ github.repository }}/backend:staging
@@ -59,8 +60,9 @@ jobs:
       - name: Build & push api image
         uses: docker/build-push-action@v6
         with:
-          context: ./api
+          context: .
           file: ./api/Dockerfile
+          target: runtime
           push: true
           tags: |
             ghcr.io/${{ github.repository }}/api:staging
@@ -71,8 +73,9 @@ jobs:
       - name: Build & push frontend image
         uses: docker/build-push-action@v6
         with:
-          context: ./frontend
+          context: .
           file: ./frontend/Dockerfile
+          target: runtime
           push: true
           tags: |
             ghcr.io/${{ github.repository }}/frontend:staging
