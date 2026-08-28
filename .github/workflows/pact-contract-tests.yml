@@ -1,5 +1,17 @@
 name: Pact Contract Tests (SR-062)
 
+# SR-216: consumer pacts and provider-verification results are published to a
+# Pact Broker when one is configured (repository variable PACT_BROKER_BASE_URL +
+# secret PACT_BROKER_TOKEN). The broker is then the source of truth that the
+# `can-i-deploy` gate in deploy-staging.yml / deploy-mainnet.yml queries.
+#
+# With no broker configured every broker step is skipped and the workflow falls
+# back to uploading pact files as CI artifacts (and committing them to pacts/ on
+# push to main), preserving the pre-broker behaviour.
+#
+# To stand up a self-hosted broker locally:  docker compose --profile pact-broker up
+# See docs/PACT_BROKER.md.
+
 on:
   push:
     branches: [main, "feat/**", "fix/**"]
@@ -52,6 +64,13 @@ jobs:
           name: pact-frontend
           path: pacts/SwiftRemitFrontend-SwiftRemitAPI.json
           retention-days: 7
+      - name: Publish Frontend pact to broker
+        if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
+        working-directory: .
+        env:
+          PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+        run: bash scripts/pact-publish.sh SwiftRemitFrontend
 
   # ── Step 1b: SDK consumer pacts ────────────────────────────────────────────
   consumer-sdk:
@@ -78,6 +97,13 @@ jobs:
           name: pact-sdk
           path: pacts/SwiftRemitSDK-SwiftRemitAPI.json
           retention-days: 7
+      - name: Publish SDK pact to broker
+        if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
+        working-directory: .
+        env:
+          PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+        run: bash scripts/pact-publish.sh SwiftRemitSDK
 
   # ── Step 1c: Mobile consumer pacts ─────────────────────────────────────────
   consumer-mobile:
@@ -104,6 +130,13 @@ jobs:
           name: pact-mobile
           path: pacts/SwiftRemitMobile-SwiftRemitAPI.json
           retention-days: 7
+      - name: Publish Mobile pact to broker
+        if: ${{ vars.PACT_BROKER_BASE_URL != '' }}
+        working-directory: .
+        env:
+          PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+        run: bash scripts/pact-publish.sh SwiftRemitMobile
 
   # ── Step 1d: API→Backend consumer pact ─────────────────────────────────────
   consumer-api-backend:
@@ -155,12 +188,24 @@ jobs:
           CURRENCY_CONFIG_PATH: ./config/currencies.json
           ADMIN_API_KEY: pact-admin-key
           ANCHOR_TOML_VALIDATION_DISABLED: "true"
+          # SR-216: when set, pacts are pulled from the broker and the
+          # verification result is published back, keyed by this commit SHA.
+          PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+          PACT_PROVIDER_VERSION: ${{ github.sha }}
+          PACT_PROVIDER_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: npm run test:pact
 
       - name: Publish step summary
         if: always()
         run: |
           echo "## Pact Provider Verification Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ vars.PACT_BROKER_BASE_URL }}" ]; then
+            echo "Source: Pact Broker (\`${{ vars.PACT_BROKER_BASE_URL }}\`) — results published for SHA \`${{ github.sha }}\`." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Source: downloaded CI artifacts (no broker configured)." >> $GITHUB_STEP_SUMMARY
+          fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Consumer | Contract file |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|---------------|" >> $GITHUB_STEP_SUMMARY
@@ -170,15 +215,18 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "A failure here means a breaking API change was introduced." >> $GITHUB_STEP_SUMMARY
 
-  # ── Step 3: Commit generated pact files back to the repo ───────────────────
-  # This makes pacts available to both sides of a change without a broker.
-  # The commit is skipped on PRs to avoid polluting history with draft pacts.
+  # ── Step 3 (legacy): Commit generated pact files back to the repo ──────────
+  # Retired once a Pact Broker is configured (SR-216): the broker becomes the
+  # source of truth, so this job only runs while PACT_BROKER_BASE_URL is unset.
   publish-pacts:
-    name: "Commit pact files to pacts/ directory"
+    name: "Commit pact files to pacts/ directory (no-broker fallback)"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: provider-verification
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'push' &&
+      vars.PACT_BROKER_BASE_URL == ''
     steps:
       - uses: actions/checkout@v4
         with:

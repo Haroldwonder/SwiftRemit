@@ -10,14 +10,14 @@ on:
     paths:
       - 'monitoring/**'
       - 'scripts/check-alert-runbooks.js'
-      - 'RUNBOOK.md'
+      - 'docs/RUNBOOK.md'
       - '.github/workflows/monitoring-ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'monitoring/**'
       - 'scripts/check-alert-runbooks.js'
-      - 'RUNBOOK.md'
+      - 'docs/RUNBOOK.md'
       - '.github/workflows/monitoring-ci.yml'
   workflow_dispatch:
 

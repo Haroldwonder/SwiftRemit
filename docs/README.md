@@ -16,7 +16,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 | [TESTNET_SETUP_GUIDE.md](TESTNET_SETUP_GUIDE.md) | Automated testnet setup script walkthrough |
 | [CONFIGURATION.md](CONFIGURATION.md) | All environment variables and config options |
 | [MIGRATION.md](MIGRATION.md) | Contract migration guide |
-| [RUNBOOK.md](RUNBOOK.md) | Operational runbook — pause/unpause, key rotation, etc. |
+| [RUNBOOK.md](RUNBOOK.md) | Day-to-day operational runbook — pause/unpause, key rotation, stuck migrations, SLO-alert response. Start here; for mainnet rollback see ROLLBACK_RUNBOOK.md |
 
 ---
 
@@ -49,6 +49,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 | [testing/STATE_MACHINE_TESTING.md](testing/STATE_MACHINE_TESTING.md) | State machine test guide |
 | [testing/TESTING_COMPLETE.md](testing/TESTING_COMPLETE.md) | Test completion report |
 | [testing/TESTING_FEE_BREAKDOWN.md](testing/TESTING_FEE_BREAKDOWN.md) | Fee breakdown test results |
+| [PACT_BROKER.md](PACT_BROKER.md) | Pact Broker setup and the `can-i-deploy` deploy gate (SR-216) |
 
 ### Security & Compliance
 
@@ -72,7 +73,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 |---|---|
 | [PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md) | Production readiness assessment |
 | [PRODUCTION_READINESS_CHECKLIST.md](PRODUCTION_READINESS_CHECKLIST.md) | Pre-mainnet checklist |
-| [ROLLBACK_RUNBOOK.md](ROLLBACK_RUNBOOK.md) | Rollback procedures |
+| [ROLLBACK_RUNBOOK.md](ROLLBACK_RUNBOOK.md) | Canonical mainnet incident recovery — severity matrix, WASM rollback, state migration, authority matrix |
 | [DATA_INVENTORY.md](DATA_INVENTORY.md) | Data inventory and retention policy |
 | [ISSUES.md](ISSUES.md) | Issue tracker (SR-series) |
 
