@@ -10,6 +10,10 @@ import { startBackgroundJobs } from './scheduler';
 import { WebhookHandler } from './webhook-handler';
 import { KycService } from './kyc-service';
 import { createWebhookVerificationMiddleware } from './webhook-middleware';
+import { remittanceEventEmitter } from './remittance/events';
+import { NotificationService } from './notification-service';
+import { WebhookService } from './webhooks';
+import { PostgresWebhookStore } from './webhooks/store';
 import { patchConsoleForProduction } from './console-shim';
 import { getSecretsManager, getDatabaseUrl, getAdminSecretKey, getContractId, initializeSecretRotation } from './secrets-manager';
 import { assertEnvConfigured } from './env-guard';
@@ -111,6 +115,15 @@ async function start() {
     webhookHandler.setupRoutes(app);
     webhookHandler.setupHealthCheck(app);
     console.log('Webhook endpoints configured');
+
+    // Wire the remittance event emitter's optional collaborators. Both were
+    // previously left unset in production, so RemittanceEventEmitter's
+    // webhook fan-out and email/SMS notification paths never ran for a
+    // real status change — only the DB-persistence listener in
+    // routes/remittance.ts fired.
+    remittanceEventEmitter.setWebhookService(new WebhookService(new PostgresWebhookStore(pool)));
+    remittanceEventEmitter.setNotificationService(new NotificationService(pool));
+    console.log('Remittance notification and webhook fan-out wired');
 
     // Start background jobs
     startBackgroundJobs();

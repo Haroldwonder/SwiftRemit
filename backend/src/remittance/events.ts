@@ -18,6 +18,7 @@ import { EventEmitter } from 'events';
 import { RemittanceData } from '../webhooks/types';
 import { WebhookService } from '../webhooks/service';
 import { AdminAuditLogService } from '../admin-audit-log';
+import { NotificationService } from '../notification-service';
 import { getCorrelationId, createLogger } from '../correlation-id';
 
 const logger = createLogger('remittance-events');
@@ -54,6 +55,7 @@ export interface AdminActionEvent {
 export class RemittanceEventEmitter extends EventEmitter {
   private webhookService?: WebhookService;
   private auditLogService?: AdminAuditLogService;
+  private notificationService?: NotificationService;
 
   setWebhookService(webhookService: WebhookService): void {
     this.webhookService = webhookService;
@@ -61,6 +63,17 @@ export class RemittanceEventEmitter extends EventEmitter {
 
   setAuditLogService(auditLogService: AdminAuditLogService): void {
     this.auditLogService = auditLogService;
+  }
+
+  /**
+   * Wired at app startup so status changes actually reach the user by email
+   * / SMS. Before this, NotificationService.notifyRemittanceStatus() existed
+   * (SR-035 localized templates included) but was never called from anywhere
+   * in the emitter, so remittance completion/failure never produced an
+   * outbound notification.
+   */
+  setNotificationService(notificationService: NotificationService): void {
+    this.notificationService = notificationService;
   }
 
   /** Emit an admin action and persist it to the audit log. */
@@ -150,6 +163,30 @@ export class RemittanceEventEmitter extends EventEmitter {
           { correlationId },
         );
         // Don't throw — webhook delivery is best-effort
+      }
+    }
+
+    // Notify the user by email/SMS on terminal status changes. Best-effort,
+    // same as the webhook fan-out above: notification delivery must never
+    // block or fail the status-change flow that triggered it.
+    if (this.notificationService && (event.status === 'completed' || event.status === 'failed')) {
+      try {
+        await this.notificationService.notifyRemittanceStatus({
+          remittanceId: event.remittanceId,
+          status: event.status,
+          amount: event.amount,
+          currency: event.currency,
+          // recipientId is the only party identifier carried on this event;
+          // it is used as the notified user until a distinct sender user ID
+          // is threaded through the remittance-creation path.
+          senderUserId: event.recipientId,
+        });
+      } catch (error) {
+        logger.error(
+          `Failed to send status notification for remittance ${event.remittanceId}`,
+          error instanceof Error ? error : new Error(String(error)),
+          { correlationId },
+        );
       }
     }
   }
