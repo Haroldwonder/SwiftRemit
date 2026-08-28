@@ -324,6 +324,14 @@ export class TransactionMonitoringService {
     }));
   }
 
+  /**
+   * A sender's real corridor usage history, from sender_corridor_history —
+   * populated by recordCorridorUsage() on every evaluated transfer. This
+   * used to read compliance_flagged_remittances, which is populated only
+   * when a remittance exceeds a reporting threshold and has nothing to do
+   * with corridor history, so isNew in unusualCorridorRule effectively
+   * never fired for a genuinely new corridor.
+   */
   private async loadKnownCorridors(
     senderAddress: string,
     before: Date,
@@ -332,18 +340,34 @@ export class TransactionMonitoringService {
     const cutoff = new Date(before.getTime() - lookbackDays * 86_400_000);
     const { rows } = await this.db.query<{ corridor: string | null }>(
       `SELECT DISTINCT corridor
-         FROM compliance_flagged_remittances
-        WHERE corridor IS NOT NULL
-          AND flagged_at >= $1
-          AND transaction_id IN (
-            SELECT transaction_id FROM transactions WHERE sender_address = $2
-          )`,
-      [cutoff, senderAddress],
+         FROM sender_corridor_history
+        WHERE sender_address = $1
+          AND created_at >= $2
+          AND created_at <= $3`,
+      [senderAddress, cutoff, before],
     ).catch(() => ({ rows: [] as { corridor: string | null }[] }));
 
     return new Set(
       rows.map((r) => r.corridor).filter((c): c is string => !!c).map((c) => c.toUpperCase()),
     );
+  }
+
+  /**
+   * Records that `transfer` used its corridor, so future evaluations for
+   * this sender see it in loadKnownCorridors(). Must run after the current
+   * transfer has already been evaluated against the prior history — recording
+   * it first would make every transfer's own corridor look "known" to itself.
+   */
+  private async recordCorridorUsage(transfer: TransferRecord): Promise<void> {
+    const corridor = transfer.corridor?.toUpperCase();
+    if (!corridor) return;
+
+    await this.db.query(
+      `INSERT INTO sender_corridor_history (sender_address, corridor, transaction_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (sender_address, corridor, transaction_id) DO NOTHING`,
+      [transfer.senderAddress, corridor, transfer.transactionId],
+    ).catch(() => undefined);
   }
 
   private async loadReportingThreshold(currency: string): Promise<number | null> {
@@ -395,6 +419,11 @@ export class TransactionMonitoringService {
       });
       if (id != null) alertIds.push(id);
     }
+
+    // Record this transfer's corridor after evaluation, so it becomes part
+    // of the sender's known-corridor baseline for future transfers without
+    // affecting the isNew check just performed above.
+    await this.recordCorridorUsage(transfer);
 
     return { hits, alertIds, unimplemented };
   }

@@ -28,6 +28,7 @@ import {
   evaluateRules,
   roundAmountRepetitionRule,
   structuringRule,
+  TransactionMonitoringService,
   unusualCorridorRule,
   velocityAmountRule,
   velocityCountRule,
@@ -536,6 +537,99 @@ describe('SR-112 monitoring — corridors', () => {
       corridorRule,
     );
     expect(hit).toBeNull();
+  });
+});
+
+describe('SR-112 monitoring — loadKnownCorridors SQL wiring', () => {
+  // Regression coverage for the loadKnownCorridors() wiring defect: it used
+  // to read compliance_flagged_remittances (populated only when an amount
+  // crosses a reporting threshold — unrelated to corridor history), so
+  // isNew was effectively always false for an ordinary sub-threshold
+  // sender. It now reads sender_corridor_history, populated by
+  // recordCorridorUsage() on every evaluated transfer.
+
+  it('loads known corridors from sender_corridor_history, uppercased and deduped', async () => {
+    const db = new FakeDb().on('SELECT DISTINCT corridor FROM sender_corridor_history', [
+      { corridor: 'USD/PHP' },
+      { corridor: 'usd/mxn' },
+    ]);
+    const service = new TransactionMonitoringService(db);
+
+    const known = await (service as any).loadKnownCorridors('GSENDER', AT, 180);
+
+    expect(known).toEqual(new Set(['USD/PHP', 'USD/MXN']));
+    const [query] = db.find('SELECT DISTINCT corridor FROM sender_corridor_history');
+    expect(query.text).toContain('sender_address = $1');
+    expect(query.params[0]).toBe('GSENDER');
+  });
+
+  it('returns an empty set for a sender with no seeded corridor history', async () => {
+    const db = new FakeDb().on('SELECT DISTINCT corridor FROM sender_corridor_history', []);
+    const service = new TransactionMonitoringService(db);
+
+    const known = await (service as any).loadKnownCorridors('GNEWSENDER', AT, 180);
+
+    expect(known.size).toBe(0);
+  });
+
+  it('does not query compliance_flagged_remittances any more', async () => {
+    const db = new FakeDb()
+      .on('SELECT DISTINCT corridor FROM sender_corridor_history', [{ corridor: 'USD/PHP' }])
+      .onThrow('compliance_flagged_remittances', new Error('should not query this table'));
+    const service = new TransactionMonitoringService(db);
+
+    await (service as any).loadKnownCorridors('GSENDER', AT, 180);
+
+    expect(db.find('compliance_flagged_remittances')).toHaveLength(0);
+  });
+
+  it('recordCorridorUsage upserts (sender, corridor, transaction) with ON CONFLICT DO NOTHING', async () => {
+    const db = new FakeDb().on('INSERT INTO sender_corridor_history', []);
+    const service = new TransactionMonitoringService(db);
+
+    await (service as any).recordCorridorUsage(
+      transfer({ corridor: 'usd/ngn', senderAddress: 'GSENDER', transactionId: 'tx-9' }),
+    );
+
+    const [insert] = db.find('INSERT INTO sender_corridor_history');
+    expect(insert.text).toContain('ON CONFLICT (sender_address, corridor, transaction_id) DO NOTHING');
+    expect(insert.params).toEqual(['GSENDER', 'USD/NGN', 'tx-9']);
+  });
+
+  it('recordCorridorUsage is a no-op when the transfer has no corridor', async () => {
+    const db = new FakeDb().on('INSERT INTO sender_corridor_history', []);
+    const service = new TransactionMonitoringService(db);
+
+    await (service as any).recordCorridorUsage(transfer({ corridor: null }));
+
+    expect(db.find('INSERT INTO sender_corridor_history')).toHaveLength(0);
+  });
+
+  it('evaluateTransfer flags a genuinely new corridor for a sender with only prior USD/PHP history, then records it', async () => {
+    const db = new FakeDb()
+      .on('SELECT code, name, severity, enabled, params FROM aml_monitoring_rules', [
+        {
+          code: 'UNUSUAL_CORRIDOR',
+          name: 'Unusual corridor',
+          severity: 'medium',
+          enabled: true,
+          params: { lookback_days: 180, high_risk_corridors: [] },
+        },
+      ])
+      .on('SELECT transaction_id, sender_address, amount_in, asset_code, created_at FROM transactions', [])
+      .on('SELECT DISTINCT corridor FROM sender_corridor_history', [{ corridor: 'USD/PHP' }])
+      .on('SELECT threshold FROM compliance_thresholds', [])
+      .on('INSERT INTO aml_alerts', [{ id: 1 }])
+      .on('INSERT INTO sender_corridor_history', []);
+    const service = new TransactionMonitoringService(db);
+
+    const result = await service.evaluateTransfer(
+      transfer({ corridor: 'USD/NGN', transactionId: 'tx-new', senderAddress: 'GSENDER' }),
+    );
+
+    expect(result.hits.some((h) => h.details.reason === 'first_use_by_sender')).toBe(true);
+    const [insert] = db.find('INSERT INTO sender_corridor_history');
+    expect(insert.params).toEqual(['GSENDER', 'USD/NGN', 'tx-new']);
   });
 });
 
