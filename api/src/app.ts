@@ -2,6 +2,8 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+
+import { corsOptionsFromEnv } from '../../shared/src/cors-options';
 import { Pool } from 'pg';
 import http from 'http';
 import https from 'https';
@@ -125,7 +127,11 @@ export function createApp(options: AppOptions = {}): Application {
 
   // Security middleware
   app.use(helmet());
-  app.use(cors());
+  // SR-issue: cors() with no options defaults to origin '*'. Restrict to the
+  // ALLOWED_ORIGINS allowlist (shared/src/cors-options.ts) — only listed
+  // frontend origins get credentials: true for the cookie-based
+  // /api/auth/refresh flow (api/AUTH_MATRIX.md).
+  app.use(cors(corsOptionsFromEnv()));
   app.use(express.json());
   app.use(cookieParser());
 

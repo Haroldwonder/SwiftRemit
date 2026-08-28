@@ -36,6 +36,8 @@ import helmet from 'helmet';
 import cors from 'cors';
 import crypto from 'crypto';
 
+import { corsOptionsFromEnv } from '../../shared/src/cors-options';
+
 import { getPool, getEnabledAnchors, getLatestAnchorHealth } from './database';
 import { getFxRateCache } from './fx-rate-cache';
 import { getFailoverFxService, setFxCircuitObserver } from './fx-provider';
@@ -112,7 +114,11 @@ setFxCircuitObserver((provider, open) => {
 // ─── Security & parsing middleware ───────────────────────────────────────────
 
 app.use(helmet());
-app.use(cors());
+// SR-issue: cors() with no options defaults to origin '*'. Restrict to the
+// ALLOWED_ORIGINS allowlist (see shared/src/cors-options.ts) so only known
+// frontend origins get a cross-origin response, and only those origins get
+// credentials: true for cookie-based flows.
+app.use(cors(corsOptionsFromEnv()));
 app.use(express.json());
 app.use(correlationIdMiddleware);
 
