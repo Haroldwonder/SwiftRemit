@@ -237,11 +237,19 @@ export class WebhookHandler {
       ]
     );
 
-    await this.dispatcher.dispatch('remittance.created', {
+    // Fire-and-forget: dispatch() records the delivery via store.recordDelivery
+    // before attempting any HTTP call, so the delivery is durable even though
+    // we don't await it here. Awaiting it inline held the inbound anchor
+    // webhook request (and its 200 response) open for up to
+    // WEBHOOK_MAX_RETRIES attempts at up to WEBHOOK_RETRY_MAX_MS backoff each,
+    // per subscriber, risking the anchor's own delivery timeout/retry.
+    this.dispatcher.dispatch('remittance.created', {
       event: 'remittance.created',
       timestamp: new Date().toISOString(),
       data: remittancePayload,
-    }, remittancePayload.remittance_id);
+    }, remittancePayload.remittance_id).catch((error) => {
+      console.error('[webhook] remittance.created dispatch failed:', error);
+    });
   }
 
   /**
