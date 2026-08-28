@@ -14,12 +14,15 @@ import { getMetricsService } from './metrics';
 import { runTracked } from './job-tracker';
 import { tracedJob } from './tracing/job-tracer';
 import { WebhookDlqProcessor } from './webhook-dlq-processor';
+import { WebhookDispatcher } from './webhooks/dispatcher';
+import { PostgresWebhookStore } from './webhooks/store';
 import { AdminAuditLogService } from './admin-audit-log';
 import { SanctionsScreeningService } from './aml/sanctions-screening';
 import { TravelRuleService } from './aml/travel-rule';
 import { RetentionService } from './aml/retention';
 import { purgeExpiredPersonalData } from './privacy/retention-service';
 import { createLogger } from './correlation-id';
+import { DeviceTokenService } from './device-token-service';
 import crypto from 'crypto';
 
 const logger = createLogger('scheduler');
@@ -31,6 +34,8 @@ const sep24Service = new Sep24Service(pool);
 const metricsService = getMetricsService(pool);
 const anchorHealthChecker = new AnchorHealthChecker(pool, metricsService);
 const dlqProcessor = new WebhookDlqProcessor(pool);
+const deviceTokenService = new DeviceTokenService(pool);
+const webhookRetryDispatcher = new WebhookDispatcher(new PostgresWebhookStore(pool));
 
 export async function startBackgroundJobs() {
   // Initialize KYC service
@@ -97,6 +102,29 @@ export async function startBackgroundJobs() {
       );
     });
     if (!ran) logger.info('check-anchor-health: skipped (another instance holds the lock)');
+  });
+
+  // Finish webhook deliveries that attemptDelivery() deferred once its inline
+  // wall-clock retry budget (WEBHOOK_INLINE_MAX_WALL_CLOCK_MS) was exhausted,
+  // so a slow/down subscriber no longer needs its retries to happen inline
+  // inside the request that triggered dispatch().
+  cron.schedule('*/2 * * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'retry-pending-webhook-deliveries', async () => {
+      await tracedJob('retry-pending-webhook-deliveries', () =>
+        runTracked(pool, 'retry-pending-webhook-deliveries', retryPendingWebhookDeliveries)
+      );
+    });
+    if (!ran) logger.info('retry-pending-webhook-deliveries: skipped (another instance holds the lock)');
+  });
+
+  // Poll Expo delivery receipts and prune permanently-dead push tokens every 15 minutes
+  cron.schedule('*/15 * * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'prune-dead-push-tokens', async () => {
+      await tracedJob('prune-dead-push-tokens', () =>
+        runTracked(pool, 'prune-dead-push-tokens', pruneDeadPushTokens)
+      );
+    });
+    if (!ran) logger.info('prune-dead-push-tokens: skipped (another instance holds the lock)');
   });
 
   // Retire expired webhook secrets hourly
@@ -269,6 +297,31 @@ async function pollSep24Transactions() {
     logger.info('SEP-24 polling completed');
   } catch (error) {
     logger.error('Error in SEP-24 polling job', error as Error);
+  }
+}
+
+/**
+ * Resolve the Expo delivery-receipt phase for previously-sent push tickets
+ * and delete device tokens that Expo reports as `DeviceNotRegistered`.
+ * Without this, dead tokens accumulate in `device_tokens` and are resent to
+ * Expo on every notification indefinitely.
+ */
+async function retryPendingWebhookDeliveries() {
+  try {
+    await webhookRetryDispatcher.retryPendingDeliveries();
+  } catch (error) {
+    logger.error('Error in retry-pending-webhook-deliveries job', error as Error);
+  }
+}
+
+async function pruneDeadPushTokens() {
+  try {
+    const prunedCount = await deviceTokenService.pollReceiptsAndPruneStaleTokens();
+    if (prunedCount > 0) {
+      logger.info(`prune-dead-push-tokens: pruned ${prunedCount} dead token(s)`);
+    }
+  } catch (error) {
+    logger.error('Error in prune-dead-push-tokens job', error as Error);
   }
 }
 

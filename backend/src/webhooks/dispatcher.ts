@@ -17,6 +17,7 @@
  *   WEBHOOK_RETRY_MAX_MS       (default 300000)
  *   WEBHOOK_RETRY_JITTER_PERCENT (default 20)
  *   WEBHOOK_TIMEOUT_MS         (default 30000)
+ *   WEBHOOK_INLINE_MAX_WALL_CLOCK_MS (default 10000) — see attemptDelivery()
  */
 
 import axios from 'axios';
@@ -35,6 +36,17 @@ const DEFAULT_OPTIONS: WebhookDeliveryOptions = {
   maxDelayMs: parseInt(process.env.WEBHOOK_RETRY_MAX_MS || '300000', 10),
   timeoutMs: parseInt(process.env.WEBHOOK_TIMEOUT_MS || '30000', 10),
 };
+
+/**
+ * Hard cap on how long attemptDelivery() is allowed to keep retrying
+ * in-process (i.e. block whatever awaited dispatch()). Once the elapsed
+ * wall-clock time since the first attempt would exceed this budget, the
+ * delivery is left in 'pending' state instead of retried inline — the
+ * existing retryPendingDeliveries()/DLQ scheduler jobs pick it up in the
+ * background. This bounds how long an inbound request (e.g. the anchor
+ * webhook receiver) can be held open by a slow/down subscriber.
+ */
+const INLINE_MAX_WALL_CLOCK_MS = parseInt(process.env.WEBHOOK_INLINE_MAX_WALL_CLOCK_MS || '10000', 10);
 
 export class WebhookDispatcher {
   private inFlight = 0;
@@ -135,11 +147,12 @@ export class WebhookDispatcher {
         ? { ...payload, correlation_id: correlationId }
         : payload;
 
-      let successCount = 0;
-      let failedCount = 0;
-
-      for (const subscriber of subscribers) {
-        try {
+      // Dispatch to every subscriber concurrently rather than sequentially —
+      // previously a single slow/down subscriber's full retry loop (up to
+      // maxRetries attempts at up to maxDelayMs backoff each) blocked
+      // delivery to every subscriber queued after it in the loop.
+      const results = await Promise.allSettled(
+        subscribers.map(async (subscriber) => {
           const deliveryRecord: Partial<WebhookDeliveryRecord> = {
             webhookId: subscriber.id,
             eventType: event,
@@ -153,7 +166,7 @@ export class WebhookDispatcher {
             attempt: 0,
           } as WebhookDeliveryRecord);
 
-          const success = await this.attemptDelivery(
+          return this.attemptDelivery(
             deliveryId,
             subscriber.url,
             subscriber.secret,
@@ -162,18 +175,24 @@ export class WebhookDispatcher {
             deliveryRecord,
             subscriber.content_type,
             correlationId,
+            Date.now(),
           );
+        }),
+      );
 
-          if (success) {
-            successCount++;
-          } else {
-            failedCount++;
-          }
-        } catch (error) {
+      let successCount = 0;
+      let failedCount = 0;
+
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled' && result.value) {
+          successCount++;
+        } else {
           failedCount++;
-          this.logger.error(`Error dispatching to subscriber ${subscriber.id}:`, error);
+          if (result.status === 'rejected') {
+            this.logger.error(`Error dispatching to subscriber ${subscribers[index].id}:`, result.reason);
+          }
         }
-      }
+      });
 
       this.logger.info(`Dispatch complete: ${successCount} succeeded, ${failedCount} failed`);
       return { success: successCount, failed: failedCount };
@@ -197,6 +216,7 @@ export class WebhookDispatcher {
     deliveryRecord?: Partial<WebhookDeliveryRecord>,
     contentType: string = 'application/json',
     correlationId?: string,
+    startedAt: number = Date.now(),
   ): Promise<boolean> {
     if (!url.startsWith('https://')) {
       const msg = `Webhook delivery rejected: URL must use HTTPS (received: ${url})`;
@@ -251,8 +271,25 @@ export class WebhookDispatcher {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      if (attempt < this.options.maxRetries!) {
+      const elapsedMs = Date.now() - startedAt;
+
+      if (attempt < this.options.maxRetries! && elapsedMs < INLINE_MAX_WALL_CLOCK_MS) {
         const delay = this.getBackoffDelay(attempt);
+
+        // If the next retry's delay would blow through the inline wall-clock
+        // budget, stop retrying in-process now — leave the delivery 'pending'
+        // so the background retryPendingDeliveries()/DLQ jobs finish it
+        // instead of holding the caller (e.g. the inbound webhook handler)
+        // open for the full backoff schedule.
+        if (elapsedMs + delay >= INLINE_MAX_WALL_CLOCK_MS) {
+          this.logger.warn(
+            `Delivery attempt ${attempt} failed (${errorMessage}). Inline retry budget ` +
+            `(${INLINE_MAX_WALL_CLOCK_MS}ms) would be exceeded — deferring to background retry.`
+          );
+          await this.store.updateDeliveryStatus(deliveryId, 'pending', attempt, errorMessage);
+          return false;
+        }
+
         this.logger.warn(
           `Delivery attempt ${attempt} failed (${errorMessage}). Retrying in ${delay}ms...`
         );
@@ -260,7 +297,16 @@ export class WebhookDispatcher {
         await this.store.updateDeliveryStatus(deliveryId, 'pending', attempt, errorMessage);
         await new Promise(resolve => setTimeout(resolve, delay));
 
-        return this.attemptDelivery(deliveryId, url, secret, payload, attempt + 1, deliveryRecord, contentType, correlationId);
+        return this.attemptDelivery(deliveryId, url, secret, payload, attempt + 1, deliveryRecord, contentType, correlationId, startedAt);
+      } else if (attempt < this.options.maxRetries!) {
+        // Retry budget (attempts) not exhausted, but wall-clock budget is —
+        // defer the remaining attempts to the background retry path.
+        this.logger.warn(
+          `Delivery attempt ${attempt} failed (${errorMessage}). Inline retry wall-clock budget ` +
+          `exceeded (${elapsedMs}ms) — deferring remaining attempts to background retry.`
+        );
+        await this.store.updateDeliveryStatus(deliveryId, 'pending', attempt, errorMessage);
+        return false;
       } else {
         await this.store.updateDeliveryStatus(deliveryId, 'failed', attempt, errorMessage);
         this.logger.error(`Delivery ${deliveryId} failed after ${attempt} attempts: ${errorMessage}`);
