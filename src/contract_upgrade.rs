@@ -20,8 +20,8 @@
 //! contract.execute_upgrade(&admin, &proposal_id);
 //! ```
 
-use soroban_sdk::{contracttype, Address, BytesN, Env, Vec, u48};
-use crate::{ContractError};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Vec};
+use crate::ContractError;
 
 // ============================================================================
 // Constants
@@ -58,7 +58,7 @@ pub enum UpgradeStatus {
 
 /// A single upgrade proposal with approval tracking
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UpgradeProposal {
     /// Unique proposal ID (hash of wasm_hash + timestamp)
     pub id: BytesN<32>,
@@ -101,19 +101,21 @@ pub enum UpgradeKey {
 /// Get proposal by index
 pub fn get_proposal(env: &Env, index: u32) -> Option<UpgradeProposal> {
     env.storage()
+        .persistent()
         .get(&UpgradeKey::Proposal(index))
-        .unwrap_or(None)
 }
 
 /// Store a proposal
 pub fn store_proposal(env: &Env, index: u32, proposal: &UpgradeProposal) {
     env.storage()
+        .persistent()
         .set(&UpgradeKey::Proposal(index), proposal);
 }
 
 /// Get next proposal ID
 pub fn get_next_id(env: &Env) -> u32 {
     env.storage()
+        .instance()
         .get(&UpgradeKey::NextId)
         .unwrap_or(0)
 }
@@ -121,7 +123,9 @@ pub fn get_next_id(env: &Env) -> u32 {
 /// Increment and return next proposal ID
 pub fn bump_next_id(env: &Env) -> u32 {
     let next = get_next_id(env);
-    env.storage().set(&UpgradeKey::NextId, &(next + 1));
+    env.storage()
+        .instance()
+        .set(&UpgradeKey::NextId, &(next + 1));
     next
 }
 
@@ -129,15 +133,10 @@ pub fn bump_next_id(env: &Env) -> u32 {
 // Validation Functions
 // ============================================================================
 
-/// Validate that caller is an admin
+/// Validate that caller is a registered admin (part of the admin-role set, not just
+/// the legacy single `Admin` address) and require their signature.
 pub fn require_upgrade_admin(env: &Env, caller: &Address) -> Result<(), ContractError> {
-    // Check if admin from admin_roles storage
-    // For simplicity, using get_admin - in production would check multi-sig admin list
-    let admin = crate::storage::get_admin(env)?;
-    if caller != &admin {
-        return Err(ContractError::NotAuthorized);
-    }
-    Ok(())
+    crate::storage::require_admin(env, caller)
 }
 
 /// Check if enough approvals for execution
@@ -170,35 +169,38 @@ pub fn propose_upgrade(
 ) -> Result<BytesN<32>, ContractError> {
     // Require admin auth
     require_upgrade_admin(env, &caller)?;
-    
+
+    // Upgrade governance only makes sense once enough independent admins exist
+    // to form a real M-of-N quorum; otherwise a single admin could rubber-stamp
+    // their own upgrade.
+    if crate::storage::get_admin_count(env) < MIN_ADMINS_FOR_UPGRADE {
+        return Err(ContractError::InsufficientAdmins);
+    }
+
     // Check pending count limit
-    let pending_count: u32 = env.storage()
+    let pending_count: u32 = env
+        .storage()
+        .instance()
         .get(&UpgradeKey::PendingCount)
         .unwrap_or(0);
-    
+
     if pending_count >= MAX_PENDING_UPGRADES {
-        return Err(ContractError::InvalidInput);
+        return Err(ContractError::InvalidAmount);
     }
-    
+
     // Generate proposal ID from wasm_hash + timestamp
     let timestamp = env.ledger().timestamp();
-    let mut id_input: Vec<u8> = Vec::new(env);
-    for b in wasm_hash.iter() {
-        id_input.push_back(b);
-    }
-    // Simple ID generation (in production, use proper hash)
-    let id = crate::hashing::compute_hash(
-        env,
-        &id_input,
-        timestamp,
-    );
+    let mut id_input = soroban_sdk::Bytes::new(env);
+    id_input.append(&soroban_sdk::Bytes::from_array(env, &wasm_hash.to_array()));
+    id_input.extend_from_array(&timestamp.to_be_bytes());
+    let id: BytesN<32> = env.crypto().sha256(&id_input).into();
     
     // Create proposal
     let mut approvals: Vec<Address> = Vec::new(env);
-    approvals.push_back(&caller);
+    approvals.push_back(caller.clone());
     
     let proposal = UpgradeProposal {
-        id,
+        id: id.clone(),
         wasm_hash: wasm_hash.clone(),
         status: UpgradeStatus::Pending,
         created_at: timestamp,
@@ -212,14 +214,13 @@ pub fn propose_upgrade(
     store_proposal(env, index, &proposal);
     
     // Increment pending count
-    env.storage().set(
-        &UpgradeKey::PendingCount, 
-        &(pending_count + 1)
-    );
+    env.storage()
+        .instance()
+        .set(&UpgradeKey::PendingCount, &(pending_count + 1));
     
     // Emit event
-    emit_upgrade_proposed(env, id, wasm_hash);
-    
+    emit_upgrade_proposed(env, id.clone(), wasm_hash);
+
     Ok(id)
 }
 
@@ -267,7 +268,7 @@ pub fn approve_upgrade(
     // Check if already approved by this admin
     let mut already_approved = false;
     for a in proposal.approvals.iter() {
-        if a == &caller {
+        if a == caller {
             already_approved = true;
             break;
         }
@@ -277,11 +278,12 @@ pub fn approve_upgrade(
     }
     
     // Add approval
-    proposal.approvals.push_back(&caller);
+    proposal.approvals.push_back(caller.clone());
     
-    // Check if quorum reached (need majority of admins)
-    // Using admin_count from storage or default
-    let admin_count = 3u32; // Default for now
+    // Check if quorum reached (need majority of the *actual* registered admins,
+    // not a hardcoded stand-in — otherwise quorum could be satisfied well below
+    // the real admin set size).
+    let admin_count = crate::storage::get_admin_count(env);
     if has_quorum(&proposal.approvals, admin_count) {
         // Set timelock
         let timelock_expires = env.ledger().timestamp() + TIMELOCK_SECONDS;
@@ -344,21 +346,28 @@ pub fn execute_upgrade(
         return Err(ContractError::CooldownActive);
     }
     
-    // Mark as executing - actual WASM update happens outside contract
+    // Perform the actual on-chain WASM upgrade. This is the step that was
+    // previously missing entirely: the proposal used to just flip to
+    // `Executed` without ever replacing the contract's code, so this module's
+    // governance had no real effect on-chain.
+    env.deployer()
+        .update_current_contract_wasm(proposal.wasm_hash.clone());
+
     proposal.status = UpgradeStatus::Executed;
     store_proposal(env, index, &proposal);
-    
+
     // Decrement pending count
-    let pending_count: u32 = env.storage()
+    let pending_count: u32 = env
+        .storage()
+        .instance()
         .get(&UpgradeKey::PendingCount)
         .unwrap_or(0);
     if pending_count > 0 {
-        env.storage().set(
-            &UpgradeKey::PendingCount,
-            &(pending_count - 1)
-        );
+        env.storage()
+            .instance()
+            .set(&UpgradeKey::PendingCount, &(pending_count - 1));
     }
-    
+
     // Emit event
     emit_upgrade_executed(env, proposal_id);
     
@@ -397,18 +406,19 @@ pub fn cancel_upgrade(
     
     proposal.status = UpgradeStatus::Rejected;
     store_proposal(env, index, &proposal);
-    
+
     // Decrement pending
-    let pending_count: u32 = env.storage()
+    let pending_count: u32 = env
+        .storage()
+        .instance()
         .get(&UpgradeKey::PendingCount)
         .unwrap_or(0);
     if pending_count > 0 {
-        env.storage().set(
-            &UpgradeKey::PendingCount,
-            &(pending_count - 1)
-        );
+        env.storage()
+            .instance()
+            .set(&UpgradeKey::PendingCount, &(pending_count - 1));
     }
-    
+
     Ok(())
 }
 
@@ -418,7 +428,7 @@ pub fn cancel_upgrade(
 
 /// Result returned by simulate_upgrade — no state is modified.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UpgradeSimulationResult {
     /// Current schema version stored on-chain (0 if unset)
     pub current_schema_version: u32,
@@ -453,12 +463,13 @@ pub fn simulate_upgrade(
 ) -> Result<UpgradeSimulationResult, ContractError> {
     // Reject the null/all-zero hash — it cannot correspond to any uploaded WASM.
     if new_wasm_hash.iter().all(|b| b == 0) {
-        return Err(ContractError::InvalidInput);
+        return Err(ContractError::InvalidAmount);
     }
 
     // Read current schema version (stored by previous migrations, default 0)
     let current_schema_version: u32 = env
         .storage()
+        .instance()
         .get(&soroban_sdk::symbol_short!("schema_v"))
         .unwrap_or(0u32);
 
@@ -476,6 +487,7 @@ pub fn simulate_upgrade(
     // extra step if there are pending upgrade proposals to clean up.
     let pending_count: u32 = env
         .storage()
+        .instance()
         .get(&UpgradeKey::PendingCount)
         .unwrap_or(0u32);
     let estimated_migration_steps =
@@ -486,9 +498,9 @@ pub fn simulate_upgrade(
     // that the migration script touches.
     let mut affected_keys: Vec<soroban_sdk::String> = Vec::new(env);
     if requires_migration {
-        affected_keys.push_back(&soroban_sdk::String::from_str(env, "schema_v"));
-        affected_keys.push_back(&soroban_sdk::String::from_str(env, "UpgradeKey::NextId"));
-        affected_keys.push_back(&soroban_sdk::String::from_str(env, "UpgradeKey::PendingCount"));
+        affected_keys.push_back(soroban_sdk::String::from_str(env, "schema_v"));
+        affected_keys.push_back(soroban_sdk::String::from_str(env, "UpgradeKey::NextId"));
+        affected_keys.push_back(soroban_sdk::String::from_str(env, "UpgradeKey::PendingCount"));
     }
 
     Ok(UpgradeSimulationResult {
@@ -510,17 +522,17 @@ use soroban_sdk::symbol_short;
 /// Emit event when upgrade is proposed
 fn emit_upgrade_proposed(env: &Env, id: BytesN<32>, wasm_hash: BytesN<32>) {
     env.events()
-        .publish((symbol_short!("upg_proposed"), id), wasm_hash);
+        .publish((symbol_short!("upg_prop"), id), wasm_hash);
 }
 
 /// Emit event when upgrade is approved
 fn emit_upgrade_approved(env: &Env, id: BytesN<32>, approval_count: u32) {
     env.events()
-        .publish((symbol_short!("upg_approved"), id), approval_count);
+        .publish((symbol_short!("upg_appr"), id), approval_count);
 }
 
 /// Emit event when upgrade is executed
 fn emit_upgrade_executed(env: &Env, id: BytesN<32>) {
     env.events()
-        .publish((symbol_short!("upg_executed"), id), ());
+        .publish((symbol_short!("upg_exec"), id), ());
 }

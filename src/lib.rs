@@ -21,6 +21,7 @@ mod hashing;
 mod health;
 #[cfg(test)]
 mod health_test;
+mod contract_upgrade;
 mod migration;
 mod multisig;
 mod netting;
@@ -101,6 +102,8 @@ mod test_state_machine_property;
 #[cfg(test)]
 mod test_contract_upgrade;
 #[cfg(test)]
+mod test_contract_upgrade_governance;
+#[cfg(test)]
 mod test_invariants;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_circuit_breaker;
@@ -134,6 +137,10 @@ pub use recipient_verification::{
     RecipientDetails, WalletRecipient, BankRecipient, RecipientHashRecord,
     RecipientHashMigrationEntry, VerificationOutcome,
     RECIPIENT_HASH_SCHEMA_VERSION, compute_recipient_hash,
+};
+pub use contract_upgrade::{
+    UpgradeProposal, UpgradeStatus, UpgradeSimulationResult,
+    MIN_ADMINS_FOR_UPGRADE, TIMELOCK_SECONDS,
 };
 pub use types::*;
 pub use validation::*;
@@ -3556,6 +3563,73 @@ impl SwiftRemitContract {
         operation_id: u64,
     ) -> Result<PendingOperation, ContractError> {
         multisig::get_operation(&env, operation_id)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Contract Upgrade Governance (M-of-N admin + 48h timelock)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Propose replacing the contract's WASM code with a new hash.
+    ///
+    /// Requires at least `MIN_ADMINS_FOR_UPGRADE` registered admins. The proposer
+    /// counts as the first approval. Once a majority of admins approve, a
+    /// `TIMELOCK_SECONDS` (48h) delay starts before `execute_upgrade` can run.
+    ///
+    /// Authorization: admin only; caller must `require_auth`.
+    pub fn propose_upgrade(
+        env: Env,
+        caller: Address,
+        wasm_hash: BytesN<32>,
+    ) -> Result<BytesN<32>, ContractError> {
+        contract_upgrade::propose_upgrade(&env, caller, wasm_hash)
+    }
+
+    /// Approve a pending contract upgrade proposal.
+    ///
+    /// Each admin may approve once. When approvals reach a majority of the
+    /// registered admin set, the 48-hour timelock starts.
+    ///
+    /// Authorization: admin only; caller must `require_auth`.
+    pub fn approve_upgrade(
+        env: Env,
+        caller: Address,
+        proposal_id: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        contract_upgrade::approve_upgrade(&env, caller, proposal_id)
+    }
+
+    /// Execute an approved upgrade once its timelock has elapsed.
+    ///
+    /// Actually replaces the contract's on-chain WASM code via
+    /// `env.deployer().update_current_contract_wasm(...)`.
+    ///
+    /// Authorization: admin only; caller must `require_auth`.
+    pub fn execute_upgrade(
+        env: Env,
+        caller: Address,
+        proposal_id: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        contract_upgrade::execute_upgrade(&env, caller, proposal_id)
+    }
+
+    /// Cancel a pending or approved (but not yet executed) upgrade proposal.
+    ///
+    /// Authorization: admin only; caller must `require_auth`.
+    pub fn cancel_upgrade(
+        env: Env,
+        caller: Address,
+        proposal_id: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        contract_upgrade::cancel_upgrade(&env, caller, proposal_id)
+    }
+
+    /// Preview what an upgrade to `new_wasm_hash` would do, without changing
+    /// any state. Read-only.
+    pub fn simulate_upgrade(
+        env: Env,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<UpgradeSimulationResult, ContractError> {
+        contract_upgrade::simulate_upgrade(&env, new_wasm_hash)
     }
 
     // ── DAO Governance ────────────────────────────────────────────────────────
