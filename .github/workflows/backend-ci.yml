@@ -61,7 +61,9 @@ jobs:
       - name: Run migrations
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftremit_test
-        run: psql $DATABASE_URL -f migrations/webhook_schema.sql
+        run: |
+          psql $DATABASE_URL -f migrations/20260101_core_schema.sql
+          psql $DATABASE_URL -f migrations/webhook_schema.sql
 
       # ── Run tests + collect coverage ────────────────────────────────────────
       # vitest.config.ts enforces the threshold values declared under
