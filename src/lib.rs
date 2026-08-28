@@ -3475,6 +3475,11 @@ impl SwiftRemitContract {
     /// `threshold` must be ≥ 1.  `ttl_seconds` is the lifetime of a pending operation
     /// before it expires.  Defaults before first call: threshold=1, ttl=86400 s.
     ///
+    /// Only callable directly while the current threshold is 1. Once a threshold > 1
+    /// has been configured, this returns `MultisigQuorumRequired` — use
+    /// `propose_multisig_config` instead so that changing the quorum guard itself
+    /// requires quorum.
+    ///
     /// Authorization: admin only.
     pub fn set_multisig_config(
         env: Env,
@@ -3483,6 +3488,23 @@ impl SwiftRemitContract {
         ttl_seconds: u64,
     ) -> Result<(), ContractError> {
         multisig::set_multisig_config(&env, caller, threshold, ttl_seconds)
+    }
+
+    /// Propose a change to the multisig threshold/TTL themselves.
+    ///
+    /// Required once the current threshold is > 1 — goes through the same
+    /// propose/approve quorum flow (requiring the *current* threshold's worth of
+    /// approvals) as any other high-impact operation, closing the loophole where a
+    /// single admin could otherwise weaken the quorum protection unilaterally.
+    ///
+    /// Authorization: admin only; proposer must `require_auth`.
+    pub fn propose_multisig_config(
+        env: Env,
+        proposer: Address,
+        new_threshold: u32,
+        new_ttl_seconds: u64,
+    ) -> Result<u64, ContractError> {
+        multisig::propose_multisig_config(&env, proposer, new_threshold, new_ttl_seconds)
     }
 
     /// Propose a high-impact admin operation.
