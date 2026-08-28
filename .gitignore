@@ -55,6 +55,11 @@ yarn-error.log*
 .env.local
 .env.*.local
 
+# Alertmanager notifier secrets — mounted at runtime, never committed (SR-214)
+monitoring/secrets/*
+!monitoring/secrets/.gitkeep
+!monitoring/secrets/README.md
+
 # Test artifacts
 test_snapshots/
 proptest-regressions/

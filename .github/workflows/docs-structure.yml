@@ -7,12 +7,14 @@ on:
       - '*.md'
       - 'docs/**'
       - 'scripts/check-root-markdown.sh'
+      - 'scripts/check-doc-h1.sh'
   pull_request:
     branches: [main]
     paths:
       - '*.md'
       - 'docs/**'
       - 'scripts/check-root-markdown.sh'
+      - 'scripts/check-doc-h1.sh'
 
 jobs:
   root-markdown:
@@ -23,3 +25,12 @@ jobs:
 
       - name: Enforce root-level markdown allowlist
         run: bash scripts/check-root-markdown.sh
+
+  single-h1:
+    name: One H1 per docs file (SR-219)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check docs/ for accidentally concatenated documents
+        run: bash scripts/check-doc-h1.sh

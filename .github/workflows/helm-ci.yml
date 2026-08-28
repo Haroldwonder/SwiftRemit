@@ -2,12 +2,18 @@ name: Helm chart
 
 # SR-103 — lint, render and validate charts/swiftremit against every value set,
 # so a template error surfaces here instead of during a production deploy.
+#
+# SR-217 — this chart is experimental / future work: it is validated here but
+# NOT applied to any cluster by any pipeline. Docker Compose on a VM is the
+# authoritative deployment mechanism today. See docs/DEPLOYMENT.md and
+# charts/swiftremit/README.md.
 
 on:
   push:
     branches: [main]
     paths:
       - 'charts/**'
+      - 'monitoring/alertmanager.yml'
       - 'scripts/helm-validate.sh'
       - 'scripts/check-rendered-manifests.py'
       - '.github/workflows/helm-ci.yml'
@@ -15,6 +21,7 @@ on:
     branches: [main]
     paths:
       - 'charts/**'
+      - 'monitoring/alertmanager.yml'
       - 'scripts/helm-validate.sh'
       - 'scripts/check-rendered-manifests.py'
       - '.github/workflows/helm-ci.yml'
@@ -45,6 +52,12 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.15.2
+
+      # SR-214 — the chart ships its own copy of the Alertmanager routing config
+      # (Helm can't read files outside the chart dir); keep it identical to the
+      # Compose one so the two deployment paths never drift.
+      - name: Alertmanager config matches monitoring/alertmanager.yml
+        run: diff -u monitoring/alertmanager.yml charts/swiftremit/files/alertmanager.yml
 
       - name: helm lint
         run: helm lint charts/swiftremit --strict -f charts/swiftremit/values.${{ matrix.environment }}.yaml

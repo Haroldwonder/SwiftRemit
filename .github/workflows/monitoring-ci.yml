@@ -9,15 +9,19 @@ on:
     branches: [main]
     paths:
       - 'monitoring/**'
+      - 'backend/monitoring/prometheus.yml'
       - 'scripts/check-alert-runbooks.js'
-      - 'RUNBOOK.md'
+      - 'scripts/check-alertmanager-routes.js'
+      - 'docs/RUNBOOK.md'
       - '.github/workflows/monitoring-ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'monitoring/**'
+      - 'backend/monitoring/prometheus.yml'
       - 'scripts/check-alert-runbooks.js'
-      - 'RUNBOOK.md'
+      - 'scripts/check-alertmanager-routes.js'
+      - 'docs/RUNBOOK.md'
       - '.github/workflows/monitoring-ci.yml'
   workflow_dispatch:
 
@@ -71,6 +75,41 @@ jobs:
       - name: Run alert unit tests
         working-directory: monitoring
         run: promtool test rules alerts_test.yml
+
+  # ── Alertmanager config + team → route coverage (SR-214) ────────────────────
+  alertmanager:
+    name: Alertmanager config valid and every team routes
+    runs-on: ubuntu-latest
+    env:
+      ALERTMANAGER_VERSION: '0.27.0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install amtool
+        run: |
+          curl -sSL -o alertmanager.tar.gz \
+            "https://github.com/prometheus/alertmanager/releases/download/v${ALERTMANAGER_VERSION}/alertmanager-${ALERTMANAGER_VERSION}.linux-amd64.tar.gz"
+          tar xzf alertmanager.tar.gz --strip-components=1 \
+            "alertmanager-${ALERTMANAGER_VERSION}.linux-amd64/amtool"
+          sudo install -m 0755 amtool /usr/local/bin/amtool
+          amtool --version
+
+      - name: Provide placeholder notifier secrets
+        run: |
+          mkdir -p monitoring/secrets
+          # amtool resolves *_file fields lazily, but keep CI hermetic regardless.
+          printf '%s' 'https://hooks.slack.com/services/T000/B000/xxxxxxxx' > monitoring/secrets/slack_api_url
+          printf '%s' '0000000000000000000000000000000a'                    > monitoring/secrets/pagerduty_routing_key
+
+      - name: Validate alertmanager.yml
+        run: amtool check-config monitoring/alertmanager.yml
+
+      - name: Every team label maps to a route
+        run: node scripts/check-alertmanager-routes.js
 
   # ── Dashboard JSON validity ──────────────────────────────────────────────────
   dashboard-json:
