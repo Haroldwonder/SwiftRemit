@@ -77,8 +77,13 @@ layered:
   Revocation and lockout recorded on one instance now apply on every instance
   within one pub/sub round trip. `REDIS_URL` unset (local dev, unit tests)
   falls back to the original single-process behaviour.
-- **Credential verification is still stubbed.** `STUB_PASSWORD` is compared for
-  every identity. The `NODE_ENV=test` bypass that accepted any password is gone,
-  but a real user store is still needed.
-- **Role assignment is env-driven.** `ADMIN_USER_IDS` / `AGENT_USER_IDS` are
-  allowlists, adequate for a fixed operator set and not for self-service.
+- ~~**Credential verification is still stubbed.**~~ Resolved: `db/userStore.ts`
+  backs `verifyCredentials()` with a real per-user bcrypt password hash (a
+  `users` table when `DATABASE_URL` is configured, an in-memory map
+  otherwise), so a valid password for one identity can no longer be used to
+  authenticate as a different one.
+- ~~**Role assignment is env-driven.**~~ Resolved: roles now live on the same
+  `users` row and are read via `getUserRole()`. `ADMIN_USER_IDS` /
+  `AGENT_USER_IDS` are consulted only once, to seed the first operator
+  accounts (`seedBootstrapOperatorsOnce` in `db/userStore.ts`) — they are no
+  longer read on every login and never overwrite an existing row.
