@@ -43,9 +43,10 @@ import { getAnchorCircuitBreaker } from './anchor-circuit-breaker';
 import { correlationIdMiddleware, createLogger } from './correlation-id';
 import { getMetricsService } from './metrics';
 import { AdminAuditLogService } from './admin-audit-log';
-import { apiKeyRateLimiter } from './middleware/api-key-rate-limit';
+import { apiKeyRateLimiter, scopedApiKeyMiddleware, initApiKeyMiddleware } from './middleware/api-key-rate-limit';
 import {
   ApiKeyStore,
+  ApiKeyRecord,
   ALL_SCOPES,
   ApiKeyScope,
   RateLimitTier,
@@ -75,6 +76,18 @@ const logger = createLogger('api');
 const fxRateCache    = getFxRateCache();
 const metricsService = getMetricsService(pool);
 
+/**
+ * Resolve the authenticated principal for audit attribution.
+ * Prefers the verified API-key owner (attached by scopedApiKeyMiddleware)
+ * over the client-supplied x-user-id header, which cannot be trusted for
+ * attribution since any caller can set it.
+ */
+function resolveActor(req: Request): string {
+  const apiKey = (req as any).apiKey as ApiKeyRecord | undefined;
+  if (apiKey?.owner_id) return apiKey.owner_id;
+  return (req.headers['x-user-id'] as string) || 'unknown';
+}
+
 async function logAdminAction(
   req: Request,
   action: string,
@@ -83,7 +96,7 @@ async function logAdminAction(
 ) {
   const auditService = new AdminAuditLogService(pool);
   await auditService.log({
-    admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+    admin_address: resolveActor(req),
     action,
     target,
     params_json: params,
@@ -185,6 +198,14 @@ app.use('/api/webhook',    webhookLimiter);
 app.use('/api/kyc/config', adminLimiter);
 app.use('/api/',           apiKeyRateLimiter);
 app.use('/api/',           publicLimiter);
+
+// Scoped API-key auth + per-tier rate limiting (SR-043). Runs ahead of every
+// router below so /api/admin, /api/aml, /api/compliance and /api/devices —
+// previously reachable with no authentication at all — now require a key
+// carrying the scope declared in ROUTE_SCOPES. Registered at the app root
+// (not under '/api/') so req.path matches the full paths ROUTE_SCOPES expects.
+initApiKeyMiddleware(pool);
+app.use(scopedApiKeyMiddleware);
 
 // ─── Metrics (excluded from rate limiting) ───────────────────────────────────
 
