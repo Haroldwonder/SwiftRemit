@@ -969,6 +969,25 @@ impl SwiftRemitContract {
         proof: Option<soroban_sdk::BytesN<32>>,
         recipient_details_hash: Option<BytesN<32>>,
     ) -> Result<(), ContractError> {
+        Self::confirm_payout_inner(env, agent, remittance_id, proof, recipient_details_hash, true)
+    }
+
+    /// Internal implementation of confirm_payout.
+    ///
+    /// `check_abuse` controls whether the per-agent abuse-protection cooldown and
+    /// sliding-window rate-limit are enforced.  Public `confirm_payout` always passes
+    /// `true`.  `confirm_batch_payout` performs a single gate-check before the loop and
+    /// then passes `false` for subsequent items so the intra-batch cooldown does not
+    /// erroneously block agents that are legitimately settling multiple remittances in one
+    /// atomic transaction.
+    fn confirm_payout_inner(
+        env: Env,
+        agent: Address,
+        remittance_id: u64,
+        proof: Option<soroban_sdk::BytesN<32>>,
+        recipient_details_hash: Option<BytesN<32>>,
+        check_abuse: bool,
+    ) -> Result<(), ContractError> {
         if crate::storage::is_migration_in_progress(&env) {
             return Err(ContractError::MigrationInProgress);
         }
@@ -1056,8 +1075,12 @@ impl SwiftRemitContract {
         // SR-123: Apply abuse-protection per-action sliding-window rate limit and cooldown
         // for Settlement. This complements the simpler storage::check_settlement_rate_limit
         // above with the more sophisticated per-action, decaying-cooldown mechanism.
-        abuse_protection::check_rate_limit(&env, &remittance.agent, ActionType::Settlement)?;
-        check_cooldown(&env, &remittance.agent, ActionType::Settlement)?;
+        // Skipped for intra-batch calls (check_abuse=false) because confirm_batch_payout
+        // gates the whole batch with a single pre-loop check.
+        if check_abuse {
+            abuse_protection::check_rate_limit(&env, &remittance.agent, ActionType::Settlement)?;
+            check_cooldown(&env, &remittance.agent, ActionType::Settlement)?;
+        }
 
         // Enforce per-agent daily withdrawal cap
         storage::check_and_record_agent_withdrawal(&env, &remittance.agent, remittance.amount)?;
@@ -2807,15 +2830,21 @@ impl SwiftRemitContract {
         agent: Address,
         remittance_ids: Vec<u64>,
     ) -> Result<Vec<u64>, ContractError> {
-        // #1264 PAUSE POLICY: pause is enforced inside confirm_payout → validate_confirm_payout_request.
+        // #1264 PAUSE POLICY: pause is enforced inside confirm_payout_inner → validate_confirm_payout_request.
         let batch_size = remittance_ids.len();
         if batch_size == 0 || batch_size > MAX_BATCH_SIZE {
             return Err(ContractError::InvalidBatchSize);
         }
+        // Perform the per-agent abuse-protection gate-check once for the whole batch.
+        // Individual items skip it via check_abuse=false to avoid intra-batch false
+        // positives when all payouts occur at the same ledger timestamp.
+        abuse_protection::check_rate_limit(&env, &agent, ActionType::Settlement)?;
+        check_cooldown(&env, &agent, ActionType::Settlement)?;
+
         let mut confirmed = Vec::new(&env);
         for i in 0..batch_size {
             let id = remittance_ids.get_unchecked(i);
-            Self::confirm_payout(env.clone(), agent.clone(), id, None, None)?;
+            Self::confirm_payout_inner(env.clone(), agent.clone(), id, None, None, false)?;
             confirmed.push_back(id);
         }
         env.events().publish(
