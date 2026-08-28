@@ -52,6 +52,10 @@ console.log("Remittance created:", result.hash);
 
 ## API Reference
 
+> **Full API Documentation:** See the [generated TypeDoc documentation](https://swiftremit.github.io/sdk-docs/) for complete API reference including all 150+ methods across remittances, governance, KYC, blacklist, circuit breakers, escrow, fee management, treasury, settlements, and multi-sig operations.
+
+The sections below provide a quick reference for the most commonly used methods. For detailed documentation of all available methods, parameter types, and return values, refer to the generated TypeDoc documentation linked above.
+
 ### Client Initialization
 
 ```typescript

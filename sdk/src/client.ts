@@ -768,6 +768,20 @@ export class SwiftRemitClient {
    * Each entry is prepared independently; failures don't abort the batch.
    * Returns a BatchCreateResponse with per-item results.
    */
+  /**
+   * Create multiple remittances via independent transactions (partial failure tolerated).
+   * 
+   * This method submits each remittance as a separate transaction with retry logic.
+   * If some transactions fail, the method still returns successfully with per-item
+   * success/failure status in the result array.
+   * 
+   * @see {@link batchCreateRemittances} for atomic batch creation (all-or-nothing)
+   * @see {@link createBatchRemittance} for atomic batch creation via create_batch_remittance contract method
+   * 
+   * @param sender - The sender's Stellar address
+   * @param entries - Array of remittance entries (max 50)
+   * @returns BatchCreateResponse with per-item results and success/failure counts
+   */
   async createRemittanceBatch(
     sender: string,
     entries: BatchCreateEntry[]
@@ -825,6 +839,20 @@ export class SwiftRemitClient {
    *   { agent: agent1, amount: toStroops(100) },
    *   { agent: agent2, amount: toStroops(250) },
    * ]);
+   */
+  /**
+   * Create multiple remittances in a single atomic transaction (all-or-nothing).
+   * 
+   * This method calls the batch_create_remittances contract method. All remittances
+   * are created in one transaction - if any entry fails validation or processing,
+   * the entire batch is rolled back.
+   * 
+   * @see {@link createRemittanceBatch} for independent transactions with partial failure tolerance
+   * @see {@link createBatchRemittance} for atomic batch via create_batch_remittance contract method
+   * 
+   * @param sender - The sender's Stellar address
+   * @param entries - Array of remittance entries (max 50)
+   * @returns Prepared transaction to be signed and submitted
    */
   async batchCreateRemittances(
     sender: string,
@@ -1133,8 +1161,12 @@ export class SwiftRemitClient {
           proposals.push(p);
         }
         id++;
-      } catch {
-        break;
+      } catch (err) {
+        // Only stop iteration on ProposalNotFound; rethrow anything else
+        if (err instanceof SwiftRemitError && err.code === ErrorCode.ProposalNotFound) {
+          break;
+        }
+        throw err;
       }
     }
     return proposals;
@@ -1786,6 +1818,20 @@ export class SwiftRemitClient {
   }
 
   /** Creates multiple remittances atomically in a single call, emitting a batch-created event. */
+  /**
+   * Create multiple remittances in a single atomic transaction via create_batch_remittance (all-or-nothing).
+   * 
+   * This method calls the create_batch_remittance contract method. Functionally similar to
+   * batchCreateRemittances but uses a different contract method. All remittances are created
+   * in one transaction - if any entry fails, the entire batch is rolled back.
+   * 
+   * @see {@link createRemittanceBatch} for independent transactions with partial failure tolerance
+   * @see {@link batchCreateRemittances} for atomic batch via batch_create_remittances contract method
+   * 
+   * @param sender - The sender's Stellar address
+   * @param entries - Array of remittance entries (max 50)
+   * @returns Prepared transaction to be signed and submitted
+   */
   async createBatchRemittance(sender: string, entries: BatchCreateEntry[]): Promise<Transaction> {
     if (entries.length === 0) {
       throw new SwiftRemitError(ErrorCode.InvalidBatchSize, "Batch must contain at least one entry");
