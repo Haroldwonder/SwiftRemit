@@ -563,7 +563,7 @@ impl SwiftRemitContract {
         sender.require_auth();
 
         // SR-123: Apply abuse-protection sliding-window rate limit and cooldown for Transfer.
-        check_rate_limit(&env, &sender, ActionType::Transfer)?;
+        abuse_protection::check_rate_limit(&env, &sender, ActionType::Transfer)?;
         check_cooldown(&env, &sender, ActionType::Transfer)?;
 
         let default_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
@@ -704,9 +704,23 @@ impl SwiftRemitContract {
         from_country: Option<String>,
         to_country: Option<String>,
     ) -> Result<u64, ContractError> {
+        // SR-128: Block while a migration is in progress (parity with create_remittance).
+        if crate::storage::is_migration_in_progress(&env) {
+            return Err(ContractError::MigrationInProgress);
+        }
         // #1264: Block new corridor-remittance creation while the circuit-breaker is active.
         validate_not_paused(&env)?;
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
+
+        // SR-128: Enforce minimum-agent-reputation gate (parity with create_remittance).
+        let min_rep = storage::get_min_agent_reputation(&env);
+        if min_rep > 0 {
+            let rep = storage::compute_agent_reputation(&storage::get_agent_stats(&env, &agent));
+            if rep < min_rep {
+                events::emit_agent_suspended(&env, agent.clone(), rep, min_rep);
+                return Err(ContractError::BelowMinReputation);
+            }
+        }
 
         sender.require_auth();
 
@@ -715,6 +729,14 @@ impl SwiftRemitContract {
             .clone()
             .unwrap_or_else(|| String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY));
         enforce_daily_send_limit(&env, &sender, &limit_currency, &limit_country, amount)?;
+
+        // SR-128: Enforce corridor/global volume cap (parity with create_remittance).
+        storage::check_and_increment_corridor_volume(
+            &env,
+            &limit_currency,
+            &limit_country,
+            amount,
+        )?;
 
         let corridor = match (&from_country, &to_country) {
             (Some(from), Some(to)) => storage::get_fee_corridor(&env, from, to),
@@ -764,9 +786,13 @@ impl SwiftRemitContract {
         set_remittance(&env, remittance_id, &remittance);
         set_payout_commitment(&env, remittance_id, &payout_commitment);
         set_remittance_counter(&env, remittance_id);
+        storage::increment_remittance_count(&env)?;
         set_transfer_state(&env, remittance_id, RemittanceStatus::Pending)?;
         storage::record_sender_volume(&env, &sender, amount, env.ledger().timestamp())?;
+
+        // SR-128: Index under both sender and agent (parity with create_remittance).
         storage::append_sender_remittance(&env, &sender, remittance_id);
+        storage::append_agent_remittance(&env, &agent, remittance_id);
 
         Ok(remittance_id)
     }
@@ -1030,7 +1056,7 @@ impl SwiftRemitContract {
         // SR-123: Apply abuse-protection per-action sliding-window rate limit and cooldown
         // for Settlement. This complements the simpler storage::check_settlement_rate_limit
         // above with the more sophisticated per-action, decaying-cooldown mechanism.
-        check_rate_limit(&env, &remittance.agent, ActionType::Settlement)?;
+        abuse_protection::check_rate_limit(&env, &remittance.agent, ActionType::Settlement)?;
         check_cooldown(&env, &remittance.agent, ActionType::Settlement)?;
 
         // Enforce per-agent daily withdrawal cap
@@ -1311,7 +1337,12 @@ impl SwiftRemitContract {
         // Enforce per-agent daily cap
         storage::check_and_record_agent_withdrawal(&env, &remittance.agent, amount)?;
 
-        let fee_breakdown = fee_service::calculate_fees_with_breakdown(&env, remittance.amount, None, None)?;
+        // SR-129: Use the fee quoted at creation time, not the current global fee
+        // strategy. Mirrors confirm_payout and resolve_dispute. Re-pricing here
+        // would produce a different net_payout than what was escrowed if the
+        // platform fee or strategy changed after creation, or if the original
+        // remittance qualified for a sender-volume discount.
+        let fee_breakdown = fee_service::breakdown_from_platform_fee(&env, remittance.amount, remittance.fee)?;
         let net_payout = fee_breakdown.net_amount;
 
         let already_disbursed = storage::get_disbursed_amount(&env, remittance_id);
@@ -1442,7 +1473,7 @@ impl SwiftRemitContract {
         remittance.sender.require_auth();
 
         // SR-123: Apply abuse-protection rate limit and cooldown for Cancellation.
-        check_rate_limit(&env, &remittance.sender, ActionType::Cancellation)?;
+        abuse_protection::check_rate_limit(&env, &remittance.sender, ActionType::Cancellation)?;
         check_cooldown(&env, &remittance.sender, ActionType::Cancellation)?;
 
         let usdc_token = get_usdc_token(&env)?;

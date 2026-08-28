@@ -64,8 +64,8 @@ fn test_migrate_preserves_remittance_state() {
     let (env, client, _, agent, sender) = setup();
 
     env.mock_all_auths();
-    let id1 = client.create_remittance(&sender, &agent, &5_000, &None, &None, &None, &None, &None);
-    let id2 = client.create_remittance(&sender, &agent, &3_000, &None, &None, &None, &None, &None);
+    let id1 = client.create_remittance(&sender, &agent, &5_000, &None, &None, &None, &None, &None, &None);
+    let id2 = client.create_remittance(&sender, &agent, &3_000, &None, &None, &None, &None, &None, &None);
 
     // Snapshot state before migration.
     let before1 = client.get_remittance(&id1);
@@ -126,7 +126,7 @@ fn test_migrate_preserves_commitment_hashes() {
 
     env.mock_all_auths();
     let id =
-        client.create_remittance(&sender, &agent, &10_000, &None, &None, &None, &None, &None);
+        client.create_remittance(&sender, &agent, &10_000, &None, &None, &None, &None, &None, &None);
 
     // Compute deterministic commitment hash before migration.
     let hash_before = client
@@ -151,7 +151,7 @@ fn test_migrate_preserves_accumulated_fees() {
 
     env.mock_all_auths();
     client.set_kyc_approved(&sender, &true, &u64::MAX);
-    let id = client.create_remittance(&sender, &agent, &8_000, &None, &None, &None, &None, &None);
+    let id = client.create_remittance(&sender, &agent, &8_000, &None, &None, &None, &None, &None, &None);
     // Fees accrue when the payout is confirmed, not when the remittance is created.
     client.confirm_payout(&agent, &id, &None, &None);
 
@@ -173,9 +173,9 @@ fn test_migrate_preserves_remittance_count() {
     let (env, client, _, agent, sender) = setup();
 
     env.mock_all_auths();
-    client.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
-    client.create_remittance(&sender, &agent, &2_000, &None, &None, &None, &None, &None);
-    client.create_remittance(&sender, &agent, &3_000, &None, &None, &None, &None, &None);
+    client.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None, &None);
+    client.create_remittance(&sender, &agent, &2_000, &None, &None, &None, &None, &None, &None);
+    client.create_remittance(&sender, &agent, &3_000, &None, &None, &None, &None, &None, &None);
 
     let count_before = client.get_remittance_count();
 
