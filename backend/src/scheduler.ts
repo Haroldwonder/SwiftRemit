@@ -114,7 +114,9 @@ export async function startBackgroundJobs() {
   // so a newly published list designation is picked up the same day.
   cron.schedule('15 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'aml-periodic-rescreening', async () => {
-      await runTracked(pool, 'aml-periodic-rescreening', runPeriodicRescreening);
+      await tracedJob('aml-periodic-rescreening', () =>
+        runTracked(pool, 'aml-periodic-rescreening', runPeriodicRescreening)
+      );
     });
     if (!ran) console.log('aml-periodic-rescreening: skipped (another instance holds the lock)');
   });
@@ -122,7 +124,9 @@ export async function startBackgroundJobs() {
   // Retry pending / failed travel-rule transmissions every 10 minutes.
   cron.schedule('*/10 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'aml-travel-rule-transmit', async () => {
-      await runTracked(pool, 'aml-travel-rule-transmit', transmitTravelRulePending);
+      await tracedJob('aml-travel-rule-transmit', () =>
+        runTracked(pool, 'aml-travel-rule-transmit', transmitTravelRulePending)
+      );
     });
     if (!ran) console.log('aml-travel-rule-transmit: skipped (another instance holds the lock)');
   });
@@ -130,7 +134,9 @@ export async function startBackgroundJobs() {
   // Enforce the data-retention schedule nightly at 03:30 UTC.
   cron.schedule('30 3 * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'aml-data-retention', async () => {
-      await runTracked(pool, 'aml-data-retention', enforceDataRetention);
+      await tracedJob('aml-data-retention', () =>
+        runTracked(pool, 'aml-data-retention', enforceDataRetention)
+      );
     });
     if (!ran) console.log('aml-data-retention: skipped (another instance holds the lock)');
   });

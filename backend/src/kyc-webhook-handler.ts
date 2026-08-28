@@ -6,10 +6,22 @@
  */
 
 import { Request, Response } from 'express';
-import { saveUserKycStatus } from './database';
+import { saveUserKycStatus, getPool } from './database';
 import { createLogger } from './correlation-id';
+import { NotificationService } from './notification-service';
 
 const logger = createLogger('kyc-webhook');
+
+// NotificationService.notifyKycEvent() existed (with SR-035 localized
+// templates) but was never called from any KYC code path — an anchor
+// approving a user's KYC produced no user-facing email/SMS. Wired here so
+// the one KYC event this handler actually observes (an approval push from
+// the anchor) reaches the user.
+let notificationService: NotificationService | null = null;
+function getNotificationService(): NotificationService {
+  if (!notificationService) notificationService = new NotificationService(getPool());
+  return notificationService;
+}
 
 export interface KycWebhookPayload {
   user_id?: string;
@@ -74,6 +86,15 @@ export async function handleKycWebhook(req: Request, res: Response): Promise<voi
     });
 
     logger.info('KYC webhook processed successfully', { anchor_id, userId });
+
+    if (internalStatus === 'approved') {
+      try {
+        await getNotificationService().notifyKycEvent({ event: 'kyc_approved', userId });
+      } catch (notifyError) {
+        logger.error('Failed to send KYC approval notification', notifyError, { anchor_id, userId });
+      }
+    }
+
     res.status(200).json({ success: true, message: 'KYC status updated' });
   } catch (error) {
     logger.error('Error processing KYC webhook', error, { anchor_id, payload });

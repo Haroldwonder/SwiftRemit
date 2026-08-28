@@ -90,13 +90,29 @@ export class SarWorkflowService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
+  /**
+   * Atomically claim the next sequence number for the current year.
+   *
+   * Previously this counted existing rows (`SELECT COUNT(*) ... WHERE
+   * reference LIKE ...`) with no locking, so two concurrent callers could
+   * read the same count before either INSERT into sar_reports committed and
+   * collide on the UNIQUE reference constraint. The upsert below is a single
+   * statement — Postgres takes a row lock on the year's counter row for its
+   * duration, so concurrent callers are serialized and each gets a distinct,
+   * monotonically increasing sequence number.
+   */
   private async nextReference(): Promise<string> {
     const year = this.now().getUTCFullYear();
-    const { rows } = await this.db.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM sar_reports WHERE reference LIKE $1`,
-      [`SAR-${year}-%`],
+    const { rows } = await this.db.query<{ last_sequence: number }>(
+      `INSERT INTO sar_reference_counters (year, last_sequence, updated_at)
+       VALUES ($1, 1, NOW())
+       ON CONFLICT (year) DO UPDATE
+         SET last_sequence = sar_reference_counters.last_sequence + 1,
+             updated_at    = NOW()
+       RETURNING last_sequence`,
+      [year],
     );
-    return formatSarReference(year, Number(rows[0]?.count ?? 0) + 1);
+    return formatSarReference(year, Number(rows[0].last_sequence));
   }
 
   /**
