@@ -65,6 +65,7 @@ import { createWebhooksRouter }     from './routes/webhooks';
 import { createComplianceRouter }   from './routes/compliance';
 import { createAmlRouter }          from './routes/aml';
 import { createDeviceRouter }       from './routes/devices';
+import { privacyRouter }            from './routes/privacy';
 import docsRouter                   from './routes/docs';
 
 // ─── App & shared services ───────────────────────────────────────────────────
@@ -230,6 +231,11 @@ app.use('/health',           createHealthRouter(pool));
 app.use('/api/docs',         docsRouter);
 app.use('/api/compliance',   createComplianceRouter(pool));
 app.use('/api/devices',      createDeviceRouter(pool));
+// GDPR consent / SAR / rectification / erasure endpoints (previously never
+// mounted anywhere — see the privacy-API finding). Each handler enforces its
+// own ownership check (self or admin:* scope) since these act on a specific
+// data subject rather than a fixed resource class.
+app.use('/api/v1/privacy',   adminLimiter, privacyRouter);
 // AML/CTF controls (SR-112). Rate-limited as an admin surface — these endpoints
 // expose screening results and the alert queue.
 app.use('/api/aml',          adminLimiter, createAmlRouter(pool));
