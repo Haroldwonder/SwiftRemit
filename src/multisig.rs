@@ -35,10 +35,20 @@ fn op_type_tag(op: &AdminOperationType) -> u32 {
         AdminOperationType::WithdrawFees => 2,
         AdminOperationType::Pause => 3,
         AdminOperationType::Unpause => 4,
+        AdminOperationType::UpdateMultisigConfig => 5,
     }
 }
 
-/// Configure multi-sig threshold and TTL. Only the existing admin can call this.
+/// Configure multi-sig threshold and TTL.
+///
+/// While the configured threshold is 1 (the default / not-yet-configured state), a
+/// single admin may call this directly to set the initial threshold and TTL.
+///
+/// Once a threshold > 1 has been configured, the multisig guard is protecting itself:
+/// this function can no longer be called directly (it returns
+/// `MultisigQuorumRequired`). Instead admins must go through
+/// `propose_multisig_config`/`approve_operation`, so that lowering the threshold — the
+/// operation that would weaken the quorum protection — itself requires quorum.
 ///
 /// * `threshold` — number of approvals required (must be ≥ 1)
 /// * `ttl_seconds` — lifetime of pending operations in seconds (must be > 0)
@@ -57,9 +67,78 @@ pub fn set_multisig_config(
         return Err(ContractError::InvalidAmount);
     }
 
+    if get_multisig_threshold(env) > 1 {
+        return Err(ContractError::MultisigQuorumRequired);
+    }
+
     set_multisig_threshold(env, threshold);
     set_multisig_ttl_seconds(env, ttl_seconds);
     Ok(())
+}
+
+/// Propose a change to the multisig threshold/TTL themselves.
+///
+/// This is the only way to change the multisig configuration once a threshold > 1 has
+/// been set — it goes through the same quorum flow as any other high-impact operation,
+/// requiring `get_multisig_threshold(env)` approvals (i.e. the *current* threshold)
+/// before the new configuration takes effect. This closes the loophole where a single
+/// admin could otherwise call `set_multisig_config` to drop the threshold to 1 and then
+/// solo-execute a `WithdrawFees`/`UpdateFee` operation.
+///
+/// Returns the new `operation_id`.
+pub fn propose_multisig_config(
+    env: &Env,
+    proposer: Address,
+    new_threshold: u32,
+    new_ttl_seconds: u64,
+) -> Result<u64, ContractError> {
+    require_admin(env, &proposer)?;
+
+    if new_threshold == 0 {
+        return Err(ContractError::InvalidMultiSigThreshold);
+    }
+    if new_ttl_seconds == 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    let threshold = get_multisig_threshold(env);
+    let ttl_seconds = get_multisig_ttl_seconds(env);
+    let proposed_at = env.ledger().timestamp();
+    let op_id = next_operation_id(env);
+
+    let mut approvers = Vec::new(env);
+    approvers.push_back(proposer.clone());
+
+    let op = PendingOperation {
+        id: op_id,
+        operation_type: AdminOperationType::UpdateMultisigConfig,
+        proposer: proposer.clone(),
+        approvers,
+        threshold,
+        proposed_at,
+        ttl_seconds,
+        fee_bps: 0,
+        withdraw_to: None,
+        new_threshold,
+        new_ttl_seconds,
+    };
+
+    emit_operation_proposed(
+        env,
+        op_id,
+        proposer.clone(),
+        op_type_tag(&AdminOperationType::UpdateMultisigConfig),
+    );
+
+    if threshold == 1 {
+        execute_operation(env, &op)?;
+        emit_operation_executed(env, op_id, op_type_tag(&op.operation_type));
+    } else {
+        set_pending_operation(env, &op);
+        emit_operation_approved(env, op_id, proposer, 1);
+    }
+
+    Ok(op_id)
 }
 
 /// Propose a high-impact admin operation.
@@ -77,6 +156,12 @@ pub fn propose_operation(
     withdraw_to: Option<Address>,
 ) -> Result<u64, ContractError> {
     require_admin(env, &proposer)?;
+
+    if operation_type == AdminOperationType::UpdateMultisigConfig {
+        // Multisig config changes carry their own new_threshold/new_ttl_seconds
+        // payload and must go through `propose_multisig_config` instead.
+        return Err(ContractError::MultisigQuorumRequired);
+    }
 
     let threshold = get_multisig_threshold(env);
     let ttl_seconds = get_multisig_ttl_seconds(env);
@@ -96,6 +181,8 @@ pub fn propose_operation(
         ttl_seconds,
         fee_bps,
         withdraw_to,
+        new_threshold: 0,
+        new_ttl_seconds: 0,
     };
 
     emit_operation_proposed(env, op_id, proposer.clone(), op_type_tag(&operation_type));
@@ -200,6 +287,10 @@ fn execute_operation(env: &Env, op: &PendingOperation) -> Result<(), ContractErr
         }
         AdminOperationType::Unpause => {
             set_paused(env, false);
+        }
+        AdminOperationType::UpdateMultisigConfig => {
+            set_multisig_threshold(env, op.new_threshold);
+            set_multisig_ttl_seconds(env, op.new_ttl_seconds);
         }
     }
     Ok(())

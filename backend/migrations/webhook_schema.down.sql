@@ -37,10 +37,8 @@ DROP INDEX IF EXISTS idx_webhook_deliveries_status;
 -- DESTRUCTIVE
 DROP TABLE IF EXISTS webhook_deliveries;
 
--- webhook_subscribers
-DROP INDEX IF EXISTS idx_webhook_subscribers_active;
--- DESTRUCTIVE
-DROP TABLE IF EXISTS webhook_subscribers;
+-- webhook_subscribers is now owned by 20260101_core_schema.sql — its rollback
+-- drops it (run that rollback after this one).
 
 -- transaction_state_history
 DROP INDEX IF EXISTS idx_state_history_changed;
@@ -48,16 +46,8 @@ DROP INDEX IF EXISTS idx_state_history_transaction;
 -- DESTRUCTIVE
 DROP TABLE IF EXISTS transaction_state_history;
 
--- transactions (FK → anchors)
-DROP INDEX IF EXISTS idx_transactions_kind;
-DROP INDEX IF EXISTS idx_transactions_status;
-DROP INDEX IF EXISTS idx_transactions_anchor;
--- DESTRUCTIVE
-DROP TABLE IF EXISTS transactions;
-
--- anchors
--- DESTRUCTIVE
-DROP TABLE IF EXISTS anchors;
+-- transactions and anchors are now owned by 20260101_core_schema.sql — its
+-- rollback drops them (run that rollback after this one).
 
 -- suspicious_webhooks
 DROP INDEX IF EXISTS idx_suspicious_webhooks_detected;

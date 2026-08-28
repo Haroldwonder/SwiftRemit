@@ -30,43 +30,10 @@ CREATE TABLE IF NOT EXISTS suspicious_webhooks (
 CREATE INDEX idx_suspicious_webhooks_anchor ON suspicious_webhooks(anchor_id);
 CREATE INDEX idx_suspicious_webhooks_detected ON suspicious_webhooks(detected_at DESC);
 
--- Anchors table (if not exists)
-CREATE TABLE IF NOT EXISTS anchors (
-  id VARCHAR(255) PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  public_key VARCHAR(56) NOT NULL,
-  webhook_secret VARCHAR(255),
-  home_domain VARCHAR(255),
-  enabled BOOLEAN DEFAULT true,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
--- Transactions table (if not exists)
-CREATE TABLE IF NOT EXISTS transactions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  transaction_id VARCHAR(255) UNIQUE NOT NULL,
-  anchor_id VARCHAR(255) NOT NULL REFERENCES anchors(id),
-  kind VARCHAR(20) NOT NULL CHECK (kind IN ('deposit', 'withdrawal')),
-  status VARCHAR(50) NOT NULL,
-  status_eta INTEGER,
-  amount_in DECIMAL(20, 7),
-  amount_out DECIMAL(20, 7),
-  amount_fee DECIMAL(20, 7),
-  asset_code VARCHAR(12),
-  stellar_transaction_id VARCHAR(64),
-  external_transaction_id VARCHAR(255),
-  kyc_status VARCHAR(20),
-  kyc_fields JSONB,
-  kyc_rejection_reason TEXT,
-  message TEXT,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_transactions_anchor ON transactions(anchor_id);
-CREATE INDEX idx_transactions_status ON transactions(status);
-CREATE INDEX idx_transactions_kind ON transactions(kind);
+-- Anchors and transactions tables now live in 20260101_core_schema.sql (which
+-- is timestamp-prefixed to run first, since many other migrations that sort
+-- alphabetically before this file depend on them). Kept out of this file to
+-- avoid a duplicate, non-idempotent `CREATE INDEX` collision.
 
 -- Transaction state history
 CREATE TABLE IF NOT EXISTS transaction_state_history (
@@ -80,17 +47,9 @@ CREATE TABLE IF NOT EXISTS transaction_state_history (
 CREATE INDEX idx_state_history_transaction ON transaction_state_history(transaction_id);
 CREATE INDEX idx_state_history_changed ON transaction_state_history(changed_at DESC);
 
--- Outbound webhook subscribers
-CREATE TABLE IF NOT EXISTS webhook_subscribers (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  url TEXT NOT NULL,
-  secret VARCHAR(255),
-  active BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_webhook_subscribers_active ON webhook_subscribers(active);
+-- webhook_subscribers also now lives in 20260101_core_schema.sql (see comment
+-- above) — sr027_dlq_monitoring.sql and add_webhook_secret_rotation.sql both
+-- ALTER it and sort alphabetically before this file.
 
 -- Outbound webhook delivery queue and retries
 CREATE TABLE IF NOT EXISTS webhook_deliveries (

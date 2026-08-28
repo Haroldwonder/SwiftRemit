@@ -355,4 +355,8 @@ pub enum ContractError {
 
     /// Agent reputation is below the configured minimum for this operation.
     BelowMinReputation = 79,
+
+    /// Once threshold > 1, changes to the multisig configuration itself must go
+    /// through propose_operation/approve_operation instead of being called directly.
+    MultisigQuorumRequired = 80,
 }
