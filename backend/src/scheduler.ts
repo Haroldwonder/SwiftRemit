@@ -19,6 +19,7 @@ import { SanctionsScreeningService } from './aml/sanctions-screening';
 import { TravelRuleService } from './aml/travel-rule';
 import { RetentionService } from './aml/retention';
 import { createLogger } from './correlation-id';
+import { DeviceTokenService } from './device-token-service';
 import crypto from 'crypto';
 
 const logger = createLogger('scheduler');
@@ -30,6 +31,7 @@ const sep24Service = new Sep24Service(pool);
 const metricsService = getMetricsService(pool);
 const anchorHealthChecker = new AnchorHealthChecker(pool, metricsService);
 const dlqProcessor = new WebhookDlqProcessor(pool);
+const deviceTokenService = new DeviceTokenService(pool);
 
 export async function startBackgroundJobs() {
   // Initialize KYC service
@@ -96,6 +98,16 @@ export async function startBackgroundJobs() {
       );
     });
     if (!ran) logger.info('check-anchor-health: skipped (another instance holds the lock)');
+  });
+
+  // Poll Expo delivery receipts and prune permanently-dead push tokens every 15 minutes
+  cron.schedule('*/15 * * * *', async () => {
+    const ran = await withAdvisoryLock(pool, 'prune-dead-push-tokens', async () => {
+      await tracedJob('prune-dead-push-tokens', () =>
+        runTracked(pool, 'prune-dead-push-tokens', pruneDeadPushTokens)
+      );
+    });
+    if (!ran) logger.info('prune-dead-push-tokens: skipped (another instance holds the lock)');
   });
 
   // Retire expired webhook secrets hourly
@@ -245,6 +257,23 @@ async function pollSep24Transactions() {
     logger.info('SEP-24 polling completed');
   } catch (error) {
     logger.error('Error in SEP-24 polling job', error as Error);
+  }
+}
+
+/**
+ * Resolve the Expo delivery-receipt phase for previously-sent push tickets
+ * and delete device tokens that Expo reports as `DeviceNotRegistered`.
+ * Without this, dead tokens accumulate in `device_tokens` and are resent to
+ * Expo on every notification indefinitely.
+ */
+async function pruneDeadPushTokens() {
+  try {
+    const prunedCount = await deviceTokenService.pollReceiptsAndPruneStaleTokens();
+    if (prunedCount > 0) {
+      logger.info(`prune-dead-push-tokens: pruned ${prunedCount} dead token(s)`);
+    }
+  } catch (error) {
+    logger.error('Error in prune-dead-push-tokens job', error as Error);
   }
 }
 
