@@ -1,145 +1,165 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import crypto from 'crypto';
+
+vi.mock('../database', () => ({ saveUserKycStatus: vi.fn().mockResolvedValue(undefined) }));
+
 import { handleKycWebhook, mapKycStatus, verifyAnchorSignature, KycWebhookPayload } from '../kyc-webhook-handler';
+import { saveUserKycStatus } from '../database';
+
+const ANCHOR_ID = 'moneygram';
+const SECRET_ENV_VAR = 'WEBHOOK_SECRET_MONEYGRAM';
+const SECRET = 'test-anchor-shared-secret';
+
+function sign(body: string, timestamp: string): string {
+  return crypto.createHmac('sha256', SECRET).update(`${timestamp}.${body}`).digest('hex');
+}
+
+function makeRequest(overrides: Partial<any> = {}) {
+  const body = overrides.body ?? { user_id: 'user123', status: 'APPROVED' };
+  const rawBody = JSON.stringify(body);
+  const timestamp = overrides.timestamp ?? String(Date.now());
+  const signature = overrides.signature ?? sign(rawBody, timestamp);
+
+  return {
+    params: { anchor_id: overrides.anchorId ?? ANCHOR_ID },
+    body,
+    rawBody,
+    headers: {
+      'x-webhook-signature': overrides.omitSignature ? undefined : signature,
+      'x-webhook-timestamp': overrides.omitTimestamp ? undefined : timestamp,
+      'x-webhook-nonce': overrides.nonce,
+      ...overrides.headers,
+    },
+    ...overrides.requestOverrides,
+  };
+}
+
+function makeResponse() {
+  return {
+    status: vi.fn().mockReturnThis(),
+    json: vi.fn().mockReturnThis(),
+  };
+}
 
 describe('KYC Webhook Handler', () => {
-  let mockRequest: any;
-  let mockResponse: any;
-
   beforeEach(() => {
-    mockRequest = {
-      params: { anchor_id: 'moneygram' },
-      body: {} as KycWebhookPayload,
-    };
-
-    mockResponse = {
-      status: vi.fn().mockReturnThis(),
-      json: vi.fn().mockReturnThis(),
-    };
-
-    process.env.TRUSTED_ANCHOR_IDS = 'moneygram,circle,nexo';
+    process.env[SECRET_ENV_VAR] = SECRET;
+    vi.mocked(saveUserKycStatus).mockClear();
   });
 
-  it('should map KYC status correctly', () => {
-    expect(mapKycStatus('APPROVED')).toBe('approved');
-    expect(mapKycStatus('REJECTED')).toBe('rejected');
-    expect(mapKycStatus('PENDING')).toBe('pending');
-    expect(mapKycStatus('NEEDS_INFO')).toBe('needs_info');
+  afterEach(() => {
+    delete process.env[SECRET_ENV_VAR];
   });
 
-  it('should handle case-insensitive status mapping', () => {
-    expect(mapKycStatus('approved')).toBe('approved');
-    expect(mapKycStatus('PENDING')).toBe('pending');
-    expect(mapKycStatus('Needs_Info')).toBe('needs_info');
+  describe('mapKycStatus', () => {
+    it('maps known SEP-12 statuses', () => {
+      expect(mapKycStatus('APPROVED')).toBe('approved');
+      expect(mapKycStatus('REJECTED')).toBe('rejected');
+      expect(mapKycStatus('PENDING')).toBe('pending');
+      expect(mapKycStatus('NEEDS_INFO')).toBe('needs_info');
+    });
+
+    it('is case-insensitive and defaults unknown values to pending', () => {
+      expect(mapKycStatus('approved')).toBe('approved');
+      expect(mapKycStatus('UNKNOWN')).toBe('pending');
+    });
   });
 
-  it('should default to pending for unknown status', () => {
-    expect(mapKycStatus('UNKNOWN')).toBe('pending');
+  describe('verifyAnchorSignature', () => {
+    it('accepts a correctly signed, fresh request', () => {
+      const rawBody = JSON.stringify({ user_id: 'u1', status: 'APPROVED' });
+      const timestamp = String(Date.now());
+      const signature = sign(rawBody, timestamp);
+
+      const result = verifyAnchorSignature(ANCHOR_ID, rawBody, signature, timestamp);
+      expect(result.ok).toBe(true);
+    });
+
+    it('rejects when no secret is configured for the anchor', () => {
+      const result = verifyAnchorSignature('unconfigured-anchor', 'body', 'sig', String(Date.now()));
+      expect(result.ok).toBe(false);
+    });
+
+    it('rejects a tampered body (signature no longer matches)', () => {
+      const timestamp = String(Date.now());
+      const signature = sign(JSON.stringify({ user_id: 'u1', status: 'APPROVED' }), timestamp);
+      const tamperedBody = JSON.stringify({ user_id: 'u1', status: 'REJECTED' });
+
+      const result = verifyAnchorSignature(ANCHOR_ID, tamperedBody, signature, timestamp);
+      expect(result.ok).toBe(false);
+    });
+
+    it('rejects a stale timestamp outside the acceptable window', () => {
+      const rawBody = JSON.stringify({ user_id: 'u1', status: 'APPROVED' });
+      const staleTimestamp = String(Date.now() - 10 * 60 * 1000); // 10 minutes ago
+      const signature = sign(rawBody, staleTimestamp);
+
+      const result = verifyAnchorSignature(ANCHOR_ID, rawBody, signature, staleTimestamp);
+      expect(result.ok).toBe(false);
+    });
+
+    it('rejects a replayed nonce', () => {
+      const rawBody = JSON.stringify({ user_id: 'u1', status: 'APPROVED' });
+      const timestamp = String(Date.now());
+      const signature = sign(rawBody, timestamp);
+      const nonce = 'nonce-1';
+
+      expect(verifyAnchorSignature(ANCHOR_ID, rawBody, signature, timestamp, nonce).ok).toBe(true);
+      expect(verifyAnchorSignature(ANCHOR_ID, rawBody, signature, timestamp, nonce).ok).toBe(false);
+    });
   });
 
-  it('should verify trusted anchor signatures', () => {
-    expect(verifyAnchorSignature('moneygram')).toBe(true);
-    expect(verifyAnchorSignature('circle')).toBe(true);
-    expect(verifyAnchorSignature('untrusted')).toBe(false);
-  });
+  describe('handleKycWebhook — signature enforcement (SR-131 regression)', () => {
+    it('rejects an unsigned request with 401 and does not touch the database', async () => {
+      const req = makeRequest({ omitSignature: true });
+      const res = makeResponse();
 
-  it('should reject webhook without user_id or external_id', async () => {
-    mockRequest.body = { status: 'APPROVED' };
+      await handleKycWebhook(req as any, res as any);
 
-    await handleKycWebhook(mockRequest, mockResponse);
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(saveUserKycStatus).not.toHaveBeenCalled();
+    });
 
-    expect(mockResponse.status).toHaveBeenCalledWith(400);
-    expect(mockResponse.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.any(String) })
-    );
-  });
+    it('rejects a mis-signed request with 401 and does not touch the database', async () => {
+      const req = makeRequest({ signature: 'deadbeef'.repeat(8) });
+      const res = makeResponse();
 
-  it('should accept webhook with user_id', async () => {
-    mockRequest.body = {
-      user_id: 'user123',
-      status: 'APPROVED',
-      timestamp: Math.floor(Date.now() / 1000),
-    };
+      await handleKycWebhook(req as any, res as any);
 
-    // Mock database save
-    vi.doMock('../database', () => ({
-      saveUserKycStatus: vi.fn().mockResolvedValue({}),
-    }));
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(saveUserKycStatus).not.toHaveBeenCalled();
+    });
 
-    await handleKycWebhook(mockRequest, mockResponse);
+    it('rejects a request signed for a different anchor', async () => {
+      const req = makeRequest({ anchorId: 'a-different-anchor' });
+      const res = makeResponse();
 
-    // Should attempt to save status (may fail due to mock, but status should be called)
-    expect(mockResponse.status).toHaveBeenCalled();
-  });
+      await handleKycWebhook(req as any, res as any);
 
-  it('should accept webhook with external_id', async () => {
-    mockRequest.body = {
-      external_id: 'ext456',
-      status: 'PENDING',
-    };
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(saveUserKycStatus).not.toHaveBeenCalled();
+    });
 
-    await handleKycWebhook(mockRequest, mockResponse);
+    it('accepts a correctly signed request and updates KYC status', async () => {
+      const req = makeRequest();
+      const res = makeResponse();
 
-    expect(mockResponse.status).toHaveBeenCalled();
-  });
+      await handleKycWebhook(req as any, res as any);
 
-  it('should use timestamp from payload if provided', () => {
-    const payload: KycWebhookPayload = {
-      user_id: 'user123',
-      status: 'APPROVED',
-      timestamp: 1704067200, // 2024-01-01 00:00:00 UTC
-    };
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(saveUserKycStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: 'user123', anchor_id: ANCHOR_ID, status: 'approved' }),
+      );
+    });
 
-    const expectedDate = new Date(1704067200 * 1000);
-    expect(expectedDate.getTime()).toBe(1704067200000);
-  });
+    it('still validates the body after signature verification passes', async () => {
+      const req = makeRequest({ body: { status: 'APPROVED' } }); // no user_id/external_id
+      const res = makeResponse();
 
-  it('should use current time if timestamp not provided', () => {
-    const before = Date.now();
-    const payload: KycWebhookPayload = {
-      user_id: 'user123',
-      status: 'APPROVED',
-    };
-    const after = Date.now();
+      await handleKycWebhook(req as any, res as any);
 
-    // Payload would use Date.now() internally
-    expect(before).toBeLessThanOrEqual(after);
-  });
-
-  it('should handle all SEP-12 status values', () => {
-    const sep12Statuses = ['APPROVED', 'REJECTED', 'PENDING', 'NEEDS_INFO'];
-    
-    for (const status of sep12Statuses) {
-      const mapped = mapKycStatus(status);
-      expect(['approved', 'rejected', 'pending', 'needs_info']).toContain(mapped);
-    }
-  });
-
-  it('should support additional webhook payload fields', () => {
-    const payload: KycWebhookPayload = {
-      user_id: 'user123',
-      status: 'APPROVED',
-      metadata: { country: 'US' },
-      requested_by: 'admin@anchor.com',
-      review_date: '2026-01-15',
-    };
-
-    expect(payload.metadata).toBeDefined();
-    expect(payload.requested_by).toBeDefined();
-    expect(payload.review_date).toBeDefined();
-  });
-
-  it('should use anchor_id from URL parameters', async () => {
-    const anchors = ['moneygram', 'circle', 'nexo'];
-    
-    for (const anchorId of anchors) {
-      mockRequest.params.anchor_id = anchorId;
-      mockRequest.body = {
-        user_id: `user-${anchorId}`,
-        status: 'APPROVED',
-      };
-
-      // Verify anchor_id is captured
-      expect(mockRequest.params.anchor_id).toBe(anchorId);
-    }
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(saveUserKycStatus).not.toHaveBeenCalled();
+    });
   });
 });

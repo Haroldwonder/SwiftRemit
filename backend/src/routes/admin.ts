@@ -14,6 +14,18 @@ import {
 
 const logger = createLogger('routes/admin');
 
+/**
+ * Resolve the authenticated principal for audit attribution. Prefers the
+ * verified API-key owner (attached by scopedApiKeyMiddleware in api.ts,
+ * which now gates every /api/admin route on the admin:* scope) over the
+ * client-supplied x-user-id header, which any caller can forge.
+ */
+function resolveActor(req: Request): string {
+  const apiKey = (req as any).apiKey as { owner_id?: string } | undefined;
+  if (apiKey?.owner_id) return apiKey.owner_id;
+  return (req.headers['x-user-id'] as string) || 'unknown';
+}
+
 export function createAdminRouter(pool: Pool): Router {
   const router = Router();
 
@@ -25,7 +37,7 @@ export function createAdminRouter(pool: Pool): Router {
   ): Promise<void> {
     const auditService = new AdminAuditLogService(pool);
     await auditService.log({
-      admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+      admin_address: resolveActor(req),
       action,
       target,
       params_json: params,
@@ -45,7 +57,7 @@ export function createAdminRouter(pool: Pool): Router {
       const subscriber = await getWebhookSubscriberById(id);
       const auditService = new AdminAuditLogService(pool);
       await auditService.log({
-        admin_address: (req.headers['x-user-id'] as string) || 'unknown',
+        admin_address: resolveActor(req),
         action: 'rotate_webhook_secret',
         target: id,
         params_json: null,

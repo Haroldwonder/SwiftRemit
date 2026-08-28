@@ -14,6 +14,7 @@ export {
   getContractId,
   getFxApiKey,
   getAnchorsAdminApiKey,
+  getEncryptionKey,
   initializeSecretRotation,
 } from '../../shared/src/secrets-manager';
 

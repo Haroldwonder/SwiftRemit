@@ -15,7 +15,7 @@ import { NotificationService } from './notification-service';
 import { WebhookService } from './webhooks';
 import { PostgresWebhookStore } from './webhooks/store';
 import { patchConsoleForProduction } from './console-shim';
-import { getSecretsManager, getDatabaseUrl, getAdminSecretKey, getContractId, initializeSecretRotation } from './secrets-manager';
+import { getSecretsManager, getDatabaseUrl, getAdminSecretKey, getContractId, getEncryptionKey, initializeSecretRotation } from './secrets-manager';
 import { assertEnvConfigured } from './env-guard';
 
 dotenv.config();
@@ -57,10 +57,14 @@ async function loadSecrets(): Promise<void> {
 
   // Resolve all required secrets — throws immediately if any are missing or
   // (in production) fall back to a plaintext environment variable.
-  const [databaseUrl, adminSecretKey, contractId] = await Promise.all([
+  const [databaseUrl, adminSecretKey, contractId, encryptionKey] = await Promise.all([
     getDatabaseUrl(),
     getAdminSecretKey(),
     getContractId(),
+    // Optional here: encryption.ts itself fails closed outside NODE_ENV=test
+    // when ENCRYPTION_KEY is unset (SR-131), so this only upgrades the
+    // sourcing/rotation posture rather than gating startup a second time.
+    getEncryptionKey(),
   ]);
 
   // Write resolved values back into process.env so legacy code that reads
@@ -69,6 +73,7 @@ async function loadSecrets(): Promise<void> {
   process.env.DATABASE_URL = databaseUrl;
   process.env.ADMIN_SECRET_KEY = adminSecretKey;
   process.env.CONTRACT_ID = contractId;
+  if (encryptionKey) process.env.ENCRYPTION_KEY = encryptionKey;
 
   // JWT_SECRET is used via getJwtSecret() at call sites; no env write needed.
 
