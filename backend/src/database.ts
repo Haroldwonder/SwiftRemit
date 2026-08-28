@@ -108,6 +108,7 @@ export async function initDatabase() {
         expires_at TIMESTAMP,
         rejection_reason TEXT,
         verification_data JSONB,
+        account_closed_at TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         UNIQUE(user_id, anchor_id)

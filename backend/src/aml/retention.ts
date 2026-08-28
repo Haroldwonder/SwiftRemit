@@ -12,6 +12,7 @@
  */
 
 import { Queryable } from './types';
+import { RETENTION_POLICIES, checkAmlLegalHold } from '../privacy/retention-service';
 
 export type RetentionAction = 'delete' | 'anonymize';
 
@@ -85,12 +86,48 @@ export const ENTITY_PLANS: Record<string, EntityPlan> = {
   user_kyc_status: {
     table: 'user_kyc_status',
     cutoffColumn: 'updated_at',
+    // Approved records are handled separately below, once the account is
+    // closed and the AML legal hold has lapsed — see user_kyc_status_closed.
     guard: `status <> 'approved'`,
     anonymizeSet: `verification_data = NULL,
                    rejection_reason = NULL,
                    user_id = 'REDACTED:' || md5(user_id)`,
   },
+  // Approved KYC records are under a mandatory AML/CTF legal hold while the
+  // relationship is active, so the plan above never touches them. Once the
+  // account is closed (account_closed_at set) and the hold window has
+  // elapsed, this plan anonymizes them. The cutoff uses
+  // RETENTION_POLICIES.AML_LEGAL_HOLD.retentionDays from
+  // privacy/retention-service.ts (see cutoffFor override below) so this
+  // schedule and checkAmlLegalHold() can never drift apart.
+  user_kyc_status_closed: {
+    table: 'user_kyc_status',
+    cutoffColumn: 'account_closed_at',
+    guard: `status = 'approved' AND account_closed_at IS NOT NULL`,
+    anonymizeSet: `verification_data = NULL,
+                   rejection_reason = NULL,
+                   user_id = 'REDACTED:' || md5(user_id)`,
+  },
 };
+
+/**
+ * Entities whose retention clock is the AML/CTF legal hold rather than the
+ * value stored in data_retention_policies.retention_days. Keeping this in
+ * sync with privacy/retention-service.ts's checkAmlLegalHold() means the two
+ * independent retention systems (GDPR privacy API vs. AML compliance
+ * schedule) can never disagree about how long the 5-year hold actually is.
+ */
+const AML_LEGAL_HOLD_ENTITIES = new Set(['user_kyc_status', 'user_kyc_status_closed']);
+
+/**
+ * True once the AML/CTF legal hold on a closed account's KYC data has
+ * lapsed. Delegates to privacy/retention-service.checkAmlLegalHold so both
+ * this schedule and the GDPR erasure endpoint (routes/privacy.ts) agree on
+ * the same hold window instead of each hard-coding their own day count.
+ */
+export function isKycLegalHoldExpired(accountClosedAt: Date): boolean {
+  return !checkAmlLegalHold(accountClosedAt).onHold;
+}
 
 export class RetentionService {
   constructor(
@@ -123,7 +160,14 @@ export class RetentionService {
 
   /** Cutoff timestamp for a policy: anything older than this is out of period. */
   cutoffFor(policy: RetentionPolicy, reference: Date = this.now()): Date {
-    return new Date(reference.getTime() - policy.retentionDays * 86_400_000);
+    // AML-hold entities use the shared AML_LEGAL_HOLD.retentionDays constant
+    // (same one checkAmlLegalHold() enforces) rather than whatever value
+    // happens to be configured in data_retention_policies, so the two
+    // systems can't silently drift apart.
+    const retentionDays = AML_LEGAL_HOLD_ENTITIES.has(policy.entity)
+      ? RETENTION_POLICIES.AML_LEGAL_HOLD.retentionDays
+      : policy.retentionDays;
+    return new Date(reference.getTime() - retentionDays * 86_400_000);
   }
 
   private buildStatement(policy: RetentionPolicy, plan: EntityPlan): string {
