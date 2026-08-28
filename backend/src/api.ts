@@ -127,7 +127,15 @@ setFxCircuitObserver((provider, open) => {
 
 app.use(helmet());
 app.use(cors());
-app.use(express.json());
+// Capture the raw request body alongside the parsed JSON so webhook handlers
+// (kyc-webhook-handler.ts, ramp-webhook-handler.ts) can verify an HMAC
+// signature computed over the exact bytes the sender signed, rather than a
+// re-serialization of the parsed object which is not guaranteed to match.
+app.use(express.json({
+  verify: (req: Request, _res: Response, buf: Buffer) => {
+    (req as any).rawBody = buf.toString('utf8');
+  },
+}));
 app.use(correlationIdMiddleware);
 
 // Request instrumentation (SR-104) — feeds the API availability and latency
