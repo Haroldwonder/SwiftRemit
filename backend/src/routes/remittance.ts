@@ -4,7 +4,8 @@ import { getFxRateCache } from '../fx-rate-cache';
 import { simulateSettlement } from '../stellar';
 import { saveContractEvent, queryContractEvents } from '../database';
 import { remittanceEventEmitter } from '../remittance/events';
-import { AuthenticatedRequest } from '../transfer-guard';
+import { AuthenticatedRequest, createTransferGuard } from '../transfer-guard';
+import { KycUpsertService } from '../kyc-upsert-service';
 import { createLogger } from '../correlation-id';
 import { sanitizeInput } from '../sanitizer';
 import { TransactionMonitoringService } from '../aml/transaction-monitoring';
@@ -111,6 +112,11 @@ export function createRemittanceRouter(pool: Pool): Router {
   const fxRateCache = getFxRateCache();
   const monitoring = new TransactionMonitoringService(pool);
   const travelRule = new TravelRuleService(pool);
+  // Same KycUpsertService construction pattern as routes/kyc.ts, so the
+  // guard below applies to the real money-movement entry point and not just
+  // the /api/transfer stub.
+  const kycUpsertService = new KycUpsertService(pool);
+  const transferGuard = createTransferGuard(kycUpsertService);
 
   // Register the contract-event persistence listener once at router creation time.
   // The listener is idempotent because it only writes; registering it here keeps
@@ -134,7 +140,12 @@ export function createRemittanceRouter(pool: Pool): Router {
   });
 
   // POST /api/remittance
-  router.post('/remittance', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  // transferGuard enforces KYC approval/expiry/re-verification-pending checks
+  // before this handler is allowed to insert a real transactions row — the
+  // only place those checks were previously applied was the unrelated
+  // /api/transfer no-op stub in routes/kyc.ts, so this was reachable by any
+  // caller with an arbitrary x-user-id header regardless of KYC status.
+  router.post('/remittance', authMiddleware, transferGuard, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { sender, agent, amount, fee, expiry, memo } = req.body;
       const fromCurrency = typeof req.body.fromCurrency === 'string' ? req.body.fromCurrency : req.body.from_currency;
