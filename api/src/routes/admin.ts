@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { AdminConfirmationService, HighRiskOperation } from '../admin-confirmation';
 import axios from 'axios';
 import { createRateLimitMiddleware } from '../middleware/rateLimitHeaders';
+import { requireAdmin } from '../middleware/auth.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -778,20 +779,13 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
    * POST /api/admin/actions
    * Initiate a high-risk operation requiring a second admin to confirm.
    */
-  router.post('/actions', async (req: Request, res: Response) => {
-    if (!isAdminAuthorized(req)) {
-      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
-    }
+  router.post('/actions', requireAdmin, async (req: Request, res: Response) => {
 
-    const { operation, initiated_by, params } = req.body as Record<string, unknown>;
+    const { operation, params } = req.body as Record<string, unknown>;
 
     if (!operation || !HIGH_RISK_OPS.includes(operation as HighRiskOperation)) {
       return sendError(res, 400, `operation must be one of: ${HIGH_RISK_OPS.join(', ')}`, 'INVALID_OPERATION');
     }
-    if (typeof initiated_by !== 'string' || !initiated_by) {
-      return sendError(res, 400, 'initiated_by is required', 'MISSING_FIELD');
-    }
-
     const svc = getConfirmationService(pool);
     if (!svc) return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
 
@@ -799,7 +793,7 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
       await svc.initTable();
       const action = await svc.initiate(
         operation as HighRiskOperation,
-        initiated_by,
+        req.auth!.userId,
         (params as Record<string, unknown>) ?? {}
       );
       return res.status(201).json({ success: true, data: action, timestamp: timestamp() });
@@ -812,10 +806,7 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
    * GET /api/admin/actions
    * List all pending (unconfirmed, non-expired) high-risk actions.
    */
-  router.get('/actions', async (req: Request, res: Response) => {
-    if (!isAdminAuthorized(req)) {
-      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
-    }
+  router.get('/actions', requireAdmin, async (req: Request, res: Response) => {
 
     const svc = getConfirmationService(pool);
     if (!svc) return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
@@ -833,22 +824,14 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
     * POST /api/admin/actions/:id/confirm
     * Second admin confirms a pending high-risk action.
     */
-  router.post('/actions/:id/confirm', async (req: Request<{ id: string }>, res: Response) => {
-    if (!isAdminAuthorized(req)) {
-      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
-    }
-
-    const { confirmed_by } = req.body as Record<string, unknown>;
-    if (typeof confirmed_by !== 'string' || !confirmed_by) {
-      return sendError(res, 400, 'confirmed_by is required', 'MISSING_FIELD');
-    }
+  router.post('/actions/:id/confirm', requireAdmin, async (req: Request<{ id: string }>, res: Response) => {
 
     const svc = getConfirmationService(pool);
     if (!svc) return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
 
     try {
       await svc.initTable();
-      const action = await svc.confirm(req.params.id, confirmed_by);
+      const action = await svc.confirm(req.params.id, req.auth!.userId);
       return res.json({ success: true, data: action, timestamp: timestamp() });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Confirmation failed';
