@@ -449,6 +449,58 @@ See [`frontend/.env.example`](frontend/.env.example) for the full list with inli
 
 ---
 
+## GHCR Image Retention
+
+`deploy-staging.yml` pushes two tags per service image to
+`ghcr.io/<repo>/{backend,api,frontend}` on every push to `main`:
+
+| Tag | Mutability | Purpose |
+|---|---|---|
+| `:staging` | Mutable (overwritten each deploy) | What `docker-compose` pulls on the staging VM |
+| `:<sha_short>` | Immutable | Pinned image the staging deploy actually runs; used for manual rollback |
+
+Without pruning, the immutable per-commit tags accumulate forever across three
+image repositories. `.github/workflows/ghcr-cleanup.yml` enforces the retention
+policy below.
+
+### Policy
+
+- **Runs:** weekly, Monday 08:00 UTC (plus manual `workflow_dispatch`, which
+  defaults to a dry run).
+- **Deletes:** image versions whose `updated_at` is older than **30 days**.
+- **Always keeps:**
+  - the `:staging` tag (and `:latest` / `:main` if ever introduced);
+  - any tag matching `v*` or `*.*.*` (semver / release tags);
+  - the **10 most recent** tagged versions of each image, regardless of age —
+    this is the rollback floor. **You can safely roll back to any per-commit
+    tag from roughly the last 30 days, or the last 10 builds, whichever reaches
+    further back.** Older tags may have been pruned.
+- **Also removes:** dangling untagged manifests left behind when a tag is
+  re-pushed.
+
+### Required secret
+
+The cleanup action needs the `!`/`*` tag-filter operators, which GitHub's
+ephemeral `GITHUB_TOKEN` does not support. Create a **classic personal access
+token** with the `write:packages` and `delete:packages` scopes and add it as the
+repository secret `GHCR_RETENTION_TOKEN`. The workflow fails fast with an
+explanatory error if the secret is missing.
+
+### Manual rollback
+
+```bash
+# On the staging VM — pin to an older known-good commit tag
+export BACKEND_IMAGE=ghcr.io/haroldwonder/swiftremit/backend:<sha_short>
+export API_IMAGE=ghcr.io/haroldwonder/swiftremit/api:<sha_short>
+export FRONTEND_IMAGE=ghcr.io/haroldwonder/swiftremit/frontend:<sha_short>
+docker compose pull && docker compose up -d --remove-orphans
+```
+
+If the tag you need has already been pruned, re-run `deploy-staging.yml` from
+the target commit to rebuild and re-push it.
+
+---
+
 ## Support
 
 - **Documentation**: See README.md files in each directory

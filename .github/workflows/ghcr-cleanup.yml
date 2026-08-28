@@ -1,0 +1,102 @@
+name: GHCR Image Retention
+
+# SR-215: deploy-staging.yml pushes an immutable per-commit tag
+# (ghcr.io/<repo>/{backend,api,frontend}:<sha_short>) on every push to main, on
+# top of the mutable :staging tag. Nothing prunes those per-commit tags, so GHCR
+# storage for the three image repos grows without bound.
+#
+# This workflow prunes per-commit tags older than the retention window while
+# always keeping:
+#   * the mutable :staging tag deploy-staging.yml deploys from
+#   * the rolling latest / main tags
+#   * any semver / v-prefixed release tag
+#   * the N most recent versions of each image, as a manual-rollback safety net
+#
+# The retention policy is documented in docs/DEPLOYMENT.md ("GHCR image retention").
+
+on:
+  schedule:
+    # Weekly, Monday 08:00 UTC — one hour after container-security.yml's scan.
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List what would be deleted without deleting anything"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ghcr-cleanup
+  cancel-in-progress: false
+
+permissions:
+  packages: write
+  contents: read
+
+env:
+  # Delete tags older than this. Parsed by the `humantime` crate (e.g. 2w 3d).
+  RETENTION_CUTOFF: "30d"
+  # Always retain at least this many recent tagged versions per image, so a
+  # manual `docker pull ...:<sha>` rollback still works well past the cutoff.
+  KEEP_MOST_RECENT: "10"
+
+jobs:
+  prune:
+    name: Prune old ${{ matrix.package }} tags
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [backend, api, frontend]
+
+    steps:
+      # The `!`/`*` filter operators the excludes below rely on are not available
+      # to the ephemeral GITHUB_TOKEN — a classic PAT (packages:write +
+      # delete:packages) stored as GHCR_RETENTION_TOKEN is required.
+      - name: Verify retention token is configured
+        env:
+          TOKEN: ${{ secrets.GHCR_RETENTION_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::GHCR_RETENTION_TOKEN is not set. Create a classic PAT with the"
+            echo "::error::'write:packages' and 'delete:packages' scopes and add it as a repo"
+            echo "::error::secret. See docs/DEPLOYMENT.md → 'GHCR image retention'."
+            exit 1
+          fi
+
+      - name: Resolve lowercased package path
+        id: pkg
+        run: |
+          set -euo pipefail
+          repo_lc="$(echo "${GITHUB_REPOSITORY#*/}" | tr '[:upper:]' '[:lower:]')"
+          echo "name=${repo_lc}/${{ matrix.package }}" >> "$GITHUB_OUTPUT"
+
+      - name: Delete stale per-commit image tags
+        uses: snok/container-retention-policy@v3.1.0
+        with:
+          # "user" for a personal account; the org name for an organization.
+          account: user
+          token: ${{ secrets.GHCR_RETENTION_TOKEN }}
+          image-names: ${{ steps.pkg.outputs.name }}
+          # Consider every tag EXCEPT the ones that must never be deleted:
+          #   staging      – the mutable tag docker-compose deploys on staging
+          #   latest, main – rolling tags
+          #   v* / *.*.*   – semver / v-prefixed release tags
+          image-tags: "!staging !latest !main !v* !*.*.*"
+          # Also sweep dangling untagged manifests left by re-pushed tags.
+          tag-selection: both
+          cut-off: ${{ env.RETENTION_CUTOFF }}
+          keep-n-most-recent: ${{ env.KEEP_MOST_RECENT }}
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### GHCR retention — \`${{ steps.pkg.outputs.name }}\`"
+            echo ""
+            echo "- Cutoff: \`${{ env.RETENTION_CUTOFF }}\`"
+            echo "- Kept most recent: \`${{ env.KEEP_MOST_RECENT }}\`"
+            echo "- Never deleted: \`staging\`, \`latest\`, \`main\`, \`v*\`, \`*.*.*\`"
+            echo "- Dry run: \`${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
