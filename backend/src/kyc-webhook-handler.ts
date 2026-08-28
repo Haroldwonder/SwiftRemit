@@ -14,31 +14,21 @@
  */
 
 import { Request, Response } from 'express';
-import crypto from 'crypto';
-import { saveUserKycStatus } from './database';
+import { saveUserKycStatus, getPool } from './database';
 import { createLogger } from './correlation-id';
+import { NotificationService } from './notification-service';
 
 const logger = createLogger('kyc-webhook');
 
-/** Reject webhooks whose timestamp is further than this from "now". */
-const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000; // 5 minutes
-
-/** Bound the in-memory replay-nonce cache so it cannot grow unbounded. */
-const NONCE_CACHE_MAX_ENTRIES = 10_000;
-const NONCE_CACHE_TTL_MS = MAX_TIMESTAMP_SKEW_MS * 2;
-
-/** seen (anchor_id + nonce) -> expiry epoch ms. */
-const seenNonces = new Map<string, number>();
-
-function pruneExpiredNonces(now: number): void {
-  for (const [key, expiresAt] of seenNonces) {
-    if (expiresAt <= now) seenNonces.delete(key);
-  }
-  // Defensive cap in case pruning falls behind under sustained traffic.
-  if (seenNonces.size > NONCE_CACHE_MAX_ENTRIES) {
-    const oldestKeys = Array.from(seenNonces.keys()).slice(0, seenNonces.size - NONCE_CACHE_MAX_ENTRIES);
-    for (const key of oldestKeys) seenNonces.delete(key);
-  }
+// NotificationService.notifyKycEvent() existed (with SR-035 localized
+// templates) but was never called from any KYC code path — an anchor
+// approving a user's KYC produced no user-facing email/SMS. Wired here so
+// the one KYC event this handler actually observes (an approval push from
+// the anchor) reaches the user.
+let notificationService: NotificationService | null = null;
+function getNotificationService(): NotificationService {
+  if (!notificationService) notificationService = new NotificationService(getPool());
+  return notificationService;
 }
 
 export interface KycWebhookPayload {
@@ -187,6 +177,15 @@ export async function handleKycWebhook(req: RawBodyRequest, res: Response): Prom
     });
 
     logger.info('KYC webhook processed successfully', { anchor_id, userId });
+
+    if (internalStatus === 'approved') {
+      try {
+        await getNotificationService().notifyKycEvent({ event: 'kyc_approved', userId });
+      } catch (notifyError) {
+        logger.error('Failed to send KYC approval notification', notifyError, { anchor_id, userId });
+      }
+    }
+
     res.status(200).json({ success: true, message: 'KYC status updated' });
   } catch (error) {
     logger.error('Error processing KYC webhook', error, { anchor_id, payload });

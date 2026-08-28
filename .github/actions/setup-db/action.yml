@@ -25,4 +25,5 @@ runs:
       env:
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftremit_test
       run: |
+        psql $DATABASE_URL -f backend/migrations/20260101_core_schema.sql || true
         psql $DATABASE_URL -f backend/migrations/webhook_schema.sql || true

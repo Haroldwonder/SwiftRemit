@@ -9,6 +9,7 @@
  */
 
 import { Pool, QueryResult } from 'pg';
+import crypto from 'crypto';
 import { EventType, WebhookSubscriber, WebhookDeliveryRecord, DeadLetterRecord } from './types';
 
 export interface IWebhookStore {
@@ -149,8 +150,19 @@ export class InMemoryWebhookStore implements IWebhookStore {
 
 /**
  * PostgreSQL Webhook Store
- * 
+ *
  * Persistent storage using PostgreSQL.
+ *
+ * IMPORTANT: this queries the tables that migrations actually create —
+ * `webhook_subscribers` (id, url, secret, active) and `webhook_deliveries`
+ * (subscriber_id, target_url, event_key, attempt_count, max_attempts). There
+ * is no `webhooks` table and no `events` column anywhere in the schema, so
+ * (unlike the in-memory store) per-webhook event-type filtering is not
+ * something the database supports: every active subscriber is returned for
+ * every event, matching how `WebhookRepository.getActiveSubscribers()` — the
+ * repository that actually matches this schema — already behaves. The
+ * `events` parameter to `registerWebhook` is accepted for interface
+ * compatibility but is not persisted.
  */
 export class PostgresWebhookStore implements IWebhookStore {
   private pool: Pool;
@@ -159,7 +171,19 @@ export class PostgresWebhookStore implements IWebhookStore {
     this.pool = pool;
   }
 
-  async registerWebhook(url: string, events: EventType[], secret?: string): Promise<WebhookSubscriber> {
+  private toSubscriber(row: any): WebhookSubscriber {
+    return {
+      id: row.id,
+      url: row.url,
+      events: [],
+      secret: row.secret,
+      active: row.active,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async registerWebhook(url: string, _events: EventType[], secret?: string): Promise<WebhookSubscriber> {
     // Validate URL
     try {
       new URL(url);
@@ -167,33 +191,29 @@ export class PostgresWebhookStore implements IWebhookStore {
       throw new Error(`Invalid webhook URL: ${url}`);
     }
 
-    const result = await this.pool.query(
-      `INSERT INTO webhooks (url, events, secret, active)
-       VALUES ($1, $2, $3, TRUE)
-       ON CONFLICT (url) DO NOTHING
-       RETURNING id, url, events, secret, active, created_at, updated_at`,
-      [url, JSON.stringify(events), secret || null]
+    // webhook_subscribers has no UNIQUE constraint on url, so duplicate
+    // detection has to be a pre-check rather than ON CONFLICT.
+    const existing = await this.pool.query(
+      `SELECT 1 FROM webhook_subscribers WHERE url = $1 AND active = TRUE`,
+      [url]
     );
-
-    if (result.rows.length === 0) {
+    if ((existing.rowCount ?? 0) > 0) {
       throw new Error(`Webhook URL already registered: ${url}`);
     }
 
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      url: row.url,
-      events: row.events,
-      secret: row.secret,
-      active: row.active,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
+    const result = await this.pool.query(
+      `INSERT INTO webhook_subscribers (url, secret, active)
+       VALUES ($1, $2, TRUE)
+       RETURNING id, url, secret, active, created_at, updated_at`,
+      [url, secret || null]
+    );
+
+    return this.toSubscriber(result.rows[0]);
   }
 
   async unregisterWebhook(id: string): Promise<boolean> {
     const result = await this.pool.query(
-      `UPDATE webhooks SET active = FALSE WHERE id = $1`,
+      `UPDATE webhook_subscribers SET active = FALSE, updated_at = NOW() WHERE id = $1`,
       [id]
     );
     return (result.rowCount ?? 0) > 0;
@@ -201,77 +221,63 @@ export class PostgresWebhookStore implements IWebhookStore {
 
   async getWebhook(id: string): Promise<WebhookSubscriber | null> {
     const result = await this.pool.query(
-      `SELECT id, url, events, secret, active, created_at, updated_at
-       FROM webhooks WHERE id = $1 AND active = TRUE`,
+      `SELECT id, url, secret, active, created_at, updated_at
+       FROM webhook_subscribers WHERE id = $1 AND active = TRUE`,
       [id]
     );
 
     if (result.rows.length === 0) return null;
-
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      url: row.url,
-      events: row.events,
-      secret: row.secret,
-      active: row.active,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
+    return this.toSubscriber(result.rows[0]);
   }
 
   async getAllWebhooks(): Promise<WebhookSubscriber[]> {
     const result = await this.pool.query(
-      `SELECT id, url, events, secret, active, created_at, updated_at
-       FROM webhooks WHERE active = TRUE ORDER BY created_at DESC`
+      `SELECT id, url, secret, active, created_at, updated_at
+       FROM webhook_subscribers WHERE active = TRUE ORDER BY created_at DESC`
     );
 
-    return result.rows.map(row => ({
-      id: row.id,
-      url: row.url,
-      events: row.events,
-      secret: row.secret,
-      active: row.active,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    return result.rows.map(row => this.toSubscriber(row));
   }
 
-  async getSubscribers(event: EventType): Promise<WebhookSubscriber[]> {
+  async getSubscribers(_event: EventType): Promise<WebhookSubscriber[]> {
+    // No per-event filtering column exists — see class doc comment.
     const result = await this.pool.query(
-      `SELECT id, url, events, secret, active, created_at, updated_at
-       FROM webhooks 
-       WHERE active = TRUE 
-       AND events @> $1::jsonb
-       ORDER BY created_at ASC`,
-      [JSON.stringify([event])]
+      `SELECT id, url, secret, active, created_at, updated_at
+       FROM webhook_subscribers
+       WHERE active = TRUE
+       ORDER BY created_at ASC`
     );
 
-    return result.rows.map(row => ({
-      id: row.id,
-      url: row.url,
-      events: row.events,
-      secret: row.secret,
-      active: row.active,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    return result.rows.map(row => this.toSubscriber(row));
   }
 
   async recordDelivery(delivery: WebhookDeliveryRecord): Promise<string> {
+    // event_key is part of webhook_deliveries' uniqueness constraint but
+    // WebhookDeliveryRecord carries no natural business key for one, so a
+    // random key is used to preserve "always insert a new delivery attempt"
+    // semantics rather than accidentally deduping unrelated deliveries.
+    const eventKey = crypto.randomUUID();
+
     const result = await this.pool.query(
-      `INSERT INTO webhook_deliveries (webhook_id, event_type, payload, status, attempt, max_retries)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO webhook_deliveries
+         (event_type, event_key, subscriber_id, target_url, payload, status, attempt_count, max_attempts)
+       SELECT $1, $2, $3, url, $4, $5, $6, $7
+       FROM webhook_subscribers WHERE id = $3
        RETURNING id`,
       [
-        delivery.webhookId,
         delivery.eventType,
+        eventKey,
+        delivery.webhookId,
         JSON.stringify(delivery.payload),
         delivery.status,
         delivery.attempt,
         delivery.maxRetries,
       ]
     );
+
+    if (result.rows.length === 0) {
+      throw new Error(`Cannot record delivery: subscriber ${delivery.webhookId} not found`);
+    }
 
     return result.rows[0].id;
   }
@@ -283,8 +289,12 @@ export class PostgresWebhookStore implements IWebhookStore {
     error?: string
   ): Promise<void> {
     await this.pool.query(
-      `UPDATE webhook_deliveries 
-       SET status = $1, attempt = $2, error = $3, updated_at = NOW()
+      `UPDATE webhook_deliveries
+       SET status = $1,
+           attempt_count = $2,
+           last_error = $3,
+           delivered_at = CASE WHEN $1 = 'success' THEN NOW() ELSE delivered_at END,
+           updated_at = NOW()
        WHERE id = $4`,
       [status, attempt, error || null, deliveryId]
     );
@@ -292,9 +302,9 @@ export class PostgresWebhookStore implements IWebhookStore {
 
   async getPendingDeliveries(limit: number = 100): Promise<WebhookDeliveryRecord[]> {
     const result = await this.pool.query(
-      `SELECT id, webhook_id, event_type, payload, status, attempt, max_retries, created_at, updated_at, error
+      `SELECT id, subscriber_id, event_type, payload, status, attempt_count, max_attempts, created_at, updated_at, last_error
        FROM webhook_deliveries
-       WHERE (status = 'pending' OR (status = 'failed' AND attempt < max_retries))
+       WHERE (status = 'pending' OR (status = 'failed' AND attempt_count < max_attempts))
        AND created_at > NOW() - INTERVAL '7 days'
        ORDER BY created_at ASC
        LIMIT $1`,
@@ -303,15 +313,15 @@ export class PostgresWebhookStore implements IWebhookStore {
 
     return result.rows.map(row => ({
       id: row.id,
-      webhookId: row.webhook_id,
+      webhookId: row.subscriber_id,
       eventType: row.event_type,
-      payload: JSON.parse(row.payload),
+      payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload,
       status: row.status,
-      attempt: row.attempt,
-      maxRetries: row.max_retries,
+      attempt: row.attempt_count,
+      maxRetries: row.max_attempts,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      error: row.error,
+      error: row.last_error,
     }));
   }
 

@@ -22,6 +22,7 @@ fi
 
 # Run database migrations
 echo "📊 Running database migrations..."
+psql $DATABASE_URL -f backend/migrations/20260101_core_schema.sql
 psql $DATABASE_URL -f backend/migrations/webhook_schema.sql
 
 echo "✅ Database schema created"

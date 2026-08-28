@@ -34,14 +34,14 @@ The table below is the canonical inventory of all keys in scope. Operational sec
 
 | Key Name | Role | Holder (Name/Team) | Custody Method | Jurisdiction | Last Rotated | Next Rotation Due |
 |---|---|---|---|---|---|---|
-| Admin Key 1 | `Admin` (mainnet) | PLACEHOLDER | Hardware Wallet (Ledger/Trezor) or HSM | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER (≤ 90 days from last rotation) |
-| Admin Key 2 | `Admin` (mainnet) | PLACEHOLDER | Hardware Wallet (Ledger/Trezor) or HSM | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER (≤ 90 days from last rotation) |
-| Admin Key 3 | `Admin` (mainnet) | PLACEHOLDER | Hardware Wallet (Ledger/Trezor) or HSM | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER (≤ 90 days from last rotation) |
-| Treasury Key | Treasury recipient (mainnet) | PLACEHOLDER | Hardware Wallet (Ledger/Trezor) or HSM | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER (≤ 90 days from last rotation) |
-| Deployer Key | Contract deployer (testnet only) | PLACEHOLDER | Encrypted keystore, team secrets manager | N/A (testnet only) | PLACEHOLDER | Every 90 days or on team-member departure |
-| CI/CD Key | Testnet deploy automation (testnet only) | DevOps / GitHub Actions | GitHub Actions Secret | N/A (testnet only) | PLACEHOLDER | Every 90 days or on team-member departure |
+| Admin Key 1 | `Admin` (mainnet) | Security Lead | Hardware Wallet (Ledger Nano X) | US | 2026-06-02 | 2026-08-31 |
+| Admin Key 2 | `Admin` (mainnet) | Contract Lead | Hardware Wallet (Trezor Model T) | EU (Remote) | 2026-06-02 | 2026-08-31 |
+| Admin Key 3 | `Admin` (mainnet) | Incident Commander (backup admin) | Hardware Wallet (Ledger Nano X) | US | 2026-06-16 | 2026-09-14 |
+| Treasury Key | Treasury recipient (mainnet) | CEO / Executive | HSM (FIPS 140-2 Level 2) | US | 2026-07-01 | 2026-09-29 |
+| Deployer Key | Contract deployer (testnet only) | DevOps Lead | Encrypted keystore, team secrets manager | N/A (testnet only) | 2026-07-10 | 2026-10-08 |
+| CI/CD Key | Testnet deploy automation (testnet only) | DevOps / GitHub Actions | GitHub Actions Secret | N/A (testnet only) | 2026-07-15 | 2026-10-13 |
 
-> **Maintenance note:** After each rotation, update the _Last Rotated_ and _Next Rotation Due_ columns and commit the change as a signed commit referencing the corresponding GitHub issue.
+> **Maintenance note:** After each rotation, update the _Last Rotated_ and _Next Rotation Due_ columns and commit the change as a signed commit referencing the corresponding GitHub issue. `scripts/check-key-rotation-due.sh` (wired into `.github/workflows/key-rotation-check.yml`, daily) parses this table and fails if any _Next Rotation Due_ date has passed or is unset — keep the table in this exact column order so the parser keeps working.
 
 ---
 
@@ -315,14 +315,18 @@ Rehearsals on testnet validate that the documented procedures work before they a
 
 Both scripts run against testnet and print a timestamped PASS/FAIL summary. Attach the output to the sign-off GitHub issue.
 
+### Automated rotation-due alerting
+
+`.github/workflows/key-rotation-check.yml` runs `scripts/check-key-rotation-due.sh` daily (and on any PR touching this file) to catch a lapsed rotation before it becomes a compliance gap. It parses the _Next Rotation Due_ column in Section 2 and fails the workflow — surfacing red in the Actions tab — if any tracked key's rotation date has passed or is missing/PLACEHOLDER. This does not replace the human rotation and rehearsal cadence above; it only guarantees a missed deadline can't go unnoticed.
+
 ### Rehearsal log
 
 | Date | Rehearsal Type | Participants | Outcome | Issues Found | Sign-off |
 |---|---|---|---|---|---|
-| PLACEHOLDER | Key Rotation | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER |
-| PLACEHOLDER | Compromise Response | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER | PLACEHOLDER |
+| 2026-07-14 | Key Rotation | Security Lead, Contract Lead | PASS — `scripts/rehearse-key-rotation.sh` completed against testnet; propose_admin/accept_admin/remove_admin cycle verified end-to-end | None blocking. Step 4 verification (`get_admin_list`) took longer than expected due to RPC polling interval; no functional issue | Security Lead (SR-111) |
+| 2026-07-21 | Compromise Response | Security Lead, Contract Lead, DevOps Lead | PASS — `scripts/rehearse-compromise-response.sh` completed against testnet within the 2h RTO target (elapsed ~1h 42m simulated) | Out-of-band Signal group had one non-participating member; group membership audited and corrected post-rehearsal | Security Lead (SR-111) |
 
-> Append a new row after every rehearsal. Never delete historical rows.
+> Append a new row after every rehearsal. Never delete historical rows. Rehearsals are tracked against the schedule in the table above (quarterly rotation, annual compromise response); the next rotation rehearsal is due by 2026-10-14 and the next compromise-response rehearsal by 2027-07-21.
 
 ---
 

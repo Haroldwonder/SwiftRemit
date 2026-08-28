@@ -53,6 +53,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftremit_test
         run: |
+          psql $DATABASE_URL -f migrations/20260101_core_schema.sql
           psql $DATABASE_URL -f migrations/webhook_schema.sql
 
       - name: Run linter
@@ -154,6 +155,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/swiftremit_test
         run: |
+          psql $DATABASE_URL -f migrations/20260101_core_schema.sql
           psql $DATABASE_URL -f migrations/webhook_schema.sql
           psql $DATABASE_URL -f migrations/seed_webhook_test_data.sql || true
 

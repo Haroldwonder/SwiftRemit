@@ -7,8 +7,97 @@ import { remittanceEventEmitter } from '../remittance/events';
 import { AuthenticatedRequest } from '../transfer-guard';
 import { createLogger } from '../correlation-id';
 import { sanitizeInput } from '../sanitizer';
+import { TransactionMonitoringService } from '../aml/transaction-monitoring';
+import { OriginatorData, BeneficiaryData, TravelRuleService } from '../aml/travel-rule';
 
 const logger = createLogger('routes/remittance');
+
+function toOriginatorData(raw: unknown): OriginatorData | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.name !== 'string' || typeof o.account_identifier !== 'string') return undefined;
+  return {
+    name: o.name,
+    accountIdentifier: o.account_identifier,
+    address: typeof o.address === 'string' ? o.address : undefined,
+    nationalIdentifier: typeof o.national_identifier === 'string' ? o.national_identifier : undefined,
+    dateOfBirth: typeof o.date_of_birth === 'string' ? o.date_of_birth : undefined,
+    placeOfBirth: typeof o.place_of_birth === 'string' ? o.place_of_birth : undefined,
+    country: typeof o.country === 'string' ? o.country : undefined,
+  };
+}
+
+function toBeneficiaryData(raw: unknown): BeneficiaryData | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const b = raw as Record<string, unknown>;
+  if (typeof b.name !== 'string' || typeof b.account_identifier !== 'string') return undefined;
+  return {
+    name: b.name,
+    accountIdentifier: b.account_identifier,
+    country: typeof b.country === 'string' ? b.country : undefined,
+  };
+}
+
+/**
+ * Run AML transaction monitoring and travel-rule assessment for a newly
+ * created remittance. Mirrors the existing autoFlagIfAboveThreshold pattern:
+ * best-effort, logged, and never allowed to fail the remittance response —
+ * but unlike the threshold check, this is the only place structuring,
+ * velocity, corridor and travel-rule obligations are evaluated for a
+ * transfer created through the live API (see SR-112 audit).
+ */
+async function runAmlChecks(
+  pool: Pool,
+  monitoring: TransactionMonitoringService,
+  travelRule: TravelRuleService,
+  params: {
+    remittanceId: string;
+    sender: string;
+    amount: number;
+    currency: string;
+    corridor: string | null;
+    jurisdiction?: string;
+    originator?: unknown;
+    beneficiary?: unknown;
+    counterpartyVasp?: string;
+  },
+): Promise<void> {
+  try {
+    await monitoring.evaluateTransfer({
+      transactionId: params.remittanceId,
+      senderAddress: params.sender,
+      amount: params.amount,
+      currency: params.currency,
+      corridor: params.corridor,
+      createdAt: new Date(),
+    });
+  } catch (error) {
+    logger.error(
+      'Transaction monitoring evaluation failed',
+      error instanceof Error ? error : new Error(String(error)),
+      { remittanceId: params.remittanceId },
+    );
+  }
+
+  try {
+    await travelRule.assess({
+      transactionId: params.remittanceId,
+      jurisdiction: params.jurisdiction ?? 'DEFAULT',
+      amount: params.amount,
+      currency: params.currency,
+      amountUsd: params.amount,
+      originator: toOriginatorData(params.originator),
+      beneficiary: toBeneficiaryData(params.beneficiary),
+      counterpartyVasp: params.counterpartyVasp,
+    });
+  } catch (error) {
+    logger.error(
+      'Travel-rule assessment failed',
+      error instanceof Error ? error : new Error(String(error)),
+      { remittanceId: params.remittanceId },
+    );
+  }
+}
 
 function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const userId = (req.headers['x-user-id'] as string) || '';
@@ -20,6 +109,8 @@ function authMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunc
 export function createRemittanceRouter(pool: Pool): Router {
   const router = Router();
   const fxRateCache = getFxRateCache();
+  const monitoring = new TransactionMonitoringService(pool);
+  const travelRule = new TravelRuleService(pool);
 
   // Register the contract-event persistence listener once at router creation time.
   // The listener is idempotent because it only writes; registering it here keeps
@@ -91,6 +182,22 @@ export function createRemittanceRouter(pool: Pool): Router {
         const { autoFlagIfAboveThreshold } = await import('./compliance');
         await autoFlagIfAboveThreshold(pool, remittanceId, parseFloat(amount), 'USD');
       } catch { /* compliance tables may not exist in all environments */ }
+
+      // SR-112: run structuring/velocity/corridor monitoring and travel-rule
+      // assessment synchronously so every remittance created through this
+      // endpoint is actually screened — not just ones a compliance officer
+      // happens to POST to /api/aml/... by hand.
+      await runAmlChecks(pool, monitoring, travelRule, {
+        remittanceId,
+        sender,
+        amount: parseFloat(amount),
+        currency: (toCurrency || fromCurrency || 'USD').toUpperCase(),
+        corridor: fromCurrency && toCurrency ? `${fromCurrency.toUpperCase()}-${toCurrency.toUpperCase()}` : null,
+        jurisdiction: typeof req.body.jurisdiction === 'string' ? req.body.jurisdiction : undefined,
+        originator: req.body.originator,
+        beneficiary: req.body.beneficiary,
+        counterpartyVasp: typeof req.body.counterparty_vasp === 'string' ? req.body.counterparty_vasp : undefined,
+      });
 
       return res.status(201).json({
         success: true,

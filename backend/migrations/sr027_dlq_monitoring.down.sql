@@ -8,7 +8,7 @@ ALTER TABLE webhook_dead_letters
   DROP COLUMN IF EXISTS subscription_id;
 
 DROP INDEX IF EXISTS idx_webhooks_consecutive_failures;
-ALTER TABLE webhooks
+ALTER TABLE webhook_subscribers
   DROP COLUMN IF EXISTS disabled_at,
   DROP COLUMN IF EXISTS consecutive_failures,
   DROP COLUMN IF EXISTS owner_email;

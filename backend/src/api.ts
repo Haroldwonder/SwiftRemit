@@ -36,6 +36,8 @@ import helmet from 'helmet';
 import cors from 'cors';
 import crypto from 'crypto';
 
+import { corsOptionsFromEnv } from '../../shared/src/cors-options';
+
 import { getPool, getEnabledAnchors, getLatestAnchorHealth } from './database';
 import { getFxRateCache } from './fx-rate-cache';
 import { getFailoverFxService, setFxCircuitObserver } from './fx-provider';
@@ -126,16 +128,12 @@ setFxCircuitObserver((provider, open) => {
 // ─── Security & parsing middleware ───────────────────────────────────────────
 
 app.use(helmet());
-app.use(cors());
-// Capture the raw request body alongside the parsed JSON so webhook handlers
-// (kyc-webhook-handler.ts, ramp-webhook-handler.ts) can verify an HMAC
-// signature computed over the exact bytes the sender signed, rather than a
-// re-serialization of the parsed object which is not guaranteed to match.
-app.use(express.json({
-  verify: (req: Request, _res: Response, buf: Buffer) => {
-    (req as any).rawBody = buf.toString('utf8');
-  },
-}));
+// SR-issue: cors() with no options defaults to origin '*'. Restrict to the
+// ALLOWED_ORIGINS allowlist (see shared/src/cors-options.ts) so only known
+// frontend origins get a cross-origin response, and only those origins get
+// credentials: true for cookie-based flows.
+app.use(cors(corsOptionsFromEnv()));
+app.use(express.json());
 app.use(correlationIdMiddleware);
 
 // Request instrumentation (SR-104) — feeds the API availability and latency
