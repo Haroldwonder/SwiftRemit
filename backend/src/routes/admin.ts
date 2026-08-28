@@ -6,6 +6,7 @@ import { AdminAuditLogService } from '../admin-audit-log';
 import { getJobSummaries } from '../job-tracker';
 import { createLogger } from '../correlation-id';
 import { validateQuery } from '../middleware/validate';
+import { AdminConfirmationService, HighRiskOperation } from '../admin-confirmation';
 import {
   AuditLogExportQuerySchema,
   AUDIT_LOG_EXPORT_MAX_DAYS,
@@ -14,8 +15,39 @@ import {
 
 const logger = createLogger('routes/admin');
 
+const HIGH_RISK_OPERATIONS: HighRiskOperation[] = ['withdraw_fees', 'remove_agent', 'update_fee'];
+
 export function createAdminRouter(pool: Pool): Router {
   const router = Router();
+  const adminConfirmationService = new AdminConfirmationService(pool);
+  let adminConfirmationTableReady = false;
+
+  async function ensureAdminConfirmationTable(): Promise<void> {
+    if (adminConfirmationTableReady) return;
+    await adminConfirmationService.initTable();
+    adminConfirmationTableReady = true;
+  }
+
+  /**
+   * Gate the two-step admin confirmation endpoints behind a dedicated
+   * credential (distinct from the generic x-user-id header used elsewhere in
+   * this router, which is only an identity hint, not proof of admin
+   * authorization). If the credential isn't configured, the endpoints are
+   * disabled (503) rather than silently open.
+   */
+  function requireAdminActionCredential(req: Request, res: Response): boolean {
+    const configuredKey = process.env.ADMIN_ACTIONS_API_KEY;
+    if (!configuredKey) {
+      res.status(503).json({ error: 'Admin action confirmation is not configured (set ADMIN_ACTIONS_API_KEY)' });
+      return false;
+    }
+    const provided = req.headers['x-admin-key'] as string | undefined;
+    if (!provided || provided !== configuredKey) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return false;
+    }
+    return true;
+  }
 
   async function logAdminAction(
     req: Request,
@@ -240,6 +272,99 @@ export function createAdminRouter(pool: Pool): Router {
     } catch (error) {
       logger.error('Error fetching job summaries', error instanceof Error ? error : new Error(String(error)));
       res.status(500).json({ error: 'Failed to fetch job summaries' });
+    }
+  });
+
+  // ── Two-step admin confirmation for high-risk operations (#481) ──────────
+  //
+  // withdraw_fees / remove_agent / update_fee are documented as requiring a
+  // second, different admin to confirm before execution, but
+  // AdminConfirmationService was never wired to any route — these endpoints
+  // close that gap. Confirming here authorizes an operator to carry out the
+  // operation (contract call / admin script) out of band using the returned
+  // params; this router does not itself execute withdraw_fees, remove_agent
+  // or update_fee against the contract, since no such call site exists
+  // elsewhere in this codebase today. The pending_admin_actions row and the
+  // audit log entries below are the system-of-record for that authorization.
+
+  // POST /api/admin/actions/:op/initiate
+  router.post('/actions/:op/initiate', async (req: Request, res: Response) => {
+    try {
+      if (!requireAdminActionCredential(req, res)) return;
+
+      const op = req.params.op as HighRiskOperation;
+      if (!HIGH_RISK_OPERATIONS.includes(op)) {
+        return res.status(400).json({
+          error: `Unsupported operation '${op}'. Must be one of: ${HIGH_RISK_OPERATIONS.join(', ')}`,
+        });
+      }
+
+      const initiatedBy = (req.headers['x-user-id'] as string) || '';
+      if (!initiatedBy) {
+        return res.status(401).json({ error: 'x-user-id header required to identify the initiating admin' });
+      }
+
+      await ensureAdminConfirmationTable();
+      const action = await adminConfirmationService.initiate(op, initiatedBy, (req.body ?? {}) as Record<string, unknown>);
+
+      return res.status(201).json({
+        id: action.id,
+        operation: action.operation,
+        initiated_by: action.initiated_by,
+        expires_at: action.expires_at,
+        status: 'pending_confirmation',
+      });
+    } catch (error) {
+      logger.error('Failed to initiate admin action', error instanceof Error ? error : new Error(String(error)));
+      return res.status(500).json({ error: 'Failed to initiate admin action' });
+    }
+  });
+
+  // POST /api/admin/actions/:id/confirm
+  router.post('/actions/:id/confirm', async (req: Request, res: Response) => {
+    try {
+      if (!requireAdminActionCredential(req, res)) return;
+
+      const confirmingAdmin = (req.headers['x-user-id'] as string) || '';
+      if (!confirmingAdmin) {
+        return res.status(401).json({ error: 'x-user-id header required to identify the confirming admin' });
+      }
+
+      await ensureAdminConfirmationTable();
+      const action = await adminConfirmationService.confirm(req.params.id as string, confirmingAdmin);
+
+      return res.status(200).json({
+        id: action.id,
+        operation: action.operation,
+        confirmed_by: action.confirmed_by,
+        confirmed_at: action.confirmed_at,
+        params: action.params,
+        status: 'confirmed',
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to confirm admin action';
+      const statusCode = /not found/i.test(message)
+        ? 404
+        : /expired|already confirmed|cannot confirm their own/i.test(message)
+        ? 409
+        : 500;
+      if (statusCode === 500) {
+        logger.error('Failed to confirm admin action', error instanceof Error ? error : new Error(String(error)));
+      }
+      return res.status(statusCode).json({ error: message });
+    }
+  });
+
+  // GET /api/admin/actions/pending
+  router.get('/actions/pending', async (req: Request, res: Response) => {
+    try {
+      if (!requireAdminActionCredential(req, res)) return;
+      await ensureAdminConfirmationTable();
+      const pending = await adminConfirmationService.listPending();
+      return res.json({ pending });
+    } catch (error) {
+      logger.error('Failed to list pending admin actions', error instanceof Error ? error : new Error(String(error)));
+      return res.status(500).json({ error: 'Failed to list pending admin actions' });
     }
   });
 
