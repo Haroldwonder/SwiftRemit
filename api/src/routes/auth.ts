@@ -42,6 +42,7 @@ import {
   revokeFamily,
   rotateRefreshToken,
 } from '../services/tokenStore.js';
+import { getUserRole, verifyUserCredentials } from '../db/userStore.js';
 
 function timestamp(): string {
   return new Date().toISOString();
@@ -78,44 +79,26 @@ function setCookieOptions() {
 }
 
 /**
- * Resolves the role for a user id.
- *
- * Admin identities come from ADMIN_USER_IDS so admin status is never derived
- * from anything the client sends. Integrate with the real user store when one
- * exists.
+ * Resolves the role for a user id from the real user store
+ * (`db/userStore.ts`). `ADMIN_USER_IDS` / `AGENT_USER_IDS` only seed the
+ * initial bootstrap accounts in that store — see the module docstring there
+ * — they are no longer consulted directly on every login.
  */
-function resolveRole(userId: string): UserRole {
-  const admins = (process.env.ADMIN_USER_IDS ?? '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean);
-  if (admins.includes(userId)) return 'admin';
-
-  const agents = (process.env.AGENT_USER_IDS ?? '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean);
-  if (agents.includes(userId)) return 'agent';
-
-  return 'user';
+async function resolveRole(userId: string): Promise<UserRole> {
+  return getUserRole(userId);
 }
 
 /**
- * Stubbed credential check.
+ * Credential check against the real per-user password store.
  *
- * Previously this accepted ANY password when NODE_ENV=test, so the test suite
- * exercised an auth path that could never fail. It now requires a configured
- * password in every environment.
+ * Previously this compared every login's password against a single
+ * `STUB_PASSWORD` shared by every userId, so "authentication" only proved
+ * the caller knew one process-wide secret, not who they were. It now checks
+ * a per-user bcrypt hash, so a valid password for one identity cannot be
+ * used to authenticate as a different one.
  */
-function verifyCredentials(password: string): boolean {
-  const expected = process.env.STUB_PASSWORD;
-  if (!expected) return false;
-
-  const given = Buffer.from(password);
-  const want = Buffer.from(expected);
-  if (given.length !== want.length) return false;
-
-  return crypto.timingSafeEqual(given, want);
+async function verifyCredentials(userId: string, password: string): Promise<boolean> {
+  return verifyUserCredentials(userId, password);
 }
 
 export function createAuthRouter(): Router {
@@ -125,7 +108,7 @@ export function createAuthRouter(): Router {
    * POST /api/auth/login
    * Body: { userId: string, password: string }
    */
-  router.post('/login', (req: Request, res: Response) => {
+  router.post('/login', async (req: Request, res: Response) => {
     const { userId, password } = req.body as Record<string, unknown>;
 
     if (typeof userId !== 'string' || userId.trim().length === 0) {
@@ -151,7 +134,7 @@ export function createAuthRouter(): Router {
       );
     }
 
-    if (!verifyCredentials(password)) {
+    if (!(await verifyCredentials(sanitizedUserId, password))) {
       const lockedNow = recordLoginFailure(sanitizedUserId);
       if (lockedNow) {
         return sendError(
@@ -167,7 +150,7 @@ export function createAuthRouter(): Router {
 
     clearLoginFailures(sanitizedUserId);
 
-    const role = resolveRole(sanitizedUserId);
+    const role = await resolveRole(sanitizedUserId);
     const accessToken = issueAccessToken(sanitizedUserId, role);
     const { token: refreshToken } = issueRefreshToken(sanitizedUserId, role);
 

@@ -27,9 +27,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ─── Vulnerability exception expiry gate ────────────────────────────────────
+  # VULNERABILITY_EXCEPTIONS.md promises "Exceptions reaching their expiration
+  # date automatically fail CI builds until renewed or patched." This job is
+  # what actually enforces that for .trivyignore entries; the trivy-scan job
+  # below depends on it so an expired exception blocks the image scan.
+  check-exception-expiry:
+    name: Vulnerability exception expiry check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Fail if any exception in .trivyignore has expired
+        run: node scripts/check-exception-expiry.js
+
   trivy-scan:
     name: Trivy scan (${{ matrix.service }})
     runs-on: ubuntu-latest
+    needs: check-exception-expiry
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +84,9 @@ jobs:
           severity: "CRITICAL,HIGH"
           exit-code: "1"
           ignore-unfixed: true
+          # Approved, time-boxed exceptions only — check-exception-expiry (above)
+          # fails the build once any entry in this file passes its Expires date.
+          trivyignores: ".trivyignore"
 
       # Upload SARIF even on failure so developers can inspect results
       - name: Upload SARIF to GitHub Security tab
