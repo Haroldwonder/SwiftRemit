@@ -1,0 +1,85 @@
+name: GHCR image retention
+
+# SR-215: prune old per-commit GHCR image tags.
+#
+# deploy-staging.yml pushes an immutable ghcr.io/<repo>/{backend,api,frontend}:<sha_short>
+# tag on every push to main, alongside the mutable :staging tag. Nothing deleted
+# those SHA tags, so GHCR storage for the three image repositories grew unbounded.
+#
+# This workflow deletes SHA-tagged versions older than the retention window while
+# always preserving:
+#   * :staging          — the tag docker-compose.yml runs in the staging env
+#   * :latest / :main    — mutable convenience tags, if ever pushed
+#   * v*                 — semver tags matching a Git release tag (deploy-mainnet.yml)
+#   * the N most recent versions per image, as a rollback buffer
+#
+# Retention window and buffer are also written up in docs/DEPLOYMENT.md.
+
+on:
+  schedule:
+    # Weekly, Mondays 08:00 UTC — one hour after container-security.yml's scan.
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only list what would be deleted (no deletion)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ghcr-cleanup
+  cancel-in-progress: false
+
+env:
+  # Days to keep a per-commit SHA tag before it becomes eligible for pruning.
+  RETENTION_DAYS: "30"
+  # Per-image rollback buffer: this many newest versions are always kept,
+  # regardless of age.
+  KEEP_MOST_RECENT: "10"
+
+jobs:
+  prune:
+    name: Prune per-commit image tags
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune old SHA-tagged versions
+        uses: snok/container-retention-policy@v3.0.0
+        with:
+          account: ${{ github.repository_owner }}
+          # GITHUB_TOKEN can delete versions of packages scoped to this repo.
+          # If the packages are owned at the account level, set a
+          # GHCR_CLEANUP_TOKEN secret (PAT with delete:packages).
+          token: ${{ secrets.GHCR_CLEANUP_TOKEN || secrets.GITHUB_TOKEN }}
+          image-names: >-
+            ${{ github.event.repository.name }}/backend
+            ${{ github.event.repository.name }}/api
+            ${{ github.event.repository.name }}/frontend
+          # Operate on every tag EXCEPT the protected set below. Per-commit tags
+          # (short Git SHAs) are what remains and what gets pruned.
+          image-tags: "!staging !latest !main !develop !v*"
+          tag-selection: both
+          cut-off: ${{ env.RETENTION_DAYS }}d
+          keep-n-most-recent: ${{ env.KEEP_MOST_RECENT }}
+          # Manual runs default to a dry run; the weekly schedule deletes.
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### GHCR retention run"
+            echo ""
+            echo "- Images: \`backend\`, \`api\`, \`frontend\`"
+            echo "- Retention window: ${RETENTION_DAYS} days"
+            echo "- Rollback buffer: ${KEEP_MOST_RECENT} most recent versions per image"
+            echo "- Protected tags: \`staging\`, \`latest\`, \`main\`, \`develop\`, \`v*\`"
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "- Mode: **dry run** (nothing deleted)"
+            else
+              echo "- Mode: delete"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
