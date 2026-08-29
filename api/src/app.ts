@@ -23,6 +23,7 @@ import { createAccountsRouter } from './routes/accounts';
 import { getApiMetrics } from './metrics';
 import { ErrorResponse } from './types';
 import { AnchorStore, PostgresAnchorStore, createAnchorPool } from './db/anchorStore';
+import { getDefaultRemittanceStore } from './db/remittanceStore';
 import { Server as SocketIOServer } from 'socket.io';
 import { createWsHealthRouter } from './websocket/health';
 import { createRateLimitMiddleware, addRateLimitHeaders } from './middleware/rateLimitHeaders';
@@ -121,6 +122,8 @@ async function checkContractReachability() {
 
 export function createApp(options: AppOptions = {}): Application {
   const app = express();
+
+  const remittanceStore = options.remittanceStore ?? (process.env.DATABASE_URL ? getDefaultRemittanceStore() : undefined);
 
   // Initialize instrumented pool if DATABASE_URL is configured
   const pool = options.pool ?? (process.env.DATABASE_URL ? initPool() : null);
@@ -261,7 +264,7 @@ export function createApp(options: AppOptions = {}): Application {
   // Remittances — cursor-based pagination (Issues #472, #531); SR-160: pool
   // passed so failed outbound webhooks are persisted to webhook_dead_letters.
   apiRouter.use('/remittances', createRemittancesRouter({
-    remittanceStore: options.remittanceStore,
+    remittanceStore,
     pool: pool ?? undefined,
   }));
 
@@ -297,7 +300,7 @@ export function createApp(options: AppOptions = {}): Application {
   // existed but was never mounted, so the endpoint was unreachable.
   apiRouter.use('/graphql', createGraphQLRouter({
     pool: analyticsPool ?? undefined,
-    remittanceStore: options.remittanceStore,
+    remittanceStore,
   }));
 
   // SR-056: Mount versioned (/v1/api/...) and unversioned-alias (/api/...)
