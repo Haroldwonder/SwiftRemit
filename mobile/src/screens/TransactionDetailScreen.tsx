@@ -1,5 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, ScrollView, TouchableOpacity, Modal, TextInput, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  ScrollView,
+  TouchableOpacity,
+  Modal,
+  TextInput,
+  Alert,
+  Linking,
+  Share,
+} from 'react-native';
 import { useRoute, RouteProp } from '@react-navigation/native';
 import { remittanceService } from '../services/api';
 import { Remittance, RemittanceStatus, DisputeReason, Receipt } from '../types';
@@ -67,6 +79,51 @@ export default function TransactionDetailScreen() {
       setSubmittingDispute(false);
     }
   }
+
+  async function handleShareReceipt() {
+    if (!receipt) return;
+
+    const summary = [
+      t('receipt.receipt'),
+      `${t('receipt.senderName')}: ${receipt.sender}`,
+      `${t('receipt.recipientName')}: ${receipt.recipient}`,
+      `${t('fees.youSend')}: ${receipt.amount_sent} ${receipt.currency_from}`,
+      `${t('fees.recipientReceives')}: ${receipt.amount_received} ${receipt.currency_to}`,
+      `${t('receipt.fxRate')}: ${receipt.fx_rate.toFixed(4)}`,
+      `${t('receipt.feesCharged')}: $${receipt.fees_charged}`,
+      `${t('receipt.referenceNumber')}: ${receipt.remittance_id}`,
+    ].join('\n');
+
+    try {
+      await Share.share({
+        message: summary,
+        title: t('receipt.receipt'),
+      });
+    } catch {
+      Alert.alert('Error', 'Unable to share receipt.');
+    }
+  }
+
+  const openProofOfPayout = async (url?: string) => {
+    if (!url) {
+      Alert.alert('Error', 'No proof of payout is available.');
+      return;
+    }
+
+    if (!/^https?:\/\//i.test(url)) {
+      Alert.alert('Error', 'This proof of payout link is not supported.');
+      return;
+    }
+
+    try {
+      const supported = await Linking.openURL(url);
+      if (!supported) {
+        Alert.alert('Error', 'Unable to open the proof of payout.');
+      }
+    } catch {
+      Alert.alert('Error', 'Unable to open the proof of payout.');
+    }
+  };
 
   if (loading) return <View style={styles.center}><ActivityIndicator testID="loading-indicator" size="large" color="#1A56DB" /></View>;
   if (!remittance) return <View style={styles.center}><Text>Transfer not found.</Text></View>;
@@ -137,14 +194,14 @@ export default function TransactionDetailScreen() {
         )}
 
         {receipt && (
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Share transfer receipt"
-            style={[styles.btn, styles.btnSecondary]}
-            onPress={() => setShowReceiptModal(true)}
-          >
-            <Text style={styles.btnSecondaryText}>{t('receipt.shareReceipt')}</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity style={[styles.btn, styles.btnSecondary]} onPress={() => setShowReceiptModal(true)}>
+              <Text style={styles.btnSecondaryText}>View receipt</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btn} onPress={handleShareReceipt}>
+              <Text style={styles.btnText}>{t('receipt.shareReceipt')}</Text>
+            </TouchableOpacity>
+          </>
         )}
       </ScrollView>
 
@@ -228,10 +285,15 @@ export default function TransactionDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalHeading}>{t('receipt.receipt')}</Text>
-            {receipt && <ReceiptView receipt={receipt} />}
-            <TouchableOpacity style={styles.btn} onPress={() => setShowReceiptModal(false)}>
-              <Text style={styles.btnText}>{t('common.cancel')}</Text>
-            </TouchableOpacity>
+            {receipt && <ReceiptView receipt={receipt} onOpenProofOfPayout={openProofOfPayout} />}
+            <View style={styles.row}>
+              <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={() => setShowReceiptModal(false)}>
+                <Text style={styles.btnOutlineText}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.btn, styles.btnSecondary, styles.btnFlex]} onPress={handleShareReceipt}>
+                <Text style={styles.btnSecondaryText}>{t('receipt.shareReceipt')}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -248,7 +310,13 @@ function Row({ label, value, multiline }: { label: string; value: string; multil
   );
 }
 
-function ReceiptView({ receipt }: { receipt: Receipt }) {
+function ReceiptView({
+  receipt,
+  onOpenProofOfPayout,
+}: {
+  receipt: Receipt;
+  onOpenProofOfPayout: (url?: string) => Promise<void>;
+}) {
   return (
     <ScrollView style={styles.receiptView} contentContainerStyle={styles.receiptContent}>
       <View style={styles.receiptSection}>
@@ -278,7 +346,7 @@ function ReceiptView({ receipt }: { receipt: Receipt }) {
         <Text style={[styles.receiptValueBold, styles.receiptValueGreen]}>{receipt.amount_received} {receipt.currency_to}</Text>
       </View>
       {receipt.proof_of_payout_url && (
-        <TouchableOpacity style={styles.linkButton}>
+        <TouchableOpacity style={styles.linkButton} onPress={() => onOpenProofOfPayout(receipt.proof_of_payout_url)}>
           <Text style={styles.linkButtonText}>{t('receipt.proofOfPayout')}</Text>
         </TouchableOpacity>
       )}
