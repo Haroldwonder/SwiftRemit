@@ -120,9 +120,22 @@ export const remittanceService = {
     return data.remittance;
   },
 
-  async getHistory(walletAddress: string): Promise<Remittance[]> {
-    const { data } = await http.get(`/api/remittance/history/${walletAddress}`);
-    return data.remittances ?? data;
+  async getHistory(walletAddress: string, limit = 20, cursor?: string): Promise<{ remittances: Remittance[]; nextCursor: string | null }> {
+    const { data } = await http.get(`/api/remittance/history/${walletAddress}`, {
+      params: {
+        limit,
+        ...(cursor ? { cursor } : {}),
+      },
+    });
+    // Support both paginated shape { remittances, nextCursor } and the legacy
+    // flat array so older backends continue to work.
+    if (Array.isArray(data)) {
+      return { remittances: data, nextCursor: null };
+    }
+    if (Array.isArray(data.remittances)) {
+      return { remittances: data.remittances, nextCursor: data.nextCursor ?? null };
+    }
+    return { remittances: data.data ?? [], nextCursor: data.nextCursor ?? null };
   },
 
   async getById(remittanceId: string): Promise<Remittance> {
