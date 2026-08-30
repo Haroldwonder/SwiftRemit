@@ -11,6 +11,7 @@ import {
   Alert,
   Linking,
   Share,
+  RefreshControl,
 } from 'react-native';
 import { useRoute, RouteProp } from '@react-navigation/native';
 import { remittanceService } from '../services/api';
@@ -32,6 +33,7 @@ export default function TransactionDetailScreen() {
   const [remittance, setRemittance] = useState<Remittance | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [disputeReason, setDisputeReason] = useState<DisputeReason>('funds_not_received');
@@ -54,6 +56,17 @@ export default function TransactionDetailScreen() {
       console.error('Failed to load transaction:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function onRefresh() {
+    setRefreshing(true);
+    try {
+      await loadTransaction();
+    } catch (err) {
+      console.error('Failed to refresh transaction:', err);
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -132,7 +145,7 @@ export default function TransactionDetailScreen() {
 
   return (
     <>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <Text style={styles.heading}>{t('receipt.receipt')}</Text>
 
         <View
