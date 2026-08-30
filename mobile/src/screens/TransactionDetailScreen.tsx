@@ -135,7 +135,12 @@ export default function TransactionDetailScreen() {
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <Text style={styles.heading}>{t('receipt.receipt')}</Text>
 
-        <View style={styles.progressRow}>
+        <View
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel={`Transfer progress: ${stepIndex + 1} of ${STATUS_STEPS.length}. Current status: ${remittance.status.replace(/_/g, ' ')}`}
+          style={styles.progressRow}
+        >
           {STATUS_STEPS.map((s, i) => (
             <React.Fragment key={s}>
               <View style={[styles.dot, i <= stepIndex ? styles.dotDone : styles.dotPending]} />
@@ -178,7 +183,12 @@ export default function TransactionDetailScreen() {
         )}
 
         {!remittance.dispute && remittance.status !== 'pending_user_transfer_start' && (
-          <TouchableOpacity style={styles.btn} onPress={() => setShowDisputeModal(true)}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Raise a dispute for this transfer"
+            style={styles.btn}
+            onPress={() => setShowDisputeModal(true)}
+          >
             <Text style={styles.btnText}>{t('disputes.raiseDispute')}</Text>
           </TouchableOpacity>
         )}
@@ -207,20 +217,26 @@ export default function TransactionDetailScreen() {
 
             <Text style={styles.label}>{t('disputes.disputeReason')}</Text>
             <View style={styles.reasonRow}>
-              {(['funds_not_received', 'incorrect_amount', 'duplicate', 'other'] as const).map((reason) => (
-                <TouchableOpacity
-                  key={reason}
-                  style={[styles.reasonPill, disputeReason === reason && styles.reasonPillActive]}
-                  onPress={() => setDisputeReason(reason)}
-                >
-                  <Text style={disputeReason === reason ? styles.reasonPillTextActive : styles.reasonPillText}>
-                    {reason === 'funds_not_received' ? t('disputes.fundNotReceived') :
-                     reason === 'incorrect_amount' ? t('disputes.incorrectAmount') :
-                     reason === 'duplicate' ? t('disputes.duplicate') :
-                     t('disputes.other')}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {(['funds_not_received', 'incorrect_amount', 'duplicate', 'other'] as const).map((reason) => {
+                const isSelected = disputeReason === reason;
+                return (
+                  <TouchableOpacity
+                    key={reason}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${reason.replace(/_/g, ' ')} dispute reason`}
+                    accessibilityState={{ selected: isSelected }}
+                    style={[styles.reasonPill, isSelected && styles.reasonPillActive]}
+                    onPress={() => setDisputeReason(reason)}
+                  >
+                    <Text style={isSelected ? styles.reasonPillTextActive : styles.reasonPillText}>
+                      {reason === 'funds_not_received' ? t('disputes.fundNotReceived') :
+                       reason === 'incorrect_amount' ? t('disputes.incorrectAmount') :
+                       reason === 'duplicate' ? t('disputes.duplicate') :
+                       t('disputes.other')}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             <Text style={styles.label}>{t('disputes.description')}</Text>
@@ -234,10 +250,17 @@ export default function TransactionDetailScreen() {
             />
 
             <View style={styles.row}>
-              <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={() => setShowDisputeModal(false)}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Cancel dispute submission"
+                style={[styles.btn, styles.btnOutline]}
+                onPress={() => setShowDisputeModal(false)}
+              >
                 <Text style={styles.btnOutlineText}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Submit dispute"
                 style={[styles.btn, styles.btnFlex, submittingDispute && styles.btnDisabled]}
                 disabled={submittingDispute}
                 onPress={handleSubmitDispute}
