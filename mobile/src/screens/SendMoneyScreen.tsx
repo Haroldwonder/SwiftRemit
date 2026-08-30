@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as SecureStore from 'expo-secure-store';
 import { remittanceService, fxService, anchorService } from '../services/api';
 import { authenticateAndGetSigningKey } from '../services/biometrics';
 import { useNetworkStatus } from '../services/offlineCache';
@@ -117,6 +118,17 @@ export default function SendMoneyScreen() {
       console.log('[SendMoney] Biometric auth succeeded. Keystore key:', authResult.keystoreKeyId);
 
       const remittance = await remittanceService.create(form);
+
+      // SR-184: persist anchor context so KycStatusScreen can look up the
+      // correct anchor for this user rather than falling back to a testnet constant.
+      if (selectedAnchor) {
+        await Promise.all([
+          SecureStore.setItemAsync('last_anchor_id', selectedAnchor.anchor_id),
+          SecureStore.setItemAsync('last_recipient_country', form.recipientCountry),
+          SecureStore.setItemAsync('last_recipient_currency', form.recipientCurrency),
+        ]);
+      }
+
       navigation.navigate('TransactionDetail', { remittanceId: remittance.remittance_id });
     } catch (err: any) {
       Alert.alert('Transfer failed', err?.response?.data?.error || 'Please try again.');
