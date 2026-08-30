@@ -1,6 +1,7 @@
 import axios, { AxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
+import { DeviceEventEmitter } from 'react-native';
 import { Remittance, KycStatus, FxRate, SendMoneyFormData, FeeBreakdown, Anchor, Receipt, Dispute, DisputeReason } from '../types';
 
 const BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://localhost:3000';
@@ -30,6 +31,8 @@ async function isSessionExpired(): Promise<boolean> {
 http.interceptors.request.use(async (config) => {
   if (await isSessionExpired()) {
     await clearAllSecrets();
+    // SR-185: notify the navigator to route back to Login
+    DeviceEventEmitter.emit('SESSION_EXPIRED');
     return Promise.reject(new Error('Session expired due to inactivity'));
   }
   const token = await SecureStore.getItemAsync('auth_token');
@@ -61,6 +64,8 @@ http.interceptors.response.use(
         return http(original);
       } catch (refreshError) {
         await clearAllSecrets();
+        // SR-185: notify navigator to route back to Login
+        DeviceEventEmitter.emit('SESSION_EXPIRED');
         return Promise.reject(refreshError);
       }
     }
