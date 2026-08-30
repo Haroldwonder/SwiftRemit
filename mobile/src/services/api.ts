@@ -1,6 +1,7 @@
 import axios, { AxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
+import { DeviceEventEmitter } from 'react-native';
 import { Remittance, KycStatus, FxRate, SendMoneyFormData, FeeBreakdown, Anchor, Receipt, Dispute, DisputeReason } from '../types';
 
 const BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://localhost:3000';
@@ -30,6 +31,8 @@ async function isSessionExpired(): Promise<boolean> {
 http.interceptors.request.use(async (config) => {
   if (await isSessionExpired()) {
     await clearAllSecrets();
+    // SR-185: notify the navigator to route back to Login
+    DeviceEventEmitter.emit('SESSION_EXPIRED');
     return Promise.reject(new Error('Session expired due to inactivity'));
   }
   const token = await SecureStore.getItemAsync('auth_token');
@@ -61,6 +64,8 @@ http.interceptors.response.use(
         return http(original);
       } catch (refreshError) {
         await clearAllSecrets();
+        // SR-185: notify navigator to route back to Login
+        DeviceEventEmitter.emit('SESSION_EXPIRED');
         return Promise.reject(refreshError);
       }
     }
@@ -100,7 +105,7 @@ export const authService = {
 };
 
 export const remittanceService = {
-  async create(payload: SendMoneyFormData): Promise<Remittance> {
+  async create(payload: SendMoneyFormData, transactionSignature: string): Promise<Remittance> {
     const wallet = await SecureStore.getItemAsync('wallet_address');
     const { data } = await http.post('/api/remittance', {
       sender: wallet,
@@ -108,13 +113,29 @@ export const remittanceService = {
       amount: payload.amountUSD,
       memo: payload.memo || undefined,
       anchor_id: payload.anchorId || undefined,
+      // SR-186: signing artifact derived from keystore-backed key; required
+      // by the server before it will execute the on-chain remittance.
+      transaction_signature: transactionSignature,
     });
     return data.remittance;
   },
 
-  async getHistory(walletAddress: string): Promise<Remittance[]> {
-    const { data } = await http.get(`/api/remittance/history/${walletAddress}`);
-    return data.remittances ?? data;
+  async getHistory(walletAddress: string, limit = 20, cursor?: string): Promise<{ remittances: Remittance[]; nextCursor: string | null }> {
+    const { data } = await http.get(`/api/remittance/history/${walletAddress}`, {
+      params: {
+        limit,
+        ...(cursor ? { cursor } : {}),
+      },
+    });
+    // Support both paginated shape { remittances, nextCursor } and the legacy
+    // flat array so older backends continue to work.
+    if (Array.isArray(data)) {
+      return { remittances: data, nextCursor: null };
+    }
+    if (Array.isArray(data.remittances)) {
+      return { remittances: data.remittances, nextCursor: data.nextCursor ?? null };
+    }
+    return { remittances: data.data ?? [], nextCursor: data.nextCursor ?? null };
   },
 
   async getById(remittanceId: string): Promise<Remittance> {
