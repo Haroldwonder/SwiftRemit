@@ -105,7 +105,7 @@ export const authService = {
 };
 
 export const remittanceService = {
-  async create(payload: SendMoneyFormData): Promise<Remittance> {
+  async create(payload: SendMoneyFormData, transactionSignature: string): Promise<Remittance> {
     const wallet = await SecureStore.getItemAsync('wallet_address');
     const { data } = await http.post('/api/remittance', {
       sender: wallet,
@@ -113,6 +113,9 @@ export const remittanceService = {
       amount: payload.amountUSD,
       memo: payload.memo || undefined,
       anchor_id: payload.anchorId || undefined,
+      // SR-186: signing artifact derived from keystore-backed key; required
+      // by the server before it will execute the on-chain remittance.
+      transaction_signature: transactionSignature,
     });
     return data.remittance;
   },
