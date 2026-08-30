@@ -11,6 +11,9 @@ export default function HomeScreen() {
       <Text style={styles.sub}>What would you like to do?</Text>
 
       <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel="Send money to family and friends abroad"
+        accessibilityHint="Opens the send money flow"
         style={[styles.card, styles.primary]}
         onPress={() => navigation.navigate('SendMoney' as never)}
       >
@@ -20,6 +23,9 @@ export default function HomeScreen() {
       </TouchableOpacity>
 
       <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel="View transaction history"
+        accessibilityHint="Opens your past transfers"
         style={styles.card}
         onPress={() => navigation.navigate('TransactionHistory' as never)}
       >
@@ -29,6 +35,9 @@ export default function HomeScreen() {
       </TouchableOpacity>
 
       <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel="Check identity verification status"
+        accessibilityHint="Opens the KYC status screen"
         style={styles.card}
         onPress={() => navigation.navigate('KycStatus' as never)}
       >

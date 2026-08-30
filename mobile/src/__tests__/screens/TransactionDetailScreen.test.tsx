@@ -73,12 +73,13 @@ describe('TransactionDetailScreen', () => {
     expect(getByText('Transfer Details')).toBeTruthy();
   });
 
-  it('renders the progress stepper', async () => {
+  it('renders the progress stepper with assistive progress text', async () => {
     mockGetById.mockResolvedValue(SAMPLE);
-    const { getByText } = await render(<TransactionDetailScreen />);
+    const { getByA11yRole, getByText } = await render(<TransactionDetailScreen />);
     await waitFor(() => {
       expect(getByText('Transfer Details')).toBeTruthy();
     });
+    expect(getByA11yRole('progressbar')).toHaveProp('accessibilityLabel', expect.stringMatching(/transfer progress|completed/i));
   });
 
   it('calls getById with the route remittanceId param', async () => {

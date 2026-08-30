@@ -45,7 +45,12 @@ function TabIcon({ name }: { name: string }) {
     History: '📋',
     KYC: '✅',
   };
-  return <Text style={{ fontSize: 20 }}>{icons[name] ?? '•'}</Text>;
+  const label = name === 'Home' ? 'Home tab' : name === 'History' ? 'Transaction history tab' : name === 'KYC' ? 'Verification tab' : `${name} tab`;
+  return (
+    <Text accessibilityLabel={label} accessibilityRole="imagebutton" style={{ fontSize: 20 }}>
+      {icons[name] ?? '•'}
+    </Text>
+  );
 }
 
 function MainTabs() {
