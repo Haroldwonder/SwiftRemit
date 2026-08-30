@@ -13,7 +13,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { remittanceService, fxService, anchorService } from '../services/api';
-import { authenticateAndGetSigningKey } from '../services/biometrics';
+import { authenticateAndGetSigningKey, signTransaction } from '../services/biometrics';
 import { useNetworkStatus } from '../services/offlineCache';
 import { t } from '../services/i18n';
 import OfflineBanner from '../components/OfflineBanner';
@@ -112,11 +112,28 @@ export default function SendMoneyScreen() {
         return;
       }
 
-      // Success: authResult.keystoreKeyId contains the OS keystore key ID
-      // In production, this would be passed to the signing function
-      console.log('[SendMoney] Biometric auth succeeded. Keystore key:', authResult.keystoreKeyId);
+      // SR-186: Derive a signing artifact from the keystore-backed key and
+      // the transaction payload.  Fail closed: if signing throws, the transfer
+      // is blocked rather than proceeding with no cryptographic proof.
+      const wallet = await SecureStore.getItemAsync('wallet_address');
+      let transactionSignature: string;
+      try {
+        transactionSignature = await signTransaction({
+          walletAddress: wallet ?? '',
+          amountUSD: form.amountUSD,
+          recipientCountry: form.recipientCountry,
+          anchorId: form.anchorId,
+        });
+      } catch (sigErr) {
+        console.error('[SendMoney] Signing failed — transfer blocked.', sigErr);
+        Alert.alert(
+          'Signing failed',
+          'Could not produce a signing artifact. The transfer was blocked for your security. Please try again.',
+        );
+        return;
+      }
 
-      const remittance = await remittanceService.create(form);
+      const remittance = await remittanceService.create(form, transactionSignature);
       navigation.navigate('TransactionDetail', { remittanceId: remittance.remittance_id });
     } catch (err: any) {
       Alert.alert('Transfer failed', err?.response?.data?.error || 'Please try again.');
