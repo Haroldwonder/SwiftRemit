@@ -107,6 +107,8 @@ mod test_contract_upgrade_governance;
 mod test_invariants;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_circuit_breaker;
+#[cfg(all(test, feature = "legacy-tests"))]
+mod test_asset_verification;
 #[cfg(test)]
 mod test_fee_differential;
 
