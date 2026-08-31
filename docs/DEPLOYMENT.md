@@ -10,7 +10,7 @@
 2. **Sign in** with your GitHub account
 3. **Import Project**:
    - Click "Add New..." → "Project"
-   - Select your GitHub repository: `Haroldwonder/SwiftRemit`
+   - Select your GitHub repository: `richardiyamura/SwiftRemit`
    - Select branch: `refactor/production-readiness-soroban`
 4. **Configure Project**:
    - Framework Preset: Vite
@@ -73,7 +73,7 @@ vercel
 2. **Sign in** with GitHub
 3. **Add new site** → "Import an existing project"
 4. **Connect to Git provider**: GitHub
-5. **Select repository**: `Haroldwonder/SwiftRemit`
+5. **Select repository**: `richardiyamura/SwiftRemit`
 6. **Configure**:
    - Branch: `refactor/production-readiness-soroban`
    - Base directory: `frontend`
@@ -107,7 +107,7 @@ netlify deploy --prod
 ### Alternative: GitHub Pages
 
 1. **Enable GitHub Pages**:
-   - Go to: https://github.com/Haroldwonder/SwiftRemit/settings/pages
+   - Go to: https://github.com/richardiyamura/SwiftRemit/settings/pages
    - Source: Deploy from a branch
    - Branch: `refactor/production-readiness-soroban`
    - Folder: `/frontend` (if available) or `/` (root)
@@ -409,7 +409,7 @@ Copy the relevant example file and fill in production values before deploying.
 | `ANCHOR_TIMEOUT_HOURS` | ❌ | Hours before a pending anchor transaction is marked as error (default: `24`) |
 | `ANCHOR_TIMEOUT_WEBHOOK_URL` | ❌ | Webhook URL notified when a transaction times out in `pending_anchor` status |
 
-See [`backend/.env.example`](backend/.env.example) for the full list with inline comments.
+See [`backend/.env.example`](../backend/.env.example) for the full list with inline comments.
 
 ### API Service (`api/.env.example`)
 
@@ -426,7 +426,7 @@ See [`backend/.env.example`](backend/.env.example) for the full list with inline
 | `CURRENCY_CONFIG_ENV_OVERRIDE` | ❌ | Set to `true` to allow env-variable overrides of currency config (default: `false`) |
 | `CURRENCY_OVERRIDES` | ❌ | JSON array of currency overrides, e.g. `[{"code":"USD","symbol":"$","decimal_precision":2}]` |
 
-See [`api/.env.example`](api/.env.example) for the full list with inline comments.
+See [`api/.env.example`](../api/.env.example) for the full list with inline comments.
 
 ### Frontend (`frontend/.env.example`)
 
@@ -440,7 +440,7 @@ See [`api/.env.example`](api/.env.example) for the full list with inline comment
 | `VITE_EURC_ISSUER` | ❌ | EURC issuer public key (optional, for EURC support) |
 | `VITE_USDC_TOKEN_ID` | ✅ | USDC token contract ID on Soroban |
 
-See [`frontend/.env.example`](frontend/.env.example) for the full list with inline comments.
+See [`frontend/.env.example`](../frontend/.env.example) for the full list with inline comments.
 
 > **Security note:** Never commit `.env` files to version control. Use your deployment
 > platform's secret management (e.g. Vercel environment variables, AWS Secrets Manager,
@@ -504,14 +504,14 @@ the target commit to rebuild and re-push it.
 ## Support
 
 - **Documentation**: See README.md files in each directory
-- **Issues**: https://github.com/Haroldwonder/SwiftRemit/issues
+- **Issues**: https://github.com/richardiyamura/SwiftRemit/issues
 - **Stellar Discord**: https://discord.gg/stellar
 
 ---
 
 ## Quick Links
 
-- **Repository**: https://github.com/Haroldwonder/SwiftRemit
+- **Repository**: https://github.com/richardiyamura/SwiftRemit
 - **Branch**: refactor/production-readiness-soroban
 - **Stellar Testnet**: https://horizon-testnet.stellar.org
 - **Freighter Wallet**: https://www.freighter.app/

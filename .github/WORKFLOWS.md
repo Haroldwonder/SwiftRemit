@@ -75,25 +75,22 @@ Starts PostgreSQL and runs migrations.
 - Can run in parallel (same code checked twice, faster feedback)
 - Ideal for backend-only PRs
 
+**Consolidation completed:** 2026-08-28
+- Removed legacy ci.yml, backend-ci.yml, and contract-ci.yml
+- All CI now runs through consolidated workflows only
+- Branch protection rules updated to reference consolidated job names
+
 ## Independent Workflows
 These run on dedicated schedules and are NOT consolidated:
 
 - **security-audit.yml** — Scheduled security scans (runs daily)
 - **dependency-security.yml** — Dependency checks (scheduled)
 - **container-security.yml** — Container image scans (on release)
+- **ghcr-cleanup.yml** — Prune old per-commit GHCR image tags (weekly, SR-215)
 - **deploy-staging.yml** — Deploy to staging (manual trigger)
 - **deploy-mainnet.yml** — Deploy to mainnet (manual trigger)
 - **release.yml** — Version bumps & releases (manual trigger)
 - **publish-abi.yml** — Publish contract ABI (on contract changes)
-
-## Legacy Workflows (To Deprecate)
-
-These are replaced by the consolidated workflows:
-- ci.yml → ci-consolidated.yml
-- backend-ci.yml → backend-ci-consolidated.yml (or remove if no longer needed)
-- contract-ci.yml → contract-ci-consolidated.yml
-
-Keep both old and new temporarily for a soft cutover. After verifying consolidated versions work correctly, delete the old files.
 
 ## Concurrency & Cancellation
 

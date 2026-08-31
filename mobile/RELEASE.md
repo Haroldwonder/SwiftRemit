@@ -4,6 +4,59 @@ This document covers how to ship a build to Apple TestFlight and Google Play int
 
 ---
 
+## Local Development
+
+Before releasing, set up your local development environment to test changes on simulators or physical devices.
+
+### Quick Start
+
+```bash
+cd mobile
+npm install
+cp .env.example .env
+npx expo start
+```
+
+### Running on Simulators
+
+**iOS Simulator (macOS):**
+```bash
+npx expo start
+i
+```
+
+Requires Xcode 14+ with iOS 14.4+ simulator.
+
+**Android Emulator:**
+```bash
+npx expo start
+a
+```
+
+Requires Android Studio with API 21+ emulator configured.
+
+### Running on Physical Devices
+
+1. Install the **Expo Go** app from the App Store (iOS) or Google Play (Android)
+2. Start the development server: `npx expo start`
+3. Scan the QR code with your device camera (iOS) or the Expo Go app (Android)
+
+### Environment Configuration
+
+Edit `mobile/.env` to customize the API base URL and other settings:
+
+```env
+# API endpoint for the mobile app
+REACT_APP_API_URL=http://localhost:3000
+
+# EAS project ID (from Expo dashboard)
+EAS_PROJECT_ID=your_project_id_here
+```
+
+See [CONFIGURATION.md](../CONFIGURATION.md) for the full list of available variables.
+
+---
+
 ## Prerequisites
 
 | Tool | Version | Install |
@@ -128,16 +181,32 @@ The `mobile-ci.yml` workflow builds a `preview` profile on every push to `main` 
 2. Manually trigger the workflow with the `production` profile, or add a separate `release.yml` job that detects the `mobile-v*` tag pattern and runs:
 
 ```yaml
-- name: EAS Submit iOS
-  run: eas submit --platform ios --profile production --non-interactive
+- name: EAS Build Production iOS
+  run: npx eas-cli build --platform ios --profile production --non-interactive
   env:
     EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-- name: EAS Submit Android
-  run: eas submit --platform android --profile production --non-interactive
+- name: EAS Build Production Android
+  run: npx eas-cli build --platform android --profile production --non-interactive
   env:
     EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+- name: EAS Submit iOS
+  run: npx eas-cli submit --platform ios --profile production --non-interactive
+  env:
+    EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    APPLE_ID: ${{ secrets.APPLE_ID }}
+    ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+    APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+- name: EAS Submit Android
+  run: npx eas-cli submit --platform android --profile production --non-interactive
+  env:
+    EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    GOOGLE_PLAY_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_KEY }}
 ```
+
+**Note:** `eas.json`'s `submit.production` config uses environment variable interpolation (e.g., `$APPLE_ID`, `$ASC_APP_ID`). These secrets are mapped from GitHub Actions secrets (or EAS secrets if using local submission). The Google Play service account key path uses `$GOOGLE_PLAY_SERVICE_ACCOUNT_KEY`, which should be set to the path of the key file on the CI runner (typically created from a GitHub secret as a temporary file during the job).
 
 ---
 

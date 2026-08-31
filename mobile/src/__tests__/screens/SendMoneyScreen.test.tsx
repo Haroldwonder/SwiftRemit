@@ -6,8 +6,12 @@ import { remittanceService, fxService } from '../../services/api';
 import * as biometrics from '../../services/biometrics';
 
 jest.mock('../../services/api', () => ({
-  remittanceService: { create: jest.fn() },
+  remittanceService: {
+    create: jest.fn(),
+    getFeeBreakdown: jest.fn(),
+  },
   fxService: { getRate: jest.fn() },
+  anchorService: { getAvailableAnchors: jest.fn() },
 }));
 
 jest.mock('../../services/biometrics', () => ({
@@ -15,7 +19,9 @@ jest.mock('../../services/biometrics', () => ({
 }));
 
 const mockCreate = remittanceService.create as jest.Mock;
+const mockGetFeeBreakdown = remittanceService.getFeeBreakdown as jest.Mock;
 const mockGetRate = fxService.getRate as jest.Mock;
+const mockGetAvailableAnchors = require('../../services/api').anchorService.getAvailableAnchors as jest.Mock;
 const mockAuthBio = biometrics.authenticateWithBiometrics as jest.Mock;
 const mockAlertAlert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
 
@@ -25,8 +31,18 @@ const mockNavigate = jest.fn();
 describe('SendMoneyScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
     useNavigation.mockReturnValue({ navigate: mockNavigate });
     mockGetRate.mockResolvedValue({ rate: 56.5, from: 'USD', to: 'PHP', timestamp: '', provider: '', cached: false });
+    mockGetFeeBreakdown.mockResolvedValue({
+      sendFee: { amount: '2.50' },
+      fxFee: { amount: '1.50' },
+      payoutFee: { amount: '0.50' },
+      total: { amount: '4.50' },
+      recipientReceives: '5,600.00',
+      recipientCurrency: 'PHP',
+    });
+    mockGetAvailableAnchors.mockResolvedValue([]);
     mockAuthBio.mockResolvedValue(true);
   });
 
@@ -66,6 +82,12 @@ describe('SendMoneyScreen', () => {
       // pill selected — no crash
       expect(getByText('MXN')).toBeTruthy();
     });
+
+    it('exposes selected currency state to assistive tech', async () => {
+      const { getByRole } = await render(<SendMoneyScreen />);
+      const phpButton = getByRole('button', { name: /php/i });
+      expect(phpButton.props.accessibilityState).toMatchObject({ selected: true });
+    });
   });
 
   // ── Step 2 ─────────────────────────────────────────────────────────────
@@ -89,6 +111,26 @@ describe('SendMoneyScreen', () => {
       fireEvent.changeText(utils.getByPlaceholderText('0.00'), '100');
       await waitFor(() => {
         expect(utils.getByText(/1 USD = 56\.5000 PHP/)).toBeTruthy();
+      });
+    });
+
+    it('debounces quote fetches and only makes one request per typing window', async () => {
+      jest.useFakeTimers();
+      const utils = await render(<SendMoneyScreen />);
+      fillStep1AndAdvance(utils);
+      const amountInput = utils.getByPlaceholderText('0.00');
+
+      fireEvent.changeText(amountInput, '1');
+      fireEvent.changeText(amountInput, '10');
+      fireEvent.changeText(amountInput, '100');
+
+      act(() => {
+        jest.advanceTimersByTime(500);
+      });
+
+      await waitFor(() => {
+        expect(mockGetRate).toHaveBeenCalledTimes(1);
+        expect(mockGetFeeBreakdown).toHaveBeenCalledTimes(1);
       });
     });
 

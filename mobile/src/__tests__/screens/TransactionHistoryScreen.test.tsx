@@ -1,5 +1,14 @@
+/**
+ * Tests for TransactionHistoryScreen (SR-187)
+ *
+ * SR-187 additions:
+ * - Second page is requested when FlatList fires onEndReached.
+ * - Duplicate items from repeated page loads are not rendered twice.
+ * - Search input filters visible rows.
+ * - Status filter strips rows that don't match.
+ */
 import React from 'react';
-import { render, waitFor, fireEvent } from '@testing-library/react-native';
+import { render, waitFor, fireEvent, act } from '@testing-library/react-native';
 import TransactionHistoryScreen from '../../screens/TransactionHistoryScreen';
 import { remittanceService } from '../../services/api';
 import * as SecureStore from 'expo-secure-store';
@@ -17,32 +26,24 @@ const mockGetItemAsync = SecureStore.getItemAsync as jest.Mock;
 const { useNavigation } = require('@react-navigation/native');
 const mockNavigate = jest.fn();
 
-const SAMPLE_REMITTANCES: Remittance[] = [
-  {
-    remittance_id: 'rm-001',
+function makeRemittance(id: string, overrides: Partial<Remittance> = {}): Remittance {
+  return {
+    remittance_id: id,
     sender: 'GABCD',
     agent: 'Agent Philippines',
-    amount: '250.00',
-    fee: '6.25',
+    amount: '100.00',
+    fee: '2.50',
     currency: 'PHP',
     status: 'completed',
-    memo: 'School fees',
+    memo: null,
     created_at: '2026-01-15T10:00:00Z',
     updated_at: '2026-01-15T10:05:00Z',
-  },
-  {
-    remittance_id: 'rm-002',
-    sender: 'GABCD',
-    agent: 'Agent Mexico',
-    amount: '100.00',
-    fee: null,
-    currency: 'MXN',
-    status: 'pending_external',
-    memo: null,
-    created_at: '2026-02-01T09:00:00Z',
-    updated_at: '2026-02-01T09:01:00Z',
-  },
-];
+    ...overrides,
+  };
+}
+
+const PAGE_1 = [makeRemittance('rm-001', { amount: '250.00' }), makeRemittance('rm-002', { amount: '100.00', status: 'pending_external' })];
+const PAGE_2 = [makeRemittance('rm-003', { amount: '75.00', agent: 'Agent Mexico' })];
 
 describe('TransactionHistoryScreen', () => {
   beforeEach(() => {
@@ -53,7 +54,6 @@ describe('TransactionHistoryScreen', () => {
 
   // ── Loading state ──────────────────────────────────────────────────────
   it('shows a loading spinner while fetching data', async () => {
-    // Never resolves so we stay in loading state
     mockGetHistory.mockReturnValue(new Promise(() => {}));
     const { getByTestId } = await render(<TransactionHistoryScreen />);
     expect(getByTestId('loading-indicator')).toBeTruthy();
@@ -61,41 +61,138 @@ describe('TransactionHistoryScreen', () => {
 
   // ── Empty state ────────────────────────────────────────────────────────
   it('shows the empty state when no remittances are returned', async () => {
-    mockGetHistory.mockResolvedValue([]);
+    mockGetHistory.mockResolvedValue({ remittances: [], nextCursor: null });
     const { getByText } = await render(<TransactionHistoryScreen />);
     await waitFor(() => {
-      expect(getByText('No transfers yet.')).toBeTruthy();
+      expect(getByText('No transfers found.')).toBeTruthy();
     });
-    expect(getByText('Your transaction history will appear here.')).toBeTruthy();
   });
 
   // ── Populated state ────────────────────────────────────────────────────
   it('renders a list of remittances after loading', async () => {
-    mockGetHistory.mockResolvedValue(SAMPLE_REMITTANCES);
+    mockGetHistory.mockResolvedValue({ remittances: PAGE_1, nextCursor: null });
     const { getByText } = await render(<TransactionHistoryScreen />);
     await waitFor(() => {
       expect(getByText('$250.00 USD')).toBeTruthy();
     });
-    expect(getByText('Agent Philippines')).toBeTruthy();
     expect(getByText('$100.00 USD')).toBeTruthy();
-    expect(getByText('Agent Mexico')).toBeTruthy();
   });
 
   it('displays the correct status badge label for a completed remittance', async () => {
-    mockGetHistory.mockResolvedValue([SAMPLE_REMITTANCES[0]]);
+    mockGetHistory.mockResolvedValue({ remittances: [PAGE_1[0]], nextCursor: null });
     const { getByText } = await render(<TransactionHistoryScreen />);
     await waitFor(() => expect(getByText('Completed')).toBeTruthy());
   });
 
   it('displays the correct status badge label for a pending remittance', async () => {
-    mockGetHistory.mockResolvedValue([SAMPLE_REMITTANCES[1]]);
+    mockGetHistory.mockResolvedValue({ remittances: [PAGE_1[1]], nextCursor: null });
     const { getByText } = await render(<TransactionHistoryScreen />);
     await waitFor(() => expect(getByText('Processing')).toBeTruthy());
   });
 
+  // ── SR-187: Pagination — second page requested on scroll-to-end ────────
+  it('calls getHistory a second time when FlatList fires onEndReached', async () => {
+    mockGetHistory
+      .mockResolvedValueOnce({ remittances: PAGE_1, nextCursor: 'cursor-page-2' })
+      .mockResolvedValueOnce({ remittances: PAGE_2, nextCursor: null });
+
+    const { getByTestId, getByText } = await render(<TransactionHistoryScreen />);
+    await waitFor(() => expect(getByText('$250.00 USD')).toBeTruthy());
+
+    // Simulate reaching the end of the list
+    await act(async () => {
+      const list = getByTestId('transaction-list');
+      fireEvent(list, 'onEndReached');
+    });
+
+    await waitFor(() => {
+      expect(mockGetHistory).toHaveBeenCalledTimes(2);
+      // Second call must include the cursor
+      expect(mockGetHistory).toHaveBeenNthCalledWith(2, 'wallet-address-123', 20, 'cursor-page-2');
+    });
+  });
+
+  // ── SR-187: No duplicate items after pagination ────────────────────────
+  it('does not render duplicate items when the same page is loaded twice', async () => {
+    mockGetHistory
+      .mockResolvedValueOnce({ remittances: PAGE_1, nextCursor: 'cursor-page-2' })
+      .mockResolvedValueOnce({ remittances: PAGE_1, nextCursor: null }); // Same data returned
+
+    const { getByTestId, getAllByText } = await render(<TransactionHistoryScreen />);
+    await waitFor(() => getAllByText('$250.00 USD'));
+
+    await act(async () => {
+      const list = getByTestId('transaction-list');
+      fireEvent(list, 'onEndReached');
+    });
+
+    await waitFor(() => expect(mockGetHistory).toHaveBeenCalledTimes(2));
+
+    // $250.00 USD should appear exactly once (deduplication by remittance_id)
+    const items = getAllByText('$250.00 USD');
+    expect(items).toHaveLength(1);
+  });
+
+  // ── SR-187: Second page items are appended, not replaced ──────────────
+  it('appends page 2 items after page 1 items', async () => {
+    mockGetHistory
+      .mockResolvedValueOnce({ remittances: PAGE_1, nextCursor: 'cursor-page-2' })
+      .mockResolvedValueOnce({ remittances: PAGE_2, nextCursor: null });
+
+    const { getByTestId, getByText } = await render(<TransactionHistoryScreen />);
+    await waitFor(() => expect(getByText('$250.00 USD')).toBeTruthy());
+
+    await act(async () => {
+      const list = getByTestId('transaction-list');
+      fireEvent(list, 'onEndReached');
+    });
+
+    await waitFor(() => {
+      // Both pages visible
+      expect(getByText('$250.00 USD')).toBeTruthy();
+      expect(getByText('$75.00 USD')).toBeTruthy();
+    });
+  });
+
+  // ── SR-187: Search filter ──────────────────────────────────────────────
+  it('filters items by agent name when user types in the search box', async () => {
+    const mixed = [
+      makeRemittance('rm-001', { agent: 'Agent Philippines', amount: '250.00' }),
+      makeRemittance('rm-002', { agent: 'Agent Mexico', amount: '100.00' }),
+    ];
+    mockGetHistory.mockResolvedValue({ remittances: mixed, nextCursor: null });
+    const { getByTestId, getByText, queryByText } = await render(<TransactionHistoryScreen />);
+    await waitFor(() => expect(getByText('$250.00 USD')).toBeTruthy());
+
+    fireEvent.changeText(getByTestId('search-input'), 'mexico');
+
+    await waitFor(() => {
+      expect(getByText('$100.00 USD')).toBeTruthy();
+      expect(queryByText('$250.00 USD')).toBeNull();
+    });
+  });
+
+  // ── SR-187: Status filter ──────────────────────────────────────────────
+  it('filters items by status when the "Completed" filter is pressed', async () => {
+    const mixed = [
+      makeRemittance('rm-001', { status: 'completed', amount: '250.00' }),
+      makeRemittance('rm-002', { status: 'error', amount: '100.00' }),
+    ];
+    mockGetHistory.mockResolvedValue({ remittances: mixed, nextCursor: null });
+    const { getByTestId, getByText, queryByText } = await render(<TransactionHistoryScreen />);
+    await waitFor(() => expect(getByText('$250.00 USD')).toBeTruthy());
+
+    fireEvent.press(getByTestId('filter-completed'));
+
+    await waitFor(() => {
+      expect(getByText('$250.00 USD')).toBeTruthy();
+      expect(queryByText('$100.00 USD')).toBeNull();
+    });
+  });
+
   // ── Navigation ─────────────────────────────────────────────────────────
   it('navigates to TransactionDetail when a row is pressed', async () => {
-    mockGetHistory.mockResolvedValue(SAMPLE_REMITTANCES);
+    mockGetHistory.mockResolvedValue({ remittances: PAGE_1, nextCursor: null });
     const { getByText } = await render(<TransactionHistoryScreen />);
     await waitFor(() => expect(getByText('$250.00 USD')).toBeTruthy());
     fireEvent.press(getByText('$250.00 USD'));
@@ -107,7 +204,7 @@ describe('TransactionHistoryScreen', () => {
     mockGetHistory.mockRejectedValue(new Error('Network error'));
     const { getByText } = await render(<TransactionHistoryScreen />);
     await waitFor(() => {
-      expect(getByText('No transfers yet.')).toBeTruthy();
+      expect(getByText('No transfers found.')).toBeTruthy();
     });
   });
 

@@ -1,19 +1,53 @@
-# Default owner for anything not matched below.
-# Replace with real team handles as ownership solidifies.
-*                       @Haroldwonder
+# CODEOWNERS — domain-split ownership (SR-213)
+#
+# Each domain routes to a GitHub team so contract-code, infra, backend, and
+# frontend review land with the right reviewers instead of a single handle.
+# Teams live under the Haroldwonder org; until a team has members its rule
+# still resolves (GitHub falls back to the next matching rule / the `*`
+# fallback), so adding people later needs no CODEOWNERS change.
+#
+# Team → domain map and the branch-protection requirements are documented in
+# .github/CODEOWNERS_POLICY.md. Keep the two files in sync.
+#
+# Ordering: later matches win, so the wildcard fallback comes first and the
+# most specific paths come last.
 
-# Smart contract (Soroban/Rust)
-/src/                   @Haroldwonder
-/tests/                 @Haroldwonder
-/fuzz/                  @Haroldwonder
-/benches/               @Haroldwonder
+# ── Fallback ─────────────────────────────────────────────────────────────────
+*                           @Haroldwonder/maintainers @Haroldwonder
 
-/api/                   @Haroldwonder
-/backend/               @Haroldwonder
-/frontend/              @Haroldwonder
-/mobile/                @Haroldwonder
-/sdk/                   @Haroldwonder
+# ── Smart contract (Soroban / Rust) ─────────────────────────────────────────
+/src/                       @Haroldwonder/contract-team
+/tests/                     @Haroldwonder/contract-team
+/fuzz/                      @Haroldwonder/contract-team
+/benches/                   @Haroldwonder/contract-team
+/Cargo.toml                 @Haroldwonder/contract-team
+/Cargo.lock                 @Haroldwonder/contract-team
+/rust-toolchain.toml        @Haroldwonder/contract-team
 
-/.github/               @Haroldwonder
-/scripts/               @Haroldwonder
-/docs/                  @Haroldwonder
+# ── Backend / API / SDK services ────────────────────────────────────────────
+/api/                       @Haroldwonder/backend-team
+/backend/                   @Haroldwonder/backend-team
+/sdk/                       @Haroldwonder/backend-team
+
+# ── Frontend & mobile ──────────────────────────────────────────────────────
+/frontend/                  @Haroldwonder/frontend-team
+/mobile/                    @Haroldwonder/frontend-team
+
+# ── Infrastructure / CI / deploy / observability ───────────────────────────
+/charts/                    @Haroldwonder/infra-team
+/monitoring/                @Haroldwonder/infra-team
+/scripts/                   @Haroldwonder/infra-team
+/docker-compose.yml         @Haroldwonder/infra-team
+/docker-compose.override.yml @Haroldwonder/infra-team
+/.github/                   @Haroldwonder/infra-team
+/.github/workflows/         @Haroldwonder/infra-team
+
+# ── Docs ───────────────────────────────────────────────────────────────────
+/docs/                      @Haroldwonder/maintainers
+/README.md                  @Haroldwonder/maintainers
+/CONTRIBUTING.md             @Haroldwonder/maintainers
+/SECURITY.md                @Haroldwonder/maintainers
+
+# CODEOWNERS itself and other org-governance files stay with maintainers.
+/.github/CODEOWNERS          @Haroldwonder/maintainers
+/.github/CODEOWNERS_POLICY.md @Haroldwonder/maintainers

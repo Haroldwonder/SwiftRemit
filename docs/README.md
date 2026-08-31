@@ -16,7 +16,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 | [TESTNET_SETUP_GUIDE.md](TESTNET_SETUP_GUIDE.md) | Automated testnet setup script walkthrough |
 | [CONFIGURATION.md](CONFIGURATION.md) | All environment variables and config options |
 | [MIGRATION.md](MIGRATION.md) | Contract migration guide |
-| [RUNBOOK.md](RUNBOOK.md) | Operational runbook — pause/unpause, key rotation, etc. |
+| [RUNBOOK.md](RUNBOOK.md) | Day-to-day operational runbook — pause/unpause, key rotation, stuck migrations, SLO-alert response. Start here; for mainnet rollback see ROLLBACK_RUNBOOK.md |
 
 ---
 
@@ -36,7 +36,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 
 | Document | Description |
 |---|---|
-| [TRANSACTION_CONTROLLER.md](TRANSACTION_CONTROLLER.md) | Transaction controller design |
+| [transaction-controller.md](transaction-controller.md) | Transaction controller service — architecture, API reference, quick start |
 | [TRANSACTION_STATE_MACHINE.md](TRANSACTION_STATE_MACHINE.md) | Remittance lifecycle state machine |
 | [FEE_SERVICE.md](FEE_SERVICE.md) | Fee calculation service — architecture, API, and refactor history |
 | [ASSET_VERIFICATION.md](ASSET_VERIFICATION.md) | Asset verification system |
@@ -49,6 +49,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 | [testing/STATE_MACHINE_TESTING.md](testing/STATE_MACHINE_TESTING.md) | State machine test guide |
 | [testing/TESTING_COMPLETE.md](testing/TESTING_COMPLETE.md) | Test completion report |
 | [testing/TESTING_FEE_BREAKDOWN.md](testing/TESTING_FEE_BREAKDOWN.md) | Fee breakdown test results |
+| [PACT_BROKER.md](PACT_BROKER.md) | Pact Broker setup and the `can-i-deploy` deploy gate (SR-216) |
 
 ### Security & Compliance
 
@@ -72,7 +73,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 |---|---|
 | [PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md) | Production readiness assessment |
 | [PRODUCTION_READINESS_CHECKLIST.md](PRODUCTION_READINESS_CHECKLIST.md) | Pre-mainnet checklist |
-| [ROLLBACK_RUNBOOK.md](ROLLBACK_RUNBOOK.md) | Rollback procedures |
+| [ROLLBACK_RUNBOOK.md](ROLLBACK_RUNBOOK.md) | Canonical mainnet incident recovery — severity matrix, WASM rollback, state migration, authority matrix |
 | [DATA_INVENTORY.md](DATA_INVENTORY.md) | Data inventory and retention policy |
 | [ISSUES.md](ISSUES.md) | Issue tracker (SR-series) |
 
@@ -85,15 +86,12 @@ that used to live at the repository root has been moved or deleted (SR-115).
 | [implementation/ABUSE_PROTECTION.md](implementation/ABUSE_PROTECTION.md) | Abuse protection implementation |
 | [implementation/PROOF_OF_PAYOUT.md](implementation/PROOF_OF_PAYOUT.md) | Proof-of-payout implementation |
 | [implementation/CURRENCY_API.md](implementation/CURRENCY_API.md) | Currency API implementation |
-| [implementation/TRANSACTION_CONTROLLER_IMPL.md](implementation/TRANSACTION_CONTROLLER_IMPL.md) | Transaction controller implementation notes |
 
 ### Integrations & SDKs
 
 | Document | Description |
 |---|---|
-| [ANCHOR_QUICKSTART.md](ANCHOR_QUICKSTART.md) | SEP-24 anchor quick-start |
-| [ANCHOR_SELECTION.md](ANCHOR_SELECTION.md) | Anchor selection guide |
-| [STELLAR_WALLETS_KIT.md](STELLAR_WALLETS_KIT.md) | Stellar Wallets Kit React integration guide |
+| [ANCHOR_QUICKSTART.md](ANCHOR_QUICKSTART.md) | Anchor provider selection (SEP-24) |
 | [MOBILE_FEATURE_PARITY.md](MOBILE_FEATURE_PARITY.md) | Mobile feature parity status |
 
 ### Design
@@ -103,8 +101,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 | [design/login-ui.md](design/login-ui.md) | Login UI design |
 | [design/landing-page.md](design/landing-page.md) | Landing page design |
 | [design/settings-ui.md](design/settings-ui.md) | Settings UI design |
-| [design/color-palette.md](design/color-palette.md) | Color palette |
-| [UI_DESIGN.md](UI_DESIGN.md) | UI design overview |
+| [design/ui-design-links.md](design/ui-design-links.md) | UI design Figma links |
 
 ---
 

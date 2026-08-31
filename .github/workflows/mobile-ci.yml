@@ -182,7 +182,8 @@ jobs:
   eas-build-ios:
     name: EAS Build — iOS
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Push runs block on the real EAS build (--wait), which can take a while.
+    timeout-minutes: 60
     # Only run on pushes to main or when the PR label "build" is present.
     # This keeps the workflow fast on every PR while still producing artifacts
     # on merge.  Remove the condition to build on every PR (costs more EAS minutes).
@@ -206,6 +207,10 @@ jobs:
       - name: Install EAS CLI
         run: npm install --global eas-cli@latest
 
+      # SR-212: no `|| true` — a failed submission fails the job immediately.
+      # On push (merge to main) we `--wait` so the job blocks on the real native
+      # build result; on label-gated PRs we submit `--no-wait` for fast feedback
+      # and rely on the nightly verify-eas-builds job to catch regressions.
       - name: Build iOS preview (no signing)
         id: build
         env:
@@ -292,7 +297,8 @@ jobs:
   eas-build-android:
     name: EAS Build — Android
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Push runs block on the real EAS build (--wait), which can take a while.
+    timeout-minutes: 60
     if: >
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build'))
@@ -313,6 +319,10 @@ jobs:
       - name: Install EAS CLI
         run: npm install --global eas-cli@latest
 
+      # SR-212: no `|| true` — a failed submission fails the job immediately.
+      # On push (merge to main) we `--wait` so the job blocks on the real native
+      # build result; on label-gated PRs we submit `--no-wait` for fast feedback
+      # and rely on the nightly verify-eas-builds job to catch regressions.
       - name: Build Android preview (APK)
         id: build
         env:
@@ -468,6 +478,8 @@ jobs:
       - lint
       - typecheck
       - test
+      - eas-build-ios
+      - eas-build-android
     # Always run so we get a clear pass/fail even if a dependency was skipped.
     if: always()
     steps:

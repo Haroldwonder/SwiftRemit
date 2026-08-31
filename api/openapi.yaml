@@ -356,6 +356,69 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/remittances/{id}/status:
+    patch:
+      tags:
+        - Remittances
+      summary: Transition a remittance status
+      description: Updates a remittance through the server-side status state machine. Requires an agent or admin JWT.
+      operationId: updateRemittanceStatus
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, webhook_endpoint]
+              properties:
+                status:
+                  type: string
+                  enum: [Pending, Processing, Completed, Cancelled, Failed, Disputed]
+                webhook_endpoint:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Status transitioned successfully
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Insufficient privileges
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Remittance not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Invalid status transition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/agents:
     post:
       tags:
@@ -405,6 +468,8 @@ paths:
         - Agents
       summary: Get agent profile (Issue #880)
       operationId: getAgent
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -421,6 +486,12 @@ paths:
                 $ref: '#/components/schemas/AgentResponse'
         '404':
           description: Agent not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
           content:
             application/json:
               schema:

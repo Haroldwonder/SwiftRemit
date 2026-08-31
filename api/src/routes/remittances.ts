@@ -20,8 +20,9 @@ import { Pool } from 'pg';
 import { ErrorResponse } from '../types';
 import { RemittanceStore } from '../db/remittanceStore';
 import { generateReceiptPdf } from '../services/receiptGenerator';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireRole } from '../middleware/auth.js';
 import { deliverWebhook, WebhookPayload } from '../services/webhook';
+import { InvalidTransitionError, RemittanceNotFoundError, RemittanceService } from '../services/remittanceService';
 
 export type RemittanceStatus = 'Pending' | 'Processing' | 'Completed' | 'Cancelled' | 'Failed' | 'Disputed';
 
@@ -72,6 +73,7 @@ function sendError(res: Response, status: number, message: string, code: string)
 export function createRemittancesRouter(options: RemittancesRouterOptions = {}): Router {
   const router = Router();
   const { remittanceStore, pool } = options;
+  const remittanceService = remittanceStore ? new RemittanceService(remittanceStore) : null;
 
   /**
    * Fire an outbound webhook for a remittance status change.
@@ -342,7 +344,7 @@ export function createRemittancesRouter(options: RemittancesRouterOptions = {}):
    *       503:
    *         description: Store not configured
    */
-  router.patch('/:id/status', requireAuth, async (req: Request<{ id: string }>, res: Response) => {
+  router.patch('/:id/status', requireRole('agent', 'admin'), async (req: Request<{ id: string }>, res: Response) => {
     const { id } = req.params;
     const { status: newStatus, webhook_endpoint } = req.body as {
       status?: string;
@@ -387,9 +389,17 @@ export function createRemittancesRouter(options: RemittancesRouterOptions = {}):
     }
 
     // Persist the status change
-    const savedRemittance = await remittanceStore.updateStatus(id, newStatus as RemittanceStatus);
-    if (!savedRemittance) {
-      return sendError(res, 404, `Remittance ${id} not found`, 'NOT_FOUND');
+    let savedRemittance;
+    try {
+      savedRemittance = await remittanceService!.updateStatus(id, newStatus as RemittanceStatus);
+    } catch (error) {
+      if (error instanceof RemittanceNotFoundError) {
+        return sendError(res, 404, error.message, 'NOT_FOUND');
+      }
+      if (error instanceof InvalidTransitionError) {
+        return sendError(res, 409, error.message, 'INVALID_TRANSITION');
+      }
+      throw error;
     }
 
     // Map store Remittance to route Remittance shape for the webhook payload
