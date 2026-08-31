@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
+import { bearer, useTestJwtSecret } from './helpers/authTestUtils';
 
 // ─── Shared in-memory state (vi.hoisted so vi.mock factory can close over it) ─
 
@@ -9,7 +10,7 @@ const { pendingActions } = vi.hoisted(() => ({
 
 // ─── Mock AdminConfirmationService with a faithful in-memory implementation ───
 
-vi.mock('../../../backend/src/admin-confirmation', () => {
+vi.mock('../admin-confirmation', () => {
   let seq = 0;
 
   class MockAdminConfirmationService {
@@ -78,15 +79,17 @@ vi.mock('../../../backend/src/admin-confirmation', () => {
 // ─── Env vars must be set before app is imported ──────────────────────────────
 
 process.env.DATABASE_URL = 'postgres://test:test@localhost/test';
-process.env.ADMIN_API_KEY = 'governance-test-key';
+useTestJwtSecret();
 
 import { createApp } from '../app';
+import { InMemoryAgentStore } from '../routes/agents';
 
-const ADMIN_KEY = 'governance-test-key';
 const ADMIN_1 = 'GADMIN1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
 const ADMIN_2 = 'GADMIN2XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+const ADMIN_1_AUTH = bearer(ADMIN_1, { role: 'admin' });
+const ADMIN_2_AUTH = bearer(ADMIN_2, { role: 'admin' });
 
-const app = createApp();
+const app = createApp({ agentStore: new InMemoryAgentStore() });
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -101,7 +104,7 @@ describe('Governance proposal lifecycle — integration', () => {
     it('admin can initiate a high-risk governance proposal', async () => {
       const res = await request(app)
         .post('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_1_AUTH)
         .send({ operation: 'update_fee', initiated_by: ADMIN_1, params: { fee_bps: 300 } });
 
       expect(res.status).toBe(201);
@@ -123,21 +126,21 @@ describe('Governance proposal lifecycle — integration', () => {
     it('rejects proposal with an invalid operation type', async () => {
       const res = await request(app)
         .post('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_1_AUTH)
         .send({ operation: 'delete_everything', initiated_by: ADMIN_1 });
 
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe('INVALID_OPERATION');
     });
 
-    it('rejects proposal when initiated_by is missing', async () => {
+    it('derives the initiator from the verified token', async () => {
       const res = await request(app)
         .post('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_1_AUTH)
         .send({ operation: 'update_fee' });
 
-      expect(res.status).toBe(400);
-      expect(res.body.error.code).toBe('MISSING_FIELD');
+      expect(res.status).toBe(201);
+      expect(res.body.data.initiated_by).toBe(ADMIN_1);
     });
   });
 
@@ -147,7 +150,7 @@ describe('Governance proposal lifecycle — integration', () => {
     it('second admin can vote to confirm a pending proposal', async () => {
       const proposeRes = await request(app)
         .post('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_1_AUTH)
         .send({ operation: 'withdraw_fees', initiated_by: ADMIN_1, params: {} });
 
       expect(proposeRes.status).toBe(201);
@@ -155,7 +158,7 @@ describe('Governance proposal lifecycle — integration', () => {
 
       const confirmRes = await request(app)
         .post(`/api/admin/actions/${actionId}/confirm`)
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_2_AUTH)
         .send({ confirmed_by: ADMIN_2 });
 
       expect(confirmRes.status).toBe(200);
@@ -167,7 +170,7 @@ describe('Governance proposal lifecycle — integration', () => {
     it('the initiating admin cannot vote on their own proposal (self-confirm blocked)', async () => {
       const proposeRes = await request(app)
         .post('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_1_AUTH)
         .send({ operation: 'remove_agent', initiated_by: ADMIN_1, params: { agent: 'GXXX' } });
 
       expect(proposeRes.status).toBe(201);
@@ -175,7 +178,7 @@ describe('Governance proposal lifecycle — integration', () => {
 
       const confirmRes = await request(app)
         .post(`/api/admin/actions/${actionId}/confirm`)
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_1_AUTH)
         .send({ confirmed_by: ADMIN_1 });
 
       expect(confirmRes.status).toBe(409);
@@ -184,17 +187,17 @@ describe('Governance proposal lifecycle — integration', () => {
     it('lists all proposals pending a second admin vote', async () => {
       await request(app)
         .post('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_1_AUTH)
         .send({ operation: 'update_fee', initiated_by: ADMIN_1, params: { fee_bps: 200 } });
 
       await request(app)
         .post('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_1_AUTH)
         .send({ operation: 'withdraw_fees', initiated_by: ADMIN_2, params: {} });
 
       const listRes = await request(app)
         .get('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY);
+        .set('Authorization', ADMIN_1_AUTH);
 
       expect(listRes.status).toBe(200);
       expect(listRes.body.success).toBe(true);
@@ -204,7 +207,7 @@ describe('Governance proposal lifecycle — integration', () => {
     it('rejects confirm without admin authentication', async () => {
       const proposeRes = await request(app)
         .post('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_1_AUTH)
         .send({ operation: 'update_fee', initiated_by: ADMIN_1, params: {} });
 
       const actionId = proposeRes.body.data.id;
@@ -223,19 +226,19 @@ describe('Governance proposal lifecycle — integration', () => {
     it('confirmed proposal is removed from the pending list', async () => {
       const proposeRes = await request(app)
         .post('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_1_AUTH)
         .send({ operation: 'update_fee', initiated_by: ADMIN_1, params: { fee_bps: 100 } });
 
       const actionId = proposeRes.body.data.id;
 
       await request(app)
         .post(`/api/admin/actions/${actionId}/confirm`)
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_2_AUTH)
         .send({ confirmed_by: ADMIN_2 });
 
       const listRes = await request(app)
         .get('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY);
+        .set('Authorization', ADMIN_1_AUTH);
 
       const stillPending = listRes.body.data.filter((a: { id: string }) => a.id === actionId);
       expect(stillPending).toHaveLength(0);
@@ -257,7 +260,7 @@ describe('Governance proposal lifecycle — integration', () => {
 
       const confirmRes = await request(app)
         .post(`/api/admin/actions/${expiredId}/confirm`)
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_2_AUTH)
         .send({ confirmed_by: ADMIN_2 });
 
       expect(confirmRes.status).toBe(409);
@@ -278,7 +281,7 @@ describe('Governance proposal lifecycle — integration', () => {
 
       const listRes = await request(app)
         .get('/api/admin/actions')
-        .set('x-api-key', ADMIN_KEY);
+        .set('Authorization', ADMIN_1_AUTH);
 
       const expired = listRes.body.data.filter((a: { id: string }) => a.id === expiredId);
       expect(expired).toHaveLength(0);
@@ -287,7 +290,7 @@ describe('Governance proposal lifecycle — integration', () => {
     it('returns 404 for an unknown proposal ID', async () => {
       const confirmRes = await request(app)
         .post('/api/admin/actions/nonexistent-id/confirm')
-        .set('x-api-key', ADMIN_KEY)
+        .set('Authorization', ADMIN_2_AUTH)
         .send({ confirmed_by: ADMIN_2 });
 
       expect(confirmRes.status).toBe(404);

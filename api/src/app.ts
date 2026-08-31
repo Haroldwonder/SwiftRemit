@@ -16,7 +16,7 @@ import settlementsRouter from './routes/settlements';
 import { createRemittancesRouter, RemittancesRouterOptions } from './routes/remittances';
 import { createAdminRouter } from './routes/admin';
 import { createAnalyticsRouter } from './routes/analytics';
-import { createAgentsRouter } from './routes/agents';
+import { createAgentsRouter, AgentStore, PostgresAgentStore } from './routes/agents';
 import { createAgentAnalyticsRouter } from './routes/agent-analytics';
 import { createAuthRouter } from './routes/auth';
 import { createAccountsRouter } from './routes/accounts';
@@ -40,6 +40,7 @@ type AppOptions = {
   io?: SocketIOServer;
   /** Instrumented database pool — when provided, mounts readiness checks */
   pool?: Pool;
+  agentStore?: AgentStore;
 } & RemittancesRouterOptions;
 
 async function probeUrl(urlString: string, timeoutMs = 2000): Promise<{ status: number; ok: boolean; message?: string }> {
@@ -228,9 +229,14 @@ export function createApp(options: AppOptions = {}): Application {
         })()
       : Promise.resolve();
 
+  const agentsStore = options.agentStore ?? (pool ? new PostgresAgentStore(pool) : undefined);
+  const agentBootstrapPromise = agentsStore instanceof PostgresAgentStore
+    ? agentsStore.initializeSchema()
+    : Promise.resolve();
+
   // Expose the bootstrap promise so index.ts can await it before accepting
   // traffic.  Tests (no DATABASE_URL, injected store) get a no-op Promise.
-  (app as any).__anchorBootstrap = anchorBootstrapPromise;
+  (app as any).__anchorBootstrap = Promise.all([anchorBootstrapPromise, agentBootstrapPromise]);
 
   // SR-056: Build a dedicated sub-router that holds all /api/* routes, then
   // mount it with createVersionedRouter so:
@@ -286,7 +292,7 @@ export function createApp(options: AppOptions = {}): Application {
   apiRouter.use('/auth', createAuthRouter());
 
   // Agents — registration and management (Issue #880)
-  apiRouter.use('/agents', createAgentsRouter());
+  apiRouter.use('/agents', createAgentsRouter({ store: agentsStore }));
 
   // Agent analytics — earnings and performance metrics (Issue #947)
   if (analyticsPool) {
