@@ -157,3 +157,143 @@ describe("subscribeToRemittanceEvents", () => {
     expect(mockGetEvents.mock.calls.length).toBe(callsBeforeUnsub);
   }, 10_000);
 });
+
+describe("on / onAny decoded payloads", () => {
+  let client: SwiftRemitClient;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    client = new SwiftRemitClient({
+      contractId: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      networkPassphrase: "Test SDF Network ; September 2015",
+      rpcUrl: "https://soroban-testnet.stellar.org",
+    });
+  });
+
+  it("on() delivers a decoded payload, not raw base64 XDR", async () => {
+    const received: Array<{ remittanceId: bigint; value: unknown; topics: unknown[] }> = [];
+
+    const event = makeEvent("created", 7n, "tok-1");
+    event.value = xdr.ScVal.scvVec([
+      xdr.ScVal.scvU32(1),
+      xdr.ScVal.scvU64(xdr.Uint64.fromString("7")),
+    ]);
+
+    mockGetEvents.mockResolvedValueOnce({ events: [event] }).mockResolvedValue({ events: [] });
+
+    const unsub = client.on("created", (e) => {
+      received.push({
+        remittanceId: e.data.remittanceId,
+        value: e.data.value,
+        topics: e.data.topics,
+      });
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    unsub();
+
+    expect(received).toHaveLength(1);
+    expect(received[0].remittanceId).toBe(7n);
+    expect(received[0].value).toEqual([1, 7n]);
+    expect(received[0].topics[0]).toBe("created");
+  });
+
+  it("on() still exposes the raw base64 XDR under data.raw", async () => {
+    const received: Array<{ topics: string[]; value: string }> = [];
+
+    mockGetEvents
+      .mockResolvedValueOnce({ events: [makeEvent("completed", 3n, "tok-1")] })
+      .mockResolvedValue({ events: [] });
+
+    const unsub = client.on("completed", (e) => received.push(e.data.raw));
+
+    await new Promise((r) => setTimeout(r, 50));
+    unsub();
+
+    expect(received).toHaveLength(1);
+    expect(typeof received[0].value).toBe("string");
+    expect(scValToNative(xdr.ScVal.fromXDR(received[0].topics[0], "base64"))).toBe("completed");
+  });
+
+  it("on() ignores events of other types", async () => {
+    const received: string[] = [];
+
+    mockGetEvents
+      .mockResolvedValueOnce({
+        events: [makeEvent("created", 1n, "tok-1"), makeEvent("completed", 1n, "tok-2")],
+      })
+      .mockResolvedValue({ events: [] });
+
+    const unsub = client.on("created", (e) => received.push(e.type));
+
+    await new Promise((r) => setTimeout(r, 50));
+    unsub();
+
+    expect(received).toEqual(["created"]);
+  });
+
+  it("onAny() delivers decoded payloads for each subscribed type", async () => {
+    const received: Array<{ type: string; remittanceId: bigint | undefined; value: unknown }> = [];
+
+    const created = makeEvent("created", 1n, "tok-1");
+    created.value = xdr.ScVal.scvU32(11);
+    const completed = makeEvent("completed", 2n, "tok-2");
+    completed.value = xdr.ScVal.scvU32(22);
+
+    mockGetEvents
+      .mockResolvedValueOnce({
+        events: [created, completed, makeEvent("cancelled", 3n, "tok-3")],
+      })
+      .mockResolvedValue({ events: [] });
+
+    const unsub = client.onAny(["created", "completed"], (e) => {
+      received.push({ type: e.type, remittanceId: e.data.remittanceId, value: e.data.value });
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    unsub();
+
+    expect(received).toEqual([
+      { type: "created", remittanceId: 1n, value: 11 },
+      { type: "completed", remittanceId: 2n, value: 22 },
+    ]);
+  });
+
+  it("skips remittance-scoped events with no decodable remittance ID", async () => {
+    const received: bigint[] = [];
+
+    const malformed = makeEvent("created", 1n, "tok-1");
+    // Drop the ID topic so the event carries no remittance ID at all.
+    malformed.topic = [malformed.topic[0]];
+
+    mockGetEvents
+      .mockResolvedValueOnce({ events: [malformed, makeEvent("created", 9n, "tok-2")] })
+      .mockResolvedValue({ events: [] });
+
+    const unsub = client.on("created", (e) => received.push(e.data.remittanceId));
+
+    await new Promise((r) => setTimeout(r, 50));
+    unsub();
+
+    expect(received).toEqual([9n]);
+  });
+
+  it("delivers contract-wide events that carry no remittance ID", async () => {
+    const received: Array<{ type: string; topics: unknown[] }> = [];
+
+    const paused = makeEvent("paused", 0n, "tok-1");
+    paused.topic = [paused.topic[0]];
+
+    mockGetEvents.mockResolvedValueOnce({ events: [paused] }).mockResolvedValue({ events: [] });
+
+    const unsub = client.on("paused", (e) => {
+      received.push({ type: e.type, topics: e.data.topics });
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    unsub();
+
+    expect(received).toHaveLength(1);
+    expect(received[0].topics).toEqual(["paused"]);
+  });
+});

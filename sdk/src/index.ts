@@ -20,6 +20,13 @@ export type {
   RemittanceEvent,
   RemittanceEventType,
   EventHandler,
+  // SR-196: decoded event payload types delivered to on()/onAny() handlers
+  AnyEventHandler,
+  RemittanceScopedEventType,
+  DecodedEventData,
+  RemittanceScopedEventData,
+  ContractEventData,
+  EventDataMap,
   SubscribeOptions,
   Unsubscribe,
   AgentStats,

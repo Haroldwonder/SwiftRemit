@@ -32,6 +32,10 @@ import type {
   Corridor,
   FeeEstimate,
   EventHandler,
+  AnyEventHandler,
+  DecodedEventData,
+  EventDataMap,
+  RemittanceScopedEventType,
   Escrow,
   AssetVerification,
   VerificationStatus,
@@ -2093,16 +2097,38 @@ export class SwiftRemitClient {
   }
 
   /**
+   * Decode a subscription event's base64 XDR topics and value into native values.
+   *
+   * `subscribeToRemittanceEvents` hands callers the wire form; `on`/`onAny`
+   * deliver this decoded form so handlers never see raw XDR.
+   */
+  private decodeEventData(event: RemittanceEvent): DecodedEventData {
+    const topics = event.raw.topics.map((t) =>
+      scValToNative(xdr.ScVal.fromXDR(t, "base64"))
+    );
+    const value = scValToNative(xdr.ScVal.fromXDR(event.raw.value, "base64"));
+    return { topics, value, raw: event.raw };
+  }
+
+  /**
    * Subscribe to typed contract events with full TypeScript type safety.
-   * 
+   *
+   * `event.data` carries the decoded event: `topics` and `value` converted from
+   * XDR to native values, plus `remittanceId` for remittance-scoped event types.
+   * The original base64 XDR remains available at `event.data.raw`.
+   *
+   * Remittance-scoped events whose ID topic cannot be decoded are skipped, so
+   * `event.data.remittanceId` is always present for those event types.
+   *
    * @param eventType - The specific event type to listen for
    * @param handler - Callback function called when an event of this type is emitted
    * @param options - Optional subscription options (filter by remittanceId, sender, agent, etc)
    * @returns Unsubscribe function to stop listening
-   * 
+   *
    * @example
    * const unsubscribe = client.on('created', (event) => {
    *   console.log(`Remittance ${event.data.remittanceId} created`);
+   *   console.log('payload:', event.data.value);
    * });
    * // Later:
    * unsubscribe();
@@ -2114,14 +2140,15 @@ export class SwiftRemitClient {
   ): Unsubscribe {
     return this.subscribeToRemittanceEvents(
       (event) => {
-        if (event.type === eventType) {
-          handler({
-            type: eventType,
-            data: event.raw,
-            ledger: event.ledger,
-            ledgerClosedAt: event.ledgerClosedAt,
-          });
-        }
+        if (event.type !== eventType) return;
+        const data = this.buildEventData(event);
+        if (!data) return;
+        handler({
+          type: eventType,
+          data: data as EventDataMap[T],
+          ledger: event.ledger,
+          ledgerClosedAt: event.ledgerClosedAt,
+        });
       },
       options
     );
@@ -2129,35 +2156,70 @@ export class SwiftRemitClient {
 
   /**
    * Subscribe to multiple event types with a single handler.
-   * 
+   *
+   * `event.data` follows the same decoded shape as {@link on}.
+   *
    * @param eventTypes - Array of event types to listen for
    * @param handler - Callback called when any of the specified events are emitted
    * @param options - Optional subscription options
    * @returns Unsubscribe function
-   * 
+   *
    * @example
    * const unsubscribe = client.onAny(['created', 'completed', 'failed'], (event) => {
-   *   console.log(`Event: ${event.type}`);
+   *   console.log(`Event: ${event.type}`, event.data.value);
    * });
    */
   onAny(
     eventTypes: RemittanceEventType[],
-    handler: (event: { type: RemittanceEventType; ledger: number; ledgerClosedAt: string }) => Promise<void> | void,
+    handler: AnyEventHandler,
     options?: SubscribeOptions
   ): Unsubscribe {
     return this.subscribeToRemittanceEvents(
       (event) => {
-        if (eventTypes.includes(event.type)) {
-          handler({
-            type: event.type,
-            ledger: event.ledger,
-            ledgerClosedAt: event.ledgerClosedAt,
-          });
-        }
+        if (!eventTypes.includes(event.type)) return;
+        const data = this.buildEventData(event);
+        if (!data) return;
+        handler({
+          type: event.type,
+          data: data as EventDataMap[RemittanceEventType],
+          ledger: event.ledger,
+          ledgerClosedAt: event.ledgerClosedAt,
+        });
       },
       options
     );
   }
+
+  /**
+   * Decode an event for handler delivery, returning null when the event is
+   * remittance-scoped but carries no decodable ID — such an event is malformed
+   * and would break the `remittanceId: bigint` contract of {@link EventDataMap}.
+   */
+  private buildEventData(
+    event: RemittanceEvent
+  ): DecodedEventData | (DecodedEventData & { remittanceId: bigint }) | null {
+    const decoded = this.decodeEventData(event);
+    const scoped: readonly string[] = SwiftRemitClient.REMITTANCE_SCOPED_EVENTS;
+    if (!scoped.includes(event.type)) {
+      return decoded;
+    }
+    if (event.remittanceId === undefined) return null;
+    return { ...decoded, remittanceId: event.remittanceId };
+  }
+
+  /** Event types that carry a remittance ID in their second topic. */
+  private static readonly REMITTANCE_SCOPED_EVENTS: RemittanceScopedEventType[] = [
+    "created",
+    "completed",
+    "cancelled",
+    "failed",
+    "disputed",
+    "partial_payout",
+    "expired",
+    "dispute_raised",
+    "dispute_resolved",
+    "settlement_completed",
+  ];
 
   /**
    * Get all available contract event types.
