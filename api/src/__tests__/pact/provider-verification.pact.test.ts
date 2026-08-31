@@ -104,12 +104,61 @@ const stateHandlers: Record<string, () => Promise<void>> = {
   'Stellar account exists':      async () => { /* accounts route uses RPC stub */ },
 };
 
-// ── Pact file paths ───────────────────────────────────────────────────────────
+// ── Pact source: broker when configured, local files otherwise ────────────────
+//
+// SR-216: when PACT_BROKER_BASE_URL is set (CI with a Pact Broker / PactFlow),
+// pacts are pulled from the broker by consumer-version selector and the
+// verification result is published back, keyed by the provider commit SHA. That
+// is what the `can-i-deploy` gate in deploy-staging.yml / deploy-mainnet.yml
+// queries. With no broker configured the job falls back to the local pact files
+// downloaded from the consumer CI artifacts, preserving the pre-broker flow.
 
 const PACT_DIR = path.resolve(__dirname, '../../../../../pacts');
 
+const BROKER_URL = process.env.PACT_BROKER_BASE_URL;
+const BROKER_TOKEN = process.env.PACT_BROKER_TOKEN;
+const PROVIDER_VERSION =
+  process.env.PACT_PROVIDER_VERSION || process.env.GITHUB_SHA || 'dev';
+const PROVIDER_BRANCH =
+  process.env.PACT_PROVIDER_BRANCH || process.env.GITHUB_REF_NAME || undefined;
+
 function pactFile(consumer: string): string {
   return path.join(PACT_DIR, `${consumer}-SwiftRemitAPI.json`);
+}
+
+type VerifierOptions = ConstructorParameters<typeof Verifier>[0];
+
+function verifierOptions(consumer: string, providerBaseUrl: string): VerifierOptions {
+  const base = {
+    provider: 'SwiftRemitAPI',
+    providerBaseUrl,
+    stateHandlers,
+    logLevel: 'warn' as const,
+  };
+
+  if (BROKER_URL) {
+    return {
+      ...base,
+      pactBrokerUrl: BROKER_URL,
+      ...(BROKER_TOKEN ? { pactBrokerToken: BROKER_TOKEN } : {}),
+      consumerVersionSelectors: [
+        { consumer, mainBranch: true },
+        { consumer, matchingBranch: true },
+        { consumer, deployedOrReleased: true },
+      ],
+      providerVersion: PROVIDER_VERSION,
+      ...(PROVIDER_BRANCH ? { providerVersionBranch: PROVIDER_BRANCH } : {}),
+      publishVerificationResult: process.env.CI === 'true',
+      failIfNoPactsFound: false,
+    };
+  }
+
+  return {
+    ...base,
+    pactUrls: [pactFile(consumer)],
+    failIfNoPactsFound: true,
+    publishVerificationResult: false,
+  };
 }
 
 // ── Verification ──────────────────────────────────────────────────────────────
@@ -125,43 +174,25 @@ describe('SwiftRemit API — Pact provider verification (all consumers)', () => 
 
   // Verify the Frontend pact — original contract from issue #934.
   it('satisfies the SwiftRemitFrontend contract', async () => {
-    const verifier = new Verifier({
-      provider: 'SwiftRemitAPI',
-      providerBaseUrl: `http://localhost:${serverPort}`,
-      pactUrls: [pactFile('SwiftRemitFrontend')],
-      stateHandlers,
-      failIfNoPactsFound: true,
-      publishVerificationResult: false,
-      logLevel: 'warn',
-    });
+    const verifier = new Verifier(
+      verifierOptions('SwiftRemitFrontend', `http://localhost:${serverPort}`),
+    );
     await verifier.verifyProvider();
   });
 
   // Verify the SDK pact (SR-062).
   it('satisfies the SwiftRemitSDK contract', async () => {
-    const verifier = new Verifier({
-      provider: 'SwiftRemitAPI',
-      providerBaseUrl: `http://localhost:${serverPort}`,
-      pactUrls: [pactFile('SwiftRemitSDK')],
-      stateHandlers,
-      failIfNoPactsFound: true,
-      publishVerificationResult: false,
-      logLevel: 'warn',
-    });
+    const verifier = new Verifier(
+      verifierOptions('SwiftRemitSDK', `http://localhost:${serverPort}`),
+    );
     await verifier.verifyProvider();
   });
 
   // Verify the Mobile pact (SR-062).
   it('satisfies the SwiftRemitMobile contract', async () => {
-    const verifier = new Verifier({
-      provider: 'SwiftRemitAPI',
-      providerBaseUrl: `http://localhost:${serverPort}`,
-      pactUrls: [pactFile('SwiftRemitMobile')],
-      stateHandlers,
-      failIfNoPactsFound: true,
-      publishVerificationResult: false,
-      logLevel: 'warn',
-    });
+    const verifier = new Verifier(
+      verifierOptions('SwiftRemitMobile', `http://localhost:${serverPort}`),
+    );
     await verifier.verifyProvider();
   });
 });

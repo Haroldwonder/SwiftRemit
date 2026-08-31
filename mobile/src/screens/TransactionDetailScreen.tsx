@@ -1,5 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, ScrollView, TouchableOpacity, Modal, TextInput, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  ScrollView,
+  TouchableOpacity,
+  Modal,
+  TextInput,
+  Alert,
+  Linking,
+  Share,
+  RefreshControl,
+} from 'react-native';
 import { useRoute, RouteProp } from '@react-navigation/native';
 import { remittanceService } from '../services/api';
 import { Remittance, RemittanceStatus, DisputeReason, Receipt } from '../types';
@@ -20,6 +33,7 @@ export default function TransactionDetailScreen() {
   const [remittance, setRemittance] = useState<Remittance | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [disputeReason, setDisputeReason] = useState<DisputeReason>('funds_not_received');
@@ -42,6 +56,17 @@ export default function TransactionDetailScreen() {
       console.error('Failed to load transaction:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function onRefresh() {
+    setRefreshing(true);
+    try {
+      await loadTransaction();
+    } catch (err) {
+      console.error('Failed to refresh transaction:', err);
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -68,6 +93,51 @@ export default function TransactionDetailScreen() {
     }
   }
 
+  async function handleShareReceipt() {
+    if (!receipt) return;
+
+    const summary = [
+      t('receipt.receipt'),
+      `${t('receipt.senderName')}: ${receipt.sender}`,
+      `${t('receipt.recipientName')}: ${receipt.recipient}`,
+      `${t('fees.youSend')}: ${receipt.amount_sent} ${receipt.currency_from}`,
+      `${t('fees.recipientReceives')}: ${receipt.amount_received} ${receipt.currency_to}`,
+      `${t('receipt.fxRate')}: ${receipt.fx_rate.toFixed(4)}`,
+      `${t('receipt.feesCharged')}: $${receipt.fees_charged}`,
+      `${t('receipt.referenceNumber')}: ${receipt.remittance_id}`,
+    ].join('\n');
+
+    try {
+      await Share.share({
+        message: summary,
+        title: t('receipt.receipt'),
+      });
+    } catch {
+      Alert.alert('Error', 'Unable to share receipt.');
+    }
+  }
+
+  const openProofOfPayout = async (url?: string) => {
+    if (!url) {
+      Alert.alert('Error', 'No proof of payout is available.');
+      return;
+    }
+
+    if (!/^https?:\/\//i.test(url)) {
+      Alert.alert('Error', 'This proof of payout link is not supported.');
+      return;
+    }
+
+    try {
+      const supported = await Linking.openURL(url);
+      if (!supported) {
+        Alert.alert('Error', 'Unable to open the proof of payout.');
+      }
+    } catch {
+      Alert.alert('Error', 'Unable to open the proof of payout.');
+    }
+  };
+
   if (loading) return <View style={styles.center}><ActivityIndicator testID="loading-indicator" size="large" color="#1A56DB" /></View>;
   if (!remittance) return <View style={styles.center}><Text>Transfer not found.</Text></View>;
 
@@ -75,10 +145,15 @@ export default function TransactionDetailScreen() {
 
   return (
     <>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <Text style={styles.heading}>{t('receipt.receipt')}</Text>
 
-        <View style={styles.progressRow}>
+        <View
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel={`Transfer progress: ${stepIndex + 1} of ${STATUS_STEPS.length}. Current status: ${remittance.status.replace(/_/g, ' ')}`}
+          style={styles.progressRow}
+        >
           {STATUS_STEPS.map((s, i) => (
             <React.Fragment key={s}>
               <View style={[styles.dot, i <= stepIndex ? styles.dotDone : styles.dotPending]} />
@@ -121,15 +196,25 @@ export default function TransactionDetailScreen() {
         )}
 
         {!remittance.dispute && remittance.status !== 'pending_user_transfer_start' && (
-          <TouchableOpacity style={styles.btn} onPress={() => setShowDisputeModal(true)}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Raise a dispute for this transfer"
+            style={styles.btn}
+            onPress={() => setShowDisputeModal(true)}
+          >
             <Text style={styles.btnText}>{t('disputes.raiseDispute')}</Text>
           </TouchableOpacity>
         )}
 
         {receipt && (
-          <TouchableOpacity style={[styles.btn, styles.btnSecondary]} onPress={() => setShowReceiptModal(true)}>
-            <Text style={styles.btnSecondaryText}>{t('receipt.shareReceipt')}</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity style={[styles.btn, styles.btnSecondary]} onPress={() => setShowReceiptModal(true)}>
+              <Text style={styles.btnSecondaryText}>View receipt</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btn} onPress={handleShareReceipt}>
+              <Text style={styles.btnText}>{t('receipt.shareReceipt')}</Text>
+            </TouchableOpacity>
+          </>
         )}
       </ScrollView>
 
@@ -145,20 +230,26 @@ export default function TransactionDetailScreen() {
 
             <Text style={styles.label}>{t('disputes.disputeReason')}</Text>
             <View style={styles.reasonRow}>
-              {(['funds_not_received', 'incorrect_amount', 'duplicate', 'other'] as const).map((reason) => (
-                <TouchableOpacity
-                  key={reason}
-                  style={[styles.reasonPill, disputeReason === reason && styles.reasonPillActive]}
-                  onPress={() => setDisputeReason(reason)}
-                >
-                  <Text style={disputeReason === reason ? styles.reasonPillTextActive : styles.reasonPillText}>
-                    {reason === 'funds_not_received' ? t('disputes.fundNotReceived') :
-                     reason === 'incorrect_amount' ? t('disputes.incorrectAmount') :
-                     reason === 'duplicate' ? t('disputes.duplicate') :
-                     t('disputes.other')}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {(['funds_not_received', 'incorrect_amount', 'duplicate', 'other'] as const).map((reason) => {
+                const isSelected = disputeReason === reason;
+                return (
+                  <TouchableOpacity
+                    key={reason}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${reason.replace(/_/g, ' ')} dispute reason`}
+                    accessibilityState={{ selected: isSelected }}
+                    style={[styles.reasonPill, isSelected && styles.reasonPillActive]}
+                    onPress={() => setDisputeReason(reason)}
+                  >
+                    <Text style={isSelected ? styles.reasonPillTextActive : styles.reasonPillText}>
+                      {reason === 'funds_not_received' ? t('disputes.fundNotReceived') :
+                       reason === 'incorrect_amount' ? t('disputes.incorrectAmount') :
+                       reason === 'duplicate' ? t('disputes.duplicate') :
+                       t('disputes.other')}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             <Text style={styles.label}>{t('disputes.description')}</Text>
@@ -172,10 +263,17 @@ export default function TransactionDetailScreen() {
             />
 
             <View style={styles.row}>
-              <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={() => setShowDisputeModal(false)}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Cancel dispute submission"
+                style={[styles.btn, styles.btnOutline]}
+                onPress={() => setShowDisputeModal(false)}
+              >
                 <Text style={styles.btnOutlineText}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Submit dispute"
                 style={[styles.btn, styles.btnFlex, submittingDispute && styles.btnDisabled]}
                 disabled={submittingDispute}
                 onPress={handleSubmitDispute}
@@ -200,10 +298,15 @@ export default function TransactionDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalHeading}>{t('receipt.receipt')}</Text>
-            {receipt && <ReceiptView receipt={receipt} />}
-            <TouchableOpacity style={styles.btn} onPress={() => setShowReceiptModal(false)}>
-              <Text style={styles.btnText}>{t('common.cancel')}</Text>
-            </TouchableOpacity>
+            {receipt && <ReceiptView receipt={receipt} onOpenProofOfPayout={openProofOfPayout} />}
+            <View style={styles.row}>
+              <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={() => setShowReceiptModal(false)}>
+                <Text style={styles.btnOutlineText}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.btn, styles.btnSecondary, styles.btnFlex]} onPress={handleShareReceipt}>
+                <Text style={styles.btnSecondaryText}>{t('receipt.shareReceipt')}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -220,7 +323,13 @@ function Row({ label, value, multiline }: { label: string; value: string; multil
   );
 }
 
-function ReceiptView({ receipt }: { receipt: Receipt }) {
+function ReceiptView({
+  receipt,
+  onOpenProofOfPayout,
+}: {
+  receipt: Receipt;
+  onOpenProofOfPayout: (url?: string) => Promise<void>;
+}) {
   return (
     <ScrollView style={styles.receiptView} contentContainerStyle={styles.receiptContent}>
       <View style={styles.receiptSection}>
@@ -250,7 +359,7 @@ function ReceiptView({ receipt }: { receipt: Receipt }) {
         <Text style={[styles.receiptValueBold, styles.receiptValueGreen]}>{receipt.amount_received} {receipt.currency_to}</Text>
       </View>
       {receipt.proof_of_payout_url && (
-        <TouchableOpacity style={styles.linkButton}>
+        <TouchableOpacity style={styles.linkButton} onPress={() => onOpenProofOfPayout(receipt.proof_of_payout_url)}>
           <Text style={styles.linkButtonText}>{t('receipt.proofOfPayout')}</Text>
         </TouchableOpacity>
       )}

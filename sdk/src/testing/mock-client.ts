@@ -25,6 +25,8 @@ import type {
   HealthStatus,
   CreateRemittanceParams,
   BatchCreateEntry,
+  BatchCreateResponse,
+  BatchCreateResult,
   GovernanceConfig,
   DailyLimitStatus,
   Proposal,
@@ -33,6 +35,23 @@ import type {
   PartialPayoutRecord,
   FeeEstimate,
   Corridor,
+  AssetVerification,
+  VerificationStatus,
+  PauseRecord,
+  PauseReason,
+  FeeStrategy,
+  FeeCorridor,
+  RateLimitConfig,
+  RateLimitStatus,
+  TransactionRecord,
+  TransactionState,
+  MigrationSnapshot,
+  BatchSettlementEntry,
+  BatchSettlementResult,
+  Role,
+  AdminOperationType,
+  PendingOperation,
+  FeeBreakdown,
 } from "../types.js";
 import { SwiftRemitError, ErrorCode } from "../errors.js";
 
@@ -97,19 +116,46 @@ export class SwiftRemitMockClient {
   private readonly proposals    = new Map<bigint, Proposal>();
   private readonly votedBy      = new Map<string, Set<string>>(); // proposalId → voterAddresses
   private readonly agentDailyCaps = new Map<string, bigint>();
+  private readonly agentKycHashes = new Map<string, string>();
+  private readonly assetVerifications = new Map<string, AssetVerification>();
+  private readonly feeCorridors = new Map<string, FeeCorridor>();
+  private readonly pendingOperations = new Map<bigint, PendingOperation>();
+  private readonly settlementHashes = new Map<bigint, string>();
+  private readonly transactionRecords = new Map<bigint, TransactionRecord>();
+  private readonly pauseRecords = new Map<bigint, PauseRecord>();
 
   private nextRemittanceId = 1n;
   private nextEscrowId     = 1n;
   private nextProposalId   = 1n;
+  private nextOperationId  = 1n;
+  private nextPauseSeq     = 0n;
 
   private _feeBps: number;
   private _protocolFeeBps: number;
   private _paused = false;
+  private _pauseReason: PauseReason | null = null;
   private _totalVolume = 0n;
   private _inFlightVolume = 0n;
   private _platformFees = 0n;
   private _integratorFees = 0n;
   private _disputeWindowSeconds = 86_400n;
+  private _escrowTtl = 86_400n;
+  private _rateLimitCooldown = 0n;
+  private _minAgentReputation = 0;
+  private _feeStrategy: FeeStrategy = { Percentage: 0 };
+  private _treasury = "";
+  private _oracle: string | null = null;
+  private _oracleRate: number | null = null;
+  private _version = "0.0.0-mock";
+  private _rateLimitConfig: RateLimitConfig = { maxRequests: 100, windowSeconds: 60n, enabled: false };
+  private _cooldownPeriod = 0n;
+  private _pauseTimelock = 0n;
+  private _unpauseQuorum = 1;
+  private _pauseVotes = new Set<string>();
+  private _multisigThreshold = 1;
+  private _multisigTtlSeconds = 3600n;
+  private _maxExpiredBatchSize = 100;
+  private _pendingAdminTransfer: string | null = null;
   private _governanceConfig: GovernanceConfig = {
     quorum: 2,
     timelockSeconds: 86_400n,
@@ -369,11 +415,11 @@ export class SwiftRemitMockClient {
     await this._applyFaults();
     return {
       isPaused: this._paused,
-      pauseReason: null,
+      pauseReason: this._pauseReason,
       pauseTimestamp: null,
-      timelockSeconds: 86_400n,
-      unpauseQuorum: 2,
-      currentVoteCount: 0,
+      timelockSeconds: this._pauseTimelock,
+      unpauseQuorum: this._unpauseQuorum,
+      currentVoteCount: this._pauseVotes.size,
     };
   }
 
@@ -467,6 +513,237 @@ export class SwiftRemitMockClient {
     return entry.expiry === 0n || entry.expiry > nowSecs;
   }
 
+  async getAgentKycHash(_sourceAddress: string, agent: string): Promise<string | null> {
+    await this._applyFaults();
+    return this.agentKycHashes.get(agent) ?? null;
+  }
+
+  async isAdmin(_sourceAddress: string, address: string): Promise<boolean> {
+    await this._applyFaults();
+    return this.admins.has(address);
+  }
+
+  async hasRole(_sourceAddress: string, address: string, role: Role): Promise<boolean> {
+    await this._applyFaults();
+    if (role === "Admin") return this.admins.has(address);
+    if (role === "Settler") return this.agents.has(address);
+    return false;
+  }
+
+  async getAdminList(_sourceAddress: string): Promise<string[]> {
+    await this._applyFaults();
+    return Array.from(this.admins);
+  }
+
+  async isPaused(_sourceAddress: string): Promise<boolean> {
+    await this._applyFaults();
+    return this._paused;
+  }
+
+  async getCooldownPeriod(_sourceAddress: string): Promise<bigint> {
+    await this._applyFaults();
+    return this._cooldownPeriod;
+  }
+
+  async getCurrentPauseRecord(_sourceAddress: string): Promise<PauseRecord | null> {
+    await this._applyFaults();
+    if (!this._paused || this._pauseRecords_latest == null) return null;
+    return this.pauseRecords.get(this._pauseRecords_latest) ?? null;
+  }
+
+  private _pauseRecords_latest: bigint | null = null;
+
+  async getPauseRecord(_sourceAddress: string, seq: bigint): Promise<PauseRecord> {
+    await this._applyFaults();
+    const r = this.pauseRecords.get(seq);
+    if (!r) throw new SwiftRemitError(ErrorCode.PauseRecordNotFound, `${seq}`);
+    return { ...r };
+  }
+
+  async getPauseHistoryCount(_sourceAddress: string): Promise<bigint> {
+    await this._applyFaults();
+    return this.nextPauseSeq;
+  }
+
+  async getVersion(_sourceAddress: string): Promise<string> {
+    await this._applyFaults();
+    return this._version;
+  }
+
+  async getTreasury(_sourceAddress: string): Promise<string> {
+    await this._applyFaults();
+    return this._treasury;
+  }
+
+  async getProtocolFeeBps(_sourceAddress: string): Promise<number> {
+    await this._applyFaults();
+    return this._protocolFeeBps;
+  }
+
+  async getFeeStrategy(_sourceAddress: string): Promise<FeeStrategy> {
+    await this._applyFaults();
+    return this._feeStrategy;
+  }
+
+  async getFeeCorridor(
+    _sourceAddress: string,
+    fromCountry: string,
+    toCountry: string,
+  ): Promise<FeeCorridor | null> {
+    await this._applyFaults();
+    return this.feeCorridors.get(`${fromCountry}:${toCountry}`) ?? null;
+  }
+
+  async calculateFeeBreakdown(_sourceAddress: string, amount: bigint): Promise<FeeBreakdown> {
+    await this._applyFaults();
+    const platformFee = (amount * BigInt(this._feeBps)) / 10_000n;
+    const protocolFee = (amount * BigInt(this._protocolFeeBps)) / 10_000n;
+    return { platformFee, protocolFee, netAmount: amount - platformFee - protocolFee };
+  }
+
+  async feeBreakdownCorridor(
+    _sourceAddress: string,
+    amount: bigint,
+    _corridor: FeeCorridor,
+  ): Promise<FeeBreakdown> {
+    await this._applyFaults();
+    // Use global fee for simplicity in the mock
+    const platformFee = (amount * BigInt(this._feeBps)) / 10_000n;
+    const protocolFee = (amount * BigInt(this._protocolFeeBps)) / 10_000n;
+    return { platformFee, protocolFee, netAmount: amount - platformFee - protocolFee };
+  }
+
+  async getRateLimitConfig(_sourceAddress: string): Promise<RateLimitConfig> {
+    await this._applyFaults();
+    return { ...this._rateLimitConfig };
+  }
+
+  async getRateLimitCooldown(_sourceAddress: string): Promise<bigint> {
+    await this._applyFaults();
+    return this._rateLimitCooldown;
+  }
+
+  async getRateLimitStatus(
+    _sourceAddress: string,
+    _address: string,
+  ): Promise<RateLimitStatus> {
+    await this._applyFaults();
+    return {
+      requestCount: 0,
+      remaining: this._rateLimitConfig.maxRequests,
+      resetAt: BigInt(Math.floor(Date.now() / 1000)) + this._rateLimitConfig.windowSeconds,
+    };
+  }
+
+  async getDailyLimit(
+    _sourceAddress: string,
+    currency: string,
+    country: string,
+  ): Promise<bigint | null> {
+    await this._applyFaults();
+    const key = `*:${currency}:${country}`;
+    return this.dailyLimits.get(key)?.limit ?? null;
+  }
+
+  async getMinAgentReputation(_sourceAddress: string): Promise<number> {
+    await this._applyFaults();
+    return this._minAgentReputation;
+  }
+
+  async getTokenFeeBps(_sourceAddress: string, _token: string): Promise<number | null> {
+    await this._applyFaults();
+    return null;
+  }
+
+  async getOracle(_sourceAddress: string): Promise<string | null> {
+    await this._applyFaults();
+    return this._oracle;
+  }
+
+  async getOracleRate(_sourceAddress: string): Promise<number | null> {
+    await this._applyFaults();
+    return this._oracleRate;
+  }
+
+  async getTransferState(_sourceAddress: string, transferId: bigint): Promise<RemittanceStatus | null> {
+    await this._applyFaults();
+    return this.remittances.get(transferId)?.status ?? null;
+  }
+
+  async getLastSettlementTime(_sourceAddress: string, _sender: string): Promise<bigint | null> {
+    await this._applyFaults();
+    return null;
+  }
+
+  async computeSettlementHash(_sourceAddress: string, remittanceId: bigint): Promise<string> {
+    await this._applyFaults();
+    this._requireRemittance(remittanceId);
+    return `mock_settlement_hash_${remittanceId}`;
+  }
+
+  async getSettlementHash(_sourceAddress: string, remittanceId: bigint): Promise<string> {
+    await this._applyFaults();
+    const h = this.settlementHashes.get(remittanceId);
+    if (!h) throw new SwiftRemitError(ErrorCode.RemittanceNotFound, `${remittanceId}`);
+    return h;
+  }
+
+  async getAssetVerification(
+    _sourceAddress: string,
+    assetCode: string,
+    issuer: string,
+  ): Promise<AssetVerification> {
+    await this._applyFaults();
+    const r = this.assetVerifications.get(`${assetCode}:${issuer}`);
+    if (!r) throw new SwiftRemitError(ErrorCode.AssetNotFound, `${assetCode}:${issuer}`);
+    return { ...r };
+  }
+
+  async hasAssetVerification(
+    _sourceAddress: string,
+    assetCode: string,
+    issuer: string,
+  ): Promise<boolean> {
+    await this._applyFaults();
+    return this.assetVerifications.has(`${assetCode}:${issuer}`);
+  }
+
+  async getPendingOperation(_sourceAddress: string, operationId: bigint): Promise<PendingOperation> {
+    await this._applyFaults();
+    const op = this.pendingOperations.get(operationId);
+    if (!op) throw new SwiftRemitError(ErrorCode.OperationNotFound, `${operationId}`);
+    return { ...op };
+  }
+
+  async getTransactionStatus(_sourceAddress: string, remittanceId: bigint): Promise<TransactionRecord> {
+    await this._applyFaults();
+    const r = this.transactionRecords.get(remittanceId);
+    if (!r) throw new SwiftRemitError(ErrorCode.TransactionNotFound, `${remittanceId}`);
+    return { ...r };
+  }
+
+  async getQuorum(_sourceAddress: string): Promise<number> {
+    await this._applyFaults();
+    return this._governanceConfig.quorum;
+  }
+
+  async getTimelockSeconds(_sourceAddress: string): Promise<bigint> {
+    await this._applyFaults();
+    return this._governanceConfig.timelockSeconds;
+  }
+
+  async exportMigrationSnapshot(_caller: string): Promise<MigrationSnapshot> {
+    await this._applyFaults();
+    return {
+      version: 1,
+      timestamp: BigInt(Math.floor(Date.now() / 1000)),
+      ledgerSequence: 0,
+      instanceData: {},
+      persistentData: {},
+      verificationHash: "mock_verification_hash",
+    };
+  }
+
   // ─── Escrow read operations ────────────────────────────────────────────────
 
   async getEscrow(_sourceAddress: string, transferId: bigint): Promise<MockEscrow> {
@@ -478,7 +755,7 @@ export class SwiftRemitMockClient {
 
   async getEscrowTtl(_sourceAddress: string): Promise<bigint> {
     await this._applyFaults();
-    return 86_400n;
+    return this._escrowTtl;
   }
 
   async estimateFee(
@@ -553,6 +830,81 @@ export class SwiftRemitMockClient {
     return { txHash: fakeTxHash() };
   }
 
+  async createBatchRemittance(
+    sender: string,
+    entries: BatchCreateEntry[],
+  ): Promise<MockTxResult> {
+    await this._applyFaults();
+    for (const e of entries) {
+      await this.createRemittance({ sender, agent: e.agent, amount: e.amount, expiry: e.expiry });
+    }
+    return { txHash: fakeTxHash() };
+    return this.batchCreateRemittances(sender, entries);
+  }
+
+  async createRemittanceBatch(
+    sender: string,
+    entries: BatchCreateEntry[],
+  ): Promise<BatchCreateResponse> {
+    await this._applyFaults();
+    const results: BatchCreateResult[] = [];
+    
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
+      try {
+        const result = await this.createRemittance({
+          sender,
+          agent: entry.agent,
+          amount: entry.amount,
+          expiry: entry.expiry,
+        });
+        results.push({
+          index,
+          entry,
+          success: true,
+          tx: { txHash: result.txHash, id: result.id },
+        });
+      } catch (err) {
+        results.push({
+          index,
+          entry,
+          success: false,
+          error: err instanceof Error ? err : new Error(String(err)),
+        });
+      }
+    }
+
+  ): Promise<{ results: Array<{ index: number; success: boolean; id?: bigint; error?: Error }>; successCount: number; failureCount: number }> {
+    await this._applyFaults();
+    const results = await Promise.all(
+      entries.map(async (e, index) => {
+        try {
+          const result = await this.createRemittance({ sender, agent: e.agent, amount: e.amount, expiry: e.expiry });
+          return { index, success: true, id: result.id };
+        } catch (err) {
+          return { index, success: false, error: err instanceof Error ? err : new Error(String(err)) };
+        }
+      })
+    );
+    return {
+      results,
+      successCount: results.filter((r) => r.success).length,
+      failureCount: results.filter((r) => !r.success).length,
+    };
+  }
+
+  async createRemittanceWithCorridor(
+    sender: string,
+    agent: string,
+    amount: bigint,
+    expiry?: bigint,
+    _fromCountry?: string,
+    _toCountry?: string,
+  ): Promise<MockTxResult> {
+    await this._applyFaults();
+    return this.createRemittance({ sender, agent, amount, expiry });
+  }
+
   async confirmPayout(
     agent: string,
     remittanceId: bigint,
@@ -572,7 +924,10 @@ export class SwiftRemitMockClient {
     this._platformFees += fee;
     this._totalVolume += r.amount;
     this._inFlightVolume -= r.amount;
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const settlementHash = `settlement_${remittanceId}_${now}`;
     this.remittances.set(remittanceId, { ...processing, status: "Completed" });
+    this.settlementHashes.set(remittanceId, settlementHash);
     this._bumpAgentStats(agent, true, r.amount);
     return { txHash: fakeTxHash() };
   }
@@ -589,6 +944,14 @@ export class SwiftRemitMockClient {
         ErrorCode.InvalidStatus,
         `Expected Pending or Processing, got ${r.status}`,
       );
+    return { txHash: fakeTxHash() };
+  }
+
+  async confirmBatchPayout(agent: string, remittanceIds: bigint[]): Promise<MockTxResult> {
+    await this._applyFaults();
+    for (const id of remittanceIds) {
+      await this.confirmPayout(agent, id);
+    }
     return { txHash: fakeTxHash() };
   }
 
@@ -663,6 +1026,14 @@ export class SwiftRemitMockClient {
     return { txHash: fakeTxHash() };
   }
 
+  async finalizeRemittance(_caller: string, remittanceId: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    const r = this._requireRemittance(remittanceId);
+    if (r.status !== "Completed")
+      throw new SwiftRemitError(ErrorCode.InvalidStatus, `Expected Completed, got ${r.status}`);
+    return { txHash: fakeTxHash() };
+  }
+
   async withdrawFees(_admin: string, _to: string): Promise<MockTxResult> {
     await this._applyFaults();
     if (this._platformFees === 0n)
@@ -677,11 +1048,14 @@ export class SwiftRemitMockClient {
     return { txHash: fakeTxHash() };
   }
 
-  async registerAgent(_admin: string, agent: string, _kycHash?: Buffer): Promise<MockTxResult> {
+  async registerAgent(_admin: string, agent: string, kycHash?: Buffer): Promise<MockTxResult> {
     await this._applyFaults();
     if (this.agents.has(agent))
       throw new SwiftRemitError(ErrorCode.AgentAlreadyRegistered, agent);
     this.seedAgent(agent);
+    if (kycHash) {
+      this.agentKycHashes.set(agent, kycHash.toString("hex"));
+    }
     return { txHash: fakeTxHash() };
   }
 
@@ -698,6 +1072,43 @@ export class SwiftRemitMockClient {
     if (feeBps < 0 || feeBps > 10_000)
       throw new SwiftRemitError(ErrorCode.InvalidFeeBps, `${feeBps}`);
     this._feeBps = feeBps;
+    return { txHash: fakeTxHash() };
+  }
+
+  async updateProtocolFee(_caller: string, feeBps: number): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (feeBps < 0 || feeBps > 10_000)
+      throw new SwiftRemitError(ErrorCode.InvalidFeeBps, `${feeBps}`);
+    this._protocolFeeBps = feeBps;
+    return { txHash: fakeTxHash() };
+  }
+
+  async updateTokenFee(_caller: string, _token: string, _feeBps: number): Promise<MockTxResult> {
+    await this._applyFaults();
+    return { txHash: fakeTxHash() };
+  }
+
+  async updateTreasury(_caller: string, treasury: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._treasury = treasury;
+    return { txHash: fakeTxHash() };
+  }
+
+  async updateFeeStrategy(_caller: string, strategy: FeeStrategy): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._feeStrategy = strategy;
+    return { txHash: fakeTxHash() };
+  }
+
+  async setFeeCorridor(_caller: string, corridor: FeeCorridor): Promise<MockTxResult> {
+    await this._applyFaults();
+    this.feeCorridors.set(`${corridor.fromCountry}:${corridor.toCountry}`, { ...corridor });
+    return { txHash: fakeTxHash() };
+  }
+
+  async removeFeeCorridor(_caller: string, fromCountry: string, toCountry: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    this.feeCorridors.delete(`${fromCountry}:${toCountry}`);
     return { txHash: fakeTxHash() };
   }
 
@@ -727,9 +1138,84 @@ export class SwiftRemitMockClient {
     return { txHash: fakeTxHash() };
   }
 
+  async setMinAgentReputation(_admin: string, threshold: number): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._minAgentReputation = threshold;
+    return { txHash: fakeTxHash() };
+  }
+
+  async setDisputeWindow(_admin: string, seconds: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._disputeWindowSeconds = seconds;
+    return { txHash: fakeTxHash() };
+  }
+
+  async setMaxExpiredBatchSize(_admin: string, size: number): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (size < 1 || size > 200)
+      throw new SwiftRemitError(ErrorCode.InvalidBatchSize, `${size}`);
+    this._maxExpiredBatchSize = size;
+    return { txHash: fakeTxHash() };
+  }
+
   async addAdmin(_caller: string, newAdmin: string): Promise<MockTxResult> {
     await this._applyFaults();
     this.admins.add(newAdmin);
+    return { txHash: fakeTxHash() };
+  }
+
+  async removeAdmin(_caller: string, adminToRemove: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (!this.admins.has(adminToRemove))
+      throw new SwiftRemitError(ErrorCode.AdminNotFound, adminToRemove);
+    if (this.admins.size <= 1)
+      throw new SwiftRemitError(ErrorCode.CannotRemoveLastAdmin, adminToRemove);
+    this.admins.delete(adminToRemove);
+    return { txHash: fakeTxHash() };
+  }
+
+  async proposeAdmin(_admin: string, newAdmin: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._pendingAdminTransfer = newAdmin;
+    return { txHash: fakeTxHash() };
+  }
+
+  async acceptAdmin(newAdmin: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (this._pendingAdminTransfer !== newAdmin)
+      throw new SwiftRemitError(ErrorCode.NoPendingAdminTransfer, newAdmin);
+    this.admins.add(newAdmin);
+    this._pendingAdminTransfer = null;
+    return { txHash: fakeTxHash() };
+  }
+
+  async assignRole(_caller: string, address: string, role: Role): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (role === "Admin") this.admins.add(address);
+    else if (role === "Settler") this.seedAgent(address);
+    return { txHash: fakeTxHash() };
+  }
+
+  async removeRole(_caller: string, address: string, role: Role): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (role === "Admin") this.admins.delete(address);
+    else if (role === "Settler") this.agents.delete(address);
+    return { txHash: fakeTxHash() };
+  }
+
+  async addWhitelistedToken(_admin: string, token: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (this.tokens.has(token))
+      throw new SwiftRemitError(ErrorCode.TokenAlreadyWhitelisted, token);
+    this.tokens.add(token);
+    return { txHash: fakeTxHash() };
+  }
+
+  async removeWhitelistedToken(_admin: string, token: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (!this.tokens.has(token))
+      throw new SwiftRemitError(ErrorCode.TokenNotWhitelisted, token);
+    this.tokens.delete(token);
     return { txHash: fakeTxHash() };
   }
 
@@ -762,7 +1248,7 @@ export class SwiftRemitMockClient {
       amount,
       status: "Pending",
       createdAt: now,
-      ttl: 86_400n,
+      ttl: this._escrowTtl,
     });
     return { txHash: fakeTxHash(), id };
   }
@@ -782,6 +1268,12 @@ export class SwiftRemitMockClient {
     if (e.status !== "Pending")
       throw new SwiftRemitError(ErrorCode.InvalidEscrowStatus, `${e.status}`);
     this.escrows.set(transferId, { ...e, status: "Refunded" });
+    return { txHash: fakeTxHash() };
+  }
+
+  async updateEscrowTtl(_admin: string, ttl: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._escrowTtl = ttl;
     return { txHash: fakeTxHash() };
   }
 
@@ -864,6 +1356,86 @@ export class SwiftRemitMockClient {
     return { txHash: fakeTxHash() };
   }
 
+  async expireProposal(_caller: string, proposalId: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    const p = this.proposals.get(proposalId);
+    if (!p) throw new SwiftRemitError(ErrorCode.ProposalNotFound, `${proposalId}`);
+    this.proposals.set(proposalId, { ...p, state: "Expired" });
+    return { txHash: fakeTxHash() };
+  }
+
+  async cleanupExpiredProposals(_caller: string, proposalIds: bigint[]): Promise<MockTxResult> {
+    await this._applyFaults();
+    for (const id of proposalIds) {
+      const p = this.proposals.get(id);
+      if (p && (p.state === "Executed" || p.state === "Expired")) {
+        this.proposals.delete(id);
+      }
+    }
+    return { txHash: fakeTxHash() };
+  }
+
+  async migrateToGovernance(
+    _caller: string,
+    quorum: number,
+    timelockSeconds: bigint,
+    proposalTtlSeconds: bigint,
+  ): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._governanceConfig = { quorum, timelockSeconds, proposalTtlSeconds };
+    return { txHash: fakeTxHash() };
+  }
+
+  // ─── Multi-sig admin operations ─────────────────────────────────────────────
+
+  async proposeOperation(
+    proposer: string,
+    operationType: AdminOperationType,
+    feeBps: number,
+    withdrawTo?: string,
+  ): Promise<MockTxResult> {
+    await this._applyFaults();
+    const id = this.nextOperationId++;
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    this.pendingOperations.set(id, {
+      id,
+      operationType,
+      proposer,
+      approvers: [proposer],
+      threshold: this._multisigThreshold,
+      proposedAt: now,
+      ttlSeconds: this._multisigTtlSeconds,
+      feeBps,
+      withdrawTo: withdrawTo ?? null,
+    });
+    return { txHash: fakeTxHash(), id };
+  }
+
+  async approveOperation(approver: string, operationId: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    const op = this.pendingOperations.get(operationId);
+    if (!op) throw new SwiftRemitError(ErrorCode.OperationNotFound, `${operationId}`);
+    if (op.approvers.includes(approver))
+      throw new SwiftRemitError(ErrorCode.AlreadyApproved, approver);
+    this.pendingOperations.set(operationId, { ...op, approvers: [...op.approvers, approver] });
+    return { txHash: fakeTxHash() };
+  }
+
+  async expireOperation(_caller: string, operationId: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    const op = this.pendingOperations.get(operationId);
+    if (!op) throw new SwiftRemitError(ErrorCode.OperationNotFound, `${operationId}`);
+    this.pendingOperations.delete(operationId);
+    return { txHash: fakeTxHash() };
+  }
+
+  async setMultisigConfig(_caller: string, threshold: number, ttlSeconds: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._multisigThreshold = threshold;
+    this._multisigTtlSeconds = ttlSeconds;
+    return { txHash: fakeTxHash() };
+  }
+
   // ─── Blacklist / KYC write operations ─────────────────────────────────────
 
   async blacklistUser(_admin: string, user: string): Promise<MockTxResult> {
@@ -875,6 +1447,13 @@ export class SwiftRemitMockClient {
   async removeFromBlacklist(_admin: string, user: string): Promise<MockTxResult> {
     await this._applyFaults();
     this.blacklist.delete(user);
+    return { txHash: fakeTxHash() };
+  }
+
+  async setUserBlacklisted(_admin: string, user: string, blacklisted: boolean): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (blacklisted) this.blacklist.add(user);
+    else this.blacklist.delete(user);
     return { txHash: fakeTxHash() };
   }
 
@@ -904,7 +1483,185 @@ export class SwiftRemitMockClient {
     if (!this._paused)
       throw new SwiftRemitError(ErrorCode.NotPaused, "not paused");
     this._paused = false;
+    this._pauseReason = null;
+    this._pauseVotes.clear();
     return { txHash: fakeTxHash() };
+  }
+
+  async emergencyPause(caller: string, reason: PauseReason): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (this._paused)
+      throw new SwiftRemitError(ErrorCode.AlreadyPaused, "already paused");
+    this._paused = true;
+    this._pauseReason = reason;
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const seq = this.nextPauseSeq++;
+    const record: PauseRecord = { seq, caller, timestamp: now, reason };
+    this.pauseRecords.set(seq, record);
+    this._pauseRecords_latest = seq;
+    return { txHash: fakeTxHash() };
+  }
+
+  async emergencyUnpause(caller: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (!this._paused)
+      throw new SwiftRemitError(ErrorCode.NotPaused, "not paused");
+    void caller;
+    this._paused = false;
+    this._pauseReason = null;
+    this._pauseVotes.clear();
+    this._pauseRecords_latest = null;
+    return { txHash: fakeTxHash() };
+  }
+
+  async voteUnpause(caller: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    if (!this._paused)
+      throw new SwiftRemitError(ErrorCode.NotPaused, "not paused");
+    this._pauseVotes.add(caller);
+    if (this._pauseVotes.size >= this._unpauseQuorum) {
+      this._paused = false;
+      this._pauseReason = null;
+      this._pauseVotes.clear();
+      this._pauseRecords_latest = null;
+    }
+    return { txHash: fakeTxHash() };
+  }
+
+  async setPauseTimelock(_caller: string, seconds: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._pauseTimelock = seconds;
+    return { txHash: fakeTxHash() };
+  }
+
+  async setUnpauseQuorum(_caller: string, quorum: number): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._unpauseQuorum = quorum;
+    return { txHash: fakeTxHash() };
+  }
+
+  async setCooldownPeriod(_caller: string, seconds: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._cooldownPeriod = seconds;
+    return { txHash: fakeTxHash() };
+  }
+
+  // ─── Asset verification write operations ───────────────────────────────────
+
+  async setAssetVerification(
+    _admin: string,
+    assetCode: string,
+    issuer: string,
+    status: VerificationStatus,
+    reputationScore: number,
+    trustlineCount: bigint,
+    hasToml: boolean,
+  ): Promise<MockTxResult> {
+    await this._applyFaults();
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    this.assetVerifications.set(`${assetCode}:${issuer}`, {
+      assetCode,
+      issuer,
+      status,
+      reputationScore,
+      lastVerified: now,
+      trustlineCount,
+      hasToml,
+    });
+    return { txHash: fakeTxHash() };
+  }
+
+  async validateAssetSafety(_caller: string, assetCode: string, issuer: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    const v = this.assetVerifications.get(`${assetCode}:${issuer}`);
+    if (v?.status === "Suspicious")
+      throw new SwiftRemitError(ErrorCode.SuspiciousAsset, `${assetCode}:${issuer}`);
+    return { txHash: fakeTxHash() };
+  }
+
+  // ─── Rate limiting write operations ────────────────────────────────────────
+
+  async updateRateLimitConfig(
+    _caller: string,
+    maxRequests: number,
+    windowSeconds: bigint,
+    enabled: boolean,
+  ): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._rateLimitConfig = { maxRequests, windowSeconds, enabled };
+    return { txHash: fakeTxHash() };
+  }
+
+  async updateRateLimit(_admin: string, cooldownSeconds: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._rateLimitCooldown = cooldownSeconds;
+    return { txHash: fakeTxHash() };
+  }
+
+  async cleanupRateLimitEntries(_caller: string, _address: string): Promise<MockTxResult> {
+    await this._applyFaults();
+    return { txHash: fakeTxHash() };
+  }
+
+  // ─── Oracle write operations ────────────────────────────────────────────────
+
+  async setOracle(_caller: string, oracle: string, _stalenessWindowLedgers?: number): Promise<MockTxResult> {
+    await this._applyFaults();
+    this._oracle = oracle;
+    return { txHash: fakeTxHash() };
+  }
+
+  // ─── Transaction controller ─────────────────────────────────────────────────
+
+  async executeTransaction(
+    user: string,
+    agent: string,
+    amount: bigint,
+    expiry?: bigint,
+  ): Promise<MockTxResult> {
+    await this._applyFaults();
+    const result = await this.createRemittance({ sender: user, agent, amount, expiry });
+    if (result.id != null) {
+      const now = BigInt(Math.floor(Date.now() / 1000));
+      const state: TransactionState = { ContractCalled: result.id };
+      this.transactionRecords.set(result.id, {
+        user,
+        agent,
+        amount,
+        remittanceId: result.id,
+        anchorTxId: null,
+        state,
+        retryCount: 0,
+        timestamp: now,
+      });
+    }
+    return result;
+  }
+
+  async retryTransaction(_caller: string, remittanceId: bigint): Promise<MockTxResult> {
+    await this._applyFaults();
+    const record = this.transactionRecords.get(remittanceId);
+    if (!record) throw new SwiftRemitError(ErrorCode.TransactionNotFound, `${remittanceId}`);
+    this.transactionRecords.set(remittanceId, { ...record, retryCount: record.retryCount + 1 });
+    return { txHash: fakeTxHash() };
+  }
+
+  // ─── Settlement / netting ────────────────────────────────────────────────────
+
+  async batchSettleWithNetting(
+    _caller: string,
+    entries: BatchSettlementEntry[],
+  ): Promise<BatchSettlementResult> {
+    await this._applyFaults();
+    const settledIds: bigint[] = [];
+    for (const entry of entries) {
+      const r = this.remittances.get(entry.remittanceId);
+      if (r && r.status === "Pending") {
+        await this.confirmPayout(r.agent, entry.remittanceId);
+        settledIds.push(entry.remittanceId);
+      }
+    }
+    return { settledIds };
   }
 
   // ─── Private helpers ────────────────────────────────────────────────────────

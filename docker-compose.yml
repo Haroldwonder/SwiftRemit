@@ -159,6 +159,42 @@ services:
     depends_on:
       - prometheus
 
+  # ── Pact Broker (SR-216) ──────────────────────────────────────────────────
+  # Opt-in: only starts with `docker compose --profile pact-broker up`.
+  # Source of truth for consumer pacts and provider-verification results; the
+  # `can-i-deploy` gate in the deploy workflows queries it. See docs/PACT_BROKER.md.
+  pact-broker-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles: ["pact-broker"]
+    environment:
+      POSTGRES_USER: pactbroker
+      POSTGRES_PASSWORD: pactbroker
+      POSTGRES_DB: pactbroker
+    volumes:
+      - pact_broker_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pactbroker"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pact-broker:
+    image: pactfoundation/pact-broker:latest
+    restart: unless-stopped
+    profiles: ["pact-broker"]
+    ports:
+      - "9292:9292"
+    depends_on:
+      pact-broker-db:
+        condition: service_healthy
+    environment:
+      PACT_BROKER_DATABASE_URL: postgres://pactbroker:pactbroker@pact-broker-db/pactbroker
+      PACT_BROKER_BASIC_AUTH_USERNAME: ${PACT_BROKER_USERNAME:-pact}
+      PACT_BROKER_BASIC_AUTH_PASSWORD: ${PACT_BROKER_PASSWORD:-pact}
+      # Allow anonymous reads so `can-i-deploy` works without credentials locally.
+      PACT_BROKER_ALLOW_PUBLIC_READ: "true"
+
 volumes:
   postgres_data:
   grafana_data:

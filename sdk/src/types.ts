@@ -455,3 +455,49 @@ export interface PendingOperation {
   /** Only meaningful for WithdrawFees operations */
   withdrawTo: string | null;
 }
+
+// ─── Recipient verification (SR-195) ────────────────────────────────────────
+
+/**
+ * Schema version used when serializing recipient details for hashing.
+ * Must match RECIPIENT_HASH_SCHEMA_VERSION in src/recipient_verification.rs.
+ */
+export const RECIPIENT_HASH_SCHEMA_VERSION = 1;
+
+/**
+ * Describes a crypto-wallet recipient.
+ *
+ * Wire format (SHA-256 input):
+ *   [0x01] + XDR-encoded Stellar address (32-byte raw public key, big-endian)
+ */
+export interface WalletRecipient {
+  type: "Wallet";
+  /** 56-character Stellar/Soroban StrKey address (G…). */
+  address: string;
+}
+
+/**
+ * Describes a bank-account recipient.
+ *
+ * Wire format (SHA-256 input):
+ *   [0x02]
+ *   + u32-BE(len(account_number)) + UTF-8(account_number)
+ *   + u32-BE(len(routing_code))   + UTF-8(routing_code)
+ */
+export interface BankRecipient {
+  type: "Bank";
+  /** Bank account number (UTF-8). */
+  accountNumber: string;
+  /** Routing / sort code (UTF-8). */
+  routingCode: string;
+}
+
+/**
+ * Union type for all recipient variants understood by the contract's
+ * recipient-hash scheme (schema v1).
+ *
+ * Pass to {@link computeRecipientHash} to obtain a 32-byte SHA-256 digest
+ * suitable for `createRemittance.recipientHash` and
+ * `confirmPayout.recipientDetailsHash`.
+ */
+export type RecipientDetails = WalletRecipient | BankRecipient;

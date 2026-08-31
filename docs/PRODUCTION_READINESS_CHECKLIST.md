@@ -47,7 +47,7 @@ These items require human judgement and must be verified by the deployment owner
 ### Operational readiness
 - [ ] Monitoring dashboards (Grafana) are configured for the new contract address.
 - [ ] PagerDuty / on-call alerts are set up for error-rate and latency SLOs.
-- [ ] The incident-response runbook (`RUNBOOK.md`) has been reviewed and is accessible to the on-call team.
+- [ ] The incident-response runbooks (`docs/RUNBOOK.md` for routine operations, `docs/ROLLBACK_RUNBOOK.md` for mainnet rollback) have been reviewed and are accessible to the on-call team.
 - [ ] A post-deployment smoke test checklist has been prepared and assigned to a responsible person.
 
 ### Legal and compliance

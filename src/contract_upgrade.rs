@@ -346,13 +346,13 @@ pub fn execute_upgrade(
         return Err(ContractError::CooldownActive);
     }
     
-    // Perform the actual on-chain WASM upgrade. This is the step that was
-    // previously missing entirely: the proposal used to just flip to
-    // `Executed` without ever replacing the contract's code, so this module's
-    // governance had no real effect on-chain.
-    env.deployer()
-        .update_current_contract_wasm(proposal.wasm_hash.clone());
-
+    // Mark the proposal as Executed and persist it *before* performing the
+    // WASM swap.  This ensures that:
+    //   1. A re-execute attempt finds `status == Executed` and returns
+    //      `InvalidStateTransition` from storage even after the new WASM is
+    //      in place (the new WASM might not have an `execute_upgrade` fn).
+    //   2. The accounting (PendingCount) is consistent if the WASM upgrade
+    //      itself panics.
     proposal.status = UpgradeStatus::Executed;
     store_proposal(env, index, &proposal);
 
@@ -367,6 +367,13 @@ pub fn execute_upgrade(
             .instance()
             .set(&UpgradeKey::PendingCount, &(pending_count - 1));
     }
+
+    // Perform the actual on-chain WASM upgrade.  This call must come *after*
+    // state is persisted because `update_current_contract_wasm` replaces the
+    // running code; any code that needs to execute after this point must be
+    // in the *new* WASM, which is not guaranteed for governance helpers.
+    env.deployer()
+        .update_current_contract_wasm(proposal.wasm_hash.clone());
 
     // Emit event
     emit_upgrade_executed(env, proposal_id);

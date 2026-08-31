@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,8 +12,9 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as SecureStore from 'expo-secure-store';
 import { remittanceService, fxService, anchorService } from '../services/api';
-import { authenticateAndGetSigningKey } from '../services/biometrics';
+import { authenticateAndGetSigningKey, signTransaction } from '../services/biometrics';
 import { useNetworkStatus } from '../services/offlineCache';
 import { t } from '../services/i18n';
 import OfflineBanner from '../components/OfflineBanner';
@@ -34,9 +35,11 @@ export default function SendMoneyScreen() {
   const [loading, setLoading] = useState(false);
   const [fxRate, setFxRate] = useState<FxRate | null>(null);
   const [fees, setFees] = useState<FeeBreakdown | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
   const [anchors, setAnchors] = useState<Anchor[]>([]);
   const [selectedAnchor, setSelectedAnchor] = useState<Anchor | null>(null);
   const { isOffline } = useNetworkStatus();
+  const quoteRequestId = useRef(0);
 
   const [form, setForm] = useState<SendMoneyFormData>({
     recipientName: '',
@@ -48,17 +51,36 @@ export default function SendMoneyScreen() {
   });
 
   useEffect(() => {
-    if (form.recipientCurrency && form.amountUSD && parseFloat(form.amountUSD) > 0) {
-      fxService
-        .getRate('USD', form.recipientCurrency)
-        .then(setFxRate)
-        .catch(() => {});
-
-      remittanceService
-        .getFeeBreakdown(form.amountUSD, form.recipientCurrency)
-        .then(setFees)
-        .catch(() => {});
+    const parsedAmount = Number(form.amountUSD);
+    if (!form.recipientCurrency || !form.amountUSD || Number.isNaN(parsedAmount) || parsedAmount <= 0) {
+      setFxRate(null);
+      setFees(null);
+      setQuoteError(null);
+      return;
     }
+
+    const requestId = ++quoteRequestId.current;
+    setQuoteError(null);
+
+    const timer = setTimeout(() => {
+      Promise.all([
+        fxService.getRate('USD', form.recipientCurrency),
+        remittanceService.getFeeBreakdown(form.amountUSD, form.recipientCurrency),
+      ])
+        .then(([nextRate, nextFees]) => {
+          if (requestId !== quoteRequestId.current) return;
+          setFxRate(nextRate);
+          setFees(nextFees);
+        })
+        .catch(() => {
+          if (requestId !== quoteRequestId.current) return;
+          setFxRate(null);
+          setFees(null);
+          setQuoteError('We could not refresh the exchange rate and fee estimate.');
+        });
+    }, 450);
+
+    return () => clearTimeout(timer);
   }, [form.recipientCurrency, form.amountUSD]);
 
   useEffect(() => {
@@ -91,11 +113,38 @@ export default function SendMoneyScreen() {
         return;
       }
 
-      // Success: authResult.keystoreKeyId contains the OS keystore key ID
-      // In production, this would be passed to the signing function
-      console.log('[SendMoney] Biometric auth succeeded. Keystore key:', authResult.keystoreKeyId);
+      // SR-186: Derive a signing artifact from the keystore-backed key and
+      // the transaction payload.  Fail closed: if signing throws, the transfer
+      // is blocked rather than proceeding with no cryptographic proof.
+      const wallet = await SecureStore.getItemAsync('wallet_address');
+      let transactionSignature: string;
+      try {
+        transactionSignature = await signTransaction({
+          walletAddress: wallet ?? '',
+          amountUSD: form.amountUSD,
+          recipientCountry: form.recipientCountry,
+          anchorId: form.anchorId,
+        });
+      } catch (sigErr) {
+        console.error('[SendMoney] Signing failed — transfer blocked.', sigErr);
+        Alert.alert(
+          'Signing failed',
+          'Could not produce a signing artifact. The transfer was blocked for your security. Please try again.',
+        );
+        return;
+      }
 
-      const remittance = await remittanceService.create(form);
+      const remittance = await remittanceService.create(form, transactionSignature);
+
+      // SR-184: persist anchor context so KycStatusScreen can look up the
+      // correct anchor for this user rather than falling back to a testnet constant.
+      if (selectedAnchor) {
+        await Promise.all([
+          SecureStore.setItemAsync('last_anchor_id', selectedAnchor.anchor_id),
+          SecureStore.setItemAsync('last_recipient_country', form.recipientCountry),
+          SecureStore.setItemAsync('last_recipient_currency', form.recipientCurrency),
+        ]);
+      }
       navigation.navigate('TransactionDetail', { remittanceId: remittance.remittance_id });
     } catch (err: any) {
       Alert.alert('Transfer failed', err?.response?.data?.error || 'Please try again.');
@@ -129,20 +178,28 @@ export default function SendMoneyScreen() {
 
           <Text style={styles.label}>{t('sendFlow.payoutCurrency')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillRow}>
-            {SUPPORTED_CURRENCIES.map((cur) => (
-              <TouchableOpacity
-                key={cur}
-                style={[styles.pill, form.recipientCurrency === cur && styles.pillActive]}
-                onPress={() => setForm((f) => ({ ...f, recipientCurrency: cur }))}
-              >
-                <Text style={form.recipientCurrency === cur ? styles.pillTextActive : styles.pillText}>
-                  {cur}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            {SUPPORTED_CURRENCIES.map((cur) => {
+              const isSelected = form.recipientCurrency === cur;
+              return (
+                <TouchableOpacity
+                  key={cur}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${cur} payout currency`}
+                  accessibilityState={{ selected: isSelected }}
+                  style={[styles.pill, isSelected && styles.pillActive]}
+                  onPress={() => setForm((f) => ({ ...f, recipientCurrency: cur }))}
+                >
+                  <Text style={isSelected ? styles.pillTextActive : styles.pillText}>
+                    {cur}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
 
           <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Continue to amount"
             style={[styles.btn, (!form.recipientName || !form.recipientCountry) && styles.btnDisabled]}
             disabled={!form.recipientName || !form.recipientCountry}
             onPress={() => setStep(2)}
@@ -165,6 +222,40 @@ export default function SendMoneyScreen() {
             onChangeText={(v) => setForm((f) => ({ ...f, amountUSD: v }))}
           />
 
+          {quoteError ? (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorText}>{quoteError}</Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Retry exchange rate and fee quote"
+                onPress={() => {
+                  const amount = Number(form.amountUSD);
+                  if (form.recipientCurrency && form.amountUSD && !Number.isNaN(amount) && amount > 0) {
+                    quoteRequestId.current += 1;
+                    setQuoteError(null);
+                    const requestId = quoteRequestId.current;
+                    Promise.all([
+                      fxService.getRate('USD', form.recipientCurrency),
+                      remittanceService.getFeeBreakdown(form.amountUSD, form.recipientCurrency),
+                    ])
+                      .then(([nextRate, nextFees]) => {
+                        if (requestId !== quoteRequestId.current) return;
+                        setFxRate(nextRate);
+                        setFees(nextFees);
+                      })
+                      .catch(() => {
+                        if (requestId !== quoteRequestId.current) return;
+                        setQuoteError('We could not refresh the exchange rate and fee estimate.');
+                      });
+                  }
+                }}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
           {fxRate && (
             <View style={styles.rateCard}>
               <Text style={styles.rateText}>
@@ -186,10 +277,17 @@ export default function SendMoneyScreen() {
           />
 
           <View style={styles.row}>
-            <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={() => setStep(1)}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Go back to recipient details"
+              style={[styles.btn, styles.btnOutline]}
+              onPress={() => setStep(1)}
+            >
               <Text style={styles.btnOutlineText}>{t('common.back')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Continue to review transfer"
               style={[styles.btn, styles.btnFlex, (!form.amountUSD || parseFloat(form.amountUSD) <= 0) && styles.btnDisabled]}
               disabled={!form.amountUSD || parseFloat(form.amountUSD) <= 0}
               onPress={() => setStep(3)}
@@ -218,10 +316,17 @@ export default function SendMoneyScreen() {
           )}
 
           <View style={styles.row}>
-            <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={() => setStep(2)}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Go back to amount"
+              style={[styles.btn, styles.btnOutline]}
+              onPress={() => setStep(2)}
+            >
               <Text style={styles.btnOutlineText}>{t('common.back')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Continue to choose payout anchor"
               style={[styles.btn, styles.btnFlex]}
               onPress={() => setStep(4)}
             >
@@ -244,33 +349,46 @@ export default function SendMoneyScreen() {
               scrollEnabled={false}
               data={anchors}
               keyExtractor={(a) => a.anchor_id}
-              renderItem={({ item: anchor }) => (
-                <TouchableOpacity
-                  style={[styles.anchorCard, selectedAnchor?.anchor_id === anchor.anchor_id && styles.anchorCardSelected]}
-                  onPress={() => {
-                    setSelectedAnchor(anchor);
-                    setForm((f) => ({ ...f, anchorId: anchor.anchor_id }));
-                  }}
-                >
-                  <View style={styles.anchorHeader}>
-                    <Text style={styles.anchorName}>{anchor.name}</Text>
-                    <Text style={[styles.availabilityBadge, AVAILABILITY_STYLES[anchor.availability]]}>
-                      {anchor.availability}
-                    </Text>
-                  </View>
-                  <Row label={t('anchors.country')} value={anchor.country} small />
-                  <Row label={t('anchors.settlementTime')} value={`${anchor.settlement_time_hours} ${t('anchors.hours')}`} small />
-                  <Row label={t('anchors.fees')} value={`${anchor.fee_percentage}%`} small />
-                </TouchableOpacity>
-              )}
+              renderItem={({ item: anchor }) => {
+                const isSelected = selectedAnchor?.anchor_id === anchor.anchor_id;
+                return (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={`${anchor.name} anchor option ${isSelected ? 'selected' : 'not selected'}`}
+                    accessibilityState={{ selected: isSelected }}
+                    style={[styles.anchorCard, isSelected && styles.anchorCardSelected]}
+                    onPress={() => {
+                      setSelectedAnchor(anchor);
+                      setForm((f) => ({ ...f, anchorId: anchor.anchor_id }));
+                    }}
+                  >
+                    <View style={styles.anchorHeader}>
+                      <Text style={styles.anchorName}>{anchor.name}</Text>
+                      <Text style={[styles.availabilityBadge, AVAILABILITY_STYLES[anchor.availability]]}>
+                        {anchor.availability}
+                      </Text>
+                    </View>
+                    <Row label={t('anchors.country')} value={anchor.country} small />
+                    <Row label={t('anchors.settlementTime')} value={`${anchor.settlement_time_hours} ${t('anchors.hours')}`} small />
+                    <Row label={t('anchors.fees')} value={`${anchor.fee_percentage}%`} small />
+                  </TouchableOpacity>
+                );
+              }}
             />
           )}
 
           <View style={styles.row}>
-            <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={() => setStep(3)}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Go back to review transfer"
+              style={[styles.btn, styles.btnOutline]}
+              onPress={() => setStep(3)}
+            >
               <Text style={styles.btnOutlineText}>{t('common.back')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Continue to confirm transfer"
               style={[styles.btn, styles.btnFlex, !selectedAnchor && styles.btnDisabled]}
               disabled={!selectedAnchor}
               onPress={() => setStep(5)}
@@ -298,10 +416,17 @@ export default function SendMoneyScreen() {
           </Text>
 
           <View style={styles.row}>
-            <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={() => setStep(4)}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Go back to choose anchor"
+              style={[styles.btn, styles.btnOutline]}
+              onPress={() => setStep(4)}
+            >
               <Text style={styles.btnOutlineText}>{t('common.back')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={isOffline ? 'Confirm and send is unavailable while offline' : 'Confirm and send transfer'}
               style={[styles.btn, styles.btnFlex, (loading || isOffline) && styles.btnDisabled]}
               disabled={loading || isOffline}
               onPress={handleConfirm}
@@ -384,6 +509,26 @@ const styles = StyleSheet.create({
     padding: 14,
     marginTop: 12,
   },
+  errorCard: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 10,
+    padding: 14,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  errorText: { color: '#991B1B', fontSize: 14, fontWeight: '600' },
+  retryButton: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  retryButtonText: { color: '#991B1B', fontWeight: '700', fontSize: 12 },
   rateText: { color: '#1A56DB', fontWeight: '600', fontSize: 14 },
   recipientAmount: { color: '#1E3A5F', fontSize: 20, fontWeight: '700', marginTop: 4 },
   summaryCard: {
