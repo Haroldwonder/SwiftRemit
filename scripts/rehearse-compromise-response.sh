@@ -10,14 +10,14 @@ set -euo pipefail
 #          mainnet key compromise.
 #
 # Requires:
-#   - soroban CLI installed and on $PATH
+#   - Stellar CLI installed and on $PATH
 #   - The following env vars set (or present in a .env file at repo root):
 #       CONTRACT_ID              Deployed SwiftRemit contract address
 #       NETWORK                  Soroban network name (should be "testnet")
 #       RPC_URL                  Soroban RPC endpoint
-#       ADMIN_IDENTITY           soroban CLI identity name for the pausing admin
+#       ADMIN_IDENTITY           Stellar CLI identity name for the pausing admin
 #       ADMIN_ADDRESS            Stellar address corresponding to ADMIN_IDENTITY
-#       SECOND_ADMIN_IDENTITY    soroban CLI identity name for the second approver
+#       SECOND_ADMIN_IDENTITY    Stellar CLI identity name for the second approver
 #       SECOND_ADMIN_ADDRESS     Stellar address for the second approver
 #   Optional:
 #       SIMULATED_COMPROMISED_IDENTITY   Identity to treat as "compromised"
@@ -137,19 +137,19 @@ OPERATION_ID=""
 prepare_compromised_identity() {
   COMPROMISED_IDENTITY="${SIMULATED_COMPROMISED_IDENTITY:-sr111-compromised-rehearsal-$$}"
 
-  if ! soroban keys address "${COMPROMISED_IDENTITY}" &>/dev/null; then
+  if ! stellar keys address "${COMPROMISED_IDENTITY}" &>/dev/null; then
     warn "Generating simulated compromised identity '${COMPROMISED_IDENTITY}'..."
-    soroban keys generate "${COMPROMISED_IDENTITY}" --network "${NETWORK}" --fund
+    stellar keys generate "${COMPROMISED_IDENTITY}" --network "${NETWORK}" --fund
     ok "Generated '${COMPROMISED_IDENTITY}' for rehearsal"
     COMPROMISED_KEY_GENERATED=true
   fi
 
-  COMPROMISED_ADDRESS=$(soroban keys address "${COMPROMISED_IDENTITY}")
+  COMPROMISED_ADDRESS=$(stellar keys address "${COMPROMISED_IDENTITY}")
   log "COMPROMISED_ADDRESS = ${COMPROMISED_ADDRESS}"
 
   # Register this key as an admin so we can then remove it (simulating a real key compromise)
   log "Adding simulated compromised key as admin (so we can rehearse removal)..."
-  soroban contract invoke \
+  stellar contract invoke \
     --id "${CONTRACT_ID}" \
     --source "${ADMIN_IDENTITY}" \
     --network "${NETWORK}" \
@@ -164,7 +164,7 @@ prepare_compromised_identity() {
 # Helper: invoke the contract
 # ---------------------------------------------------------------------------
 invoke() {
-  soroban contract invoke \
+  stellar contract invoke \
     --id "${CONTRACT_ID}" \
     --network "${NETWORK}" \
     "$@"
@@ -172,7 +172,7 @@ invoke() {
 
 invoke_as() {
   local identity="$1"; shift
-  soroban contract invoke \
+  stellar contract invoke \
     --id "${CONTRACT_ID}" \
     --source "${identity}" \
     --network "${NETWORK}" \
@@ -333,7 +333,7 @@ step_health_check() {
 cleanup() {
   if [[ "${COMPROMISED_KEY_GENERATED:-false}" == "true" ]]; then
     warn "Cleaning up auto-generated compromised identity '${COMPROMISED_IDENTITY}'..."
-    soroban keys remove "${COMPROMISED_IDENTITY}" 2>/dev/null \
+    stellar keys remove "${COMPROMISED_IDENTITY}" 2>/dev/null \
       && log "Removed '${COMPROMISED_IDENTITY}' from local keystore." \
       || warn "Could not remove '${COMPROMISED_IDENTITY}' — remove manually if needed."
   fi

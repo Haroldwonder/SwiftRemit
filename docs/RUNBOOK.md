@@ -1,18 +1,5 @@
 # SwiftRemit Operational Runbook
 
-> **Which runbook do I use?**
-> - **This file** is the day-to-day operational reference: emergency pause/unpause,
->   circuit-breaker quorum, admin key rotation, stuck migrations, webhook replay,
->   storage TTL, and SLO-alert response. It is network-agnostic and is the right
->   starting point for testnet and routine admin operations.
-> - **For a compromised or failed *mainnet* deployment** — WASM rollback, state
->   migration to a new contract ID, the severity decision tree, and the authority
->   matrix — use [ROLLBACK_RUNBOOK.md](ROLLBACK_RUNBOOK.md), which is canonical for
->   mainnet incident recovery.
->
-> Both runbooks use the `stellar` CLI (`stellar contract invoke`, `stellar contract deploy`).
-> The commands are copy-paste compatible between the two files.
-
 On-call reference for common production procedures. All `stellar contract invoke` commands assume the following environment variables are set:
 
 ```bash
@@ -412,7 +399,7 @@ stellar contract invoke \
   --remittance_id <ID>
 ```
 
-**Extend TTL via Soroban CLI (bump ledgers):**
+**Extend TTL via Stellar CLI (bump ledgers):**
 
 ```bash
 stellar contract extend \

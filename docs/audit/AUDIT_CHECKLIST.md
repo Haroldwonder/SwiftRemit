@@ -19,7 +19,7 @@
 | 1.3 | Contract builds cleanly: `cargo build --target wasm32-unknown-unknown --release` | ☐ Pending | Must produce zero warnings |
 | 1.4 | All Rust tests pass: `cargo test` | ☐ Pending | |
 | 1.5 | Clippy passes: `cargo clippy -- -D warnings` | ☐ Pending | |
-| 1.6 | Optimised WASM produced: `soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm` | ☐ Pending | |
+| 1.6 | Optimised WASM produced: `stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm` | ☐ Pending | |
 | 1.7 | WASM hash (SHA-256) documented and pinned | ☐ Pending | Hash: _TBD_ |
 | 1.8 | Rust toolchain version confirmed: `cat rust-toolchain.toml` | ☐ Pending | Currently: `stable` |
 | 1.9 | `soroban-sdk` version confirmed: `grep soroban-sdk Cargo.toml` | ☐ Pending | Currently: `26.1.0` |

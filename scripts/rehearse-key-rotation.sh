@@ -9,13 +9,13 @@ set -euo pipefail
 #          every step that would be followed during a real mainnet rotation.
 #
 # Requires:
-#   - soroban CLI installed and on $PATH
+#   - Stellar CLI installed and on $PATH
 #   - The following env vars set (or present in a .env file at repo root):
 #       CONTRACT_ID              Deployed SwiftRemit contract address
 #       NETWORK                  Soroban network name (should be "testnet" for rehearsal)
 #       RPC_URL                  Soroban RPC endpoint
-#       CURRENT_ADMIN_IDENTITY   soroban CLI identity name for the current admin
-#       NEW_ADMIN_IDENTITY       soroban CLI identity name for the replacement admin
+#       CURRENT_ADMIN_IDENTITY   Stellar CLI identity name for the current admin
+#       NEW_ADMIN_IDENTITY       Stellar CLI identity name for the replacement admin
 #
 # The script generates NEW_ADMIN_IDENTITY on testnet if it does not already exist.
 # It never touches mainnet keys.
@@ -128,25 +128,25 @@ check_network_safety() {
 # Resolve addresses from identity names
 # ---------------------------------------------------------------------------
 resolve_addresses() {
-  log "Resolving Stellar addresses from soroban identities..."
+  log "Resolving Stellar addresses from stellar identities..."
 
-  CURRENT_ADMIN_ADDRESS=$(soroban keys address "${CURRENT_ADMIN_IDENTITY}" 2>/dev/null) || {
-    fail "Cannot resolve address for identity '${CURRENT_ADMIN_IDENTITY}'. Is it registered in soroban CLI?"
+  CURRENT_ADMIN_ADDRESS=$(stellar keys address "${CURRENT_ADMIN_IDENTITY}" 2>/dev/null) || {
+    fail "Cannot resolve address for identity '${CURRENT_ADMIN_IDENTITY}'. Is it registered in Stellar CLI?"
     exit 1
   }
   log "CURRENT_ADMIN_ADDRESS = ${CURRENT_ADMIN_ADDRESS}"
 
   # If the new identity does not yet exist, generate it on testnet
-  if ! soroban keys address "${NEW_ADMIN_IDENTITY}" &>/dev/null; then
+  if ! stellar keys address "${NEW_ADMIN_IDENTITY}" &>/dev/null; then
     warn "Identity '${NEW_ADMIN_IDENTITY}' not found. Generating a fresh testnet keypair..."
-    soroban keys generate "${NEW_ADMIN_IDENTITY}" --network "${NETWORK}" --fund
+    stellar keys generate "${NEW_ADMIN_IDENTITY}" --network "${NETWORK}" --fund
     ok "Generated and funded '${NEW_ADMIN_IDENTITY}' on testnet"
     NEW_KEY_GENERATED=true
   else
     NEW_KEY_GENERATED=false
   fi
 
-  NEW_ADMIN_ADDRESS=$(soroban keys address "${NEW_ADMIN_IDENTITY}")
+  NEW_ADMIN_ADDRESS=$(stellar keys address "${NEW_ADMIN_IDENTITY}")
   log "NEW_ADMIN_ADDRESS = ${NEW_ADMIN_ADDRESS}"
 }
 
@@ -154,7 +154,7 @@ resolve_addresses() {
 # Helper: invoke the contract
 # ---------------------------------------------------------------------------
 invoke() {
-  soroban contract invoke \
+  stellar contract invoke \
     --id "${CONTRACT_ID}" \
     --network "${NETWORK}" \
     "$@"
@@ -162,7 +162,7 @@ invoke() {
 
 invoke_as() {
   local identity="$1"; shift
-  soroban contract invoke \
+  stellar contract invoke \
     --id "${CONTRACT_ID}" \
     --source "${identity}" \
     --network "${NETWORK}" \
@@ -256,8 +256,8 @@ step_health_check() {
 cleanup() {
   if [[ "${NEW_KEY_GENERATED:-false}" == "true" ]]; then
     warn "Cleaning up auto-generated test identity '${NEW_ADMIN_IDENTITY}'..."
-    # Remove from soroban keystore (best effort — do not fail the script)
-    soroban keys remove "${NEW_ADMIN_IDENTITY}" 2>/dev/null \
+    # Remove from stellar keystore (best effort — do not fail the script)
+    stellar keys remove "${NEW_ADMIN_IDENTITY}" 2>/dev/null \
       && log "Removed identity '${NEW_ADMIN_IDENTITY}' from local keystore." \
       || warn "Could not remove '${NEW_ADMIN_IDENTITY}' — remove manually if needed."
   fi

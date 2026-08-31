@@ -26,20 +26,20 @@ echo "📦 Adding wasm32-unknown-unknown target..."
 rustup target add wasm32-unknown-unknown
 echo "✅ wasm32 target added"
 
-# Check if Soroban CLI is installed
+# Check if Stellar CLI is installed
 echo ""
-if ! command -v soroban &> /dev/null; then
-    echo "📦 Installing Soroban CLI..."
-    cargo install --locked soroban-cli --features opt
-    echo "✅ Soroban CLI installed successfully"
+if ! command -v stellar &> /dev/null; then
+    echo "📦 Installing Stellar CLI..."
+    cargo install --locked stellar-cli --features opt
+    echo "✅ Stellar CLI installed successfully"
 else
-    echo "✅ Soroban CLI is already installed ($(soroban --version))"
+    echo "✅ Stellar CLI is already installed ($(stellar --version))"
 fi
 
 # Configure testnet
 echo ""
 echo "🌐 Configuring Stellar testnet..."
-soroban network add --global testnet \
+stellar network add --global testnet \
   --rpc-url https://soroban-testnet.stellar.org:443 \
   --network-passphrase "Test SDF Network ; September 2015" 2>/dev/null || echo "Testnet already configured"
 echo "✅ Testnet configured"
@@ -52,7 +52,7 @@ cargo build --target wasm32-unknown-unknown --release
 # Optimize the contract
 echo ""
 echo "⚡ Optimizing contract..."
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 
 echo ""
 echo "✅ Setup complete!"

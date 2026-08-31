@@ -23,23 +23,23 @@ Write-Host "📦 Adding wasm32-unknown-unknown target..." -ForegroundColor Yello
 rustup target add wasm32-unknown-unknown
 Write-Host "✅ wasm32 target added" -ForegroundColor Green
 
-# Check if Soroban CLI is installed
+# Check if Stellar CLI is installed
 Write-Host ""
-$sorobanInstalled = Get-Command soroban -ErrorAction SilentlyContinue
-if (-not $sorobanInstalled) {
-    Write-Host "📦 Installing Soroban CLI..." -ForegroundColor Yellow
-    cargo install --locked soroban-cli --features opt
-    Write-Host "✅ Soroban CLI installed successfully" -ForegroundColor Green
+$stellarInstalled = Get-Command stellar -ErrorAction SilentlyContinue
+if (-not $stellarInstalled) {
+    Write-Host "📦 Installing Stellar CLI..." -ForegroundColor Yellow
+    cargo install --locked stellar-cli --features opt
+    Write-Host "✅ Stellar CLI installed successfully" -ForegroundColor Green
 } else {
-    $sorobanVersion = soroban --version
-    Write-Host "✅ Soroban CLI is already installed ($sorobanVersion)" -ForegroundColor Green
+    $stellarVersion = stellar --version
+    Write-Host "✅ Stellar CLI is already installed ($stellarVersion)" -ForegroundColor Green
 }
 
 # Configure testnet
 Write-Host ""
 Write-Host "🌐 Configuring Stellar testnet..." -ForegroundColor Yellow
 try {
-    soroban network add --global testnet `
+    stellar network add --global testnet `
       --rpc-url https://soroban-testnet.stellar.org:443 `
       --network-passphrase "Test SDF Network ; September 2015" 2>$null
 } catch {
@@ -55,7 +55,7 @@ cargo build --target wasm32-unknown-unknown --release
 # Optimize the contract
 Write-Host ""
 Write-Host "⚡ Optimizing contract..." -ForegroundColor Yellow
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 
 Write-Host ""
 Write-Host "✅ Setup complete!" -ForegroundColor Green

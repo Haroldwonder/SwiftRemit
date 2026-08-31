@@ -50,7 +50,7 @@ Follow the steps below if you prefer to run services directly on your machine.
 - Node.js 18+ and npm
 - PostgreSQL 14+
 - Rust and Cargo (for smart contract)
-- Stellar CLI (soroban-cli)
+- Stellar CLI (`stellar`) — install via `cargo install --locked stellar-cli`
 
 ## 1. Database Setup
 
@@ -99,16 +99,16 @@ npm start
 ```bash
 # Build contract
 cargo build --target wasm32-unknown-unknown --release
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 
 # Deploy to testnet
-soroban contract deploy \
+stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm \
   --source deployer \
   --network testnet
 
 # Initialize contract
-soroban contract invoke \
+stellar contract invoke \
   --id <CONTRACT_ID> \
   --source deployer \
   --network testnet \
@@ -235,10 +235,10 @@ curl http://localhost:3000/health
 
 ```bash
 # Verify contract is deployed
-soroban contract info --id <CONTRACT_ID> --network testnet
+stellar contract info --id <CONTRACT_ID> --network testnet
 
 # Check contract functions
-soroban contract inspect --wasm target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm
+stellar contract inspect --wasm target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm
 ```
 
 ## Production Deployment

@@ -339,12 +339,12 @@ test result: ok. 210+ passed; 0 failed
 1. **Build Contract**
    ```bash
    cargo build --target wasm32-unknown-unknown --release
-   soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+   stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
    ```
 
 2. **Deploy to Testnet**
    ```bash
-   soroban contract deploy \
+   stellar contract deploy \
      --wasm target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm \
      --source deployer \
      --network testnet
@@ -352,7 +352,7 @@ test result: ok. 210+ passed; 0 failed
 
 3. **Initialize Contract**
    ```bash
-   soroban contract invoke \
+   stellar contract invoke \
      --id <CONTRACT_ID> \
      --source deployer \
      --network testnet \

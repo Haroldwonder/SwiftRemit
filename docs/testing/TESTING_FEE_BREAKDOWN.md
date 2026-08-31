@@ -109,7 +109,7 @@ cargo build --target wasm32-unknown-unknown --release
 Then verify with Soroban CLI:
 
 ```bash
-soroban contract invoke --help
+stellar contract invoke --help
 ```
 
 The `get_fee_breakdown` function should appear in the contract interface.
@@ -125,7 +125,7 @@ Deploy the contract and test the function on testnet:
 ./deploy.sh testnet
 
 # 2. Test the function with sample values
-soroban contract invoke \
+stellar contract invoke \
   --id <CONTRACT_ID> \
   --network testnet \
   -- \

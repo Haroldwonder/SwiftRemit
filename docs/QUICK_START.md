@@ -55,8 +55,8 @@ Install [Freighter](https://www.freighter.app/) and import your test accounts:
 
 ```bash
 # Get your account secret keys
-soroban keys show sender
-soroban keys show agent
+stellar keys show sender
+stellar keys show agent
 ```
 
 ### 2. Start Frontend
@@ -95,18 +95,18 @@ If you prefer manual setup or need to customize the process:
 
 1. **Install Prerequisites**
    ```bash
-   # Install Rust and Soroban CLI
+   # Install Rust and Stellar CLI
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   cargo install --locked soroban-cli
+   cargo install --locked stellar-cli
    ```
 
 2. **Get Testnet XLM**
    ```bash
    # Generate accounts
-   soroban keys generate --global sender --network testnet
+   stellar keys generate --global sender --network testnet
    
    # Fund via Friendbot
-   curl "https://friendbot.stellar.org/?addr=$(soroban keys address sender)"
+   curl "https://friendbot.stellar.org/?addr=$(stellar keys address sender)"
    ```
 
 3. **Deploy Contract**
@@ -125,7 +125,7 @@ See [TESTNET_SETUP_GUIDE.md](TESTNET_SETUP_GUIDE.md) for complete manual instruc
 source .env.local
 
 # Create a remittance
-soroban contract invoke \
+stellar contract invoke \
   --id $SWIFTREMIT_CONTRACT_ID \
   --source sender \
   --network testnet \
@@ -136,7 +136,7 @@ soroban contract invoke \
   --amount 1000000000
 
 # Confirm payout (as agent)
-soroban contract invoke \
+stellar contract invoke \
   --id $SWIFTREMIT_CONTRACT_ID \
   --source agent \
   --network testnet \
@@ -158,7 +158,7 @@ soroban contract invoke \
 
 ### Check Contract Status
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $SWIFTREMIT_CONTRACT_ID \
   --source sender \
   --network testnet \
@@ -168,13 +168,13 @@ soroban contract invoke \
 
 ### Watch Events
 ```bash
-soroban events --start-ledger latest --id $SWIFTREMIT_CONTRACT_ID --network testnet
+stellar events --start-ledger latest --id $SWIFTREMIT_CONTRACT_ID --network testnet
 ```
 
 ### Check Balances
 ```bash
 # USDC balance
-soroban contract invoke \
+stellar contract invoke \
   --id $USDC_TOKEN_ID \
   --source sender \
   --network testnet \
@@ -196,7 +196,7 @@ curl "https://friendbot.stellar.org/?addr=YOUR_ADDRESS"
 **"Contract not found"**
 ```bash
 # Verify deployment
-soroban contract info --id $SWIFTREMIT_CONTRACT_ID --network testnet
+stellar contract info --id $SWIFTREMIT_CONTRACT_ID --network testnet
 ```
 
 **"Insufficient balance"**
@@ -208,9 +208,9 @@ curl "https://horizon-testnet.stellar.org/accounts/YOUR_ADDRESS"
 ### Reset Everything
 ```bash
 # Remove old identities
-soroban keys rm sender
-soroban keys rm agent
-soroban keys rm deployer
+stellar keys rm sender
+stellar keys rm agent
+stellar keys rm deployer
 
 # Run setup again
 ./setup-testnet.sh

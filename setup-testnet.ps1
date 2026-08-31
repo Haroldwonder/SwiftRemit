@@ -23,9 +23,9 @@ Write-Host ""
 # Check prerequisites
 Write-Host "Checking prerequisites..." -ForegroundColor Yellow
 
-if (-not (Get-Command soroban -ErrorAction SilentlyContinue)) {
-    Write-Error "Soroban CLI not found. Please install it first:"
-    Write-Host "  cargo install --locked soroban-cli"
+if (-not (Get-Command stellar -ErrorAction SilentlyContinue)) {
+    Write-Error "Stellar CLI not found. Please install it first:"
+    Write-Host "  cargo install --locked stellar-cli"
     exit 1
 }
 
@@ -48,38 +48,38 @@ Write-Host "Step 1: Generating test accounts..." -ForegroundColor Yellow
 
 # Generate sender account
 try {
-    $null = soroban keys address $SenderIdentity 2>$null
+    $null = stellar keys address $SenderIdentity 2>$null
     Write-Info "Sender account already exists"
 } catch {
     Write-Info "Generating sender account..."
-    soroban keys generate --global $SenderIdentity --network $Network
+    stellar keys generate --global $SenderIdentity --network $Network
     Write-Success "Sender account generated"
 }
 
 # Generate agent account
 try {
-    $null = soroban keys address $AgentIdentity 2>$null
+    $null = stellar keys address $AgentIdentity 2>$null
     Write-Info "Agent account already exists"
 } catch {
     Write-Info "Generating agent account..."
-    soroban keys generate --global $AgentIdentity --network $Network
+    stellar keys generate --global $AgentIdentity --network $Network
     Write-Success "Agent account generated"
 }
 
 # Generate deployer account
 try {
-    $null = soroban keys address $DeployerIdentity 2>$null
+    $null = stellar keys address $DeployerIdentity 2>$null
     Write-Info "Deployer account already exists"
 } catch {
     Write-Info "Generating deployer account..."
-    soroban keys generate --global $DeployerIdentity --network $Network
+    stellar keys generate --global $DeployerIdentity --network $Network
     Write-Success "Deployer account generated"
 }
 
 # Get addresses
-$SenderAddress = soroban keys address $SenderIdentity
-$AgentAddress = soroban keys address $AgentIdentity
-$DeployerAddress = soroban keys address $DeployerIdentity
+$SenderAddress = stellar keys address $SenderIdentity
+$AgentAddress = stellar keys address $AgentIdentity
+$DeployerAddress = stellar keys address $DeployerIdentity
 
 Write-Host ""
 Write-Host "Generated Accounts:" -ForegroundColor Gray
@@ -100,10 +100,10 @@ function Fund-Account {
         $response = Invoke-RestMethod -Uri "https://friendbot.stellar.org/?addr=$Address" -Method Get
         Write-Success "$Name account funded via Friendbot"
     } catch {
-        Write-Warning "Friendbot funding failed for $Name, trying Soroban CLI..."
+        Write-Warning "Friendbot funding failed for $Name, trying Stellar CLI..."
         try {
-            soroban keys fund $Name --network $Network
-            Write-Success "$Name account funded via Soroban CLI"
+            stellar keys fund $Name --network $Network
+            Write-Success "$Name account funded via Stellar CLI"
         } catch {
             Write-Error "Failed to fund $Name account"
             throw
@@ -166,11 +166,11 @@ if (-not (Test-Path "target/wasm32-unknown-unknown/release/swiftremit.wasm")) {
 
 # Optimize contract
 Write-Info "Optimizing contract..."
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 
 # Deploy contract
 Write-Info "Deploying SwiftRemit contract..."
-$ContractId = soroban contract deploy `
+$ContractId = stellar contract deploy `
   --wasm target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm `
   --source $DeployerIdentity `
   --network $Network
@@ -179,7 +179,7 @@ Write-Success "Contract deployed: $ContractId"
 
 # Deploy mock USDC token
 Write-Info "Deploying mock USDC token..."
-$UsdcId = soroban contract asset deploy `
+$UsdcId = stellar contract asset deploy `
   --asset "USDC:$DeployerAddress" `
   --source $DeployerIdentity `
   --network $Network
@@ -188,7 +188,7 @@ Write-Success "USDC token deployed: $UsdcId"
 
 # Initialize contract
 Write-Info "Initializing contract..."
-soroban contract invoke `
+stellar contract invoke `
   --id $ContractId `
   --source $DeployerIdentity `
   --network $Network `
@@ -205,7 +205,7 @@ Write-Host ""
 # Step 5: Register agent
 Write-Host "Step 5: Registering agent..." -ForegroundColor Yellow
 
-soroban contract invoke `
+stellar contract invoke `
   --id $ContractId `
   --source $DeployerIdentity `
   --network $Network `
@@ -221,7 +221,7 @@ Write-Host ""
 Write-Host "Step 6: Minting USDC tokens to sender..." -ForegroundColor Yellow
 
 # Mint 10,000 USDC to sender (10,000 * 10^7 stroops)
-soroban contract invoke `
+stellar contract invoke `
   --id $UsdcId `
   --source $DeployerIdentity `
   --network $Network `
@@ -233,7 +233,7 @@ soroban contract invoke `
 Write-Success "Minted 10,000 USDC to sender"
 
 # Verify USDC balance
-$UsdcBalance = soroban contract invoke `
+$UsdcBalance = stellar contract invoke `
   --id $UsdcId `
   --source $SenderIdentity `
   --network $Network `
@@ -273,7 +273,7 @@ SENDER_ADDRESS=$SenderAddress
 AGENT_ADDRESS=$AgentAddress
 DEPLOYER_ADDRESS=$DeployerAddress
 
-# Account identities (for Soroban CLI)
+# Account identities (for Stellar CLI)
 SENDER_IDENTITY=$SenderIdentity
 AGENT_IDENTITY=$AgentIdentity
 DEPLOYER_IDENTITY=$DeployerIdentity
@@ -296,13 +296,13 @@ SWIFTREMIT_CONTRACT_ID=$ContractId
 USDC_TOKEN_ID=$UsdcId
 
 # Test account secrets (WARNING: Testnet only!)
-TESTNET_ADMIN_SECRET=$(soroban keys show $DeployerIdentity)
+TESTNET_ADMIN_SECRET=$(stellar keys show $DeployerIdentity)
 TESTNET_ADMIN_PUBLIC=$DeployerAddress
 
-TESTNET_AGENT_SECRET=$(soroban keys show $AgentIdentity)
+TESTNET_AGENT_SECRET=$(stellar keys show $AgentIdentity)
 TESTNET_AGENT_PUBLIC=$AgentAddress
 
-TESTNET_SENDER_SECRET=$(soroban keys show $SenderIdentity)
+TESTNET_SENDER_SECRET=$(stellar keys show $SenderIdentity)
 TESTNET_SENDER_PUBLIC=$SenderAddress
 
 # Test configuration
@@ -324,7 +324,7 @@ Write-Host "Step 8: Testing the setup..." -ForegroundColor Yellow
 Write-Info "Creating a test remittance..."
 
 # Approve USDC transfer
-soroban contract invoke `
+stellar contract invoke `
   --id $UsdcId `
   --source $SenderIdentity `
   --network $Network `
@@ -335,7 +335,7 @@ soroban contract invoke `
   --amount 1000000000
 
 # Create test remittance (100 USDC)
-$RemittanceId = soroban contract invoke `
+$RemittanceId = stellar contract invoke `
   --id $ContractId `
   --source $SenderIdentity `
   --network $Network `
@@ -348,7 +348,7 @@ $RemittanceId = soroban contract invoke `
 Write-Success "Test remittance created: $RemittanceId"
 
 # Confirm payout as agent
-soroban contract invoke `
+stellar contract invoke `
   --id $ContractId `
   --source $AgentIdentity `
   --network $Network `
@@ -359,7 +359,7 @@ soroban contract invoke `
 Write-Success "Test remittance completed successfully"
 
 # Check final balances
-$SenderFinalBalance = soroban contract invoke `
+$SenderFinalBalance = stellar contract invoke `
   --id $UsdcId `
   --source $SenderIdentity `
   --network $Network `
@@ -367,7 +367,7 @@ $SenderFinalBalance = soroban contract invoke `
   balance `
   --id $SenderAddress
 
-$AgentFinalBalance = soroban contract invoke `
+$AgentFinalBalance = stellar contract invoke `
   --id $UsdcId `
   --source $AgentIdentity `
   --network $Network `

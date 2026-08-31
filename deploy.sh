@@ -23,34 +23,34 @@ echo "Network: $NETWORK"
 echo "Deployer Identity: $DEPLOYER"
 
 # Check prerequisites
-if ! command -v soroban &> /dev/null; then
-    echo "❌ Soroban CLI not found. Please install it first."
+if ! command -v stellar &> /dev/null; then
+    echo "❌ Stellar CLI not found. Please install it first."
     exit 1
 fi
 
 # Setup Identity
 echo "Checking identity..."
-if ! soroban keys address $DEPLOYER > /dev/null 2>&1; then
+if ! stellar keys address $DEPLOYER > /dev/null 2>&1; then
     echo "Creating new identity '$DEPLOYER'..."
-    soroban keys generate --global $DEPLOYER --network $NETWORK
+    stellar keys generate --global $DEPLOYER --network $NETWORK
 else
     echo "Identity '$DEPLOYER' found."
 fi
 
-ADDRESS=$(soroban keys address $DEPLOYER)
+ADDRESS=$(stellar keys address $DEPLOYER)
 echo "Address: $ADDRESS"
 
 # Fund Identity (attempt on testnet/standalone, skip on mainnet)
 if [ "$NETWORK" != "mainnet" ]; then
     echo "Funding identity (this may take a moment)..."
-    soroban keys fund $DEPLOYER --network $NETWORK || echo "Funding warning: Request may have failed or account already funded (or network doesn't support funding)."
+    stellar keys fund $DEPLOYER --network $NETWORK || echo "Funding warning: Request may have failed or account already funded (or network doesn't support funding)."
 fi
 
 # Build and Optimize
 echo "🔨 Building and Optimizing Contract..."
 # Note: To enable debug logging for local testing, add: --features debug-log
 cargo build --target wasm32-unknown-unknown --release
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 
 if [ ! -f "$WASM_PATH" ]; then
     echo "❌ Build failed. $WASM_PATH not found."
@@ -59,7 +59,7 @@ fi
 
 # Deploy Contract
 echo "📤 Deploying Contract..."
-CONTRACT_ID=$(soroban contract deploy \
+CONTRACT_ID=$(stellar contract deploy \
   --wasm $WASM_PATH \
   --source $DEPLOYER \
   --network $NETWORK)
@@ -68,7 +68,7 @@ echo "✅ Contract Deployed: $CONTRACT_ID"
 
 # Deploy Mock USDC Token
 echo "💰 Deploying Mock USDC Token..."
-USDC_ID=$(soroban contract asset deploy \
+USDC_ID=$(stellar contract asset deploy \
   --asset "USDC:$ADDRESS" \
   --source $DEPLOYER \
   --network $NETWORK)
@@ -77,7 +77,7 @@ echo "✅ USDC Token Deployed: $USDC_ID"
 
 # Initialize Contract
 echo "⚙️ Initializing Contract..."
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $DEPLOYER \
   --network $NETWORK \
