@@ -1,7 +1,7 @@
 /**
  * Typed error mapping for the SwiftRemit TypeScript SDK.
  *
- * Mirrors the 71 ContractError codes defined in src/errors.rs so callers
+ * Mirrors the ContractError codes defined in src/errors.rs so callers
  * can catch and branch on named error codes instead of parsing raw strings.
  *
  * Usage:
@@ -111,8 +111,21 @@ export enum ErrorCode {
   ProposalNotFound = 68,
   AgentAlreadyRegistered = 69,
 
+  // Restored variants (70, 72-80) — re-added after bad-merge gap (SR-192)
+  NotFound = 70,
+
   // Dispute (71)
   NotDisputed = 71,
+
+  MigrationValidationFailed = 72,
+  PauseRecordNotFound = 73,
+  DisputeWindowExpired = 74,
+  MissingRecipientHash = 75,
+  RecipientHashSchemaMismatch = 76,
+  RecipientHashMismatch = 77,
+  InvalidTimelockDuration = 78,
+  BelowMinReputation = 79,
+  MultisigQuorumRequired = 80,
 
   // Dispute evidence (83)
   MalformedEvidenceHash = 83,
@@ -191,6 +204,17 @@ const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.AgentAlreadyRegistered]: "Agent is already registered in the system",
   [ErrorCode.NotDisputed]: "This operation requires the remittance to be in a Disputed state",
   [ErrorCode.MalformedEvidenceHash]: "Evidence hash for a dispute is not a valid 32-byte SHA-256 commitment",
+  // SR-192: restored variants (70, 72-80)
+  [ErrorCode.NotFound]: "The requested record does not exist",
+  [ErrorCode.MigrationValidationFailed]: "Post-migration validation detected inconsistent storage state",
+  [ErrorCode.PauseRecordNotFound]: "No pause record exists for the requested sequence number",
+  [ErrorCode.DisputeWindowExpired]: "The dispute window for this remittance has already closed",
+  [ErrorCode.MissingRecipientHash]: "The remittance has no recipient hash committed on-chain",
+  [ErrorCode.RecipientHashSchemaMismatch]: "The stored recipient hash uses a different schema version than supplied",
+  [ErrorCode.RecipientHashMismatch]: "The supplied recipient details do not match the committed hash",
+  [ErrorCode.InvalidTimelockDuration]: "Timelock duration is outside the permitted range",
+  [ErrorCode.BelowMinReputation]: "Agent reputation is below the configured minimum for this operation",
+  [ErrorCode.MultisigQuorumRequired]: "This configuration change requires a multi-sig proposal once threshold > 1",
 };
 
 /**
@@ -269,6 +293,17 @@ const ERROR_REMEDIATIONS: Record<ErrorCode, string> = {
   [ErrorCode.AgentAlreadyRegistered]: "This agent is already registered; no action needed.",
   [ErrorCode.NotDisputed]: "This operation is only valid while the remittance is in a Disputed state.",
   [ErrorCode.MalformedEvidenceHash]: "Supply a 32-byte SHA-256 hash as the evidence commitment.",
+  // SR-192: restored variants (70, 72-80)
+  [ErrorCode.NotFound]: "Verify the requested record exists before operating on it.",
+  [ErrorCode.MigrationValidationFailed]: "Re-export the migration snapshot and re-import; contact support if this persists.",
+  [ErrorCode.PauseRecordNotFound]: "Verify the pause sequence number before querying it.",
+  [ErrorCode.DisputeWindowExpired]: "The dispute window has closed; the remittance can no longer be disputed.",
+  [ErrorCode.MissingRecipientHash]: "Submit a recipient hash when creating the remittance, or use computeRecipientHash() to build one.",
+  [ErrorCode.RecipientHashSchemaMismatch]: "Ensure the schema version used to build the hash matches the one stored on-chain (currently v1).",
+  [ErrorCode.RecipientHashMismatch]: "Recompute the recipient hash from the correct recipient details using computeRecipientHash().",
+  [ErrorCode.InvalidTimelockDuration]: "Use a timelock duration within the contract's permitted range.",
+  [ErrorCode.BelowMinReputation]: "Use an agent with a reputation score at or above the configured minimum.",
+  [ErrorCode.MultisigQuorumRequired]: "Submit this change via proposeOperation/approveOperation instead of calling the admin function directly.",
 };
 
 /**
