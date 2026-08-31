@@ -2,6 +2,8 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+
+import { corsOptionsFromEnv } from '../../shared/src/cors-options';
 import { Pool } from 'pg';
 import http from 'http';
 import https from 'https';
@@ -14,13 +16,14 @@ import settlementsRouter from './routes/settlements';
 import { createRemittancesRouter, RemittancesRouterOptions } from './routes/remittances';
 import { createAdminRouter } from './routes/admin';
 import { createAnalyticsRouter } from './routes/analytics';
-import { createAgentsRouter } from './routes/agents';
+import { createAgentsRouter, AgentStore, PostgresAgentStore } from './routes/agents';
 import { createAgentAnalyticsRouter } from './routes/agent-analytics';
 import { createAuthRouter } from './routes/auth';
 import { createAccountsRouter } from './routes/accounts';
 import { getApiMetrics } from './metrics';
 import { ErrorResponse } from './types';
 import { AnchorStore, PostgresAnchorStore, createAnchorPool } from './db/anchorStore';
+import { getDefaultRemittanceStore } from './db/remittanceStore';
 import { Server as SocketIOServer } from 'socket.io';
 import { createWsHealthRouter } from './websocket/health';
 import { createRateLimitMiddleware, addRateLimitHeaders } from './middleware/rateLimitHeaders';
@@ -37,6 +40,7 @@ type AppOptions = {
   io?: SocketIOServer;
   /** Instrumented database pool — when provided, mounts readiness checks */
   pool?: Pool;
+  agentStore?: AgentStore;
 } & RemittancesRouterOptions;
 
 async function probeUrl(urlString: string, timeoutMs = 2000): Promise<{ status: number; ok: boolean; message?: string }> {
@@ -120,12 +124,18 @@ async function checkContractReachability() {
 export function createApp(options: AppOptions = {}): Application {
   const app = express();
 
+  const remittanceStore = options.remittanceStore ?? (process.env.DATABASE_URL ? getDefaultRemittanceStore() : undefined);
+
   // Initialize instrumented pool if DATABASE_URL is configured
   const pool = options.pool ?? (process.env.DATABASE_URL ? initPool() : null);
 
   // Security middleware
   app.use(helmet());
-  app.use(cors());
+  // SR-issue: cors() with no options defaults to origin '*'. Restrict to the
+  // ALLOWED_ORIGINS allowlist (shared/src/cors-options.ts) — only listed
+  // frontend origins get credentials: true for the cookie-based
+  // /api/auth/refresh flow (api/AUTH_MATRIX.md).
+  app.use(cors(corsOptionsFromEnv()));
   app.use(express.json());
   app.use(cookieParser());
 
@@ -219,9 +229,14 @@ export function createApp(options: AppOptions = {}): Application {
         })()
       : Promise.resolve();
 
+  const agentsStore = options.agentStore ?? (pool ? new PostgresAgentStore(pool) : undefined);
+  const agentBootstrapPromise = agentsStore instanceof PostgresAgentStore
+    ? agentsStore.initializeSchema()
+    : Promise.resolve();
+
   // Expose the bootstrap promise so index.ts can await it before accepting
   // traffic.  Tests (no DATABASE_URL, injected store) get a no-op Promise.
-  (app as any).__anchorBootstrap = anchorBootstrapPromise;
+  (app as any).__anchorBootstrap = Promise.all([anchorBootstrapPromise, agentBootstrapPromise]);
 
   // SR-056: Build a dedicated sub-router that holds all /api/* routes, then
   // mount it with createVersionedRouter so:
@@ -255,7 +270,7 @@ export function createApp(options: AppOptions = {}): Application {
   // Remittances — cursor-based pagination (Issues #472, #531); SR-160: pool
   // passed so failed outbound webhooks are persisted to webhook_dead_letters.
   apiRouter.use('/remittances', createRemittancesRouter({
-    remittanceStore: options.remittanceStore,
+    remittanceStore,
     pool: pool ?? undefined,
   }));
 
@@ -277,7 +292,7 @@ export function createApp(options: AppOptions = {}): Application {
   apiRouter.use('/auth', createAuthRouter());
 
   // Agents — registration and management (Issue #880)
-  apiRouter.use('/agents', createAgentsRouter());
+  apiRouter.use('/agents', createAgentsRouter({ store: agentsStore }));
 
   // Agent analytics — earnings and performance metrics (Issue #947)
   if (analyticsPool) {
@@ -291,7 +306,7 @@ export function createApp(options: AppOptions = {}): Application {
   // existed but was never mounted, so the endpoint was unreachable.
   apiRouter.use('/graphql', createGraphQLRouter({
     pool: analyticsPool ?? undefined,
-    remittanceStore: options.remittanceStore,
+    remittanceStore,
   }));
 
   // SR-056: Mount versioned (/v1/api/...) and unversioned-alias (/api/...)

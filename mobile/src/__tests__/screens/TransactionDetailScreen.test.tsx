@@ -1,16 +1,19 @@
 import React from 'react';
-import { render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { Alert, Linking, Share } from 'react-native';
 import TransactionDetailScreen from '../../screens/TransactionDetailScreen';
 import { remittanceService } from '../../services/api';
-import { Remittance } from '../../types';
+import { Receipt, Remittance } from '../../types';
 
 jest.mock('../../services/api', () => ({
   remittanceService: {
     getById: jest.fn(),
+    getReceipt: jest.fn(),
   },
 }));
 
 const mockGetById = remittanceService.getById as jest.Mock;
+const mockGetReceipt = remittanceService.getReceipt as jest.Mock;
 
 const { useRoute } = require('@react-navigation/native');
 
@@ -27,9 +30,27 @@ const SAMPLE: Remittance = {
   updated_at: '2026-03-10T08:10:00Z',
 };
 
+const SAMPLE_RECEIPT: Receipt = {
+  remittance_id: 'rm-abc-123',
+  sender: 'GABCDEF',
+  recipient: 'Jane Doe',
+  amount_sent: '500.00',
+  currency_from: 'USD',
+  amount_received: '476.46',
+  currency_to: 'KES',
+  fx_rate: 126.55,
+  fees_charged: '12.50',
+  transfer_date: '2026-03-10T08:00:00Z',
+  status: 'completed',
+  proof_of_payout_url: 'https://example.com/proof-of-payout.pdf',
+};
+
 describe('TransactionDetailScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    jest.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' } as any);
+    jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     useRoute.mockReturnValue({
       params: { remittanceId: 'rm-abc-123' },
       key: 'TransactionDetail',
@@ -73,12 +94,13 @@ describe('TransactionDetailScreen', () => {
     expect(getByText('Transfer Details')).toBeTruthy();
   });
 
-  it('renders the progress stepper', async () => {
+  it('renders the progress stepper with assistive progress text', async () => {
     mockGetById.mockResolvedValue(SAMPLE);
-    const { getByText } = await render(<TransactionDetailScreen />);
+    const { getByA11yRole, getByText } = await render(<TransactionDetailScreen />);
     await waitFor(() => {
       expect(getByText('Transfer Details')).toBeTruthy();
     });
+    expect(getByA11yRole('progressbar')).toHaveProp('accessibilityLabel', expect.stringMatching(/transfer progress|completed/i));
   });
 
   it('calls getById with the route remittanceId param', async () => {
@@ -102,6 +124,53 @@ describe('TransactionDetailScreen', () => {
     const { getByText } = await render(<TransactionDetailScreen />);
     await waitFor(() => {
       expect(getByText('pending user transfer start')).toBeTruthy();
+    });
+  });
+
+  it('shares the receipt via the native share sheet', async () => {
+    mockGetById.mockResolvedValue(SAMPLE);
+    mockGetReceipt.mockResolvedValue(SAMPLE_RECEIPT);
+    const { getByText } = await render(<TransactionDetailScreen />);
+
+    await waitFor(() => {
+      expect(getByText('Share receipt')).toBeTruthy();
+    });
+
+    fireEvent.press(getByText('Share receipt'));
+
+    await waitFor(() => {
+      expect(Share.share).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.any(String),
+          message: expect.stringContaining('Jane Doe'),
+        })
+      );
+    });
+  });
+
+  it('opens the proof of payout URL and surfaces failures', async () => {
+    mockGetById.mockResolvedValue(SAMPLE);
+    mockGetReceipt.mockResolvedValue(SAMPLE_RECEIPT);
+    const { getByText } = await render(<TransactionDetailScreen />);
+
+    await waitFor(() => {
+      expect(getByText('View receipt')).toBeTruthy();
+    });
+
+    fireEvent.press(getByText('View receipt'));
+    await waitFor(() => {
+      expect(getByText('Proof of payout')).toBeTruthy();
+    });
+
+    fireEvent.press(getByText('Proof of payout'));
+    await waitFor(() => {
+      expect(Linking.openURL).toHaveBeenCalledWith(SAMPLE_RECEIPT.proof_of_payout_url);
+    });
+
+    (Linking.openURL as jest.Mock).mockRejectedValueOnce(new Error('blocked'));
+    fireEvent.press(getByText('Proof of payout'));
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('Error', 'Unable to open the proof of payout.');
     });
   });
 });

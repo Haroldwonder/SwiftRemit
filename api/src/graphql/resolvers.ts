@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import type { GraphQLContext } from '../routes/graphql';
 
 export interface RemittanceStore {
   queryWithCursor(
@@ -34,15 +35,20 @@ export function createResolvers(pool: Pool, remittanceStore?: RemittanceStore) {
     remittances: async (
       _: unknown,
       args: { agent?: string; status?: string; cursor?: string; limit?: number },
+      context?: GraphQLContext,
     ) => {
       if (!remittanceStore) {
         throw new Error('Remittance store not configured');
       }
 
+      const allowedAgent = context?.role === 'admin'
+        ? args.agent?.trim()
+        : context?.userId ?? args.agent?.trim();
+
       const result = await remittanceStore.queryWithCursor(
         args.cursor || null,
         args.limit || 20,
-        args.agent,
+        allowedAgent || undefined,
         args.status,
       );
 
@@ -52,6 +58,7 @@ export function createResolvers(pool: Pool, remittanceStore?: RemittanceStore) {
     remittance: async (
       _: unknown,
       args: { id: number },
+      context?: GraphQLContext,
     ) => {
       if (!pool) {
         throw new Error('Database not configured');
@@ -62,7 +69,19 @@ export function createResolvers(pool: Pool, remittanceStore?: RemittanceStore) {
         [args.id],
       );
 
-      return result.rows[0] || null;
+      const row = result.rows[0] || null;
+      if (!row) {
+        return null;
+      }
+
+      if (context && context.role !== 'admin') {
+        const isOwner = row.sender_id === context.userId || row.agent_id === context.userId;
+        if (!isOwner) {
+          return null;
+        }
+      }
+
+      return row;
     },
 
     corridors: async (

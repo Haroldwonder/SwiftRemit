@@ -41,7 +41,7 @@ fn setup() -> F<'static> {
 }
 
 fn remit(f: &F, amount: i128) -> u64 {
-    f.c.create_remittance(&f.sender, &f.agent, &amount, &None, &None, &None, &None, &None)
+    f.c.create_remittance(&f.sender, &f.agent, &amount, &None, &None, &None, &None, &None, &None)
 }
 
 // ── #589 Multi-currency ───────────────────────────────────────────────────────
@@ -58,14 +58,14 @@ fn remit(f: &F, amount: i128) -> u64 {
     let t2 = make_token(&f.env, &f.admin);
     t2.mint(&f.sender, &5_000);
     f.c.add_whitelisted_token(&t2.address);
-    let id = f.c.create_remittance(&f.sender, &f.agent, &1_000, &None, &Some(t2.address.clone()), &None, &None, &None);
+    let id = f.c.create_remittance(&f.sender, &f.agent, &1_000, &None, &Some(t2.address.clone()), &None, &None, &None, &None);
     assert_eq!(f.c.get_remittance(&id).token, t2.address);
 }
 
 #[test] fn test_589_unwhitelisted_token_rejected() {
     let f = setup();
     let bad = make_token(&f.env, &f.admin);
-    let r = f.c.try_create_remittance(&f.sender, &f.agent, &1_000, &None, &Some(bad.address.clone()), &None, &None, &None);
+    let r = f.c.try_create_remittance(&f.sender, &f.agent, &1_000, &None, &Some(bad.address.clone()), &None, &None, &None, &None);
     assert_eq!(r, Err(Ok(ContractError::TokenNotWhitelisted)));
 }
 
@@ -161,7 +161,7 @@ fn remit(f: &F, amount: i128) -> u64 {
     let f = setup();
     f.c.set_min_agent_reputation(&50u32);
     // New agent has reputation 100, should pass
-    let r = f.c.try_create_remittance(&f.sender, &f.agent, &1_000, &None, &None, &None, &None, &None);
+    let r = f.c.try_create_remittance(&f.sender, &f.agent, &1_000, &None, &None, &None, &None, &None, &None);
     assert!(r.is_ok());
 }
 

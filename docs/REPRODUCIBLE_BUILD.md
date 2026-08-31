@@ -10,7 +10,7 @@ This is the basis for trustless auditing of a deployed contract.
 
 ```bash
 # 1. Clone the repository at the release tag you want to verify
-git clone https://github.com/Haroldwonder/SwiftRemit.git
+git clone https://github.com/richardiyamura/SwiftRemit.git
 cd SwiftRemit
 git checkout v1.0.0   # replace with the release tag
 
@@ -23,7 +23,7 @@ bash scripts/reproducible-build.sh
 
 # 4. Compare against the published hash for this release
 cat releases/v1.0.0.sha256
-# OR: curl https://github.com/Haroldwonder/SwiftRemit/releases/download/v1.0.0/swiftremit-v1.0.0.sha256
+# OR: curl https://github.com/richardiyamura/SwiftRemit/releases/download/v1.0.0/swiftremit-v1.0.0.sha256
 
 # 5. The two hashes should be identical ✓
 ```
@@ -64,7 +64,7 @@ all of which are required for a reproducible build.
 
 ```bash
 # Clone and checkout the exact tag
-git clone https://github.com/Haroldwonder/SwiftRemit.git
+git clone https://github.com/richardiyamura/SwiftRemit.git
 cd SwiftRemit
 git checkout v1.0.0
 
@@ -80,7 +80,7 @@ bash scripts/verify-reproducible-build.sh
 
 # Verify against the published release hash
 bash scripts/verify-reproducible-build.sh --expected "$(curl -sSf \
-  https://github.com/Haroldwonder/SwiftRemit/releases/download/v1.0.0/swiftremit-v1.0.0.sha256)"
+  https://github.com/richardiyamura/SwiftRemit/releases/download/v1.0.0/swiftremit-v1.0.0.sha256)"
 ```
 
 ---
@@ -95,8 +95,8 @@ Every release publishes two files:
 
 ```bash
 # Download both
-curl -sSfLO https://github.com/Haroldwonder/SwiftRemit/releases/download/v1.0.0/swiftremit.wasm
-curl -sSfL  https://github.com/Haroldwonder/SwiftRemit/releases/download/v1.0.0/swiftremit-v1.0.0.sha256
+curl -sSfLO https://github.com/richardiyamura/SwiftRemit/releases/download/v1.0.0/swiftremit.wasm
+curl -sSfL  https://github.com/richardiyamura/SwiftRemit/releases/download/v1.0.0/swiftremit-v1.0.0.sha256
 
 # Verify
 sha256sum -c <<< "$(cat swiftremit-v1.0.0.sha256)  swiftremit.wasm"

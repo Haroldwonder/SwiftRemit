@@ -36,6 +36,11 @@ graph TB
         VB[VerificationBadge]
     end
 
+    subgraph Mobile["Mobile (React Native)"]
+        MOBILE[Expo App]
+        PUSH[Push Notifications]
+    end
+
     subgraph API["API Service (TypeScript)"]
         REST[REST Endpoints]
         FX[FX Rate / Currency API]
@@ -73,9 +78,13 @@ graph TB
     end
 
     S -->|create_remittance / cancel| UI
+    S -->|create_remittance / cancel| MOBILE
     A -->|confirm_payout| UI
+    A -->|confirm_payout| MOBILE
     ADM -->|register_agent / withdraw_fees| UI
+    ADM -->|register_agent / withdraw_fees| MOBILE
     UI --> REST
+    MOBILE --> REST
     REST --> LIB
     LIB --> STOR
     LIB --> TRANS
@@ -90,6 +99,8 @@ graph TB
     EVT --> WH
     WH -->|deliver webhooks| DB
     WH -->|notify| S
+    WH -->|push notifications| PUSH
+    PUSH --> MOBILE
     EVT --> KYC
     KYC --> ANC
     KYC --> DB
@@ -99,6 +110,7 @@ graph TB
     AV -->|off-chain checks| TOML
     Backend -->|health check| HLTH
     Frontend --> FX
+    Mobile --> FX
     FX --> CFG
 ```
 

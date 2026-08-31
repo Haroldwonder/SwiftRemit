@@ -64,6 +64,9 @@ jobs:
       - name: Run contract tests
         run: cargo test --locked 2>&1 | tee /tmp/test-output.txt
 
+      - name: Run legacy-tests suite
+        run: cargo test --locked --features legacy-tests 2>&1 | tee -a /tmp/test-output.txt
+
       - name: Upload test output
         if: always()
         uses: actions/upload-artifact@v4

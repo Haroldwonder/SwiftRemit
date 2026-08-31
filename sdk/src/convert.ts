@@ -3,7 +3,9 @@ import {
   scValToNative,
   nativeToScVal,
   Address,
+  StrKey,
 } from "@stellar/stellar-sdk";
+import { createHash } from "crypto";
 import { SwiftRemitError, ErrorCode } from "./errors.js";
 import type {
   Remittance,
@@ -33,6 +35,7 @@ import type {
   Role,
   AdminOperationType,
   PendingOperation,
+  RecipientDetails,
 } from "./types.js";
 
 // ─── ScVal → Native ──────────────────────────────────────────────────────────
@@ -543,4 +546,94 @@ export function parsePendingOperation(val: xdr.ScVal): PendingOperation {
     feeBps: Number(map["fee_bps"]),
     withdrawTo: map["withdraw_to"] != null ? String(map["withdraw_to"]) : null,
   };
+}
+
+// ─── SR-195: Recipient hash builder ──────────────────────────────────────────
+
+/**
+ * Compute the canonical SHA-256 recipient hash that the SwiftRemit contract
+ * expects for `createRemittance.recipientHash` and
+ * `confirmPayout.recipientDetailsHash`.
+ *
+ * This mirrors the byte layout produced by `compute_recipient_hash()` in
+ * `src/recipient_verification.rs` (schema version 1):
+ *
+ * **Wallet variant**
+ * ```
+ * SHA-256( [0x01] | XDR-encoded Stellar Address )
+ * ```
+ * The XDR encoding of a Soroban `Address` as produced by `Address::to_xdr(env)` is:
+ *   ScAddressType::Account (u32-BE = 0, 4 bytes)
+ *   PublicKeyType::PublicKeyTypeEd25519 (u32-BE = 0, 4 bytes)
+ *   32-byte raw ed25519 public key
+ * Total = 40 bytes
+ *
+ * **Bank variant**
+ * ```
+ * SHA-256(
+ *   [0x02]
+ *   | u32-BE( byteLength(account_number) ) | UTF-8(account_number)
+ *   | u32-BE( byteLength(routing_code)   ) | UTF-8(routing_code)
+ * )
+ * ```
+ *
+ * @example — wallet recipient
+ * ```ts
+ * import { computeRecipientHash } from '@swiftremit/sdk';
+ *
+ * const hash = computeRecipientHash({ type: 'Wallet', address: 'GABC...' });
+ * const tx = await client.createRemittance({ ..., recipientHash: hash });
+ * ```
+ *
+ * @example — bank recipient
+ * ```ts
+ * const hash = computeRecipientHash({
+ *   type: 'Bank',
+ *   accountNumber: '1234567890',
+ *   routingCode: '021000021',
+ * });
+ * ```
+ *
+ * @param details - Recipient details (Wallet or Bank)
+ * @returns 32-byte SHA-256 Buffer suitable for on-chain hash comparison
+ * @throws {SwiftRemitError} ErrorCode.InvalidAddress if the wallet address is invalid
+ */
+export function computeRecipientHash(details: RecipientDetails): Buffer {
+  const h = createHash("sha256");
+
+  if (details.type === "Wallet") {
+    // Type tag = 0x01
+    h.update(Buffer.from([0x01]));
+
+    // Decode the StrKey to extract the raw 32-byte ed25519 public key
+    validateAddress(details.address);
+    const rawPubKey = Buffer.from(StrKey.decodeEd25519PublicKey(details.address));
+
+    // Replicate what Soroban's `Address::to_xdr(env)` produces for an Account address:
+    //   ScAddressType::Account = 0  (u32 big-endian, 4 bytes)
+    //   PublicKeyTypeEd25519   = 0  (u32 big-endian, 4 bytes)
+    //   raw ed25519 key            (32 bytes)
+    // Total = 40 bytes
+    const xdrBuf = Buffer.alloc(40);
+    xdrBuf.writeUInt32BE(0, 0);  // ScAddressType::Account discriminant
+    xdrBuf.writeUInt32BE(0, 4);  // PublicKeyType::Ed25519 discriminant
+    rawPubKey.copy(xdrBuf, 8);
+    h.update(xdrBuf);
+  } else {
+    // Bank variant — type tag = 0x02
+    h.update(Buffer.from([0x02]));
+
+    const acctBytes = Buffer.from(details.accountNumber, "utf8");
+    const lenBuf = Buffer.alloc(4);
+    lenBuf.writeUInt32BE(acctBytes.byteLength, 0);
+    h.update(lenBuf);
+    h.update(acctBytes);
+
+    const routeBytes = Buffer.from(details.routingCode, "utf8");
+    lenBuf.writeUInt32BE(routeBytes.byteLength, 0);
+    h.update(lenBuf);
+    h.update(routeBytes);
+  }
+
+  return h.digest();
 }

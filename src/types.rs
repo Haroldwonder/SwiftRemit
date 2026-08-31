@@ -326,6 +326,10 @@ pub enum AdminOperationType {
     Pause,
     /// Unpause the contract.
     Unpause,
+    /// Reconfigure the multisig threshold/TTL themselves (new_threshold/new_ttl_seconds
+    /// fields carry the new values). Required once the current threshold is > 1 so that
+    /// a single admin cannot unilaterally weaken the quorum protection.
+    UpdateMultisigConfig,
 }
 
 /// A pending multi-sig admin operation awaiting sufficient approvals.
@@ -350,6 +354,10 @@ pub struct PendingOperation {
     pub fee_bps: u32,
     /// Fee withdrawal recipient — only used for WithdrawFees operations.
     pub withdraw_to: Option<Address>,
+    /// New multisig threshold — only used for UpdateMultisigConfig operations.
+    pub new_threshold: u32,
+    /// New multisig TTL in seconds — only used for UpdateMultisigConfig operations.
+    pub new_ttl_seconds: u64,
 }
 
 /// Idempotency record for duplicate remittance prevention.

@@ -56,6 +56,11 @@ use crate::{
 /// Rolling window over which an agent's daily payout cap is enforced.
 pub const AGENT_CAP_WINDOW_SECONDS: u64 = 86_400;
 
+// SR-126: Maximum number of remittance IDs stored in a single index shard.
+// At 8 bytes per u64, 500 entries ≈ 4 KB — well within Soroban's 64 KB
+// per-ledger-entry limit and cheap to read/write on the hot path.
+pub const REMITTANCE_INDEX_SHARD_SIZE: u32 = 500;
+
 /// Default window, in seconds, during which a failed remittance may be disputed.
 pub const DEFAULT_DISPUTE_WINDOW_SECONDS: u64 = 72 * 3600; // 72 hours
 
@@ -323,10 +328,27 @@ enum DataKey {
 
     // === Remittance Indexes ===
     /// Remittance IDs created by a sender (persistent storage).
+    /// Legacy flat-list key kept for backward-compatible reads during migration.
     SenderRemittances(Address),
 
     /// Remittance IDs assigned to an agent (persistent storage).
+    /// Legacy flat-list key kept for backward-compatible reads during migration.
     AgentRemittances(Address),
+
+    // SR-126: Sharded index variants. Each shard stores at most
+    // REMITTANCE_INDEX_SHARD_SIZE IDs so ledger-entry growth is bounded.
+    /// One shard of a sender's remittance index: (sender, shard_number).
+    SenderRemittancesShard(Address, u32),
+
+    /// Running count of remittances indexed for a sender (used to derive the current
+    /// shard number without loading any shard data).
+    SenderRemittancesCount(Address),
+
+    /// One shard of an agent's remittance index: (agent, shard_number).
+    AgentRemittancesShard(Address, u32),
+
+    /// Running count of remittances indexed for an agent.
+    AgentRemittancesCount(Address),
 
     // === In-Flight Volume ===
     /// Total value of remittances currently in the Processing state (instance storage).
@@ -368,6 +390,11 @@ enum DataKey {
 
     /// Seconds that must elapse between governance approval and execution (instance storage).
     GovernanceTimelockSeconds,
+
+    // === Asset Verification Token Mapping ===
+    /// Maps a whitelisted token contract Address → (asset_code, issuer) so that
+    /// create_remittance can look up on-chain verification status by token address.
+    TokenAssetInfo(Address),
 }
 
 /// Checks if the contract has an admin configured.
@@ -1224,6 +1251,31 @@ pub fn get_all_whitelisted_tokens(env: &Env) -> Vec<Address> {
         .instance()
         .get(&DataKey::WhitelistedTokensList)
         .unwrap_or(Vec::new(env))
+}
+
+/// Associates a token contract address with its (asset_code, issuer) tuple so that
+/// create_remittance can resolve the asset-verification record by token address.
+/// Called by set_asset_verification when the admin registers verification data.
+pub fn set_token_asset_info(
+    env: &Env,
+    token: &Address,
+    asset_code: &soroban_sdk::String,
+    issuer: &Address,
+) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::TokenAssetInfo(token.clone()), &(asset_code.clone(), issuer.clone()));
+}
+
+/// Retrieves the (asset_code, issuer) tuple for a token contract address.
+/// Returns None if no mapping has been registered.
+pub fn get_token_asset_info(
+    env: &Env,
+    token: &Address,
+) -> Option<(soroban_sdk::String, Address)> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TokenAssetInfo(token.clone()))
 }
 
 // === Settlement Event Emission Tracking ===
@@ -2162,15 +2214,31 @@ pub fn add_processing_volume(env: &Env, amount: i128) -> Result<(), ContractErro
 }
 
 /// Appends a remittance ID to the agent's persistent remittance index.
+///
+/// SR-126: Writes are sharded — at most `REMITTANCE_INDEX_SHARD_SIZE` IDs
+/// are stored per ledger entry, so the write cost stays O(shard_size) rather
+/// than O(total IDs ever created by this agent).
 pub fn append_agent_remittance(env: &Env, agent: &Address, remittance_id: u64) {
-    let key = DataKey::AgentRemittances(agent.clone());
-    let mut ids: soroban_sdk::Vec<u64> = env
+    let count_key = DataKey::AgentRemittancesCount(agent.clone());
+    let count: u32 = env
         .storage()
         .persistent()
-        .get(&key)
+        .get(&count_key)
+        .unwrap_or(0);
+
+    let shard_index = count / REMITTANCE_INDEX_SHARD_SIZE;
+    let shard_key = DataKey::AgentRemittancesShard(agent.clone(), shard_index);
+
+    let mut shard: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&shard_key)
         .unwrap_or_else(|| soroban_sdk::Vec::new(env));
-    ids.push_back(remittance_id);
-    env.storage().persistent().set(&key, &ids);
+
+    shard.push_back(remittance_id);
+    env.storage().persistent().set(&shard_key, &shard);
+
+    env.storage().persistent().set(&count_key, &(count + 1));
 }
 
 /// Appends a partial payout record to the remittance's disbursement history.
@@ -2191,15 +2259,31 @@ pub fn append_partial_payout_record(
 }
 
 /// Appends a remittance ID to the sender's persistent remittance index.
+///
+/// SR-126: Writes are sharded — at most `REMITTANCE_INDEX_SHARD_SIZE` IDs
+/// are stored per ledger entry, so the write cost stays O(shard_size) rather
+/// than O(total IDs ever created by this sender).
 pub fn append_sender_remittance(env: &Env, sender: &Address, remittance_id: u64) {
-    let key = DataKey::SenderRemittances(sender.clone());
-    let mut ids: soroban_sdk::Vec<u64> = env
+    let count_key = DataKey::SenderRemittancesCount(sender.clone());
+    let count: u32 = env
         .storage()
         .persistent()
-        .get(&key)
+        .get(&count_key)
+        .unwrap_or(0);
+
+    let shard_index = count / REMITTANCE_INDEX_SHARD_SIZE;
+    let shard_key = DataKey::SenderRemittancesShard(sender.clone(), shard_index);
+
+    let mut shard: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&shard_key)
         .unwrap_or_else(|| soroban_sdk::Vec::new(env));
-    ids.push_back(remittance_id);
-    env.storage().persistent().set(&key, &ids);
+
+    shard.push_back(remittance_id);
+    env.storage().persistent().set(&shard_key, &shard);
+
+    env.storage().persistent().set(&count_key, &(count + 1));
 }
 
 /// Checks and records an agent withdrawal against the rolling cap.
@@ -2376,11 +2460,42 @@ pub fn get_agent_list(env: &Env) -> soroban_sdk::Vec<Address> {
 }
 
 /// Returns all remittance IDs for an agent.
+///
+/// SR-126: Reads across all shards in order. If no sharded data exists, falls
+/// back to the legacy flat `AgentRemittances` key so existing on-chain state
+/// continues to work during the upgrade.
 pub fn get_agent_remittances(env: &Env, agent: &Address) -> soroban_sdk::Vec<u64> {
-    env.storage()
+    let count_key = DataKey::AgentRemittancesCount(agent.clone());
+    let count: u32 = env
+        .storage()
         .persistent()
-        .get(&DataKey::AgentRemittances(agent.clone()))
-        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+        .get(&count_key)
+        .unwrap_or(0);
+
+    if count == 0 {
+        // Fall back to the legacy flat list in case this address was indexed
+        // before SR-126 sharding was deployed.
+        return env
+            .storage()
+            .persistent()
+            .get(&DataKey::AgentRemittances(agent.clone()))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    }
+
+    let num_shards = (count + REMITTANCE_INDEX_SHARD_SIZE - 1) / REMITTANCE_INDEX_SHARD_SIZE;
+    let mut all_ids: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(env);
+    for shard_index in 0..num_shards {
+        let shard_key = DataKey::AgentRemittancesShard(agent.clone(), shard_index);
+        let shard: soroban_sdk::Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&shard_key)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+        for i in 0..shard.len() {
+            all_ids.push_back(shard.get_unchecked(i));
+        }
+    }
+    all_ids
 }
 
 /// Returns the current corridor daily cap (0 = no cap configured).
@@ -2448,13 +2563,39 @@ pub fn get_remittance_expiry_window(env: &Env) -> u64 {
 
 /// Returns all remittance IDs for a sender.
 ///
-/// The caller is responsible for applying pagination (offset/limit) to avoid
-/// returning unbounded data in a single call.
+/// SR-126: Reads across all shards in order. Falls back to the legacy flat
+/// `SenderRemittances` key when no sharded data exists (backward compat).
 pub fn get_sender_remittances(env: &Env, sender: &Address) -> soroban_sdk::Vec<u64> {
-    env.storage()
+    let count_key = DataKey::SenderRemittancesCount(sender.clone());
+    let count: u32 = env
+        .storage()
         .persistent()
-        .get(&DataKey::SenderRemittances(sender.clone()))
-        .unwrap_or_else(|| soroban_sdk::Vec::new(env))
+        .get(&count_key)
+        .unwrap_or(0);
+
+    if count == 0 {
+        // Fall back to the legacy flat list for addresses indexed before SR-126.
+        return env
+            .storage()
+            .persistent()
+            .get(&DataKey::SenderRemittances(sender.clone()))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    }
+
+    let num_shards = (count + REMITTANCE_INDEX_SHARD_SIZE - 1) / REMITTANCE_INDEX_SHARD_SIZE;
+    let mut all_ids: soroban_sdk::Vec<u64> = soroban_sdk::Vec::new(env);
+    for shard_index in 0..num_shards {
+        let shard_key = DataKey::SenderRemittancesShard(sender.clone(), shard_index);
+        let shard: soroban_sdk::Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&shard_key)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+        for i in 0..shard.len() {
+            all_ids.push_back(shard.get_unchecked(i));
+        }
+    }
+    all_ids
 }
 
 /// Returns the total amount currently held in Processing (in-flight) remittances.

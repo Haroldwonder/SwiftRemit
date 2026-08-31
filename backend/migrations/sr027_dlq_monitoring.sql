@@ -1,18 +1,23 @@
 -- SR-027: DLQ monitoring, auto-retry, auto-disable, and bulk-replay
 --
--- 1. Add owner_email to the webhooks table so we can notify subscription owners.
--- 2. Add consecutive_failures counter to webhooks for auto-disable logic.
+-- 1. Add owner_email to webhook_subscribers so we can notify subscription owners.
+-- 2. Add consecutive_failures counter to webhook_subscribers for auto-disable logic.
 -- 3. Add subscription_id to webhook_dead_letters for per-subscription metrics.
+--
+-- NOTE: this used to ALTER a table literally named `webhooks`, which no
+-- migration anywhere creates — the real outbound-webhook table is
+-- `webhook_subscribers` (see 20260101_core_schema.sql). That made this
+-- migration fail unconditionally with "relation \"webhooks\" does not exist".
 
--- Add owner contact fields to webhooks
-ALTER TABLE webhooks
+-- Add owner contact fields to webhook_subscribers
+ALTER TABLE webhook_subscribers
   ADD COLUMN IF NOT EXISTS owner_email VARCHAR(255),
   ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMP;
 
 -- Index to quickly find subscriptions with high consecutive failures
 CREATE INDEX IF NOT EXISTS idx_webhooks_consecutive_failures
-  ON webhooks(consecutive_failures)
+  ON webhook_subscribers(consecutive_failures)
   WHERE active = TRUE;
 
 -- Add subscription_id to DLQ for per-subscription depth queries.

@@ -185,3 +185,20 @@ describe('notifications.ts — addResponseListener', () => {
     expect(navigate).toHaveBeenCalledWith('TransactionDetail', { remittanceId: 'rm-1' });
   });
 });
+
+describe('PII / amount lock-screen safety contract', () => {
+  it('notification data payload contains only type and remittanceId — no amounts', () => {
+    const payload = { type: 'remittance', remittanceId: 'rem_abc' };
+    expect(payload).not.toHaveProperty('amount');
+    expect(payload).not.toHaveProperty('currency');
+    expect(payload).not.toHaveProperty('senderName');
+    expect(payload).not.toHaveProperty('recipientName');
+  });
+
+  it('kyc notification data contains only type — no user details', () => {
+    const payload = { type: 'kyc' };
+    expect(payload).not.toHaveProperty('userId');
+    expect(payload).not.toHaveProperty('email');
+    expect(payload).not.toHaveProperty('kycDetails');
+  });
+});

@@ -14,12 +14,17 @@
 
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
 import { randomUUID } from 'crypto';
+import { correlationStorage } from '../correlation-id';
 
 const tracer = trace.getTracer('swiftremit-jobs', '1.0.0');
 
 /**
  * Wraps a background job in a root span. Generates a per-run correlation ID
- * that is attached to the span and every child span created within the job.
+ * that is attached to the span and every child span created within the job,
+ * and establishes it as the active AsyncLocalStorage correlation context so
+ * every createLogger(...).info/warn/error call made inside `fn` picks up the
+ * same ID — without this, logs report `correlationId: undefined` and can
+ * never be cross-referenced against the span that produced them.
  *
  * @param jobName   Human-readable job name (used as the span name)
  * @param fn        The async job body
@@ -40,7 +45,7 @@ export async function tracedJob<T>(jobName: string, fn: () => Promise<T>): Promi
     },
     async (span) => {
       try {
-        const result = await fn();
+        const result = await correlationStorage.run(correlationId, () => fn());
         span.setStatus({ code: SpanStatusCode.OK });
         return result;
       } catch (err) {

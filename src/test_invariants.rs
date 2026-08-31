@@ -91,7 +91,7 @@ proptest! {
 
         let sender_before = token.balance(&sender);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None, &None);
 
         // Contract must hold exactly the escrowed amount
         prop_assert_eq!(
@@ -136,7 +136,7 @@ proptest! {
         contract.set_kyc_approved(&sender, &true, &u64::MAX);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None, &None);
 
         let total_before = token.balance(&sender)
             + token.balance(&contract.address)
@@ -187,7 +187,7 @@ proptest! {
         contract.set_kyc_approved(&sender, &true, &u64::MAX);
 
         let sender_before = token.balance(&sender);
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None, &None);
 
         contract.cancel_remittance(&id);
 
@@ -236,7 +236,7 @@ proptest! {
         contract.register_agent(&agent, &None);
         contract.set_kyc_approved(&sender, &true, &u64::MAX);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None, &None);
         let r = contract.get_remittance(&id);
 
         prop_assert_eq!(
@@ -269,7 +269,7 @@ proptest! {
         contract.set_kyc_approved(&sender, &true, &u64::MAX);
         contract.assign_role(&admin, &agent, &crate::Role::Settler);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None, &None);
         contract.confirm_payout(&agent, &id, &None, &None);
 
         prop_assert_eq!(contract.get_remittance(&id).status, RemittanceStatus::Completed);
@@ -306,7 +306,7 @@ proptest! {
         contract.register_agent(&agent, &None);
         contract.set_kyc_approved(&sender, &true, &u64::MAX);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None, &None);
         contract.cancel_remittance(&id);
 
         prop_assert_eq!(contract.get_remittance(&id).status, RemittanceStatus::Cancelled);
@@ -354,7 +354,7 @@ proptest! {
         // Intentionally NOT registering `unregistered_agent`
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            contract.create_remittance(&sender, &unregistered_agent, &amount, &None, &None, &None, &None, &None);
+            contract.create_remittance(&sender, &unregistered_agent, &amount, &None, &None, &None, &None, &None, &None);
         }));
 
         prop_assert!(
@@ -411,7 +411,7 @@ proptest! {
         contract.register_agent(&agent, &None);
         contract.set_kyc_approved(&sender, &true, &u64::MAX);
 
-        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None);
+        let id = contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None, &None);
         let r = contract.get_remittance(&id);
 
         prop_assert!(r.fee >= 0, "Fee must be non-negative");
@@ -611,7 +611,7 @@ proptest! {
                 Op::CreateRemittance { amount_seed } => {
                     let amount = 1i128 + (amount_seed as i128 % 500_000);
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None)
+                        contract.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None, &None)
                     }));
                     if let Ok(id) = result {
                         rems.push(RemModel { id, amount, disbursed: 0, open: true });

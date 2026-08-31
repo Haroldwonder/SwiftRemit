@@ -119,6 +119,81 @@ describe('GraphQL API (Issue #879)', () => {
       expect(remittance).toHaveProperty('sender');
     });
 
+    it('should enforce row ownership for remittances list on non-admin callers', async () => {
+      const userApp = express();
+      userApp.use(express.json());
+
+      const userStore = {
+        queryWithCursor: async (_cursor: string | null, _limit: number, agent?: string) => {
+          expect(agent).toBe('user-42');
+          return {
+            items: [
+              {
+                id: 7,
+                sender: 'user-42',
+                agent: 'agent-42',
+                amount: 1500,
+                fee: 30,
+                status: 'Completed',
+                token: 'USDC',
+                memo: 'owned',
+                created_at: '2025-06-01T00:00:00Z',
+                updated_at: '2025-06-01T01:00:00Z',
+              },
+            ],
+            nextCursor: null,
+            hasMore: false,
+          };
+        },
+      };
+
+      userApp.use('/api/graphql', createGraphQLRouter({ pool: undefined, remittanceStore: userStore as any }));
+
+      const response = await request(userApp)
+        .post('/api/graphql')
+        .set('Authorization', bearer('user-42', { role: 'user' }))
+        .send({ query: 'query { remittances(agent: "OTHER_AGENT") { id sender agent } }' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.remittances[0].sender).toBe('user-42');
+    });
+
+    it('should deny access to a remittance row owned by another user', async () => {
+      const userApp = express();
+      userApp.use(express.json());
+
+      const pool = {
+        query: async (sql: string) => {
+          if (sql.includes('SELECT * FROM remittances WHERE id = $1')) {
+            return {
+              rows: [{
+                id: 99,
+                sender_id: 'other-user',
+                agent_id: 'other-agent',
+                amount: 2000,
+                fee: 40,
+                status: 'Completed',
+                created_at: '2025-06-01T00:00:00Z',
+                updated_at: '2025-06-01T01:00:00Z',
+              }],
+            };
+          }
+          return { rows: [] };
+        },
+      } as unknown as Pool;
+
+      userApp.use('/api/graphql', createGraphQLRouter({ pool, remittanceStore: undefined }));
+
+      const response = await request(userApp)
+        .post('/api/graphql')
+        .set('Authorization', bearer('user-42', { role: 'user' }))
+        .send({ query: 'query { remittance(id: 99) { id sender } }' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.remittance).toBeNull();
+    });
+
     it('should handle invalid queries', async () => {
       const query = `query { invalidField { foo } }`;
 

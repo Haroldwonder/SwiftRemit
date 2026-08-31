@@ -36,7 +36,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 
 | Document | Description |
 |---|---|
-| [TRANSACTION_CONTROLLER.md](TRANSACTION_CONTROLLER.md) | Transaction controller design |
+| [transaction-controller.md](transaction-controller.md) | Transaction controller service — architecture, API reference, quick start |
 | [TRANSACTION_STATE_MACHINE.md](TRANSACTION_STATE_MACHINE.md) | Remittance lifecycle state machine |
 | [FEE_SERVICE.md](FEE_SERVICE.md) | Fee calculation service — architecture, API, and refactor history |
 | [ASSET_VERIFICATION.md](ASSET_VERIFICATION.md) | Asset verification system |
@@ -85,15 +85,12 @@ that used to live at the repository root has been moved or deleted (SR-115).
 | [implementation/ABUSE_PROTECTION.md](implementation/ABUSE_PROTECTION.md) | Abuse protection implementation |
 | [implementation/PROOF_OF_PAYOUT.md](implementation/PROOF_OF_PAYOUT.md) | Proof-of-payout implementation |
 | [implementation/CURRENCY_API.md](implementation/CURRENCY_API.md) | Currency API implementation |
-| [implementation/TRANSACTION_CONTROLLER_IMPL.md](implementation/TRANSACTION_CONTROLLER_IMPL.md) | Transaction controller implementation notes |
 
 ### Integrations & SDKs
 
 | Document | Description |
 |---|---|
-| [ANCHOR_QUICKSTART.md](ANCHOR_QUICKSTART.md) | SEP-24 anchor quick-start |
-| [ANCHOR_SELECTION.md](ANCHOR_SELECTION.md) | Anchor selection guide |
-| [STELLAR_WALLETS_KIT.md](STELLAR_WALLETS_KIT.md) | Stellar Wallets Kit React integration guide |
+| [ANCHOR_QUICKSTART.md](ANCHOR_QUICKSTART.md) | Anchor provider selection (SEP-24) |
 | [MOBILE_FEATURE_PARITY.md](MOBILE_FEATURE_PARITY.md) | Mobile feature parity status |
 
 ### Design
@@ -103,8 +100,7 @@ that used to live at the repository root has been moved or deleted (SR-115).
 | [design/login-ui.md](design/login-ui.md) | Login UI design |
 | [design/landing-page.md](design/landing-page.md) | Landing page design |
 | [design/settings-ui.md](design/settings-ui.md) | Settings UI design |
-| [design/color-palette.md](design/color-palette.md) | Color palette |
-| [UI_DESIGN.md](UI_DESIGN.md) | UI design overview |
+| [design/ui-design-links.md](design/ui-design-links.md) | UI design Figma links |
 
 ---
 

@@ -42,6 +42,8 @@ export const ALL_SCOPES = [
   'read:kyc',
   'write:kyc',
   'admin:*',
+  'read:compliance',
+  'read:devices',
 ] as const;
 
 export type ApiKeyScope = (typeof ALL_SCOPES)[number];
@@ -316,6 +318,21 @@ export const ROUTE_SCOPES: Array<{ prefix: string; scope: ApiKeyScope }> = [
   // KYC reads
   { prefix: 'GET /api/kyc',             scope: 'read:kyc' },
   { prefix: 'POST /api/kyc/register',   scope: 'write:kyc' },
+  // AML/CTF operations (SR-112 surface) — officer-attributed mutations still
+  // require admin:*; read-only queue/status views accept the narrower
+  // read:compliance scope (satisfied automatically by admin:* too).
+  { prefix: 'PATCH /api/aml',           scope: 'admin:*' },
+  { prefix: 'POST /api/aml',            scope: 'admin:*' },
+  { prefix: 'GET /api/aml',             scope: 'read:compliance' },
+  // Compliance reporting — flagged remittances, thresholds, manual flags.
+  { prefix: 'POST /api/compliance',     scope: 'admin:*' },
+  { prefix: 'PATCH /api/compliance',    scope: 'admin:*' },
+  { prefix: 'GET /api/compliance',      scope: 'read:compliance' },
+  // Registered device management.
+  { prefix: 'POST /api/devices',        scope: 'admin:*' },
+  { prefix: 'PATCH /api/devices',       scope: 'admin:*' },
+  { prefix: 'DELETE /api/devices',      scope: 'admin:*' },
+  { prefix: 'GET /api/devices',         scope: 'read:devices' },
   // Verification reads (most permissive — default for free-tier keys)
   { prefix: 'GET /api/verification',    scope: 'read:verification' },
   { prefix: 'POST /api/verification',   scope: 'read:verification' },

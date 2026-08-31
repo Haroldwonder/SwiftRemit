@@ -43,7 +43,7 @@ Before you begin, ensure you have the following installed:
 
 3. Add the upstream repository:
    ```bash
-   git remote add upstream https://github.com/Haroldwonder/SwiftRemit.git
+   git remote add upstream https://github.com/richardiyamura/SwiftRemit.git
    ```
 
 ## Development Environment Setup
@@ -106,7 +106,37 @@ npm run dev
 npm test
 ```
 
-### 4. Environment Configuration
+### 4. Mobile App (React Native)
+
+```bash
+cd mobile
+
+# Install dependencies
+npm install
+
+# Set up environment configuration
+cp .env.example .env
+
+# Start the development server (uses Expo)
+npx expo start
+
+# Run on iOS simulator (macOS only)
+i
+
+# Run on Android emulator
+a
+
+# Run on web
+w
+```
+
+**Simulator requirements:**
+- **iOS**: Xcode 14+ with iOS 14.4+ simulator (macOS only)
+- **Android**: Android Studio with API 21+ emulator, or a physical device with Expo Go app
+
+For detailed release and deployment instructions, see [mobile/RELEASE.md](mobile/RELEASE.md).
+
+### 5. Environment Configuration
 
 Copy the example environment files and configure them:
 
@@ -119,13 +149,16 @@ cp backend/.env.example backend/.env
 
 # API configuration
 cp api/.env.example api/.env
+
+# Mobile configuration
+cp mobile/.env.example mobile/.env
 ```
 
 See [CONFIGURATION.md](CONFIGURATION.md) for detailed configuration options.
 
-### 5. One-command local stack
+### 6. One-command local stack
 
-Instead of steps 2-4, `make dev` (from the repo root) brings up Postgres, Jaeger, the backend,
+Instead of steps 2-5, `make dev` (from the repo root) brings up Postgres, Jaeger, the backend,
 API, frontend, Prometheus, and Grafana via `docker-compose.yml` in one step, with migrations run
 automatically on container start. Run `make dev-down` to stop it, and `make verify` to run the
 same lint/typecheck/test suite CI runs across every workspace. See `make help` for the full list
@@ -164,6 +197,10 @@ SwiftRemit/
 ├── api/                   # API service
 │   ├── src/               # TypeScript source
 │   └── __tests__/         # API tests
+├── mobile/                # React Native mobile app
+│   ├── src/               # React Native source
+│   ├── app.json           # Expo configuration
+│   └── RELEASE.md         # Release and deployment guide
 ├── examples/              # Example scripts and utilities
 ├── docs/                  # Additional documentation
 └── .github/workflows/     # CI/CD workflows
@@ -460,7 +497,7 @@ troubleshooting section.
 
 1. Push your branch to your fork
 
-2. Go to the [SwiftRemit repository](https://github.com/Haroldwonder/SwiftRemit)
+2. Go to the [SwiftRemit repository](https://github.com/richardiyamura/SwiftRemit)
 
 3. Click "New Pull Request"
 

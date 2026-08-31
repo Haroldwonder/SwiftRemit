@@ -1,0 +1,26 @@
+name: Key Rotation Due Check
+
+on:
+  schedule:
+    # Daily at 09:00 UTC — catches overdue rotations without waiting on a PR.
+    - cron: "0 9 * * *"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "docs/KEY_MANAGEMENT_POLICY.md"
+      - "scripts/check-key-rotation-due.sh"
+      - ".github/workflows/key-rotation-check.yml"
+  workflow_dispatch: {}
+
+jobs:
+  check-rotation-due:
+    name: Verify no key rotation is overdue (SR-111)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Key Inventory rotation dates
+        run: bash scripts/check-key-rotation-due.sh
+        # Fails the workflow (and, on schedule, shows red in the Actions tab)
+        # if any tracked key's "Next Rotation Due" date is in the past or
+        # unset. See docs/KEY_MANAGEMENT_POLICY.md Section 2.

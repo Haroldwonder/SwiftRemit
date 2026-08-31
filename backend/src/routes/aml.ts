@@ -53,10 +53,15 @@ interface OfficerRequest extends Request {
 }
 
 export function requireOfficer(req: OfficerRequest, res: Response, next: NextFunction): void {
-  const officerId = (req.headers['x-officer-id'] as string | undefined)?.trim();
+  // Prefer the verified API-key owner (attached by scopedApiKeyMiddleware,
+  // which now gates every /api/aml route on a scope) over the client-supplied
+  // x-officer-id header — a header the caller fully controls is not a real
+  // identity claim, so it is only accepted as a legacy fallback.
+  const apiKey = (req as any).apiKey as { owner_id?: string } | undefined;
+  const officerId = apiKey?.owner_id ?? (req.headers['x-officer-id'] as string | undefined)?.trim();
   if (!officerId) {
     res.status(403).json({
-      error: 'Compliance actions require an officer identity in the x-officer-id header',
+      error: 'Compliance actions require an authenticated officer identity (API key or x-officer-id header)',
     });
     return;
   }
