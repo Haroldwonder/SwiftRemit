@@ -9,12 +9,22 @@ import {
   ScrollView,
 } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
-import { kycService } from '../services/api';
+import { kycService, anchorService } from '../services/api';
 import { readThroughCache } from '../services/offlineCache';
 import OfflineBanner from '../components/OfflineBanner';
 import { KycStatus } from '../types';
+import Constants from 'expo-constants';
 
-const DEFAULT_ANCHOR = 'testanchor.stellar.org';
+/**
+ * SR-184: The testnet anchor is only used as an absolute last-resort fallback
+ * and only when EXPO_PUBLIC_ALLOW_TESTNET_ANCHOR is explicitly set to "true"
+ * in the build environment. Production builds leave this unset, so the fallback
+ * is never reachable outside of local/testnet development.
+ */
+const TESTNET_ANCHOR_FALLBACK =
+  Constants.expoConfig?.extra?.allowTestnetAnchor === true
+    ? 'testanchor.stellar.org'
+    : null;
 
 const KYC_DESCRIPTIONS: Record<KycStatus['kyc_status'], { label: string; color: string; desc: string }> = {
   not_started: {
@@ -44,6 +54,43 @@ const KYC_DESCRIPTIONS: Record<KycStatus['kyc_status'], { label: string; color: 
   },
 };
 
+/**
+ * Resolves the anchor ID to use for a given wallet address.
+ *
+ * Priority order:
+ *  1. Anchor persisted from the user's last completed transaction
+ *     (stored under 'last_anchor_id' in SecureStore by SendMoneyScreen).
+ *  2. The first available anchor returned by anchorService for the user's
+ *     stored country (stored under 'last_recipient_country').
+ *  3. The testnet fallback — only when explicitly enabled via build config,
+ *     to prevent it from ever reaching a production build.
+ *
+ * Throws if none of the above resolves so that the caller can surface a
+ * clear "no anchor available" error rather than silently querying the wrong one.
+ */
+async function resolveAnchorId(wallet: string): Promise<string> {
+  // 1. Last-used anchor persisted by SendMoneyScreen
+  const stored = await SecureStore.getItemAsync('last_anchor_id');
+  if (stored) return stored;
+
+  // 2. Derive from the user's last-used corridor via anchorService
+  const country = await SecureStore.getItemAsync('last_recipient_country');
+  const currency = await SecureStore.getItemAsync('last_recipient_currency');
+  if (country) {
+    try {
+      const anchors = await anchorService.getAvailableAnchors(country, currency ?? 'USD');
+      if (anchors.length > 0) return anchors[0].anchor_id;
+    } catch {
+      // anchorService unavailable — fall through to the testnet guard below
+    }
+  }
+
+  // 3. Testnet fallback — only in explicit dev/testnet builds
+  if (TESTNET_ANCHOR_FALLBACK) return TESTNET_ANCHOR_FALLBACK;
+
+  throw new Error('no_anchor_context');
+}
+
 export default function KycStatusScreen() {
   const [status, setStatus] = useState<KycStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,7 +102,23 @@ export default function KycStatusScreen() {
       try {
         const wallet = await SecureStore.getItemAsync('wallet_address');
         if (!wallet) { setError('Not logged in'); return; }
-        const result = await readThroughCache(`kyc:${wallet}`, () => kycService.getStatus(wallet, DEFAULT_ANCHOR));
+
+        let anchorId: string;
+        try {
+          anchorId = await resolveAnchorId(wallet);
+        } catch (anchorErr: any) {
+          setError(
+            anchorErr?.message === 'no_anchor_context'
+              ? 'No anchor context found. Please complete a transfer first.'
+              : 'Failed to determine your anchor.',
+          );
+          return;
+        }
+
+        const result = await readThroughCache(
+          `kyc:${wallet}:${anchorId}`,
+          () => kycService.getStatus(wallet, anchorId),
+        );
         setStatus(result.data);
         setCachedAt(result.fromCache ? result.cachedAt : null);
       } catch {

@@ -128,16 +128,32 @@ The `mobile-ci.yml` workflow builds a `preview` profile on every push to `main` 
 2. Manually trigger the workflow with the `production` profile, or add a separate `release.yml` job that detects the `mobile-v*` tag pattern and runs:
 
 ```yaml
-- name: EAS Submit iOS
-  run: eas submit --platform ios --profile production --non-interactive
+- name: EAS Build Production iOS
+  run: npx eas-cli build --platform ios --profile production --non-interactive
   env:
     EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-- name: EAS Submit Android
-  run: eas submit --platform android --profile production --non-interactive
+- name: EAS Build Production Android
+  run: npx eas-cli build --platform android --profile production --non-interactive
   env:
     EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+- name: EAS Submit iOS
+  run: npx eas-cli submit --platform ios --profile production --non-interactive
+  env:
+    EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    APPLE_ID: ${{ secrets.APPLE_ID }}
+    ASC_APP_ID: ${{ secrets.ASC_APP_ID }}
+    APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+- name: EAS Submit Android
+  run: npx eas-cli submit --platform android --profile production --non-interactive
+  env:
+    EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    GOOGLE_PLAY_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_KEY }}
 ```
+
+**Note:** `eas.json`'s `submit.production` config uses environment variable interpolation (e.g., `$APPLE_ID`, `$ASC_APP_ID`). These secrets are mapped from GitHub Actions secrets (or EAS secrets if using local submission). The Google Play service account key path uses `$GOOGLE_PLAY_SERVICE_ACCOUNT_KEY`, which should be set to the path of the key file on the CI runner (typically created from a GitHub secret as a temporary file during the job).
 
 ---
 

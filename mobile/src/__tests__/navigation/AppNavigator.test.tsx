@@ -1,6 +1,9 @@
 /**
  * Navigation tests for AppNavigator (src/navigation/AppNavigator.tsx)
  *
+ * SR-185 additions: auth-gate tests (Login screen shown when no wallet stored;
+ * Main shown when wallet is present; SESSION_EXPIRED event routes back to Login).
+ *
  * Strategy: render the full NavigationContainer + navigator stack using
  * @testing-library/react-native.  react-native-screens and
  * react-native-safe-area-context are mocked globally in setup.ts so the
@@ -14,9 +17,97 @@ import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Text, View, TouchableOpacity } from 'react-native';
+import { Text, View, TouchableOpacity, DeviceEventEmitter } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
+import AppNavigator from '../../navigation/AppNavigator';
+import { authService } from '../../services/api';
 
-// ── Minimal screen stubs (avoid loading full screen implementations here) ──
+// ── Mock authService ───────────────────────────────────────────────────────
+jest.mock('../../services/api', () => ({
+  authService: {
+    login: jest.fn(),
+    logout: jest.fn(),
+    getStoredWallet: jest.fn(),
+  },
+  deviceService: {
+    register: jest.fn(),
+  },
+}));
+
+// ── Mock all screens to keep tests lightweight ─────────────────────────────
+jest.mock('../../screens/LoginScreen', () => {
+  const { View, Text } = require('react-native');
+  return () => <View><Text>LoginScreen</Text></View>;
+});
+jest.mock('../../screens/HomeScreen', () => {
+  const { View, Text } = require('react-native');
+  return () => <View><Text>HomeScreen</Text></View>;
+});
+jest.mock('../../screens/SendMoneyScreen', () => {
+  const { View, Text } = require('react-native');
+  return () => <View><Text>SendMoneyScreen</Text></View>;
+});
+jest.mock('../../screens/TransactionHistoryScreen', () => {
+  const { View, Text } = require('react-native');
+  return () => <View><Text>TransactionHistoryScreen</Text></View>;
+});
+jest.mock('../../screens/TransactionDetailScreen', () => {
+  const { View, Text } = require('react-native');
+  return () => <View><Text>TransactionDetailScreen</Text></View>;
+});
+jest.mock('../../screens/KycStatusScreen', () => {
+  const { View, Text } = require('react-native');
+  return () => <View><Text>KycStatusScreen</Text></View>;
+});
+
+const mockGetStoredWallet = authService.getStoredWallet as jest.Mock;
+const mockGetItemAsync = SecureStore.getItemAsync as jest.Mock;
+
+// ── Auth-gate tests ────────────────────────────────────────────────────────
+
+describe('AppNavigator — auth gate (SR-185)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Default SecureStore: no session active
+    mockGetItemAsync.mockResolvedValue(null);
+  });
+
+  it('shows LoginScreen when no wallet is stored', async () => {
+    mockGetStoredWallet.mockResolvedValue(null);
+    const { getByText } = render(<AppNavigator />);
+    await waitFor(() => expect(getByText('LoginScreen')).toBeTruthy());
+  });
+
+  it('shows HomeScreen (Main) when a wallet is already stored', async () => {
+    mockGetStoredWallet.mockResolvedValue('GABC123');
+    const { getByText } = render(<AppNavigator />);
+    await waitFor(() => expect(getByText('HomeScreen')).toBeTruthy());
+  });
+
+  it('routes back to LoginScreen when SESSION_EXPIRED event fires', async () => {
+    mockGetStoredWallet.mockResolvedValue('GABC123');
+    const { getByText } = render(<AppNavigator />);
+    await waitFor(() => expect(getByText('HomeScreen')).toBeTruthy());
+
+    // Simulate session expiry
+    await act(async () => {
+      DeviceEventEmitter.emit('SESSION_EXPIRED');
+    });
+
+    await waitFor(() => expect(getByText('LoginScreen')).toBeTruthy());
+  });
+
+  it('shows a loading spinner while checking auth state', async () => {
+    // Never resolves to keep the loading state visible
+    mockGetStoredWallet.mockReturnValue(new Promise(() => {}));
+    const { getByTestId } = render(<AppNavigator />);
+    expect(getByTestId('auth-loading-indicator')).toBeTruthy();
+  });
+});
+
+// ── Original deep-link / transition tests (unchanged) ─────────────────────
+
+// Minimal screen stubs (avoid loading full screen implementations here)
 function HomeStub() {
   const { useNavigation } = require('@react-navigation/native');
   const nav = useNavigation();
@@ -68,7 +159,6 @@ function HistoryStub() {
   return <View><Text>HistoryStub</Text></View>;
 }
 
-// ── Minimal navigator that mirrors AppNavigator's structure ────────────────
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
@@ -94,12 +184,6 @@ function TestNavigator({ initialState }: { initialState?: object }) {
     </NavigationContainer>
   );
 }
-
-// ── Unmock @react-navigation/native for these integration tests ────────────
-// The global mock in setup.ts only mocks useNavigation/useRoute hooks, not
-// the NavigationContainer / createNativeStackNavigator exports which are real.
-// Because we explicitly re-require them above, the navigator renders with the
-// actual react-navigation routing logic.
 
 describe('AppNavigator — deep links and screen transitions', () => {
   it('renders the Home screen on initial load', async () => {
@@ -164,12 +248,6 @@ describe('AppNavigator — deep links and screen transitions', () => {
 });
 
 describe('AppNavigator — deep link: initialState simulation', () => {
-  /**
-   * React Navigation accepts an `initialState` object that mirrors what a
-   * deep link would produce after being parsed through the linking config.
-   * We use this to verify that the correct screen is shown for a given
-   * deep-link target without needing a real URL scheme in tests.
-   */
   it('opens SendMoney screen from deep link initial state', async () => {
     const initialState = {
       routes: [
