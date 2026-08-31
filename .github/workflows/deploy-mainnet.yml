@@ -9,6 +9,7 @@ name: Deploy to Mainnet
 #   4. gate-wasm-hash         – reproducible build hash matches
 #   5. gate-testnet-dry-run   – testnet deploy succeeded on this SHA (last 24h)
 #   6. require-checklist      – mainnet-checklist.yml passed on this SHA
+#   6b. gate-pact             – Pact Broker can-i-deploy for this SHA (SR-216)
 #   7. build-wasm             – build the final WASM artifact
 #   8. deploy-contract        – deploy to mainnet (requires "mainnet" environment approval)
 #   9. post-deploy-verify     – on-chain WASM hash == built artifact hash
@@ -195,11 +196,27 @@ jobs:
           fi
           echo "✅ Mainnet Checklist passed"
 
+  # ── 6b. Gate: Pact can-i-deploy (SR-216) ─────────────────────────────────
+  # Asks the Pact Broker whether SwiftRemitAPI at this SHA has verified pacts for
+  # every consumer currently in the mainnet environment. Inert (passes with a
+  # warning) until the PACT_BROKER_BASE_URL repository variable is set.
+  gate-pact:
+    name: Gate — Pact can-i-deploy
+    runs-on: ubuntu-latest
+    needs: require-checklist
+    steps:
+      - uses: actions/checkout@v4
+      - name: can-i-deploy to mainnet
+        env:
+          PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+        run: bash scripts/pact-can-i-deploy.sh mainnet "${{ github.sha }}"
+
   # ── 7. Build production WASM artifact ─────────────────────────────────────
   build-wasm:
     name: Build WASM artifact
     runs-on: ubuntu-latest
-    needs: require-checklist
+    needs: gate-pact
     outputs:
       wasm_sha256: ${{ steps.hash.outputs.wasm_sha256 }}
     steps:

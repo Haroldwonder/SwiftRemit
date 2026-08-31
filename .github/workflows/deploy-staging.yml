@@ -80,11 +80,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ── Pact can-i-deploy gate (SR-216) ──────────────────────────────────────
+  # Asks the Pact Broker whether SwiftRemitAPI at this SHA has verified pacts for
+  # every consumer currently in the staging environment. Inert (passes with a
+  # warning) until the PACT_BROKER_BASE_URL repository variable is set.
+  pact-can-i-deploy:
+    name: Pact — can I deploy to staging?
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: can-i-deploy
+        env:
+          PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+          PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+        run: bash scripts/pact-can-i-deploy.sh staging "${{ github.sha }}"
+
   # ── Deploy to staging VM via SSH ──────────────────────────────────────────
   deploy:
     name: Deploy to staging
     runs-on: ubuntu-latest
-    needs: build-images
+    needs: [build-images, pact-can-i-deploy]
     environment:
       name: staging
       url: ${{ vars.STAGING_API_URL }}
@@ -160,7 +175,7 @@ jobs:
   smoke-tests:
     name: Smoke tests
     runs-on: ubuntu-latest
-    needs: deploy
+    needs: [build-images, deploy]
     if: ${{ github.event.inputs.skip_smoke != 'true' }}
 
     steps:
