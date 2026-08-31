@@ -10,7 +10,7 @@
 2. **Sign in** with your GitHub account
 3. **Import Project**:
    - Click "Add New..." → "Project"
-   - Select your GitHub repository: `Haroldwonder/SwiftRemit`
+   - Select your GitHub repository: `richardiyamura/SwiftRemit`
    - Select branch: `refactor/production-readiness-soroban`
 4. **Configure Project**:
    - Framework Preset: Vite
@@ -73,7 +73,7 @@ vercel
 2. **Sign in** with GitHub
 3. **Add new site** → "Import an existing project"
 4. **Connect to Git provider**: GitHub
-5. **Select repository**: `Haroldwonder/SwiftRemit`
+5. **Select repository**: `richardiyamura/SwiftRemit`
 6. **Configure**:
    - Branch: `refactor/production-readiness-soroban`
    - Base directory: `frontend`
@@ -107,7 +107,7 @@ netlify deploy --prod
 ### Alternative: GitHub Pages
 
 1. **Enable GitHub Pages**:
-   - Go to: https://github.com/Haroldwonder/SwiftRemit/settings/pages
+   - Go to: https://github.com/richardiyamura/SwiftRemit/settings/pages
    - Source: Deploy from a branch
    - Branch: `refactor/production-readiness-soroban`
    - Folder: `/frontend` (if available) or `/` (root)
@@ -452,14 +452,14 @@ See [`frontend/.env.example`](frontend/.env.example) for the full list with inli
 ## Support
 
 - **Documentation**: See README.md files in each directory
-- **Issues**: https://github.com/Haroldwonder/SwiftRemit/issues
+- **Issues**: https://github.com/richardiyamura/SwiftRemit/issues
 - **Stellar Discord**: https://discord.gg/stellar
 
 ---
 
 ## Quick Links
 
-- **Repository**: https://github.com/Haroldwonder/SwiftRemit
+- **Repository**: https://github.com/richardiyamura/SwiftRemit
 - **Branch**: refactor/production-readiness-soroban
 - **Stellar Testnet**: https://horizon-testnet.stellar.org
 - **Freighter Wallet**: https://www.freighter.app/
