@@ -25,6 +25,8 @@ import type {
   HealthStatus,
   CreateRemittanceParams,
   BatchCreateEntry,
+  BatchCreateResponse,
+  BatchCreateResult,
   GovernanceConfig,
   DailyLimitStatus,
   Proposal,
@@ -833,12 +835,45 @@ export class SwiftRemitMockClient {
     entries: BatchCreateEntry[],
   ): Promise<MockTxResult> {
     await this._applyFaults();
+    for (const e of entries) {
+      await this.createRemittance({ sender, agent: e.agent, amount: e.amount, expiry: e.expiry });
+    }
+    return { txHash: fakeTxHash() };
     return this.batchCreateRemittances(sender, entries);
   }
 
   async createRemittanceBatch(
     sender: string,
     entries: BatchCreateEntry[],
+  ): Promise<BatchCreateResponse> {
+    await this._applyFaults();
+    const results: BatchCreateResult[] = [];
+    
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
+      try {
+        const result = await this.createRemittance({
+          sender,
+          agent: entry.agent,
+          amount: entry.amount,
+          expiry: entry.expiry,
+        });
+        results.push({
+          index,
+          entry,
+          success: true,
+          tx: { txHash: result.txHash, id: result.id },
+        });
+      } catch (err) {
+        results.push({
+          index,
+          entry,
+          success: false,
+          error: err instanceof Error ? err : new Error(String(err)),
+        });
+      }
+    }
+
   ): Promise<{ results: Array<{ index: number; success: boolean; id?: bigint; error?: Error }>; successCount: number; failureCount: number }> {
     await this._applyFaults();
     const results = await Promise.all(
