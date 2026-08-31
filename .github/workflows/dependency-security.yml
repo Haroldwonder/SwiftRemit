@@ -3,8 +3,26 @@ name: Dependency security
 on:
   push:
     branches: [main]
+    paths:
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '**/pnpm-lock.yaml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/dependency-security.yml'
   pull_request:
     branches: [main]
+    paths:
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '**/pnpm-lock.yaml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/dependency-security.yml'
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday at 6 AM UTC
   workflow_dispatch:
 
 permissions:
@@ -25,6 +43,7 @@ jobs:
           - backend
           - frontend
           - api
+          - examples
 
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +59,16 @@ jobs:
       - name: Audit npm production dependencies (fail on high/critical)
         # Single root lockfile (npm workspaces): audit from the root, scoped to
         # the workspace with -w. `npm audit` inside a workspace dir has no lockfile.
-        run: npm audit --audit-level=high --omit=dev -w ${{ matrix.workspace }}
+        run: npm audit --audit-level=high --omit=dev -w ${{ matrix.workspace }} --json | tee npm-audit-${{ matrix.workspace }}.json; npm audit --audit-level=high --omit=dev -w ${{ matrix.workspace }}
+        continue-on-error: false
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-${{ matrix.workspace }}
+          path: npm-audit-${{ matrix.workspace }}.json
+          retention-days: 14
 
   cargo-audit-and-deny:
     name: cargo audit & cargo deny (Rust)
@@ -117,3 +145,18 @@ jobs:
 
       - name: Check Rust dependency licences against deny.toml
         run: cargo deny --all-features check licenses
+
+  # ─── Summary gate ───────────────────────────────────────────────────────────
+  security-summary:
+    name: Security Audit Summary
+    runs-on: ubuntu-latest
+    needs: [npm-audit, cargo-audit-and-deny, manifest-licenses, npm-licenses, cargo-licenses]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "❌ Security audit failed — high or critical CVEs detected"
+            exit 1
+          fi
+          echo "✅ No high or critical vulnerabilities found"

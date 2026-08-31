@@ -51,7 +51,7 @@ jobs:
 
       - uses: azure/setup-helm@v4
         with:
-          version: v3.15.2
+          version: v3.17.0
 
       # SR-214 — the chart ships its own copy of the Alertmanager routing config
       # (Helm can't read files outside the chart dir); keep it identical to the
@@ -108,7 +108,7 @@ jobs:
 
       - uses: azure/setup-helm@v4
         with:
-          version: v3.15.2
+          version: v3.17.0
 
       - name: Install helm-unittest
         run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false

@@ -38,8 +38,9 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/Dockerfile
+      target: dev
     restart: unless-stopped
     ports:
       - "3001:3001"
@@ -66,8 +67,9 @@ services:
 
   api:
     build:
-      context: ./api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./api/Dockerfile
+      target: dev
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -92,8 +94,9 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./frontend/Dockerfile
+      target: dev
     restart: unless-stopped
     ports:
       - "5173:5173"
