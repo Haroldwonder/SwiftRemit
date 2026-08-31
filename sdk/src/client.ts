@@ -54,7 +54,7 @@ import type {
   AdminOperationType,
   PendingOperation,
 } from "./types.js";
-import { parseContractError, SwiftRemitError, ErrorCode } from "./errors.js";
+import { parseContractError, SwiftRemitError, ErrorCode, TransactionTimeoutError } from "./errors.js";
 import { withRetry, withRetryPolicy } from "./retry.js";
 import {
   parseRemittance,
@@ -94,6 +94,34 @@ import {
 
 /** Maximum number of entries allowed in a single batch remittance call. */
 export const MAX_BATCH_SIZE = 50;
+
+/** Delay between confirmation polls after a transaction is submitted. */
+export const CONFIRMATION_POLL_INTERVAL_MS = 1_000;
+
+/** Default wall-clock budget for confirming a submitted transaction. */
+export const DEFAULT_CONFIRMATION_WAIT_MS = 90_000;
+
+/**
+ * Hard cap on confirmation polls, independent of the wall-clock deadline. Sized
+ * well above what `DEFAULT_CONFIRMATION_WAIT_MS` needs so it only ever fires if
+ * the clock misbehaves.
+ */
+export const MAX_CONFIRMATION_POLLS = 300;
+
+/** Options accepted by `submitTransaction` and `submitSignedTransaction`. */
+export interface SubmitOptions {
+  /**
+   * Per-call retry policy that overrides the client's `writeRetryPolicy`.
+   * Leave unset for non-idempotent operations.
+   */
+  retryPolicy?: RetryPolicy;
+  /**
+   * How long to wait for the transaction to reach a terminal status, in ms.
+   * Defaults to {@link DEFAULT_CONFIRMATION_WAIT_MS}. Exceeding it throws
+   * {@link TransactionTimeoutError} rather than hanging.
+   */
+  maxWaitMs?: number;
+}
 
 function shouldAllowHttp(rpcUrl: string): boolean {
   let parsedUrl: URL;
@@ -336,11 +364,16 @@ export class SwiftRemitClient {
    *   inherently safe to re-submit) may opt in to retries by passing
    *   `RetryPolicies.AGGRESSIVE` here. Non-idempotent operations should leave this
    *   unset to rely on the default (no retries).
+   * @param options.maxWaitMs - How long to wait for the transaction to reach a
+   *   terminal status before giving up (default: 90 s). Throws
+   *   {@link TransactionTimeoutError} when exceeded.
+   * @throws {TransactionTimeoutError} if confirmation does not arrive within
+   *   `maxWaitMs`. The transaction may still land in a later ledger.
    */
   async submitTransaction(
     tx: Transaction,
     keypair: Keypair,
-    options?: { retryPolicy?: RetryPolicy }
+    options?: SubmitOptions
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     tx.sign(keypair);
     return this.submitSignedTransaction(tx, options);
@@ -354,10 +387,14 @@ export class SwiftRemitClient {
    * @param tx - A transaction that already carries a valid signature
    * @param options.retryPolicy - Per-call retry policy that overrides the client's
    *   `writeRetryPolicy`. See {@link submitTransaction} for guidance on when to opt in.
+   * @param options.maxWaitMs - How long to wait for the transaction to reach a
+   *   terminal status before giving up (default: 90 s).
+   * @throws {TransactionTimeoutError} if confirmation does not arrive within
+   *   `maxWaitMs`. The transaction may still land in a later ledger.
    */
   async submitSignedTransaction(
     tx: Transaction,
-    options?: { retryPolicy?: RetryPolicy }
+    options?: SubmitOptions
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     const writePolicy = this.resolveWriteRetryPolicy(options?.retryPolicy);
     const defaults = { delayMs: this.retryDelayMs, backoffFactor: this.retryBackoffFactor };
@@ -373,18 +410,35 @@ export class SwiftRemitClient {
 
     // Polling for confirmation is always idempotent — use the global read retry config.
     const readPolicy: RetryPolicy = { retries: this.retries };
+    const maxWaitMs = options?.maxWaitMs ?? DEFAULT_CONFIRMATION_WAIT_MS;
+    const startedAt = Date.now();
+    let polls = 1;
+
     let getResult = await withRetryPolicy(
       () => this.server.getTransaction(sendResult.hash),
       readPolicy,
       defaults
     );
     while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-      await new Promise((r) => setTimeout(r, 1000));
+      // Two independent bounds: a wall-clock deadline, plus a hard poll cap so a
+      // stalled or time-warped clock can still not spin this loop forever.
+      if (
+        Date.now() - startedAt >= maxWaitMs ||
+        polls >= MAX_CONFIRMATION_POLLS
+      ) {
+        throw new TransactionTimeoutError(
+          sendResult.hash,
+          Date.now() - startedAt,
+          polls
+        );
+      }
+      await new Promise((r) => setTimeout(r, CONFIRMATION_POLL_INTERVAL_MS));
       getResult = await withRetryPolicy(
         () => this.server.getTransaction(sendResult.hash),
         readPolicy,
         defaults
       );
+      polls++;
     }
 
     if (getResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
