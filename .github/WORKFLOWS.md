@@ -86,6 +86,7 @@ These run on dedicated schedules and are NOT consolidated:
 - **security-audit.yml** — Scheduled security scans (runs daily)
 - **dependency-security.yml** — Dependency checks (scheduled)
 - **container-security.yml** — Container image scans (on release)
+- **ghcr-cleanup.yml** — Prune old per-commit GHCR image tags (weekly, SR-215)
 - **deploy-staging.yml** — Deploy to staging (manual trigger)
 - **deploy-mainnet.yml** — Deploy to mainnet (manual trigger)
 - **release.yml** — Version bumps & releases (manual trigger)

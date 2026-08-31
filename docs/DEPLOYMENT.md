@@ -409,7 +409,7 @@ Copy the relevant example file and fill in production values before deploying.
 | `ANCHOR_TIMEOUT_HOURS` | ❌ | Hours before a pending anchor transaction is marked as error (default: `24`) |
 | `ANCHOR_TIMEOUT_WEBHOOK_URL` | ❌ | Webhook URL notified when a transaction times out in `pending_anchor` status |
 
-See [`backend/.env.example`](backend/.env.example) for the full list with inline comments.
+See [`backend/.env.example`](../backend/.env.example) for the full list with inline comments.
 
 ### API Service (`api/.env.example`)
 
@@ -426,7 +426,7 @@ See [`backend/.env.example`](backend/.env.example) for the full list with inline
 | `CURRENCY_CONFIG_ENV_OVERRIDE` | ❌ | Set to `true` to allow env-variable overrides of currency config (default: `false`) |
 | `CURRENCY_OVERRIDES` | ❌ | JSON array of currency overrides, e.g. `[{"code":"USD","symbol":"$","decimal_precision":2}]` |
 
-See [`api/.env.example`](api/.env.example) for the full list with inline comments.
+See [`api/.env.example`](../api/.env.example) for the full list with inline comments.
 
 ### Frontend (`frontend/.env.example`)
 
@@ -440,12 +440,57 @@ See [`api/.env.example`](api/.env.example) for the full list with inline comment
 | `VITE_EURC_ISSUER` | ❌ | EURC issuer public key (optional, for EURC support) |
 | `VITE_USDC_TOKEN_ID` | ✅ | USDC token contract ID on Soroban |
 
-See [`frontend/.env.example`](frontend/.env.example) for the full list with inline comments.
+See [`frontend/.env.example`](../frontend/.env.example) for the full list with inline comments.
 
 > **Security note:** Never commit `.env` files to version control. Use your deployment
 > platform's secret management (e.g. Vercel environment variables, AWS Secrets Manager,
 > or Docker secrets) for all production values, especially `ADMIN_SECRET_KEY` and
 > `ANCHORS_ADMIN_API_KEY`.
+
+---
+
+## Container Image Retention (GHCR) — SR-215
+
+[`deploy-staging.yml`](../.github/workflows/deploy-staging.yml) pushes an immutable
+per-commit image on every merge to `main`:
+
+```
+ghcr.io/Haroldwonder/SwiftRemit/backend:<sha_short>
+ghcr.io/Haroldwonder/SwiftRemit/api:<sha_short>
+ghcr.io/Haroldwonder/SwiftRemit/frontend:<sha_short>
+```
+
+alongside the mutable `:staging` tag that [`docker-compose.yml`](../docker-compose.yml)
+runs on the staging VM.
+
+[`ghcr-cleanup.yml`](../.github/workflows/ghcr-cleanup.yml) runs weekly (Mondays
+08:00 UTC) and prunes those per-commit tags on the following policy:
+
+| Rule | Value |
+|------|-------|
+| Retention window | Per-commit (`<sha_short>`) tags are deleted **30 days** after they were pushed |
+| Rollback buffer | The **10 most recent** versions per image are always kept, even if older than 30 days |
+| Never deleted | `:staging`, `:latest`, `:main`, `:develop`, and any `v*` semver tag (Git release tags referenced by [`deploy-mainnet.yml`](../.github/workflows/deploy-mainnet.yml)) |
+
+### What this means for on-call
+
+- You can manually roll a staging image back to **any commit merged in the last
+  30 days**, or to one of the last 10 merges regardless of age, by setting
+  `BACKEND_IMAGE` / `API_IMAGE` / `FRONTEND_IMAGE` to
+  `ghcr.io/Haroldwonder/SwiftRemit/<service>:<sha_short>` and running
+  `docker compose up -d` on the staging host.
+- To roll back further than the window allows, re-run `deploy-staging.yml` from
+  the desired commit (Actions → Deploy to Staging → Run workflow), which
+  rebuilds and re-pushes that SHA tag.
+- Before a large manual pin outside the buffer, trigger `ghcr-cleanup.yml` with
+  **Run workflow → dry run = true** to confirm the tag you need has not been
+  pruned.
+
+### Changing the policy
+
+Edit `RETENTION_DAYS` / `KEEP_MOST_RECENT` in
+[`ghcr-cleanup.yml`](../.github/workflows/ghcr-cleanup.yml) and update the table
+above in the same PR.
 
 ---
 
