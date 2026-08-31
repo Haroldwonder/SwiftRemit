@@ -24,6 +24,10 @@ This directory contains [Changesets](https://github.com/changesets/changesets) f
 ## Rules
 
 - Every PR that changes the SDK API or behavior must include a changeset.
+  The `SDK — changeset required` job in `.github/workflows/sdk-ci.yml` enforces
+  this for any PR touching `sdk/src/**` or `sdk/react-native/src/**`. Release PRs
+  that bump the version in `sdk/package.json` are exempt, since they consume
+  their changesets.
 - Breaking changes must be marked `major` and include a migration note in the changeset description.
 - Patch bumps are for bug fixes; minor bumps are for new features; major bumps are for breaking changes.
 

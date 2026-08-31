@@ -53,10 +53,68 @@ export interface RemittanceEvent {
   };
 }
 
+/**
+ * Event types whose second topic carries the remittance ID the event belongs to.
+ * Every other event type is contract-wide (admin, governance, token whitelist)
+ * and has no remittance ID to decode.
+ */
+export type RemittanceScopedEventType =
+  | "created"
+  | "completed"
+  | "cancelled"
+  | "failed"
+  | "disputed"
+  | "partial_payout"
+  | "expired"
+  | "dispute_raised"
+  | "dispute_resolved"
+  | "settlement_completed";
+
+/** A contract event payload decoded from XDR into native JavaScript values. */
+export interface DecodedEventData {
+  /** Topics decoded to native values. `topics[0]` is the event type symbol. */
+  topics: unknown[];
+  /**
+   * Payload decoded to a native value. Multi-field contract events decode to an
+   * array in emission order; single-field events decode to a bare scalar.
+   */
+  value: unknown;
+  /** Base64 XDR exactly as received, for consumers that need the wire form. */
+  raw: {
+    topics: string[];
+    value: string;
+  };
+}
+
+/** Decoded payload for an event that belongs to a specific remittance. */
+export interface RemittanceScopedEventData extends DecodedEventData {
+  remittanceId: bigint;
+}
+
+/** Decoded payload for a contract-wide event. */
+export interface ContractEventData extends DecodedEventData {
+  remittanceId?: undefined;
+}
+
+/** Maps each event type to the payload shape its handler receives. */
+export type EventDataMap = {
+  [K in RemittanceEventType]: K extends RemittanceScopedEventType
+    ? RemittanceScopedEventData
+    : ContractEventData;
+};
+
 /** Handler function for contract events. */
 export type EventHandler<T extends RemittanceEventType = RemittanceEventType> = (event: {
   type: T;
-  data: any;
+  data: EventDataMap[T];
+  ledger: number;
+  ledgerClosedAt: string;
+}) => Promise<void> | void;
+
+/** Handler function for a multi-type subscription, where the type is not known statically. */
+export type AnyEventHandler = (event: {
+  type: RemittanceEventType;
+  data: EventDataMap[RemittanceEventType];
   ledger: number;
   ledgerClosedAt: string;
 }) => Promise<void> | void;

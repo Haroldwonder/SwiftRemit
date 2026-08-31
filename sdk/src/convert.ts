@@ -209,6 +209,63 @@ export function parseProposal(val: xdr.ScVal): Proposal {
   };
 }
 
+/**
+ * Decode the scalar `u64` return value of a submitted transaction.
+ *
+ * Soroban returns a contract function's result as an XDR `ScVal` on the
+ * transaction response. `create_remittance`, `create_escrow`, and `propose` all
+ * return the ID they just created, so this is the correct way to learn that ID
+ * after a write.
+ *
+ * Do NOT use a counter read such as `getRemittanceCount()` for this: the counter
+ * reflects whatever the contract's state is at the moment you read it, so with
+ * concurrent senders it can already have moved past your own remittance.
+ *
+ * @example
+ * ```ts
+ * import { parseU64ReturnValue } from '@swiftremit/sdk';
+ *
+ * const result = await client.submitTransaction(tx, senderKeypair);
+ * const remittanceId = parseU64ReturnValue(result);
+ * ```
+ *
+ * @param result - A successful transaction response carrying a `returnValue`
+ * @returns The decoded ID
+ * @throws {SwiftRemitError} ErrorCode.DataCorruption if the response carries no
+ *   return value, or one that does not decode to an integer
+ */
+export function parseU64ReturnValue(result: { returnValue?: xdr.ScVal }): bigint {
+  const retval = result.returnValue;
+  if (!retval) {
+    throw new SwiftRemitError(
+      ErrorCode.DataCorruption,
+      "Transaction response has no returnValue to decode. This method may not return a value, " +
+        "or the transaction was not read back with getTransaction()."
+    );
+  }
+
+  const native = scValToNative(retval);
+  if (
+    typeof native !== "bigint" &&
+    typeof native !== "number" &&
+    typeof native !== "string"
+  ) {
+    throw new SwiftRemitError(
+      ErrorCode.DataCorruption,
+      `Expected a scalar u64 return value, received ${typeof native}.`
+    );
+  }
+
+  try {
+    return BigInt(native);
+  } catch {
+    throw new SwiftRemitError(
+      ErrorCode.DataCorruption,
+      `Return value "${String(native)}" is not a valid u64.`
+    );
+  }
+}
+
 // ─── Input validation ─────────────────────────────────────────────────────────
 
 /**

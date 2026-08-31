@@ -57,7 +57,7 @@ console.log(`Daily limit remaining: ${limitStatus.remaining} (resets ${limitStat
 ## 4. Quote the fee
 
 ```typescript
-import { toStroops, fromStroops } from "@swiftremit/sdk";
+import { toStroops, fromStroops, parseU64ReturnValue } from "@swiftremit/sdk";
 
 const amount = toStroops(50); // 50 USDC
 const quote = await client.estimateFee(amount, { currency: "USD", country: "US" }, sender.publicKey());
@@ -81,8 +81,14 @@ const tx = await client.createRemittance({
 const result = await client.submitTransaction(tx, sender);
 console.log("Remittance created, tx hash:", result.hash);
 
-const remittanceId = await client.getRemittanceCount(sender.publicKey());
+const remittanceId = parseU64ReturnValue(result);
 ```
+
+`create_remittance` returns the new remittance's ID as the transaction's return
+value, and `parseU64ReturnValue` decodes it. Do not reach for
+`getRemittanceCount()` here: it reports the contract's counter as of the moment
+you read it, so as soon as another sender creates a remittance between your
+submit and your read, the count is somebody else's ID rather than yours.
 
 ## 6. Track status
 

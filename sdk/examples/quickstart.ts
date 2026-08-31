@@ -1,6 +1,6 @@
 // Runnable end-to-end example: connect wallet → create remittance → monitor status → confirm payout.
 // See ../../GETTING_STARTED.md for the required .env values and a step-by-step walkthrough.
-import { SwiftRemitClient, toStroops, fromStroops } from "../src";
+import { SwiftRemitClient, toStroops, fromStroops, parseU64ReturnValue } from "../src";
 import { Keypair } from "@stellar/stellar-sdk";
 import * as dotenv from "dotenv";
 
@@ -45,7 +45,10 @@ async function main() {
   const result = await client.submitTransaction(tx, senderKeypair);
   console.log("✓ Remittance created, tx hash:", result.hash);
 
-  const remittanceId = await client.getRemittanceCount(senderKeypair.publicKey());
+  // create_remittance returns the new ID as the transaction's return value.
+  // Do not use getRemittanceCount() here — it reports the contract's current
+  // counter, which concurrent senders may already have advanced past.
+  const remittanceId = parseU64ReturnValue(result);
   console.log("Remittance ID:", remittanceId.toString());
 
   console.log("Polling for status…");

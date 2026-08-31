@@ -79,3 +79,62 @@ jobs:
             sdk/dist/browser/index.global.js.map
             sdk/dist/browser/index.esm.mjs
           retention-days: 14
+
+  # ── Changeset required for SDK source changes ──────────────────────────────
+  sdk-changeset:
+    name: SDK — changeset required
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the base branch to diff against.
+          fetch-depth: 0
+
+      - name: Require a changeset for SDK source changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+
+          source_changed="$(echo "$changed" \
+            | grep -E '^sdk/(src|react-native/src)/' \
+            | grep -vE '\.test\.ts$' || true)"
+
+          if [ -z "$source_changed" ]; then
+            echo "No SDK source changes — changeset not required."
+            exit 0
+          fi
+
+          echo "SDK source files changed in this PR:"
+          echo "$source_changed"
+
+          # A changeset is any new .md file under sdk/.changeset/ other than the
+          # directory's own README.
+          changeset_added="$(echo "$changed" \
+            | grep -E '^sdk/\.changeset/.+\.md$' \
+            | grep -v '^sdk/.changeset/README.md$' || true)"
+
+          if [ -n "$changeset_added" ]; then
+            echo "Changeset found:"
+            echo "$changeset_added"
+            exit 0
+          fi
+
+          # A release PR consumes its changesets and bumps the version instead,
+          # so it legitimately carries no pending changeset file.
+          base_version="$(git show "$BASE_SHA:sdk/package.json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
+          head_version="$(git show "$HEAD_SHA:sdk/package.json" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
+
+          if [ "$base_version" != "$head_version" ]; then
+            echo "Release PR: @swiftremit/sdk $base_version -> $head_version. Changeset not required."
+            exit 0
+          fi
+
+          echo "::error::This PR changes SDK source but adds no changeset."
+          echo "Run 'npm run changeset' in sdk/ and commit the generated file."
+          echo "Consumers cannot tell which published version carries these changes without one."
+          exit 1

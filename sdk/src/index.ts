@@ -1,6 +1,10 @@
 export {
   SwiftRemitClient,
   MAX_BATCH_SIZE,
+  // SR-198: bounds on transaction-confirmation polling
+  CONFIRMATION_POLL_INTERVAL_MS,
+  DEFAULT_CONFIRMATION_WAIT_MS,
+  MAX_CONFIRMATION_POLLS,
   buildUpdateFeeProposal,
   buildRegisterAgentProposal,
   buildRemoveAgentProposal,
@@ -12,7 +16,14 @@ export {
   buildWhitelistAssetProposal,
   buildAdjustReputationThresholdProposal,
 } from "./client.js";
-export { SwiftRemitError, ErrorCode, parseContractError } from "./errors.js";
+export type { SubmitOptions } from "./client.js";
+export {
+  SwiftRemitError,
+  ErrorCode,
+  parseContractError,
+  // SR-198: thrown when confirmation polling exceeds its bound
+  TransactionTimeoutError,
+} from "./errors.js";
 export type {
   SwiftRemitClientOptions,
   Remittance,
@@ -20,6 +31,13 @@ export type {
   RemittanceEvent,
   RemittanceEventType,
   EventHandler,
+  // SR-196: decoded event payload types delivered to on()/onAny() handlers
+  AnyEventHandler,
+  RemittanceScopedEventType,
+  DecodedEventData,
+  RemittanceScopedEventData,
+  ContractEventData,
+  EventDataMap,
   SubscribeOptions,
   Unsubscribe,
   AgentStats,
@@ -103,6 +121,8 @@ export {
   pauseReasonToScVal,
   // SR-195: recipient hash builder
   computeRecipientHash,
+  // SR-197: decode a created ID from a submitted transaction's return value
+  parseU64ReturnValue,
 } from "./convert.js";
 
 /** Stellar network passphrases for convenience. */

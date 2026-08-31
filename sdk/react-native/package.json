@@ -1,13 +1,10 @@
 {
   "name": "@swiftremit/react-native-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "React Native wrapper for the SwiftRemit TypeScript SDK",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": [
-    "dist",
-    "src"
-  ],
+  "files": ["dist", "src", "CHANGELOG.md"],
   "scripts": {
     "build": "tsc",
     "test": "jest"
