@@ -13,6 +13,15 @@ rule_files:
   - "alerts.yml"   # operational alerts     (monitoring/alerts.yml)
   - "slo.yml"      # SLOs and error budgets (monitoring/slo.yml)
 
+# SR-214 — every rule carries a `team:` label; Alertmanager (monitoring/
+# alertmanager.yml) routes on it. On the Compose network Alertmanager is
+# reachable as `alertmanager:9093`.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
 scrape_configs:
   # Service names resolve on the Compose network. The ports match the ones the
   # services actually listen on: backend 3001, api 3000.

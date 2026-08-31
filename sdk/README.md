@@ -13,7 +13,7 @@ npm install @swiftremit/sdk @stellar/stellar-sdk
 ## Quick Start
 
 ```typescript
-import { SwiftRemitClient, Networks, RpcUrls, toStroops } from "@swiftremit/sdk";
+import { SwiftRemitClient, Networks, RpcUrls, toStroops, parseU64ReturnValue } from "@swiftremit/sdk";
 import { Keypair } from "@stellar/stellar-sdk";
 
 const client = new SwiftRemitClient({
@@ -39,7 +39,20 @@ const tx = await client.createRemittance({
 
 const result = await client.submitTransaction(tx, senderKeypair);
 console.log("Remittance created:", result.hash);
+
+// The new remittance's ID comes back as the transaction's return value.
+const remittanceId = parseU64ReturnValue(result);
 ```
+
+### Reading a created ID
+
+`create_remittance`, `create_escrow`, and `propose` each return the ID they just
+created. `parseU64ReturnValue(result)` decodes that ID from the submitted
+transaction's `returnValue`.
+
+`getRemittanceCount()` is **not** a safe substitute. It reports the contract's
+global counter at read time, so with concurrent senders it can already have moved
+past your own remittance, and you would read another sender's ID.
 
 ## Features
 
@@ -51,6 +64,10 @@ console.log("Remittance created:", result.hash);
 - ✅ Real-time event subscription via Horizon SSE (`subscribeToRemittanceEvents`)
 
 ## API Reference
+
+> **Full API Documentation:** See the [generated TypeDoc documentation](https://swiftremit.github.io/sdk-docs/) for complete API reference including all 150+ methods across remittances, governance, KYC, blacklist, circuit breakers, escrow, fee management, treasury, settlements, and multi-sig operations.
+
+The sections below provide a quick reference for the most commonly used methods. For detailed documentation of all available methods, parameter types, and return values, refer to the generated TypeDoc documentation linked above.
 
 ### Client Initialization
 

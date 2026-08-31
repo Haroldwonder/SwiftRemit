@@ -107,8 +107,16 @@ mod test_contract_upgrade_governance;
 mod test_invariants;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_circuit_breaker;
+#[cfg(all(test, feature = "legacy-tests"))]
+mod test_asset_verification;
 #[cfg(test)]
 mod test_fee_differential;
+#[cfg(test)]
+mod test_error_handler_exhaustiveness;
+#[cfg(test)]
+mod test_retry_transaction;
+#[cfg(test)]
+mod test_governance_paused;
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, String, Vec};
 

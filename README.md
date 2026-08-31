@@ -1,6 +1,6 @@
 # SwiftRemit
 
-[![Soroban Contract CI](https://github.com/Haroldwonder/SwiftRemit/actions/workflows/contract-ci.yml/badge.svg)](https://github.com/Haroldwonder/SwiftRemit/actions/workflows/contract-ci.yml)
+[![Soroban Contract CI](https://github.com/topsonDev/SwiftRemit/actions/workflows/contract-ci.yml/badge.svg)](https://github.com/topsonDev/SwiftRemit/actions/workflows/contract-ci.yml)
 
 Production-ready Soroban smart contract for USDC remittance platform on Stellar blockchain.
 
@@ -34,6 +34,11 @@ graph TB
     subgraph Frontend["Frontend (React/Vite)"]
         UI[UI Components]
         VB[VerificationBadge]
+    end
+
+    subgraph Mobile["Mobile (React Native)"]
+        MOBILE[Expo App]
+        PUSH[Push Notifications]
     end
 
     subgraph API["API Service (TypeScript)"]
@@ -73,9 +78,13 @@ graph TB
     end
 
     S -->|create_remittance / cancel| UI
+    S -->|create_remittance / cancel| MOBILE
     A -->|confirm_payout| UI
+    A -->|confirm_payout| MOBILE
     ADM -->|register_agent / withdraw_fees| UI
+    ADM -->|register_agent / withdraw_fees| MOBILE
     UI --> REST
+    MOBILE --> REST
     REST --> LIB
     LIB --> STOR
     LIB --> TRANS
@@ -90,6 +99,8 @@ graph TB
     EVT --> WH
     WH -->|deliver webhooks| DB
     WH -->|notify| S
+    WH -->|push notifications| PUSH
+    PUSH --> MOBILE
     EVT --> KYC
     KYC --> ANC
     KYC --> DB
@@ -99,6 +110,7 @@ graph TB
     AV -->|off-chain checks| TOML
     Backend -->|health check| HLTH
     Frontend --> FX
+    Mobile --> FX
     FX --> CFG
 ```
 
@@ -577,6 +589,7 @@ SwiftRemit uses environment variables for configuration. This allows you to easi
 - **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**: Complete configuration reference with all variables, validation rules, and examples
 - **[docs/MIGRATION.md](docs/MIGRATION.md)**: Migration guide for existing developers
 - **[docs/RUNBOOK.md](docs/RUNBOOK.md)**: Operational runbook — emergency pause/unpause, admin key rotation, stuck migrations, webhook replay, storage TTL extension
+- **[docs/ROLLBACK_RUNBOOK.md](docs/ROLLBACK_RUNBOOK.md)**: Canonical mainnet incident recovery — severity decision tree, WASM rollback, state migration, authority matrix
 - **[docs/PRODUCTION_READINESS_REPORT.md](docs/PRODUCTION_READINESS_REPORT.md)**: Current production readiness status — what's complete, what's pending, and known risks before mainnet
 
 📚 **Full documentation index:** [docs/README.md](docs/README.md)

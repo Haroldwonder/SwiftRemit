@@ -13,7 +13,7 @@ The fastest way to get a full local environment running — no manual PostgreSQL
 
 ```bash
 # 1. Clone the repo and enter the directory
-git clone https://github.com/HaroldwonderSwiftRemit/SwiftRemit.git
+git clone https://github.com/richardiyamura/SwiftRemit.git
 cd SwiftRemit
 
 # 2. (Optional) Create a local secrets override

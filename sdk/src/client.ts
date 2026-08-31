@@ -32,6 +32,10 @@ import type {
   Corridor,
   FeeEstimate,
   EventHandler,
+  AnyEventHandler,
+  DecodedEventData,
+  EventDataMap,
+  RemittanceScopedEventType,
   Escrow,
   AssetVerification,
   VerificationStatus,
@@ -50,7 +54,7 @@ import type {
   AdminOperationType,
   PendingOperation,
 } from "./types.js";
-import { parseContractError, SwiftRemitError, ErrorCode } from "./errors.js";
+import { parseContractError, SwiftRemitError, ErrorCode, TransactionTimeoutError } from "./errors.js";
 import { withRetry, withRetryPolicy } from "./retry.js";
 import {
   parseRemittance,
@@ -90,6 +94,34 @@ import {
 
 /** Maximum number of entries allowed in a single batch remittance call. */
 export const MAX_BATCH_SIZE = 50;
+
+/** Delay between confirmation polls after a transaction is submitted. */
+export const CONFIRMATION_POLL_INTERVAL_MS = 1_000;
+
+/** Default wall-clock budget for confirming a submitted transaction. */
+export const DEFAULT_CONFIRMATION_WAIT_MS = 90_000;
+
+/**
+ * Hard cap on confirmation polls, independent of the wall-clock deadline. Sized
+ * well above what `DEFAULT_CONFIRMATION_WAIT_MS` needs so it only ever fires if
+ * the clock misbehaves.
+ */
+export const MAX_CONFIRMATION_POLLS = 300;
+
+/** Options accepted by `submitTransaction` and `submitSignedTransaction`. */
+export interface SubmitOptions {
+  /**
+   * Per-call retry policy that overrides the client's `writeRetryPolicy`.
+   * Leave unset for non-idempotent operations.
+   */
+  retryPolicy?: RetryPolicy;
+  /**
+   * How long to wait for the transaction to reach a terminal status, in ms.
+   * Defaults to {@link DEFAULT_CONFIRMATION_WAIT_MS}. Exceeding it throws
+   * {@link TransactionTimeoutError} rather than hanging.
+   */
+  maxWaitMs?: number;
+}
 
 function shouldAllowHttp(rpcUrl: string): boolean {
   let parsedUrl: URL;
@@ -332,11 +364,16 @@ export class SwiftRemitClient {
    *   inherently safe to re-submit) may opt in to retries by passing
    *   `RetryPolicies.AGGRESSIVE` here. Non-idempotent operations should leave this
    *   unset to rely on the default (no retries).
+   * @param options.maxWaitMs - How long to wait for the transaction to reach a
+   *   terminal status before giving up (default: 90 s). Throws
+   *   {@link TransactionTimeoutError} when exceeded.
+   * @throws {TransactionTimeoutError} if confirmation does not arrive within
+   *   `maxWaitMs`. The transaction may still land in a later ledger.
    */
   async submitTransaction(
     tx: Transaction,
     keypair: Keypair,
-    options?: { retryPolicy?: RetryPolicy }
+    options?: SubmitOptions
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     tx.sign(keypair);
     return this.submitSignedTransaction(tx, options);
@@ -350,10 +387,14 @@ export class SwiftRemitClient {
    * @param tx - A transaction that already carries a valid signature
    * @param options.retryPolicy - Per-call retry policy that overrides the client's
    *   `writeRetryPolicy`. See {@link submitTransaction} for guidance on when to opt in.
+   * @param options.maxWaitMs - How long to wait for the transaction to reach a
+   *   terminal status before giving up (default: 90 s).
+   * @throws {TransactionTimeoutError} if confirmation does not arrive within
+   *   `maxWaitMs`. The transaction may still land in a later ledger.
    */
   async submitSignedTransaction(
     tx: Transaction,
-    options?: { retryPolicy?: RetryPolicy }
+    options?: SubmitOptions
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     const writePolicy = this.resolveWriteRetryPolicy(options?.retryPolicy);
     const defaults = { delayMs: this.retryDelayMs, backoffFactor: this.retryBackoffFactor };
@@ -369,18 +410,35 @@ export class SwiftRemitClient {
 
     // Polling for confirmation is always idempotent — use the global read retry config.
     const readPolicy: RetryPolicy = { retries: this.retries };
+    const maxWaitMs = options?.maxWaitMs ?? DEFAULT_CONFIRMATION_WAIT_MS;
+    const startedAt = Date.now();
+    let polls = 1;
+
     let getResult = await withRetryPolicy(
       () => this.server.getTransaction(sendResult.hash),
       readPolicy,
       defaults
     );
     while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-      await new Promise((r) => setTimeout(r, 1000));
+      // Two independent bounds: a wall-clock deadline, plus a hard poll cap so a
+      // stalled or time-warped clock can still not spin this loop forever.
+      if (
+        Date.now() - startedAt >= maxWaitMs ||
+        polls >= MAX_CONFIRMATION_POLLS
+      ) {
+        throw new TransactionTimeoutError(
+          sendResult.hash,
+          Date.now() - startedAt,
+          polls
+        );
+      }
+      await new Promise((r) => setTimeout(r, CONFIRMATION_POLL_INTERVAL_MS));
       getResult = await withRetryPolicy(
         () => this.server.getTransaction(sendResult.hash),
         readPolicy,
         defaults
       );
+      polls++;
     }
 
     if (getResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
@@ -768,6 +826,20 @@ export class SwiftRemitClient {
    * Each entry is prepared independently; failures don't abort the batch.
    * Returns a BatchCreateResponse with per-item results.
    */
+  /**
+   * Create multiple remittances via independent transactions (partial failure tolerated).
+   * 
+   * This method submits each remittance as a separate transaction with retry logic.
+   * If some transactions fail, the method still returns successfully with per-item
+   * success/failure status in the result array.
+   * 
+   * @see {@link batchCreateRemittances} for atomic batch creation (all-or-nothing)
+   * @see {@link createBatchRemittance} for atomic batch creation via create_batch_remittance contract method
+   * 
+   * @param sender - The sender's Stellar address
+   * @param entries - Array of remittance entries (max 50)
+   * @returns BatchCreateResponse with per-item results and success/failure counts
+   */
   async createRemittanceBatch(
     sender: string,
     entries: BatchCreateEntry[]
@@ -825,6 +897,20 @@ export class SwiftRemitClient {
    *   { agent: agent1, amount: toStroops(100) },
    *   { agent: agent2, amount: toStroops(250) },
    * ]);
+   */
+  /**
+   * Create multiple remittances in a single atomic transaction (all-or-nothing).
+   * 
+   * This method calls the batch_create_remittances contract method. All remittances
+   * are created in one transaction - if any entry fails validation or processing,
+   * the entire batch is rolled back.
+   * 
+   * @see {@link createRemittanceBatch} for independent transactions with partial failure tolerance
+   * @see {@link createBatchRemittance} for atomic batch via create_batch_remittance contract method
+   * 
+   * @param sender - The sender's Stellar address
+   * @param entries - Array of remittance entries (max 50)
+   * @returns Prepared transaction to be signed and submitted
    */
   async batchCreateRemittances(
     sender: string,
@@ -1133,8 +1219,12 @@ export class SwiftRemitClient {
           proposals.push(p);
         }
         id++;
-      } catch {
-        break;
+      } catch (err) {
+        // Only stop iteration on ProposalNotFound; rethrow anything else
+        if (err instanceof SwiftRemitError && err.code === ErrorCode.ProposalNotFound) {
+          break;
+        }
+        throw err;
       }
     }
     return proposals;
@@ -1786,6 +1876,20 @@ export class SwiftRemitClient {
   }
 
   /** Creates multiple remittances atomically in a single call, emitting a batch-created event. */
+  /**
+   * Create multiple remittances in a single atomic transaction via create_batch_remittance (all-or-nothing).
+   * 
+   * This method calls the create_batch_remittance contract method. Functionally similar to
+   * batchCreateRemittances but uses a different contract method. All remittances are created
+   * in one transaction - if any entry fails, the entire batch is rolled back.
+   * 
+   * @see {@link createRemittanceBatch} for independent transactions with partial failure tolerance
+   * @see {@link batchCreateRemittances} for atomic batch via batch_create_remittances contract method
+   * 
+   * @param sender - The sender's Stellar address
+   * @param entries - Array of remittance entries (max 50)
+   * @returns Prepared transaction to be signed and submitted
+   */
   async createBatchRemittance(sender: string, entries: BatchCreateEntry[]): Promise<Transaction> {
     if (entries.length === 0) {
       throw new SwiftRemitError(ErrorCode.InvalidBatchSize, "Batch must contain at least one entry");
@@ -2093,16 +2197,38 @@ export class SwiftRemitClient {
   }
 
   /**
+   * Decode a subscription event's base64 XDR topics and value into native values.
+   *
+   * `subscribeToRemittanceEvents` hands callers the wire form; `on`/`onAny`
+   * deliver this decoded form so handlers never see raw XDR.
+   */
+  private decodeEventData(event: RemittanceEvent): DecodedEventData {
+    const topics = event.raw.topics.map((t) =>
+      scValToNative(xdr.ScVal.fromXDR(t, "base64"))
+    );
+    const value = scValToNative(xdr.ScVal.fromXDR(event.raw.value, "base64"));
+    return { topics, value, raw: event.raw };
+  }
+
+  /**
    * Subscribe to typed contract events with full TypeScript type safety.
-   * 
+   *
+   * `event.data` carries the decoded event: `topics` and `value` converted from
+   * XDR to native values, plus `remittanceId` for remittance-scoped event types.
+   * The original base64 XDR remains available at `event.data.raw`.
+   *
+   * Remittance-scoped events whose ID topic cannot be decoded are skipped, so
+   * `event.data.remittanceId` is always present for those event types.
+   *
    * @param eventType - The specific event type to listen for
    * @param handler - Callback function called when an event of this type is emitted
    * @param options - Optional subscription options (filter by remittanceId, sender, agent, etc)
    * @returns Unsubscribe function to stop listening
-   * 
+   *
    * @example
    * const unsubscribe = client.on('created', (event) => {
    *   console.log(`Remittance ${event.data.remittanceId} created`);
+   *   console.log('payload:', event.data.value);
    * });
    * // Later:
    * unsubscribe();
@@ -2114,14 +2240,15 @@ export class SwiftRemitClient {
   ): Unsubscribe {
     return this.subscribeToRemittanceEvents(
       (event) => {
-        if (event.type === eventType) {
-          handler({
-            type: eventType,
-            data: event.raw,
-            ledger: event.ledger,
-            ledgerClosedAt: event.ledgerClosedAt,
-          });
-        }
+        if (event.type !== eventType) return;
+        const data = this.buildEventData(event);
+        if (!data) return;
+        handler({
+          type: eventType,
+          data: data as EventDataMap[T],
+          ledger: event.ledger,
+          ledgerClosedAt: event.ledgerClosedAt,
+        });
       },
       options
     );
@@ -2129,35 +2256,70 @@ export class SwiftRemitClient {
 
   /**
    * Subscribe to multiple event types with a single handler.
-   * 
+   *
+   * `event.data` follows the same decoded shape as {@link on}.
+   *
    * @param eventTypes - Array of event types to listen for
    * @param handler - Callback called when any of the specified events are emitted
    * @param options - Optional subscription options
    * @returns Unsubscribe function
-   * 
+   *
    * @example
    * const unsubscribe = client.onAny(['created', 'completed', 'failed'], (event) => {
-   *   console.log(`Event: ${event.type}`);
+   *   console.log(`Event: ${event.type}`, event.data.value);
    * });
    */
   onAny(
     eventTypes: RemittanceEventType[],
-    handler: (event: { type: RemittanceEventType; ledger: number; ledgerClosedAt: string }) => Promise<void> | void,
+    handler: AnyEventHandler,
     options?: SubscribeOptions
   ): Unsubscribe {
     return this.subscribeToRemittanceEvents(
       (event) => {
-        if (eventTypes.includes(event.type)) {
-          handler({
-            type: event.type,
-            ledger: event.ledger,
-            ledgerClosedAt: event.ledgerClosedAt,
-          });
-        }
+        if (!eventTypes.includes(event.type)) return;
+        const data = this.buildEventData(event);
+        if (!data) return;
+        handler({
+          type: event.type,
+          data: data as EventDataMap[RemittanceEventType],
+          ledger: event.ledger,
+          ledgerClosedAt: event.ledgerClosedAt,
+        });
       },
       options
     );
   }
+
+  /**
+   * Decode an event for handler delivery, returning null when the event is
+   * remittance-scoped but carries no decodable ID — such an event is malformed
+   * and would break the `remittanceId: bigint` contract of {@link EventDataMap}.
+   */
+  private buildEventData(
+    event: RemittanceEvent
+  ): DecodedEventData | (DecodedEventData & { remittanceId: bigint }) | null {
+    const decoded = this.decodeEventData(event);
+    const scoped: readonly string[] = SwiftRemitClient.REMITTANCE_SCOPED_EVENTS;
+    if (!scoped.includes(event.type)) {
+      return decoded;
+    }
+    if (event.remittanceId === undefined) return null;
+    return { ...decoded, remittanceId: event.remittanceId };
+  }
+
+  /** Event types that carry a remittance ID in their second topic. */
+  private static readonly REMITTANCE_SCOPED_EVENTS: RemittanceScopedEventType[] = [
+    "created",
+    "completed",
+    "cancelled",
+    "failed",
+    "disputed",
+    "partial_payout",
+    "expired",
+    "dispute_raised",
+    "dispute_resolved",
+    "settlement_completed",
+  ];
 
   /**
    * Get all available contract event types.

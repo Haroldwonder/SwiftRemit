@@ -4,7 +4,7 @@
 
 ---
 
-# Fee Service Architecture
+## Fee Service Architecture
 
 ## System Overview
 

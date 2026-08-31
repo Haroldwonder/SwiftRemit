@@ -4,6 +4,59 @@ This document covers how to ship a build to Apple TestFlight and Google Play int
 
 ---
 
+## Local Development
+
+Before releasing, set up your local development environment to test changes on simulators or physical devices.
+
+### Quick Start
+
+```bash
+cd mobile
+npm install
+cp .env.example .env
+npx expo start
+```
+
+### Running on Simulators
+
+**iOS Simulator (macOS):**
+```bash
+npx expo start
+i
+```
+
+Requires Xcode 14+ with iOS 14.4+ simulator.
+
+**Android Emulator:**
+```bash
+npx expo start
+a
+```
+
+Requires Android Studio with API 21+ emulator configured.
+
+### Running on Physical Devices
+
+1. Install the **Expo Go** app from the App Store (iOS) or Google Play (Android)
+2. Start the development server: `npx expo start`
+3. Scan the QR code with your device camera (iOS) or the Expo Go app (Android)
+
+### Environment Configuration
+
+Edit `mobile/.env` to customize the API base URL and other settings:
+
+```env
+# API endpoint for the mobile app
+REACT_APP_API_URL=http://localhost:3000
+
+# EAS project ID (from Expo dashboard)
+EAS_PROJECT_ID=your_project_id_here
+```
+
+See [CONFIGURATION.md](../CONFIGURATION.md) for the full list of available variables.
+
+---
+
 ## Prerequisites
 
 | Tool | Version | Install |

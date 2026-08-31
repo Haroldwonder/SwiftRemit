@@ -2,13 +2,20 @@
 
 > **Audience:** On-call engineers, contract administrators.  
 > **Purpose:** Step-by-step recovery from a failed or compromised mainnet deployment.
+>
+> **This file is canonical for mainnet incident recovery** — the severity decision
+> tree, WASM rollback, state migration to a new contract ID, and the authority
+> matrix. For day-to-day admin operations (routine pause/unpause, key rotation,
+> stuck migrations, webhook replay, storage TTL, SLO-alert response) and for
+> testnet, see [RUNBOOK.md](RUNBOOK.md). Both runbooks use the `stellar` CLI and
+> the commands are copy-paste compatible.
 
 ---
 
 ## Table of Contents
 
 1. [Severity levels and decision tree](#1-severity-levels-and-decision-tree)
-2. [Trigger emergency_pause](#2-trigger-emergency_pause)
+2. [Trigger the emergency pause](#2-trigger-the-emergency-pause)
 3. [Verify the contract is paused](#3-verify-the-contract-is-paused)
 4. [Assess the situation](#4-assess-the-situation)
 5. [Rollback: redeploy a prior WASM version](#5-rollback-redeploy-a-prior-wasm-version)
@@ -34,7 +41,7 @@
 
 ---
 
-## 2. Trigger emergency_pause
+## 2. Trigger the emergency pause
 
 ### Using the stellar CLI (primary method)
 

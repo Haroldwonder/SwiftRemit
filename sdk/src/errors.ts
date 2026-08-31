@@ -352,6 +352,38 @@ export class SwiftRemitError extends Error {
 }
 
 /**
+ * Thrown when a submitted transaction does not reach a terminal status within
+ * the confirmation window.
+ *
+ * The transaction may still be included in a later ledger — this error only says
+ * the SDK stopped waiting. Re-check with `server.getTransaction(hash)` before
+ * assuming the transaction failed, and never blindly re-submit a non-idempotent
+ * operation after seeing this.
+ */
+export class TransactionTimeoutError extends Error {
+  /** Hash of the transaction that was being confirmed. */
+  readonly hash: string;
+  /** How long the SDK waited, in milliseconds. */
+  readonly waitedMs: number;
+  /** Number of confirmation polls performed before giving up. */
+  readonly polls: number;
+
+  constructor(hash: string, waitedMs: number, polls: number) {
+    super(
+      `Transaction ${hash} was not confirmed within ${waitedMs}ms (${polls} polls). ` +
+        `It may still be included in a later ledger — re-check with getTransaction(hash) ` +
+        `before re-submitting.`
+    );
+    this.name = "TransactionTimeoutError";
+    this.hash = hash;
+    this.waitedMs = waitedMs;
+    this.polls = polls;
+    // Maintain proper prototype chain in transpiled environments
+    Object.setPrototypeOf(this, TransactionTimeoutError.prototype);
+  }
+}
+
+/**
  * Parse a raw RPC/simulation error string and return a SwiftRemitError if
  * it contains a known contract error code, or re-throw the original error.
  *

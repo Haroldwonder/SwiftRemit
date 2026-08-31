@@ -1,6 +1,6 @@
 {
   "name": "@swiftremit/sdk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "TypeScript client SDK for the SwiftRemit Soroban smart contract",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -86,7 +86,7 @@
     "tsup": "^8.0.0",
     "typescript": "^5.8.3",
     "typedoc": "^0.28.20",
-    "typedoc-plugin-markdown": "^4.0.0",
+    "typedoc-plugin-markdown": "^4.13.0",
     "vitest": "^3.1.1"
   }
 }

@@ -148,23 +148,25 @@ await withdrawFees(adminKeypair, adminKeypair.publicKey());
 
 ## Error Handling
 
-The contract returns specific error codes. Here's how to handle them:
+The contract returns specific error codes for different failure scenarios. For the complete, up-to-date list of all error codes (79+ codes covering initialization, validation, settlement, KYC, authorization, and more), see [src/errors.rs](../src/errors.rs) in the contract source.
+
+**Common errors you may encounter:**
 
 ```javascript
 try {
   await createRemittance(senderKeypair, agentAddress, amount);
 } catch (error) {
-  // Error codes:
+  // Common error codes:
   // 1 - AlreadyInitialized
   // 2 - NotInitialized
   // 3 - InvalidAmount
-  // 4 - InvalidFeeBps
   // 5 - AgentNotRegistered
-  // 6 - RemittanceNotFound
-  // 7 - InvalidStatus
-  // 8 - Overflow
-  // 9 - NoFeesToWithdraw
+  // 15 - UserBlacklisted
+  // 17 - KycNotApproved
+  // 21 - DailySendLimitExceeded
+  // 36 - Overflow
   
+  // For the full error catalogue, see src/errors.rs
   console.error('Contract error:', error);
 }
 ```
@@ -197,18 +199,18 @@ const server = new StellarSdk.SorobanRpc.Server('https://soroban-testnet.stellar
 // Subscribe to contract events
 const events = await server.getContractEvents(
   contractId,
-  { topics: ['created'], limit: 10 }
+  { topics: ['remit', 'created'], limit: 10 }
 );
 
-// Event types:
-// - created: New remittance created
-// - completed: Payout confirmed
-// - cancelled: Remittance cancelled
-// - agent_reg: Agent registered
-// - agent_rem: Agent removed
-// - fee_upd: Fee updated
-// - fees_with: Fees withdrawn
+// Common event topics (topics are emitted as tuples like ["remit", "created"]):
+// - ["remit", "created"]: New remittance created
+// - ["remit", "completed"]: Payout confirmed
+// - ["remit", "cancelled"]: Remittance cancelled
+// - ["agent", "registered"]: Agent registered
+// - ["admin", "paused"]: Contract paused
 ```
+
+**For the complete event catalogue**, including all event topics, data structures, schema versioning, and payload shapes, see [docs/EVENTS.md](../docs/EVENTS.md).
 
 ## Additional Resources
 
@@ -239,6 +241,6 @@ const events = await server.getContractEvents(
 
 ## Support
 
-- [GitHub Issues](https://github.com/swiftremit/swiftremit/issues)
+- [GitHub Issues](https://github.com/richardiyamura/SwiftRemit/issues)
 - [Stellar Discord](https://discord.gg/stellar)
 - [Documentation](../README.md)

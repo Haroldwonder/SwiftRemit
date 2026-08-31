@@ -1,0 +1,106 @@
+# SwiftRemit Alertmanager routing (SR-214).
+#
+# Every rule in monitoring/alerts.yml and monitoring/slo.yml carries a `team:`
+# label (payments | platform | backend). Prometheus (see the `alerting:` block
+# in backend/monitoring/prometheus.yml) forwards firing alerts here; this file
+# routes each team to its own on-call receiver.
+#
+# Both notifier integrations are gated behind secret *files* that are mounted at
+# runtime (see docker-compose.yml / the Helm alertmanager template). If a file
+# is missing or empty the notifier is simply inert — the stack still starts
+# cleanly on a laptop with no pager configured.
+#
+#   /etc/alertmanager/secrets/slack_api_url          <- Slack incoming-webhook URL
+#   /etc/alertmanager/secrets/pagerduty_routing_key  <- PagerDuty Events v2 routing key
+#
+# Validated in CI by .github/workflows/monitoring-ci.yml:
+#   * amtool check-config
+#   * scripts/check-alertmanager-routes.js — every `team:` value used by a rule
+#     must resolve to a route here, and every route must name a real receiver.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: ['alertname', 'team']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: team-payments
+      matchers:
+        - team = "payments"
+    - receiver: team-platform
+      matchers:
+        - team = "platform"
+    - receiver: team-backend
+      matchers:
+        - team = "backend"
+
+# A critical alert mutes the matching warning for the same alert family so a
+# single incident does not double-page.
+inhibit_rules:
+  - source_matchers: ['severity = "critical"']
+    target_matchers: ['severity = "warning"']
+    equal: ['alertname', 'team']
+
+receivers:
+  - name: default
+    slack_configs:
+      - channel: '#alerts-firehose'
+        send_resolved: true
+        api_url_file: /etc/alertmanager/secrets/slack_api_url
+        title: '{{ .CommonLabels.alertname }} ({{ .Status }})'
+        text: >-
+          {{ range .Alerts }}{{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+
+  - name: team-payments
+    slack_configs:
+      - channel: '#oncall-payments'
+        send_resolved: true
+        api_url_file: /etc/alertmanager/secrets/slack_api_url
+        title: '[payments] {{ .CommonLabels.alertname }} ({{ .Status }})'
+        text: >-
+          {{ range .Alerts }}{{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          Runbook: {{ .Annotations.runbook_url }}
+          {{ end }}
+    pagerduty_configs:
+      - routing_key_file: /etc/alertmanager/secrets/pagerduty_routing_key
+        severity: '{{ if eq .CommonLabels.severity "critical" }}critical{{ else }}warning{{ end }}'
+        description: '{{ .CommonLabels.alertname }} — {{ .CommonAnnotations.summary }}'
+
+  - name: team-platform
+    slack_configs:
+      - channel: '#oncall-platform'
+        send_resolved: true
+        api_url_file: /etc/alertmanager/secrets/slack_api_url
+        title: '[platform] {{ .CommonLabels.alertname }} ({{ .Status }})'
+        text: >-
+          {{ range .Alerts }}{{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          Runbook: {{ .Annotations.runbook_url }}
+          {{ end }}
+    pagerduty_configs:
+      - routing_key_file: /etc/alertmanager/secrets/pagerduty_routing_key
+        severity: '{{ if eq .CommonLabels.severity "critical" }}critical{{ else }}warning{{ end }}'
+        description: '{{ .CommonLabels.alertname }} — {{ .CommonAnnotations.summary }}'
+
+  - name: team-backend
+    slack_configs:
+      - channel: '#oncall-backend'
+        send_resolved: true
+        api_url_file: /etc/alertmanager/secrets/slack_api_url
+        title: '[backend] {{ .CommonLabels.alertname }} ({{ .Status }})'
+        text: >-
+          {{ range .Alerts }}{{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          Runbook: {{ .Annotations.runbook_url }}
+          {{ end }}
+    pagerduty_configs:
+      - routing_key_file: /etc/alertmanager/secrets/pagerduty_routing_key
+        severity: '{{ if eq .CommonLabels.severity "critical" }}critical{{ else }}warning{{ end }}'
+        description: '{{ .CommonLabels.alertname }} — {{ .CommonAnnotations.summary }}'

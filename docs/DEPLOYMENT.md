@@ -1,5 +1,76 @@
 # SwiftRemit Deployment Guide
 
+## Deployment mechanisms — which one is authoritative
+
+SwiftRemit has two sets of deployment assets in the repo. Only one is wired to a
+pipeline today:
+
+| Mechanism | Status | What runs it |
+|---|---|---|
+| **Docker Compose on a VM (SSH)** | **Authoritative** for the hosted services (api, backend, frontend, prometheus, grafana, alertmanager) | `.github/workflows/deploy-staging.yml` (staging, on push to `main`); the staging/mainnet VMs run `docker compose up -d` from the tracked `docker-compose.yml` |
+| **Smart contract → Stellar/Soroban** | **Authoritative** for the on-chain contract | `.github/workflows/deploy-mainnet.yml` (+ `testnet-integration.yml`) |
+| **Kubernetes via the Helm chart (`charts/swiftremit/`)** | **Experimental / future work — NOT deployed by any pipeline** | `helm-ci.yml` only lints, templates and `kubeconform`-validates the chart. No workflow or script runs `helm upgrade`, `helm install`, or `kubectl apply` against a cluster. |
+
+> **Do not assume the hardened Helm chart reflects production.** Its non-root
+> security contexts, resource limits, HPAs and PodDisruptionBudgets (SR-103) are
+> validated in CI but describe a Kubernetes environment that does not exist yet.
+> If/when Kubernetes becomes the target, add a real `helm upgrade --install`
+> deploy job gated the same way the SSH deploys are, and update the table above.
+
+---
+
+## Hosted services — staging deploy and automated rollback (SR-209)
+
+`deploy-staging.yml` builds the `api` / `backend` / `frontend` images, pushes
+them to GHCR, and deploys them to the staging VM over SSH with
+`docker compose up -d`. The flow is:
+
+1. **`deploy`** — before overwriting the running stack it records the image
+   currently backing each service into `~/swiftremit/rollback/previous-images.env`
+   on the host (`<service>_image=<ref>`), then pulls and starts the new images.
+   The GitHub deployment status is left *pending* here — it is **not** marked
+   success yet.
+2. **`smoke-tests`** — `scripts/smoke-test-staging.sh` runs against the live
+   environment.
+3. On success, **`finalize`** marks the GitHub deployment `success`.
+4. On smoke-test **failure**, **`rollback`** SSHes back in, re-exports the
+   `BACKEND_IMAGE` / `API_IMAGE` / `FRONTEND_IMAGE` tags from
+   `previous-images.env`, re-runs `docker compose up -d`, re-runs the smoke
+   tests to confirm the previous build is healthy, and only then marks the
+   GitHub deployment `failure`. The deployment history therefore reflects what
+   is actually running, not what was attempted.
+
+If no rollback point was recorded (the very first deploy), the rollback job
+fails loudly with `::error::` so a human is paged — there is nothing to roll
+back to.
+
+The mainnet contract pipeline (`deploy-mainnet.yml`) has its own recovery path:
+`post-deploy-smoke` auto-pauses the contract on failure — see
+`ROLLBACK_RUNBOOK.md`.
+
+---
+
+## Alerting — Alertmanager (SR-214)
+
+Every Prometheus rule in `monitoring/alerts.yml` and `monitoring/slo.yml` carries
+a `team:` label (`payments` | `platform` | `backend`). An `alertmanager` service
+(in `docker-compose.yml`, and as `charts/swiftremit/templates/alertmanager.yaml`
+for the future Kubernetes target) routes each team to its own on-call receiver.
+
+- Routing config: `monitoring/alertmanager.yml` (the chart keeps a byte-identical
+  copy at `charts/swiftremit/files/alertmanager.yml`; CI diffs them).
+- Prometheus is pointed at it via the `alerting:` block in
+  `backend/monitoring/prometheus.yml`.
+- Slack and PagerDuty are gated behind secret **files** mounted at
+  `/etc/alertmanager/secrets/` (`slack_api_url`, `pagerduty_routing_key`). If a
+  file is absent the notifier is inert and Alertmanager still starts — see
+  `monitoring/secrets/README.md` for how to populate them per environment.
+- CI (`monitoring-ci.yml`) runs `amtool check-config` and
+  `scripts/check-alertmanager-routes.js`, which fails if any `team:` value used
+  by a rule has no matching route.
+
+---
+
 ## Frontend Deployment
 
 ### Quick Deploy to Vercel (Recommended)
@@ -10,7 +81,7 @@
 2. **Sign in** with your GitHub account
 3. **Import Project**:
    - Click "Add New..." → "Project"
-   - Select your GitHub repository: `Haroldwonder/SwiftRemit`
+   - Select your GitHub repository: `richardiyamura/SwiftRemit`
    - Select branch: `refactor/production-readiness-soroban`
 4. **Configure Project**:
    - Framework Preset: Vite
@@ -73,7 +144,7 @@ vercel
 2. **Sign in** with GitHub
 3. **Add new site** → "Import an existing project"
 4. **Connect to Git provider**: GitHub
-5. **Select repository**: `Haroldwonder/SwiftRemit`
+5. **Select repository**: `richardiyamura/SwiftRemit`
 6. **Configure**:
    - Branch: `refactor/production-readiness-soroban`
    - Base directory: `frontend`
@@ -107,7 +178,7 @@ netlify deploy --prod
 ### Alternative: GitHub Pages
 
 1. **Enable GitHub Pages**:
-   - Go to: https://github.com/Haroldwonder/SwiftRemit/settings/pages
+   - Go to: https://github.com/richardiyamura/SwiftRemit/settings/pages
    - Source: Deploy from a branch
    - Branch: `refactor/production-readiness-soroban`
    - Folder: `/frontend` (if available) or `/` (root)
@@ -409,7 +480,7 @@ Copy the relevant example file and fill in production values before deploying.
 | `ANCHOR_TIMEOUT_HOURS` | ❌ | Hours before a pending anchor transaction is marked as error (default: `24`) |
 | `ANCHOR_TIMEOUT_WEBHOOK_URL` | ❌ | Webhook URL notified when a transaction times out in `pending_anchor` status |
 
-See [`backend/.env.example`](backend/.env.example) for the full list with inline comments.
+See [`backend/.env.example`](../backend/.env.example) for the full list with inline comments.
 
 ### API Service (`api/.env.example`)
 
@@ -426,7 +497,7 @@ See [`backend/.env.example`](backend/.env.example) for the full list with inline
 | `CURRENCY_CONFIG_ENV_OVERRIDE` | ❌ | Set to `true` to allow env-variable overrides of currency config (default: `false`) |
 | `CURRENCY_OVERRIDES` | ❌ | JSON array of currency overrides, e.g. `[{"code":"USD","symbol":"$","decimal_precision":2}]` |
 
-See [`api/.env.example`](api/.env.example) for the full list with inline comments.
+See [`api/.env.example`](../api/.env.example) for the full list with inline comments.
 
 ### Frontend (`frontend/.env.example`)
 
@@ -440,7 +511,7 @@ See [`api/.env.example`](api/.env.example) for the full list with inline comment
 | `VITE_EURC_ISSUER` | ❌ | EURC issuer public key (optional, for EURC support) |
 | `VITE_USDC_TOKEN_ID` | ✅ | USDC token contract ID on Soroban |
 
-See [`frontend/.env.example`](frontend/.env.example) for the full list with inline comments.
+See [`frontend/.env.example`](../frontend/.env.example) for the full list with inline comments.
 
 > **Security note:** Never commit `.env` files to version control. Use your deployment
 > platform's secret management (e.g. Vercel environment variables, AWS Secrets Manager,
@@ -449,17 +520,69 @@ See [`frontend/.env.example`](frontend/.env.example) for the full list with inli
 
 ---
 
+## GHCR Image Retention
+
+`deploy-staging.yml` pushes two tags per service image to
+`ghcr.io/<repo>/{backend,api,frontend}` on every push to `main`:
+
+| Tag | Mutability | Purpose |
+|---|---|---|
+| `:staging` | Mutable (overwritten each deploy) | What `docker-compose` pulls on the staging VM |
+| `:<sha_short>` | Immutable | Pinned image the staging deploy actually runs; used for manual rollback |
+
+Without pruning, the immutable per-commit tags accumulate forever across three
+image repositories. `.github/workflows/ghcr-cleanup.yml` enforces the retention
+policy below.
+
+### Policy
+
+- **Runs:** weekly, Monday 08:00 UTC (plus manual `workflow_dispatch`, which
+  defaults to a dry run).
+- **Deletes:** image versions whose `updated_at` is older than **30 days**.
+- **Always keeps:**
+  - the `:staging` tag (and `:latest` / `:main` if ever introduced);
+  - any tag matching `v*` or `*.*.*` (semver / release tags);
+  - the **10 most recent** tagged versions of each image, regardless of age —
+    this is the rollback floor. **You can safely roll back to any per-commit
+    tag from roughly the last 30 days, or the last 10 builds, whichever reaches
+    further back.** Older tags may have been pruned.
+- **Also removes:** dangling untagged manifests left behind when a tag is
+  re-pushed.
+
+### Required secret
+
+The cleanup action needs the `!`/`*` tag-filter operators, which GitHub's
+ephemeral `GITHUB_TOKEN` does not support. Create a **classic personal access
+token** with the `write:packages` and `delete:packages` scopes and add it as the
+repository secret `GHCR_RETENTION_TOKEN`. The workflow fails fast with an
+explanatory error if the secret is missing.
+
+### Manual rollback
+
+```bash
+# On the staging VM — pin to an older known-good commit tag
+export BACKEND_IMAGE=ghcr.io/haroldwonder/swiftremit/backend:<sha_short>
+export API_IMAGE=ghcr.io/haroldwonder/swiftremit/api:<sha_short>
+export FRONTEND_IMAGE=ghcr.io/haroldwonder/swiftremit/frontend:<sha_short>
+docker compose pull && docker compose up -d --remove-orphans
+```
+
+If the tag you need has already been pruned, re-run `deploy-staging.yml` from
+the target commit to rebuild and re-push it.
+
+---
+
 ## Support
 
 - **Documentation**: See README.md files in each directory
-- **Issues**: https://github.com/Haroldwonder/SwiftRemit/issues
+- **Issues**: https://github.com/richardiyamura/SwiftRemit/issues
 - **Stellar Discord**: https://discord.gg/stellar
 
 ---
 
 ## Quick Links
 
-- **Repository**: https://github.com/Haroldwonder/SwiftRemit
+- **Repository**: https://github.com/richardiyamura/SwiftRemit
 - **Branch**: refactor/production-readiness-soroban
 - **Stellar Testnet**: https://horizon-testnet.stellar.org
 - **Freighter Wallet**: https://www.freighter.app/

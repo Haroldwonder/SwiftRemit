@@ -121,6 +121,24 @@ services:
       - ./monitoring/slo.yml:/etc/prometheus/slo.yml:ro
     command:
       - --config.file=/etc/prometheus/prometheus.yml
+    depends_on:
+      - alertmanager
+
+  # SR-214 — routes firing alerts (keyed on the `team:` label) to on-call.
+  # Slack / PagerDuty credentials come from ./monitoring/secrets/ at runtime;
+  # when they are absent Alertmanager still runs and alerts show in its UI.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/secrets:/etc/alertmanager/secrets:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
 
   grafana:
     image: grafana/grafana:10.4.2
@@ -141,6 +159,43 @@ services:
     depends_on:
       - prometheus
 
+  # ── Pact Broker (SR-216) ──────────────────────────────────────────────────
+  # Opt-in: only starts with `docker compose --profile pact-broker up`.
+  # Source of truth for consumer pacts and provider-verification results; the
+  # `can-i-deploy` gate in the deploy workflows queries it. See docs/PACT_BROKER.md.
+  pact-broker-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles: ["pact-broker"]
+    environment:
+      POSTGRES_USER: pactbroker
+      POSTGRES_PASSWORD: pactbroker
+      POSTGRES_DB: pactbroker
+    volumes:
+      - pact_broker_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pactbroker"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pact-broker:
+    image: pactfoundation/pact-broker:latest
+    restart: unless-stopped
+    profiles: ["pact-broker"]
+    ports:
+      - "9292:9292"
+    depends_on:
+      pact-broker-db:
+        condition: service_healthy
+    environment:
+      PACT_BROKER_DATABASE_URL: postgres://pactbroker:pactbroker@pact-broker-db/pactbroker
+      PACT_BROKER_BASIC_AUTH_USERNAME: ${PACT_BROKER_USERNAME:-pact}
+      PACT_BROKER_BASIC_AUTH_PASSWORD: ${PACT_BROKER_PASSWORD:-pact}
+      # Allow anonymous reads so `can-i-deploy` works without credentials locally.
+      PACT_BROKER_ALLOW_PUBLIC_READ: "true"
+
 volumes:
   postgres_data:
   grafana_data:
+  alertmanager_data:

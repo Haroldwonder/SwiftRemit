@@ -751,7 +751,7 @@ Dashboards are provisioned from `monitoring/dashboards/` — see
 
 ## Admin Key Rotation
 
-See [docs/KEY_MANAGEMENT_POLICY.md](docs/KEY_MANAGEMENT_POLICY.md) for the full rotation policy (SR-111).  
+See [KEY_MANAGEMENT_POLICY.md](KEY_MANAGEMENT_POLICY.md) for the full rotation policy (SR-111).  
 Rehearsal script: `scripts/rehearse-key-rotation.sh`
 
 All mainnet admin keys must be stored on hardware wallets (Ledger/Trezor) or HSMs. Rotate at minimum quarterly and before every mainnet upgrade.
@@ -769,7 +769,7 @@ All mainnet admin keys must be stored on hardware wallets (Ledger/Trezor) or HSM
 
 ## Key Compromise Response
 
-See [docs/KEY_MANAGEMENT_POLICY.md](docs/KEY_MANAGEMENT_POLICY.md) Section 5 for the full playbook (SR-111).  
+See [KEY_MANAGEMENT_POLICY.md](KEY_MANAGEMENT_POLICY.md) Section 5 for the full playbook (SR-111).  
 Rehearsal script: `scripts/rehearse-compromise-response.sh`  
 **Target RTO: 2 hours** from detection to service restoration.
 
