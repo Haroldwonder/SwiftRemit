@@ -315,8 +315,14 @@ fn test_changing_multisig_config_invalidates_flights() {
 
     let (contract, admin, _) = setup(&env);
     let admin2 = Address::generate(&env);
+    let admin3 = Address::generate(&env);
 
+    // We need 3 admins so that threshold=3 is a valid value (≤ admin_count).
     contract.add_admin(&admin, &admin2);
+    contract.add_admin(&admin, &admin3);
+
+    // Set initial threshold to 2 via direct call (threshold was 1, so this is
+    // allowed without going through the proposal flow).
     contract.set_multisig_config(&admin, &2, &86400);
 
     let op_id = contract.propose_operation(
@@ -326,15 +332,29 @@ fn test_changing_multisig_config_invalidates_flights() {
         &None,
     );
 
-    // Change threshold to 3
-    contract.set_multisig_config(&admin, &3, &86400);
+    // Change threshold to 3 — current threshold is 2 > 1 so we must go through
+    // propose_multisig_config and get the required approvals.
+    let cfg_op_id = contract.propose_multisig_config(&admin, &3, &86400);
+    // Need 2 approvals (current threshold=2).  The proposer already counts as 1.
+    contract.approve_operation(&admin2, &cfg_op_id);
+    // Operation should now be executed and removed (threshold reached).
+    let result = contract.try_get_pending_operation(&cfg_op_id);
+    assert_eq!(result, Err(Ok(ContractError::OperationNotFound)));
 
-    // Pending operation still exists but now needs 3 approvals instead of 2
+    // The in-flight fee proposal (op_id) was created under the old threshold=2.
+    // It must still be present in storage and must retain its original threshold.
     let op = contract.get_pending_operation(&op_id);
     assert_eq!(op.threshold, 2); // Stored threshold when operation was proposed
 
-    // Now get the current config
-    contract.set_multisig_config(&admin, &2, &86400);
+    // Lower threshold back to 2 via the proposal flow (current threshold=3 now).
+    let cfg_op_id2 = contract.propose_multisig_config(&admin, &2, &86400);
+    contract.approve_operation(&admin2, &cfg_op_id2);
+    contract.approve_operation(&admin3, &cfg_op_id2);
+    let result = contract.try_get_pending_operation(&cfg_op_id2);
+    assert_eq!(result, Err(Ok(ContractError::OperationNotFound)));
+
+    // The original in-flight operation still retains the threshold from when it
+    // was proposed.
     let op = contract.get_pending_operation(&op_id);
     assert_eq!(op.threshold, 2); // Still uses the original threshold
 }

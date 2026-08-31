@@ -3,8 +3,8 @@
  * SR-104 — every alert must point at a runbook procedure that actually exists.
  *
  * Parses the Prometheus rule files, pulls the `runbook_url` annotation out of
- * each alert, and resolves its `#fragment` against the headings in RUNBOOK.md
- * (using GitHub's anchor slug rules). Fails on:
+ * each alert, and resolves its `#fragment` against the headings in
+ * docs/RUNBOOK.md (using GitHub's anchor slug rules). Fails on:
  *
  *   - an alert with no runbook_url
  *   - an alert with no severity or team label
@@ -20,7 +20,8 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const RUNBOOK = path.join(ROOT, 'RUNBOOK.md');
+// RUNBOOK.md was moved under docs/ by the root-markdown cleanup (SR-115).
+const RUNBOOK = path.join(ROOT, 'docs', 'RUNBOOK.md');
 
 const RULE_FILES = [
   'monitoring/alerts.yml',
@@ -168,7 +169,7 @@ for (const alert of alerts) {
   }
 
   if (!anchors.has(fragment)) {
-    errors.push(`${where}: RUNBOOK.md has no section "#${fragment}"`);
+    errors.push(`${where}: docs/RUNBOOK.md has no section "#${fragment}"`);
   }
 }
 
@@ -176,7 +177,7 @@ if (errors.length > 0) {
   console.error(`✗ Alert / runbook check failed (${errors.length} problem(s)):\n`);
   for (const error of errors) console.error(`  - ${error}`);
   console.error('\nEvery alert needs a severity, a team, and a runbook_url whose');
-  console.error('#section exists in RUNBOOK.md. See SR-104.');
+  console.error('#section exists in docs/RUNBOOK.md. See SR-104.');
   process.exit(1);
 }
 

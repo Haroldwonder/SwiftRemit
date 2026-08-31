@@ -63,6 +63,12 @@ frontend:
     VITE_EURC_ISSUER: ""
     VITE_USDC_TOKEN_ID: ""
 
+# SR-214 — page on-call for staging incidents. Slack / PagerDuty credentials are
+# injected at deploy time, e.g.:
+#   --set alertmanager.secrets.slackApiUrl="$ALERTMANAGER_SLACK_WEBHOOK"
+alertmanager:
+  enabled: true
+
 ingress:
   enabled: true
   className: nginx

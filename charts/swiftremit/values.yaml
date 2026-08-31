@@ -258,6 +258,41 @@ frontend:
     initialDelaySeconds: 5
     periodSeconds: 10
 
+# ─── Alertmanager (SR-214) ────────────────────────────────────────────────────
+# Routes firing Prometheus alerts (keyed on the `team:` label) to on-call. The
+# routing config is charts/swiftremit/files/alertmanager.yml, kept byte-identical
+# to monitoring/alertmanager.yml (CI diffs them).
+#
+# Disabled by default — see docs/DEPLOYMENT.md for which deployment mechanism is
+# authoritative today. Enable per environment in values.<env>.yaml.
+alertmanager:
+  enabled: false
+
+  image:
+    repository: prom/alertmanager
+    tag: v0.27.0
+    pullPolicy: IfNotPresent
+
+  service:
+    port: 9093
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+  # Point at an existing Secret with keys `slack_api_url` /
+  # `pagerduty_routing_key`, or leave blank and let the chart create one from
+  # the values below. The volume mount is `optional`, so unset keys just leave
+  # the matching notifier inert.
+  secretName: ""
+  secrets: {}
+    # slackApiUrl: "https://hooks.slack.com/services/…"
+    # pagerdutyRoutingKey: "…"
+
 # ─── Ingress ───────────────────────────────────────────────────────────────────
 ingress:
   enabled: false

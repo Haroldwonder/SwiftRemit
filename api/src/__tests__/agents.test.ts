@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app';
 import { agentStore } from '../routes/agents';
+import { bearer, useTestJwtSecret } from './helpers/authTestUtils';
 
 const ADMIN_KEY = 'test-admin-key';
 const VALID_ADDRESS = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
@@ -88,11 +89,22 @@ describe('POST /api/agents', () => {
 });
 
 describe('GET /api/agents/:id', () => {
-  beforeEach(() => agentStore.clear());
+  beforeEach(() => {
+    agentStore.clear();
+    useTestJwtSecret();
+  });
+
+  it('returns 401 without authentication', async () => {
+    const app = createApp();
+    const res = await request(app).get(`/api/agents/${VALID_ADDRESS}`);
+    expect(res.status).toBe(401);
+  });
 
   it('returns 404 for unknown agent', async () => {
     const app = createApp();
-    const res = await request(app).get(`/api/agents/${VALID_ADDRESS}`);
+    const res = await request(app)
+      .get(`/api/agents/${VALID_ADDRESS}`)
+      .set('Authorization', bearer('user-1'));
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('AGENT_NOT_FOUND');
   });
@@ -105,7 +117,9 @@ describe('GET /api/agents/:id', () => {
       .set('x-api-key', ADMIN_KEY)
       .send({ stellar_address: VALID_ADDRESS, payout_address: 'iban456', name: 'Bob' });
 
-    const res = await request(app).get(`/api/agents/${VALID_ADDRESS}`);
+    const res = await request(app)
+      .get(`/api/agents/${VALID_ADDRESS}`)
+      .set('Authorization', bearer(VALID_ADDRESS, { role: 'agent' }));
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.name).toBe('Bob');

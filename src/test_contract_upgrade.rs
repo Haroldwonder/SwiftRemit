@@ -15,7 +15,7 @@
 
 extern crate std;
 
-use soroban_sdk::{testutils::Address as _, token, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Ledger as _}, token, Address, Env};
 
 use crate::{migration, SwiftRemitContract, SwiftRemitContractClient};
 
@@ -65,6 +65,8 @@ fn test_migrate_preserves_remittance_state() {
 
     env.mock_all_auths();
     let id1 = client.create_remittance(&sender, &agent, &5_000, &None, &None, &None, &None, &None, &None);
+    // Advance past the per-sender Transfer cooldown (5 s) before the next call.
+    env.ledger().with_mut(|li| li.timestamp += 6);
     let id2 = client.create_remittance(&sender, &agent, &3_000, &None, &None, &None, &None, &None, &None);
 
     // Snapshot state before migration.
@@ -174,7 +176,10 @@ fn test_migrate_preserves_remittance_count() {
 
     env.mock_all_auths();
     client.create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None, &None);
+    // Advance past the per-sender Transfer cooldown (5 s) between calls.
+    env.ledger().with_mut(|li| li.timestamp += 6);
     client.create_remittance(&sender, &agent, &2_000, &None, &None, &None, &None, &None, &None);
+    env.ledger().with_mut(|li| li.timestamp += 6);
     client.create_remittance(&sender, &agent, &3_000, &None, &None, &None, &None, &None, &None);
 
     let count_before = client.get_remittance_count();

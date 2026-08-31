@@ -666,6 +666,326 @@ describe('TransactionStatusTracker', () => {
     });
   });
 
+  describe('WebSocket Functionality', () => {
+    let mockWebSocket: any;
+
+    beforeEach(() => {
+      mockWebSocket = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        close: vi.fn(),
+        send: vi.fn(),
+      };
+
+      global.WebSocket = vi.fn(() => mockWebSocket) as any;
+    });
+
+    it('connects to WebSocket when transactionId is provided', () => {
+      render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          enablePolling={false}
+        />
+      );
+
+      expect(global.WebSocket).toHaveBeenCalledWith(
+        expect.stringContaining('/ws/transaction-status/tx_123')
+      );
+    });
+
+    it('updates status when receiving valid WebSocket message', () => {
+      const onStatusUpdate = vi.fn();
+      render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          onStatusUpdate={onStatusUpdate}
+          enablePolling={false}
+        />
+      );
+
+      const messageHandler = mockWebSocket.addEventListener.mock.calls.find(
+        call => call[0] === 'message'
+      )?.[1];
+
+      expect(messageHandler).toBeDefined();
+      const mockEvent = new MessageEvent('message', {
+        data: JSON.stringify({ status: 'completed', transactionId: 'tx_123' }),
+      });
+      messageHandler?.(mockEvent);
+
+      expect(onStatusUpdate).toHaveBeenCalledWith('completed');
+    });
+
+    it('gracefully handles malformed JSON payload', () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const onStatusUpdate = vi.fn();
+
+      render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          onStatusUpdate={onStatusUpdate}
+          enablePolling={false}
+        />
+      );
+
+      const messageHandler = mockWebSocket.addEventListener.mock.calls.find(
+        call => call[0] === 'message'
+      )?.[1];
+
+      const mockEvent = new MessageEvent('message', {
+        data: 'invalid json',
+      });
+      messageHandler?.(mockEvent);
+
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to parse transaction status websocket payload'),
+        expect.any(Error)
+      );
+      expect(onStatusUpdate).not.toHaveBeenCalled();
+
+      consoleError.mockRestore();
+    });
+
+    it('ignores messages with non-string status field', () => {
+      const onStatusUpdate = vi.fn();
+      render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          onStatusUpdate={onStatusUpdate}
+          enablePolling={false}
+        />
+      );
+
+      const messageHandler = mockWebSocket.addEventListener.mock.calls.find(
+        call => call[0] === 'message'
+      )?.[1];
+
+      const mockEvent = new MessageEvent('message', {
+        data: JSON.stringify({ status: 123, transactionId: 'tx_123' }),
+      });
+      messageHandler?.(mockEvent);
+
+      expect(onStatusUpdate).not.toHaveBeenCalled();
+    });
+
+    it('ignores messages for different transaction IDs', () => {
+      const onStatusUpdate = vi.fn();
+      render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          onStatusUpdate={onStatusUpdate}
+          enablePolling={false}
+        />
+      );
+
+      const messageHandler = mockWebSocket.addEventListener.mock.calls.find(
+        call => call[0] === 'message'
+      )?.[1];
+
+      const mockEvent = new MessageEvent('message', {
+        data: JSON.stringify({ status: 'completed', transactionId: 'tx_456' }),
+      });
+      messageHandler?.(mockEvent);
+
+      expect(onStatusUpdate).not.toHaveBeenCalled();
+    });
+
+    it('closes WebSocket on unmount', () => {
+      const { unmount } = render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          enablePolling={false}
+        />
+      );
+
+      expect(mockWebSocket.close).not.toHaveBeenCalled();
+
+      unmount();
+
+      expect(mockWebSocket.close).toHaveBeenCalled();
+    });
+
+    it('closes WebSocket when status reaches terminal state', () => {
+      const { rerender } = render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          enablePolling={false}
+        />
+      );
+
+      expect(mockWebSocket.close).not.toHaveBeenCalled();
+
+      rerender(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="completed"
+          enablePolling={false}
+        />
+      );
+
+      expect(mockWebSocket.close).toHaveBeenCalled();
+    });
+
+    it('uses provided socketUrl instead of default', () => {
+      global.WebSocket = vi.fn(() => mockWebSocket) as any;
+
+      render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          socketUrl="wss://custom.host/ws"
+          enablePolling={false}
+        />
+      );
+
+      expect(global.WebSocket).toHaveBeenCalledWith('wss://custom.host/ws');
+    });
+
+    it('does not connect to WebSocket when transactionId is missing', () => {
+      global.WebSocket = vi.fn(() => mockWebSocket) as any;
+
+      render(
+        <TransactionStatusTracker
+          currentStatus="processing"
+          enablePolling={false}
+        />
+      );
+
+      expect(global.WebSocket).not.toHaveBeenCalled();
+    });
+
+    it('reconnects with exponential backoff on error', () => {
+      vi.useFakeTimers();
+
+      const { unmount } = render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          maxReconnectAttempts={3}
+          initialReconnectDelayMs={1000}
+          enablePolling={false}
+        />
+      );
+
+      const errorHandler = mockWebSocket.addEventListener.mock.calls.find(
+        call => call[0] === 'error'
+      )?.[1];
+
+      errorHandler?.(new Event('error'));
+
+      vi.advanceTimersByTime(1000);
+      expect(global.WebSocket).toHaveBeenCalledTimes(2);
+
+      vi.advanceTimersByTime(2000);
+      expect(global.WebSocket).toHaveBeenCalledTimes(3);
+
+      unmount();
+      vi.useRealTimers();
+    });
+
+    it('does not reconnect after max attempts reached', () => {
+      vi.useFakeTimers();
+
+      const { unmount } = render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          maxReconnectAttempts={2}
+          initialReconnectDelayMs={500}
+          enablePolling={false}
+        />
+      );
+
+      const errorHandler = mockWebSocket.addEventListener.mock.calls.find(
+        call => call[0] === 'error'
+      )?.[1];
+
+      errorHandler?.(new Event('error'));
+      vi.advanceTimersByTime(500);
+
+      errorHandler?.(new Event('error'));
+      vi.advanceTimersByTime(1000);
+
+      errorHandler?.(new Event('error'));
+      vi.advanceTimersByTime(2000);
+
+      const initialCallCount = global.WebSocket.mock.calls.length;
+      vi.advanceTimersByTime(10000);
+
+      expect(global.WebSocket.mock.calls.length).toBe(initialCallCount);
+
+      unmount();
+      vi.useRealTimers();
+    });
+
+    it('does not reconnect after terminal state reached', () => {
+      vi.useFakeTimers();
+
+      const { rerender } = render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          maxReconnectAttempts={5}
+          enablePolling={false}
+        />
+      );
+
+      const closeHandler = mockWebSocket.addEventListener.mock.calls.find(
+        call => call[0] === 'close'
+      )?.[1];
+
+      rerender(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="completed"
+          maxReconnectAttempts={5}
+          enablePolling={false}
+        />
+      );
+
+      const initialCallCount = global.WebSocket.mock.calls.length;
+      closeHandler?.(new Event('close'));
+      vi.advanceTimersByTime(10000);
+
+      expect(global.WebSocket.mock.calls.length).toBe(initialCallCount);
+      vi.useRealTimers();
+    });
+
+    it('resets reconnect attempts on successful connection', () => {
+      vi.useFakeTimers();
+
+      global.WebSocket = vi.fn(() => mockWebSocket) as any;
+
+      const { unmount } = render(
+        <TransactionStatusTracker
+          transactionId="tx_123"
+          currentStatus="processing"
+          maxReconnectAttempts={5}
+          initialReconnectDelayMs={1000}
+          enablePolling={false}
+        />
+      );
+
+      const openHandler = mockWebSocket.addEventListener.mock.calls.find(
+        call => call[0] === 'open'
+      )?.[1];
+
+      openHandler?.(new Event('open'));
+
+      expect(global.WebSocket).toHaveBeenCalledTimes(1);
+
+      unmount();
+      vi.useRealTimers();
+    });
+  });
+
   describe('accessibility', () => {
     it('has no a11y violations in initiated state', async () => {
       const { container } = render(

@@ -114,7 +114,7 @@ groups:
           description: >
             {{ $value | humanizePercentage }} of API requests are failing. At this rate the
             30-day availability budget (99.9%) is gone in under 2 days.
-          runbook_url: "RUNBOOK.md#9-api-availability-slo-burn"
+          runbook_url: "docs/RUNBOOK.md#9-api-availability-slo-burn"
 
       - alert: SwiftRemitAvailabilityBudgetBurnSlow
         # 6x burn exhausts the monthly budget in ~5 days.
@@ -132,7 +132,7 @@ groups:
           description: >
             Sustained elevated 5xx rate over 6 hours. The 30-day availability budget
             will be exhausted well before the window closes.
-          runbook_url: "RUNBOOK.md#9-api-availability-slo-burn"
+          runbook_url: "docs/RUNBOOK.md#9-api-availability-slo-burn"
 
       - alert: SwiftRemitLatencyBudgetBurnFast
         expr: >
@@ -149,7 +149,7 @@ groups:
           description: >
             {{ $value | humanizePercentage }} of requests are slower than the 500 ms
             objective over the last hour.
-          runbook_url: "RUNBOOK.md#10-api-latency-slo-burn"
+          runbook_url: "docs/RUNBOOK.md#10-api-latency-slo-burn"
 
       - alert: SwiftRemitSettlementTimeSLOBreached
         # 95% of remittances must settle within 15 minutes.
@@ -164,7 +164,7 @@ groups:
           description: >
             p95 settlement time is {{ $value | humanizeDuration }} over the last hour
             (objective: 15 minutes). Senders are waiting far longer than promised.
-          runbook_url: "RUNBOOK.md#11-remittance-settlement-time-slo-breach"
+          runbook_url: "docs/RUNBOOK.md#11-remittance-settlement-time-slo-breach"
 
       - alert: SwiftRemitAvailabilityBudgetExhausted
         expr: swiftremit:slo_availability:budget_remaining <= 0
@@ -178,4 +178,4 @@ groups:
           description: >
             The availability error budget for the current 30-day window has been fully
             spent. Freeze risky deploys until the window rolls over.
-          runbook_url: "RUNBOOK.md#9-api-availability-slo-burn"
+          runbook_url: "docs/RUNBOOK.md#9-api-availability-slo-burn"
