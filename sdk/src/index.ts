@@ -42,8 +42,29 @@ export type {
   Proposal,
   ProposalAction,
   ProposalState,
+  // SR-194: previously unexported domain types
+  Escrow,
+  AssetVerification,
+  VerificationStatus,
+  PauseRecord,
+  FeeStrategy,
+  FeeCorridor,
+  RateLimitConfig,
+  RateLimitStatus,
+  TransactionRecord,
+  TransactionState,
+  MigrationSnapshot,
+  BatchSettlementEntry,
+  BatchSettlementResult,
+  AdminOperationType,
+  PendingOperation,
+  PartialPayoutRecord,
+  // SR-195: recipient hash types
+  RecipientDetails,
+  WalletRecipient,
+  BankRecipient,
 } from "./types.js";
-export { RetryPolicies } from "./types.js";
+export { RetryPolicies, RECIPIENT_HASH_SCHEMA_VERSION } from "./types.js";
 export {
   parseRemittance,
   parseAgentStats,
@@ -61,6 +82,27 @@ export {
   validateAmount,
   /** Validate a Stellar address string before passing to any transaction-building function. */
   validateAddress,
+  // SR-194: previously unexported parsers and encoders
+  parseEscrow,
+  parseAssetVerification,
+  parsePauseRecord,
+  parseFeeCorridor,
+  parseFeeStrategy,
+  parseRateLimitConfig,
+  parseRateLimitStatus,
+  parseTransactionRecord,
+  parseMigrationSnapshot,
+  parseBatchSettlementResult,
+  parsePendingOperation,
+  feeCorridorToScVal,
+  feeStrategyToScVal,
+  batchSettlementEntryToScVal,
+  adminOperationTypeToScVal,
+  roleToScVal,
+  verificationStatusToScVal,
+  pauseReasonToScVal,
+  // SR-195: recipient hash builder
+  computeRecipientHash,
 } from "./convert.js";
 
 /** Stellar network passphrases for convenience. */
