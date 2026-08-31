@@ -86,7 +86,7 @@
     "tsup": "^8.0.0",
     "typescript": "^5.8.3",
     "typedoc": "^0.28.20",
-    "typedoc-plugin-markdown": "^4.0.0",
+    "typedoc-plugin-markdown": "^4.13.0",
     "vitest": "^3.1.1"
   }
 }
