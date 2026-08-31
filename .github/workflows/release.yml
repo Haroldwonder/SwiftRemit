@@ -142,14 +142,14 @@ jobs:
           toolchain: stable
           target: wasm32-unknown-unknown
 
-      - name: Install Soroban CLI
+      - name: Install Stellar CLI
         run: |
-          cargo install --locked soroban-cli --features opt
+          cargo install --locked stellar-cli --features opt
 
       - name: Build contract
         run: |
           cargo build --target wasm32-unknown-unknown --release
-          soroban contract optimize \
+          stellar contract optimize \
             --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm \
             --wasm-out swiftremit-optimized.wasm
 

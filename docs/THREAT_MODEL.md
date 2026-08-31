@@ -233,7 +233,7 @@ Each row describes a boundary where data or control crosses from one trust zone 
 |---|---|
 | **Goal** | Replace contract logic with a backdoored version that siphons funds or bypasses auth |
 | **Capabilities** | Requires admin key (Soroban contract upgrades require the `upgrade` instruction gated by the contract's own auth); also achievable via compromised CI/CD pipeline |
-| **Entry Points** | CI/CD deployment pipeline; `soroban contract deploy`; `import_migration_batch` (can overwrite stored state) |
+| **Entry Points** | CI/CD deployment pipeline; `stellar contract deploy`; `import_migration_batch` (can overwrite stored state) |
 | **Likely Attacks** | Supply-chain attack on build toolchain; inject malicious WASM via compromised GitHub Actions; use `import_migration_batch` with crafted state to alter balances; deploy contract with disabled auth checks |
 
 ---

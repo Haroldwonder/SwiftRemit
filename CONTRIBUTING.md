@@ -29,6 +29,10 @@ Before you begin, ensure you have the following installed:
 - **Rust** (latest stable): [Install Rust](https://www.rust-lang.org/tools/install)
 - **Node.js** (v18 or v20): [Install Node.js](https://nodejs.org/)
 - **Stellar CLI**: Install via `cargo install --locked stellar-cli`
+  > **Note:** The Stellar CLI was previously distributed as `soroban-cli` (binary name `soroban`).
+  > It was renamed to `stellar-cli` (binary name `stellar`) in 2024.
+  > If you encounter old tutorials or issue references that use `soroban contract …`, replace
+  > `soroban` with `stellar` — the subcommands are identical.
 - **PostgreSQL** (v15+): Required for backend services
 - **Git**: [Install Git](https://git-scm.com/downloads)
 
@@ -144,7 +148,7 @@ and Node toolchains preinstalled — open the repo in VS Code and choose "Reopen
   `docker compose up --build -d` again.
 - **`cargo build` fails looking for `wasm32-unknown-unknown`** — run `make install` or
   `rustup target add wasm32-unknown-unknown` first; the target isn't installed by default.
-- **`soroban`/`stellar` CLI not found** — install it with
+- **`stellar` CLI not found** — install it with
   `cargo install --locked stellar-cli`, per the prerequisites above.
 
 ## Project Structure

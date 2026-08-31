@@ -377,7 +377,7 @@ cargo test
 
 - Rust toolchain as pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (currently `stable`, installed automatically by `rustup` when you build in this repo)
 - `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
-- Soroban CLI (`soroban`)
+- Stellar CLI (`stellar`) — install via `cargo install --locked stellar-cli`
 - See [`Cargo.toml`](Cargo.toml) for the exact `soroban-sdk` version this contract is built against
 
 ### 🐳 Local Stack with Docker Compose
@@ -461,13 +461,13 @@ If you prefer to run steps manually:
 ```bash
 cd SwiftRemit
 cargo build --target wasm32-unknown-unknown --release
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 ```
 
 ### 2. Deploy to Testnet
 
 ```bash
-soroban contract deploy \
+stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm \
   --source deployer \
   --network testnet
@@ -476,7 +476,7 @@ soroban contract deploy \
 ### 3. Initialize
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id <CONTRACT_ID> \
   --source deployer \
   --network testnet \
@@ -570,7 +570,7 @@ SwiftRemit uses environment variables for configuration. This allows you to easi
 - `USDC_TOKEN_ID`: USDC token contract address
 - `DEFAULT_FEE_BPS`: Platform fee in basis points (0-10000)
 - `INITIAL_FEE_BPS`: Initial fee for contract deployment (0-10000)
-- `DEPLOYER_IDENTITY`: Soroban CLI identity for deployment
+- `DEPLOYER_IDENTITY`: Stellar CLI identity for deployment
 
 ### Documentation
 

@@ -95,9 +95,9 @@ All commands use environment variables. Set them before running:
 export CONTRACT_ID=<deployed_contract_id>
 export NETWORK=mainnet          # or testnet for rehearsal
 export RPC_URL=<soroban_rpc_url>
-export CURRENT_ADMIN_IDENTITY=<soroban_cli_identity_for_current_admin>
+export CURRENT_ADMIN_IDENTITY=<stellar_cli_identity_for_current_admin>
 export CURRENT_ADMIN_ADDRESS=<current_admin_stellar_address>
-export NEW_ADMIN_IDENTITY=<soroban_cli_identity_for_new_admin>
+export NEW_ADMIN_IDENTITY=<stellar_cli_identity_for_new_admin>
 export NEW_ADMIN_ADDRESS=<new_admin_stellar_address>
 ```
 
@@ -116,7 +116,7 @@ Generate the replacement keypair on the hardware wallet device, **never on an in
 The current admin proposes the new address as the successor:
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $CURRENT_ADMIN_IDENTITY \
   --network $NETWORK \
@@ -134,7 +134,7 @@ Record the transaction hash and ledger sequence in the rotation log.
 The new admin authenticates with their hardware wallet and accepts the proposal:
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $NEW_ADMIN_IDENTITY \
   --network $NETWORK \
@@ -148,7 +148,7 @@ soroban contract invoke \
 
 ```bash
 # Confirm the new address is now an admin
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --network $NETWORK \
   -- \
@@ -156,7 +156,7 @@ soroban contract invoke \
   --address $NEW_ADMIN_ADDRESS
 
 # Inspect the full admin list
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --network $NETWORK \
   -- \
@@ -172,7 +172,7 @@ Both checks must succeed before proceeding to key removal.
 Only remove the old key after Step 4 confirms the new key is active. Verify that the current admin count exceeds the multisig threshold before removing.
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $NEW_ADMIN_IDENTITY \
   --network $NETWORK \
@@ -187,7 +187,7 @@ soroban contract invoke \
 ### Step 6 — Verify the admin count
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --network $NETWORK \
   -- \
@@ -233,7 +233,7 @@ Use out-of-band communication (Signal or Telegram group) for all coordination �
 
 ```bash
 # T+0 — pause immediately (any remaining admin)
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -243,7 +243,7 @@ soroban contract invoke \
   --reason SecurityIncident
 
 # T+30m — propose removal of compromised key (multisig)
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $REMAINING_ADMIN_IDENTITY \
   --network $NETWORK \
@@ -253,7 +253,7 @@ soroban contract invoke \
   --operation_type RemoveAdmin
 
 # Second admin approves (auto-executes at threshold)
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $SECOND_ADMIN_IDENTITY \
   --network $NETWORK \
@@ -263,7 +263,7 @@ soroban contract invoke \
   --operation_id <OPERATION_ID>
 
 # T+1h — add replacement key (propose then accept)
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $REMAINING_ADMIN_IDENTITY \
   --network $NETWORK \
@@ -271,7 +271,7 @@ soroban contract invoke \
   propose_admin \
   --new_admin $REPLACEMENT_ADMIN_ADDRESS
 
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $REPLACEMENT_ADMIN_IDENTITY \
   --network $NETWORK \
@@ -279,7 +279,7 @@ soroban contract invoke \
   accept_admin
 
 # T+2h — vote to unpause (each admin votes independently)
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -288,7 +288,7 @@ soroban contract invoke \
   --caller $ADMIN_ADDRESS
 
 # T+2h — verify health
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --network $NETWORK \
   -- \

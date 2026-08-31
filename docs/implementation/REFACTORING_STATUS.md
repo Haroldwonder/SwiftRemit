@@ -248,7 +248,7 @@ cargo test --package swiftremit
 After successful compilation:
 ```bash
 cargo build --release --target wasm32-unknown-unknown
-soroban contract deploy --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm --network testnet
+stellar contract deploy --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm --network testnet
 ```
 
 ---

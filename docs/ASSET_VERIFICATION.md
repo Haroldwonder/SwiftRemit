@@ -334,10 +334,10 @@ psql -U postgres -c "CREATE DATABASE swiftremit;"
 ```bash
 # Build contract
 cargo build --target wasm32-unknown-unknown --release
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 
 # Deploy
-soroban contract deploy \
+stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm \
   --source deployer \
   --network testnet

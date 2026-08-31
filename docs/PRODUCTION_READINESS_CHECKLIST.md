@@ -276,7 +276,7 @@ cargo build --release --target wasm32-unknown-unknown
 
 ### 4. Deploy to Testnet
 ```bash
-soroban contract deploy \
+stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm \
   --network testnet
 ```

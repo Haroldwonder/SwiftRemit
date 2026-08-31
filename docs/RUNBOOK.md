@@ -1,6 +1,6 @@
 # SwiftRemit Operational Runbook
 
-On-call reference for common production procedures. All `soroban contract invoke` commands assume the following environment variables are set:
+On-call reference for common production procedures. All `stellar contract invoke` commands assume the following environment variables are set:
 
 ```bash
 export CONTRACT_ID=<deployed_contract_id>
@@ -18,7 +18,7 @@ Use when a security incident, suspicious activity, or external threat requires h
 **Pause reasons:** `SecurityIncident` | `SuspiciousActivity` | `MaintenanceWindow` | `ExternalThreat`
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -31,7 +31,7 @@ soroban contract invoke \
 Verify the pause took effect:
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -57,7 +57,7 @@ The circuit breaker is a quorum-gated safety mechanism that prevents a single co
 Any single admin can pause immediately (see **Section 1** for the full procedure):
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -74,7 +74,7 @@ Notify all other admins in `#incidents` immediately so they can participate in t
 **Check current quorum state** (run this before and after each vote):
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -91,7 +91,7 @@ Inspect the response for:
 **Each admin must cast a vote independently:**
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -117,7 +117,7 @@ Use `emergency_unpause` **only** when:
 - A post-incident review will be conducted to address the quorum failure.
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -131,7 +131,7 @@ soroban contract invoke \
 Verify the contract is running normally after either path:
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -155,7 +155,7 @@ Unpausing requires admin quorum votes (default: 1). If a timelock is configured,
 **Step 1 — each admin casts a vote:**
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -169,7 +169,7 @@ Once quorum is reached the contract unpauses automatically. If quorum is already
 **Step 2 (optional direct unpause after quorum + timelock):**
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -181,7 +181,7 @@ soroban contract invoke \
 Verify:
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -204,7 +204,7 @@ Admin key rotation uses the on-chain governance module. The process is: propose 
 **Step 1 — propose adding the new admin:**
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -219,7 +219,7 @@ Note the returned `proposal_id`.
 **Step 2 — each admin votes to approve:**
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -232,7 +232,7 @@ soroban contract invoke \
 **Step 3 — execute after timelock elapses:**
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -246,7 +246,7 @@ soroban contract invoke \
 
 ```bash
 # Propose removal
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -259,7 +259,7 @@ soroban contract invoke \
 Vote and execute as above. Verify with:
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -276,7 +276,7 @@ A migration can become stuck if a batch import fails mid-flight or the contract 
 **Check current migration state:**
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -289,7 +289,7 @@ Inspect `schema_version` and whether a rollback snapshot exists.
 **Option A — abort and reset to Idle:**
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -303,7 +303,7 @@ This emits a `mig.aborted` event and resets migration state. The contract return
 **Option B — rollback to pre-migration snapshot:**
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -318,7 +318,7 @@ After rollback, verify the schema version has reverted and re-run the migration 
 If only some batches were imported, resume from the next expected batch number (visible in the stuck state export):
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -390,7 +390,7 @@ Soroban persistent storage entries expire after a set number of ledgers. Extend 
 **Check current TTL for a remittance entry:**
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -399,10 +399,10 @@ soroban contract invoke \
   --remittance_id <ID>
 ```
 
-**Extend TTL via Soroban CLI (bump ledgers):**
+**Extend TTL via Stellar CLI (bump ledgers):**
 
 ```bash
-soroban contract extend \
+stellar contract extend \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -413,7 +413,7 @@ soroban contract extend \
 For individual storage keys (e.g., a specific remittance):
 
 ```bash
-soroban contract extend \
+stellar contract extend \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -449,7 +449,7 @@ stellar keys address new-admin   # note the new public key
 **Step 2 — authorize the new key on-chain** (add it as an admin via governance; see Section 3):
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -474,7 +474,7 @@ aws secretsmanager put-secret-value \
 **Step 5 — revoke the old key on-chain** (RemoveAdmin via governance; see Section 3):
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \
@@ -488,7 +488,7 @@ soroban contract invoke \
 **Step 6 — verify** the old key no longer has admin rights:
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $ADMIN_IDENTITY \
   --network $NETWORK \

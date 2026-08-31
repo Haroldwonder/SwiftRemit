@@ -204,7 +204,7 @@ chmod +x deploy.sh
 ./deploy.sh testnet
 
 # 3. Verify deployment
-soroban contract invoke \
+stellar contract invoke \
   --id <CONTRACT_ID> \
   --source deployer \
   --network testnet \

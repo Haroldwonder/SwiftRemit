@@ -25,30 +25,30 @@ Write-Host "Network: $Network" -ForegroundColor Gray
 Write-Host "Deployer Identity: $Deployer" -ForegroundColor Gray
 
 # Check prerequisites
-if (-not (Get-Command soroban -ErrorAction SilentlyContinue)) {
-    Write-Host "❌ Soroban CLI not found. Please install it first." -ForegroundColor Red
+if (-not (Get-Command stellar -ErrorAction SilentlyContinue)) {
+    Write-Host "❌ Stellar CLI not found. Please install it first." -ForegroundColor Red
     exit 1
 }
 
 # Setup Identity
 Write-Host "Checking identity..." -ForegroundColor Yellow
 try {
-    $Address = soroban keys address $Deployer 2>$null
+    $Address = stellar keys address $Deployer 2>$null
     if (-not $Address) {
         throw "Identity not found"
     }
     Write-Host "Identity '$Deployer' found: $Address" -ForegroundColor Green
 } catch {
     Write-Host "Creating new identity '$Deployer'..." -ForegroundColor Yellow
-    soroban keys generate --global $Deployer --network $Network
-    $Address = soroban keys address $Deployer
+    stellar keys generate --global $Deployer --network $Network
+    $Address = stellar keys address $Deployer
 }
 
 # Fund Identity (attempt on testnet/standalone, skip on mainnet)
 if ($Network -ne "mainnet") {
     Write-Host "Funding identity (this may take a moment)..." -ForegroundColor Yellow
     try {
-        soroban keys fund $Deployer --network $Network
+        stellar keys fund $Deployer --network $Network
     } catch {
         Write-Host "Funding warning: Request may have failed or account already funded (or network doesn't support funding)." -ForegroundColor DarkYellow
     }
@@ -58,7 +58,7 @@ if ($Network -ne "mainnet") {
 Write-Host "🔨 Building and Optimizing Contract..." -ForegroundColor Yellow
 # Note: To enable debug logging for local testing, add: --features debug-log
 cargo build --target wasm32-unknown-unknown --release
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 
 if (-not (Test-Path $WasmPath)) {
     Write-Host "❌ Build failed. $WasmPath not found." -ForegroundColor Red
@@ -67,7 +67,7 @@ if (-not (Test-Path $WasmPath)) {
 
 # Deploy Contract
 Write-Host "📤 Deploying Contract..." -ForegroundColor Yellow
-$ContractId = soroban contract deploy `
+$ContractId = stellar contract deploy `
   --wasm $WasmPath `
   --source $Deployer `
   --network $Network
@@ -76,7 +76,7 @@ Write-Host "✅ Contract Deployed: $ContractId" -ForegroundColor Green
 
 # Deploy Mock USDC Token
 Write-Host "💰 Deploying Mock USDC Token..." -ForegroundColor Yellow
-$UsdcId = soroban contract asset deploy `
+$UsdcId = stellar contract asset deploy `
   --asset "USDC:$Address" `
   --source $Deployer `
   --network $Network
@@ -85,7 +85,7 @@ Write-Host "✅ USDC Token Deployed: $UsdcId" -ForegroundColor Green
 
 # Initialize Contract
 Write-Host "⚙️ Initializing Contract..." -ForegroundColor Yellow
-soroban contract invoke `
+stellar contract invoke `
   --id $ContractId `
   --source $Deployer `
   --network $Network `

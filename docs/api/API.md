@@ -178,7 +178,7 @@ Initialize the contract with admin, USDC token, and platform fee.
 
 **Example:**
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source deployer \
   --network testnet \
@@ -209,7 +209,7 @@ Register an agent to handle remittances.
 
 **Example:**
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source admin \
   --network testnet \

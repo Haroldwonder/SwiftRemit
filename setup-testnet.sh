@@ -41,9 +41,9 @@ print_info() {
 # Check prerequisites
 echo "Checking prerequisites..."
 
-if ! command -v soroban &> /dev/null; then
-    print_error "Soroban CLI not found. Please install it first:"
-    echo "  cargo install --locked soroban-cli"
+if ! command -v stellar &> /dev/null; then
+    print_error "Stellar CLI not found. Please install it first:"
+    echo "  cargo install --locked stellar-cli"
     exit 1
 fi
 
@@ -65,36 +65,36 @@ echo ""
 echo "Step 1: Generating test accounts..."
 
 # Generate sender account
-if ! soroban keys address $SENDER_IDENTITY &> /dev/null; then
+if ! stellar keys address $SENDER_IDENTITY &> /dev/null; then
     print_info "Generating sender account..."
-    soroban keys generate --global $SENDER_IDENTITY --network $NETWORK
+    stellar keys generate --global $SENDER_IDENTITY --network $NETWORK
     print_status "Sender account generated"
 else
     print_info "Sender account already exists"
 fi
 
 # Generate agent account
-if ! soroban keys address $AGENT_IDENTITY &> /dev/null; then
+if ! stellar keys address $AGENT_IDENTITY &> /dev/null; then
     print_info "Generating agent account..."
-    soroban keys generate --global $AGENT_IDENTITY --network $NETWORK
+    stellar keys generate --global $AGENT_IDENTITY --network $NETWORK
     print_status "Agent account generated"
 else
     print_info "Agent account already exists"
 fi
 
 # Generate deployer account
-if ! soroban keys address $DEPLOYER_IDENTITY &> /dev/null; then
+if ! stellar keys address $DEPLOYER_IDENTITY &> /dev/null; then
     print_info "Generating deployer account..."
-    soroban keys generate --global $DEPLOYER_IDENTITY --network $NETWORK
+    stellar keys generate --global $DEPLOYER_IDENTITY --network $NETWORK
     print_status "Deployer account generated"
 else
     print_info "Deployer account already exists"
 fi
 
 # Get addresses
-SENDER_ADDRESS=$(soroban keys address $SENDER_IDENTITY)
-AGENT_ADDRESS=$(soroban keys address $AGENT_IDENTITY)
-DEPLOYER_ADDRESS=$(soroban keys address $DEPLOYER_IDENTITY)
+SENDER_ADDRESS=$(stellar keys address $SENDER_IDENTITY)
+AGENT_ADDRESS=$(stellar keys address $AGENT_IDENTITY)
+DEPLOYER_ADDRESS=$(stellar keys address $DEPLOYER_IDENTITY)
 
 echo ""
 echo "Generated Accounts:"
@@ -116,9 +116,9 @@ fund_account() {
     if curl -s "https://friendbot.stellar.org/?addr=$address" > /dev/null; then
         print_status "$name account funded via Friendbot"
     else
-        print_warning "Friendbot funding failed for $name, trying Soroban CLI..."
-        if soroban keys fund $name --network $NETWORK; then
-            print_status "$name account funded via Soroban CLI"
+        print_warning "Friendbot funding failed for $name, trying Stellar CLI..."
+        if stellar keys fund $name --network $NETWORK; then
+            print_status "$name account funded via Stellar CLI"
         else
             print_error "Failed to fund $name account"
             return 1
@@ -197,11 +197,11 @@ fi
 
 # Optimize contract
 print_info "Optimizing contract..."
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 
 # Deploy contract
 print_info "Deploying SwiftRemit contract..."
-CONTRACT_ID=$(soroban contract deploy \
+CONTRACT_ID=$(stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm \
   --source $DEPLOYER_IDENTITY \
   --network $NETWORK)
@@ -210,7 +210,7 @@ print_status "Contract deployed: $CONTRACT_ID"
 
 # Deploy mock USDC token
 print_info "Deploying mock USDC token..."
-USDC_ID=$(soroban contract asset deploy \
+USDC_ID=$(stellar contract asset deploy \
   --asset "USDC:$DEPLOYER_ADDRESS" \
   --source $DEPLOYER_IDENTITY \
   --network $NETWORK)
@@ -219,7 +219,7 @@ print_status "USDC token deployed: $USDC_ID"
 
 # Initialize contract
 print_info "Initializing contract..."
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $DEPLOYER_IDENTITY \
   --network $NETWORK \
@@ -236,7 +236,7 @@ echo ""
 # Step 5: Register agent
 echo "Step 5: Registering agent..."
 
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $DEPLOYER_IDENTITY \
   --network $NETWORK \
@@ -252,7 +252,7 @@ echo ""
 echo "Step 6: Minting USDC tokens to sender..."
 
 # Mint 10,000 USDC to sender (10,000 * 10^7 stroops)
-soroban contract invoke \
+stellar contract invoke \
   --id $USDC_ID \
   --source $DEPLOYER_IDENTITY \
   --network $NETWORK \
@@ -264,7 +264,7 @@ soroban contract invoke \
 print_status "Minted 10,000 USDC to sender"
 
 # Verify USDC balance
-USDC_BALANCE=$(soroban contract invoke \
+USDC_BALANCE=$(stellar contract invoke \
   --id $USDC_ID \
   --source $SENDER_IDENTITY \
   --network $NETWORK \
@@ -304,7 +304,7 @@ SENDER_ADDRESS=$SENDER_ADDRESS
 AGENT_ADDRESS=$AGENT_ADDRESS
 DEPLOYER_ADDRESS=$DEPLOYER_ADDRESS
 
-# Account identities (for Soroban CLI)
+# Account identities (for Stellar CLI)
 SENDER_IDENTITY=$SENDER_IDENTITY
 AGENT_IDENTITY=$AGENT_IDENTITY
 DEPLOYER_IDENTITY=$DEPLOYER_IDENTITY
@@ -326,13 +326,13 @@ SWIFTREMIT_CONTRACT_ID=$CONTRACT_ID
 USDC_TOKEN_ID=$USDC_ID
 
 # Test account secrets (WARNING: Testnet only!)
-TESTNET_ADMIN_SECRET=$(soroban keys show $DEPLOYER_IDENTITY)
+TESTNET_ADMIN_SECRET=$(stellar keys show $DEPLOYER_IDENTITY)
 TESTNET_ADMIN_PUBLIC=$DEPLOYER_ADDRESS
 
-TESTNET_AGENT_SECRET=$(soroban keys show $AGENT_IDENTITY)
+TESTNET_AGENT_SECRET=$(stellar keys show $AGENT_IDENTITY)
 TESTNET_AGENT_PUBLIC=$AGENT_ADDRESS
 
-TESTNET_SENDER_SECRET=$(soroban keys show $SENDER_IDENTITY)
+TESTNET_SENDER_SECRET=$(stellar keys show $SENDER_IDENTITY)
 TESTNET_SENDER_PUBLIC=$SENDER_ADDRESS
 
 # Test configuration
@@ -353,7 +353,7 @@ echo "Step 8: Testing the setup..."
 print_info "Creating a test remittance..."
 
 # Approve USDC transfer
-soroban contract invoke \
+stellar contract invoke \
   --id $USDC_ID \
   --source $SENDER_IDENTITY \
   --network $NETWORK \
@@ -364,7 +364,7 @@ soroban contract invoke \
   --amount 1000000000
 
 # Create test remittance (100 USDC)
-REMITTANCE_ID=$(soroban contract invoke \
+REMITTANCE_ID=$(stellar contract invoke \
   --id $CONTRACT_ID \
   --source $SENDER_IDENTITY \
   --network $NETWORK \
@@ -377,7 +377,7 @@ REMITTANCE_ID=$(soroban contract invoke \
 print_status "Test remittance created: $REMITTANCE_ID"
 
 # Confirm payout as agent
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source $AGENT_IDENTITY \
   --network $NETWORK \
@@ -388,7 +388,7 @@ soroban contract invoke \
 print_status "Test remittance completed successfully"
 
 # Check final balances
-SENDER_FINAL_BALANCE=$(soroban contract invoke \
+SENDER_FINAL_BALANCE=$(stellar contract invoke \
   --id $USDC_ID \
   --source $SENDER_IDENTITY \
   --network $NETWORK \
@@ -396,7 +396,7 @@ SENDER_FINAL_BALANCE=$(soroban contract invoke \
   balance \
   --id $SENDER_ADDRESS)
 
-AGENT_FINAL_BALANCE=$(soroban contract invoke \
+AGENT_FINAL_BALANCE=$(stellar contract invoke \
   --id $USDC_ID \
   --source $AGENT_IDENTITY \
   --network $NETWORK \

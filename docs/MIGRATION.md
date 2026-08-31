@@ -63,7 +63,7 @@ registered agents so their keys can be re-written after an upgrade.
 ### 1. Verify the current schema version (optional)
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id <CONTRACT_ID> \
   -- get_schema_version
 ```
@@ -74,10 +74,10 @@ needed.
 ### 2. Upgrade the WASM
 
 ```bash
-soroban contract install --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract install --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 # Note the new WASM hash printed above, e.g. abc123...
 
-soroban contract invoke \
+stellar contract invoke \
   --id <CONTRACT_ID> \
   -- upgrade \
   --caller <ADMIN_ADDRESS> \
@@ -87,7 +87,7 @@ soroban contract invoke \
 ### 3. Call `migrate()` immediately after the upgrade
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id <CONTRACT_ID> \
   -- migrate \
   --caller <ADMIN_ADDRESS>
@@ -98,7 +98,7 @@ soroban contract invoke \
 ### 4. Verify agent records are intact
 
 ```bash
-soroban contract invoke --id <CONTRACT_ID> -- is_agent_registered --agent <AGENT_ADDRESS>
+stellar contract invoke --id <CONTRACT_ID> -- is_agent_registered --agent <AGENT_ADDRESS>
 ```
 
 Repeat for a representative sample of agents.
@@ -108,7 +108,7 @@ Repeat for a representative sample of agents.
 If `migrate()` returned `MigrationValidationFailed`:
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id <CONTRACT_ID> \
   -- rollback_migration \
   --caller <ADMIN_ADDRESS>
@@ -132,7 +132,7 @@ change that requires a fresh deployment).
 ### Step 1 — Initialize the destination contract
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id <DEST_CONTRACT_ID> \
   -- initialize \
   --admin <ADMIN_ADDRESS> \
@@ -146,7 +146,7 @@ soroban contract invoke \
 ### Step 2 — Export the snapshot from the source contract
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id <SOURCE_CONTRACT_ID> \
   -- export_migration_snapshot \
   --caller <ADMIN_ADDRESS>
@@ -170,7 +170,7 @@ state — no partial write occurs.
 For each chunk:
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id <DEST_CONTRACT_ID> \
   -- import_migration_batch \
   --caller <ADMIN_ADDRESS> \
@@ -187,7 +187,7 @@ off-chain tooling error), call `abort_migration` on the **destination** contract
 to reset the state machine back to Idle:
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id <DEST_CONTRACT_ID> \
   -- abort_migration \
   --caller <ADMIN_ADDRESS>
@@ -205,8 +205,8 @@ soroban contract invoke \
 ### Step 4 — Verify
 
 ```bash
-soroban contract invoke --id <DEST_CONTRACT_ID> -- get_remittance --remittance_id 1
-soroban contract invoke --id <DEST_CONTRACT_ID> -- is_agent_registered --agent <AGENT_ADDRESS>
+stellar contract invoke --id <DEST_CONTRACT_ID> -- get_remittance --remittance_id 1
+stellar contract invoke --id <DEST_CONTRACT_ID> -- is_agent_registered --agent <AGENT_ADDRESS>
 ```
 
 ### Step 5 — Redirect traffic
@@ -263,11 +263,11 @@ For every in-flight remittance ID known prior to the upgrade:
 
 ```bash
 # Before upgrade — save to file
-soroban contract invoke --id <CONTRACT_ID> \
+stellar contract invoke --id <CONTRACT_ID> \
   -- get_settlement_hash --remittance_id <ID> > hash_before_$ID.json
 
 # After upgrade + migrate — compare
-soroban contract invoke --id <CONTRACT_ID> \
+stellar contract invoke --id <CONTRACT_ID> \
   -- get_settlement_hash --remittance_id <ID> > hash_after_$ID.json
 
 diff hash_before_$ID.json hash_after_$ID.json
@@ -283,13 +283,13 @@ period is configurable:
 
 ```bash
 # Set cooldown to 30 minutes (admin required)
-soroban contract invoke --id <CONTRACT_ID> \
+stellar contract invoke --id <CONTRACT_ID> \
   -- set_cooldown_period \
   --caller <ADMIN_ADDRESS> \
   --seconds 1800
 
 # Check current cooldown and last-unpause timestamp
-soroban contract invoke --id <CONTRACT_ID> -- get_circuit_breaker_status
+stellar contract invoke --id <CONTRACT_ID> -- get_circuit_breaker_status
 ```
 
 The cooldown period can also be changed via governance proposal

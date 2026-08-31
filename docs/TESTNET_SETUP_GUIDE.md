@@ -8,7 +8,7 @@ Complete guide for getting testnet XLM and USDC, setting up a local sandbox, and
 
 ## Quick Start Checklist
 
-- [ ] Install Soroban CLI
+- [ ] Install Stellar CLI
 - [ ] Get testnet XLM from Friendbot
 - [ ] Get testnet USDC tokens
 - [ ] Deploy SwiftRemit contract
@@ -27,11 +27,11 @@ source ~/.cargo/env
 # Add WebAssembly target
 rustup target add wasm32-unknown-unknown
 
-# Install Soroban CLI
-cargo install --locked soroban-cli
+# Install Stellar CLI
+cargo install --locked stellar-cli
 
 # Verify installation
-soroban --version
+stellar --version
 ```
 
 ### Required Accounts
@@ -48,12 +48,12 @@ Friendbot provides 10,000 XLM per request for testnet accounts.
 
 ```bash
 # Generate a new keypair
-soroban keys generate --global sender --network testnet
-soroban keys generate --global agent --network testnet
+stellar keys generate --global sender --network testnet
+stellar keys generate --global agent --network testnet
 
 # Get the public keys
-SENDER_ADDRESS=$(soroban keys address sender)
-AGENT_ADDRESS=$(soroban keys address agent)
+SENDER_ADDRESS=$(stellar keys address sender)
+AGENT_ADDRESS=$(stellar keys address agent)
 
 echo "Sender: $SENDER_ADDRESS"
 echo "Agent: $AGENT_ADDRESS"
@@ -74,8 +74,8 @@ curl "https://friendbot.stellar.org/?addr=$AGENT_ADDRESS"
 ### Verify XLM Balance
 
 ```bash
-# Check balance via Soroban CLI
-soroban keys fund sender --network testnet
+# Check balance via Stellar CLI
+stellar keys fund sender --network testnet
 
 # Or check via Horizon API
 curl "https://horizon-testnet.stellar.org/accounts/$SENDER_ADDRESS"
@@ -105,7 +105,7 @@ For more realistic testing, use Circle's official testnet USDC:
 USDC_TOKEN="CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
 
 # Create trustline to USDC
-soroban contract invoke \
+stellar contract invoke \
   --id $USDC_TOKEN \
   --source sender \
   --network testnet \
@@ -127,7 +127,7 @@ Several testnet faucets provide USDC:
 
 ```bash
 # Check USDC balance
-soroban contract invoke \
+stellar contract invoke \
   --id $USDC_TOKEN \
   --source sender \
   --network testnet \
@@ -162,22 +162,22 @@ This will:
 ```bash
 # Build contract
 cargo build --target wasm32-unknown-unknown --release
-soroban contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/swiftremit.wasm
 
 # Deploy contract
-CONTRACT_ID=$(soroban contract deploy \
+CONTRACT_ID=$(stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/swiftremit.optimized.wasm \
   --source sender \
   --network testnet)
 
 # Deploy USDC token
-USDC_ID=$(soroban contract asset deploy \
+USDC_ID=$(stellar contract asset deploy \
   --asset "USDC:$SENDER_ADDRESS" \
   --source sender \
   --network testnet)
 
 # Initialize contract
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source sender \
   --network testnet \
@@ -234,8 +234,8 @@ export SOROBAN_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
 
 ```bash
 # Get your secret keys
-soroban keys show sender
-soroban keys show agent
+stellar keys show sender
+stellar keys show agent
 
 # In Freighter:
 # 1. Click "Add Account"
@@ -280,7 +280,7 @@ Open http://localhost:5173 and:
 
 ```bash
 # 1. Register agent
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source sender \
   --network testnet \
@@ -289,7 +289,7 @@ soroban contract invoke \
   --agent $AGENT_ADDRESS
 
 # 2. Approve USDC transfer
-soroban contract invoke \
+stellar contract invoke \
   --id $USDC_ID \
   --source sender \
   --network testnet \
@@ -300,7 +300,7 @@ soroban contract invoke \
   --amount 1000000000
 
 # 3. Create remittance
-REMITTANCE_ID=$(soroban contract invoke \
+REMITTANCE_ID=$(stellar contract invoke \
   --id $CONTRACT_ID \
   --source sender \
   --network testnet \
@@ -313,7 +313,7 @@ REMITTANCE_ID=$(soroban contract invoke \
 echo "Remittance ID: $REMITTANCE_ID"
 
 # 4. Confirm payout (as agent)
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source agent \
   --network testnet \
@@ -344,7 +344,7 @@ cargo test --features testnet-integration --test-threads=1 -- testnet
 
 ```bash
 # Get remittance details
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source sender \
   --network testnet \
@@ -357,14 +357,14 @@ soroban contract invoke \
 
 ```bash
 # Watch contract events
-soroban events --start-ledger latest --id $CONTRACT_ID --network testnet
+stellar events --start-ledger latest --id $CONTRACT_ID --network testnet
 ```
 
 ### Check Balances
 
 ```bash
 # Check USDC balances
-soroban contract invoke \
+stellar contract invoke \
   --id $USDC_ID \
   --source sender \
   --network testnet \
@@ -372,7 +372,7 @@ soroban contract invoke \
   balance \
   --id $SENDER_ADDRESS
 
-soroban contract invoke \
+stellar contract invoke \
   --id $USDC_ID \
   --source agent \
   --network testnet \
@@ -403,28 +403,28 @@ curl "https://friendbot.stellar.org/?addr=$YOUR_ADDRESS"
 **"Contract not found" error:**
 ```bash
 # Verify contract deployment
-soroban contract info --id $CONTRACT_ID --network testnet
+stellar contract info --id $CONTRACT_ID --network testnet
 ```
 
 **USDC transfer fails:**
 ```bash
 # Check USDC balance
-soroban contract invoke --id $USDC_ID --source sender --network testnet -- balance --id $SENDER_ADDRESS
+stellar contract invoke --id $USDC_ID --source sender --network testnet -- balance --id $SENDER_ADDRESS
 
 # Create trustline if needed
-soroban contract invoke --id $USDC_ID --source sender --network testnet -- approve --from $SENDER_ADDRESS --spender $CONTRACT_ID --amount 10000000000
+stellar contract invoke --id $USDC_ID --source sender --network testnet -- approve --from $SENDER_ADDRESS --spender $CONTRACT_ID --amount 10000000000
 ```
 
 ### Reset Environment
 
 ```bash
 # Generate fresh accounts
-soroban keys generate --global sender-new --network testnet
-soroban keys generate --global agent-new --network testnet
+stellar keys generate --global sender-new --network testnet
+stellar keys generate --global agent-new --network testnet
 
 # Fund new accounts
-curl "https://friendbot.stellar.org/?addr=$(soroban keys address sender-new)"
-curl "https://friendbot.stellar.org/?addr=$(soroban keys address agent-new)"
+curl "https://friendbot.stellar.org/?addr=$(stellar keys address sender-new)"
+curl "https://friendbot.stellar.org/?addr=$(stellar keys address agent-new)"
 
 # Redeploy contract
 ./deploy.sh testnet
@@ -443,7 +443,7 @@ Check Stellar testnet status:
 
 ```bash
 # Add custom network
-soroban network add \
+stellar network add \
   --global custom-testnet \
   --rpc-url https://soroban-testnet.stellar.org:443 \
   --network-passphrase "Test SDF Network ; September 2015"
@@ -478,7 +478,7 @@ AGENT_IDENTITY=agent
 ```bash
 # Create multiple remittances
 for i in {1..5}; do
-  soroban contract invoke \
+  stellar contract invoke \
     --id $CONTRACT_ID \
     --source sender \
     --network testnet \
