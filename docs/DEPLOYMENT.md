@@ -1,5 +1,76 @@
 # SwiftRemit Deployment Guide
 
+## Deployment mechanisms — which one is authoritative
+
+SwiftRemit has two sets of deployment assets in the repo. Only one is wired to a
+pipeline today:
+
+| Mechanism | Status | What runs it |
+|---|---|---|
+| **Docker Compose on a VM (SSH)** | **Authoritative** for the hosted services (api, backend, frontend, prometheus, grafana, alertmanager) | `.github/workflows/deploy-staging.yml` (staging, on push to `main`); the staging/mainnet VMs run `docker compose up -d` from the tracked `docker-compose.yml` |
+| **Smart contract → Stellar/Soroban** | **Authoritative** for the on-chain contract | `.github/workflows/deploy-mainnet.yml` (+ `testnet-integration.yml`) |
+| **Kubernetes via the Helm chart (`charts/swiftremit/`)** | **Experimental / future work — NOT deployed by any pipeline** | `helm-ci.yml` only lints, templates and `kubeconform`-validates the chart. No workflow or script runs `helm upgrade`, `helm install`, or `kubectl apply` against a cluster. |
+
+> **Do not assume the hardened Helm chart reflects production.** Its non-root
+> security contexts, resource limits, HPAs and PodDisruptionBudgets (SR-103) are
+> validated in CI but describe a Kubernetes environment that does not exist yet.
+> If/when Kubernetes becomes the target, add a real `helm upgrade --install`
+> deploy job gated the same way the SSH deploys are, and update the table above.
+
+---
+
+## Hosted services — staging deploy and automated rollback (SR-209)
+
+`deploy-staging.yml` builds the `api` / `backend` / `frontend` images, pushes
+them to GHCR, and deploys them to the staging VM over SSH with
+`docker compose up -d`. The flow is:
+
+1. **`deploy`** — before overwriting the running stack it records the image
+   currently backing each service into `~/swiftremit/rollback/previous-images.env`
+   on the host (`<service>_image=<ref>`), then pulls and starts the new images.
+   The GitHub deployment status is left *pending* here — it is **not** marked
+   success yet.
+2. **`smoke-tests`** — `scripts/smoke-test-staging.sh` runs against the live
+   environment.
+3. On success, **`finalize`** marks the GitHub deployment `success`.
+4. On smoke-test **failure**, **`rollback`** SSHes back in, re-exports the
+   `BACKEND_IMAGE` / `API_IMAGE` / `FRONTEND_IMAGE` tags from
+   `previous-images.env`, re-runs `docker compose up -d`, re-runs the smoke
+   tests to confirm the previous build is healthy, and only then marks the
+   GitHub deployment `failure`. The deployment history therefore reflects what
+   is actually running, not what was attempted.
+
+If no rollback point was recorded (the very first deploy), the rollback job
+fails loudly with `::error::` so a human is paged — there is nothing to roll
+back to.
+
+The mainnet contract pipeline (`deploy-mainnet.yml`) has its own recovery path:
+`post-deploy-smoke` auto-pauses the contract on failure — see
+`ROLLBACK_RUNBOOK.md`.
+
+---
+
+## Alerting — Alertmanager (SR-214)
+
+Every Prometheus rule in `monitoring/alerts.yml` and `monitoring/slo.yml` carries
+a `team:` label (`payments` | `platform` | `backend`). An `alertmanager` service
+(in `docker-compose.yml`, and as `charts/swiftremit/templates/alertmanager.yaml`
+for the future Kubernetes target) routes each team to its own on-call receiver.
+
+- Routing config: `monitoring/alertmanager.yml` (the chart keeps a byte-identical
+  copy at `charts/swiftremit/files/alertmanager.yml`; CI diffs them).
+- Prometheus is pointed at it via the `alerting:` block in
+  `backend/monitoring/prometheus.yml`.
+- Slack and PagerDuty are gated behind secret **files** mounted at
+  `/etc/alertmanager/secrets/` (`slack_api_url`, `pagerduty_routing_key`). If a
+  file is absent the notifier is inert and Alertmanager still starts — see
+  `monitoring/secrets/README.md` for how to populate them per environment.
+- CI (`monitoring-ci.yml`) runs `amtool check-config` and
+  `scripts/check-alertmanager-routes.js`, which fails if any `team:` value used
+  by a rule has no matching route.
+
+---
+
 ## Frontend Deployment
 
 ### Quick Deploy to Vercel (Recommended)

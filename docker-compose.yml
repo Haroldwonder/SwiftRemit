@@ -121,6 +121,24 @@ services:
       - ./monitoring/slo.yml:/etc/prometheus/slo.yml:ro
     command:
       - --config.file=/etc/prometheus/prometheus.yml
+    depends_on:
+      - alertmanager
+
+  # SR-214 — routes firing alerts (keyed on the `team:` label) to on-call.
+  # Slack / PagerDuty credentials come from ./monitoring/secrets/ at runtime;
+  # when they are absent Alertmanager still runs and alerts show in its UI.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/secrets:/etc/alertmanager/secrets:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
 
   grafana:
     image: grafana/grafana:10.4.2
@@ -180,4 +198,4 @@ services:
 volumes:
   postgres_data:
   grafana_data:
-  pact_broker_data:
+  alertmanager_data:

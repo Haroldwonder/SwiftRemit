@@ -103,6 +103,8 @@ jobs:
     environment:
       name: staging
       url: ${{ vars.STAGING_API_URL }}
+    outputs:
+      deployment_id: ${{ steps.deployment.outputs.deployment_id }}
 
     steps:
       - uses: actions/checkout@v4
@@ -124,6 +126,39 @@ jobs:
           port: ${{ secrets.STAGING_SSH_PORT || 22 }}
           source: "docker-compose.yml,docker-compose.override.yml,.env.testnet"
           target: "~/swiftremit"
+
+      # Record what is running *before* we overwrite it, so the rollback job has
+      # a last-known-good target to redeploy if smoke tests fail (SR-209).
+      - name: Capture currently-deployed image tags (rollback point)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          port: ${{ secrets.STAGING_SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            cd ~/swiftremit
+            mkdir -p rollback
+            tmp=rollback/previous-images.env.tmp
+            : > "$tmp"
+            for svc in backend api frontend; do
+              cid=$(docker compose ps -q "$svc" 2>/dev/null | head -n1 || true)
+              if [ -n "${cid:-}" ]; then
+                img=$(docker inspect --format '{{.Config.Image}}' "$cid" 2>/dev/null || true)
+                if [ -n "${img:-}" ]; then
+                  echo "${svc}_image=${img}" >> "$tmp"
+                fi
+              fi
+            done
+            if [ -s "$tmp" ]; then
+              mv "$tmp" rollback/previous-images.env
+              echo "Recorded rollback point:"
+              cat rollback/previous-images.env
+            else
+              rm -f "$tmp"
+              echo "No running stack found — first deploy, no rollback point recorded."
+            fi
 
       - name: Deploy via Docker Compose
         uses: appleboy/ssh-action@v1.0.3
@@ -154,16 +189,10 @@ jobs:
             sleep 10
             docker compose ps
 
-      - name: Mark deployment success
-        if: success()
-        uses: chrnorm/deployment-status@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          deployment-id: ${{ steps.deployment.outputs.deployment_id }}
-          state: success
-          environment-url: ${{ vars.STAGING_API_URL }}
-
-      - name: Mark deployment failure
+      # NOTE: deployment status is *not* marked success here — it is finalised by
+      # the `finalize` job only after smoke tests pass, or by the `rollback` job
+      # if they fail, so the deployment history reflects what is actually running.
+      - name: Mark deployment failure (deploy step failed)
         if: failure()
         uses: chrnorm/deployment-status@v2
         with:
@@ -194,3 +223,94 @@ jobs:
           echo "- API URL: \`${{ vars.STAGING_API_URL }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Backend URL: \`${{ vars.STAGING_BACKEND_URL }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Commit: \`${{ needs.build-images.outputs.sha_short }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ── Finalise a healthy deploy ─────────────────────────────────────────────
+  finalize:
+    name: Finalize deployment status
+    runs-on: ubuntu-latest
+    needs: [deploy, smoke-tests]
+    if: ${{ always() && needs.deploy.result == 'success' && needs.smoke-tests.result != 'failure' && needs.smoke-tests.result != 'cancelled' }}
+
+    steps:
+      - name: Mark deployment success
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          deployment-id: ${{ needs.deploy.outputs.deployment_id }}
+          state: success
+          environment-url: ${{ vars.STAGING_API_URL }}
+
+  # ── Automated rollback when smoke tests fail (SR-209) ─────────────────────
+  rollback:
+    name: Roll back failed deploy
+    runs-on: ubuntu-latest
+    needs: [build-images, deploy, smoke-tests]
+    if: ${{ always() && needs.deploy.result == 'success' && needs.smoke-tests.result == 'failure' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Re-deploy last-known-good images
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          port: ${{ secrets.STAGING_SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            cd ~/swiftremit
+
+            if [ ! -s rollback/previous-images.env ]; then
+              echo "::error::No rollback point was recorded (first deploy?). Staging is running a failed build — manual intervention required."
+              exit 1
+            fi
+
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            set -a
+            source .env.testnet
+            source rollback/previous-images.env
+            set +a
+
+            export BACKEND_IMAGE="${backend_image:?missing backend_image in rollback point}"
+            export API_IMAGE="${api_image:?missing api_image in rollback point}"
+            export FRONTEND_IMAGE="${frontend_image:?missing frontend_image in rollback point}"
+
+            echo "Rolling staging back to:"
+            echo "  BACKEND_IMAGE=$BACKEND_IMAGE"
+            echo "  API_IMAGE=$API_IMAGE"
+            echo "  FRONTEND_IMAGE=$FRONTEND_IMAGE"
+
+            docker compose pull
+            docker compose up -d --remove-orphans
+
+            sleep 10
+            docker compose ps
+
+      - name: Verify rollback with smoke tests
+        env:
+          STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+          STAGING_BACKEND_URL: ${{ vars.STAGING_BACKEND_URL }}
+        run: bash scripts/smoke-test-staging.sh
+
+      - name: Mark deployment failure (after rollback)
+        if: always()
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          deployment-id: ${{ needs.deploy.outputs.deployment_id }}
+          state: failure
+
+      - name: Rollback summary
+        if: always()
+        run: |
+          echo "### ⚠️ Staging deploy rolled back" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Smoke tests failed against \`${{ needs.build-images.outputs.sha_short }}\`." >> $GITHUB_STEP_SUMMARY
+          echo "Staging was redeployed with the previously-running images (see the" >> $GITHUB_STEP_SUMMARY
+          echo "rollback job log for the exact tags). The GitHub deployment is marked failed." >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" != "success" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**The rollback itself did not fully succeed — page the on-call engineer.**" >> $GITHUB_STEP_SUMMARY
+          fi

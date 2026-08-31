@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
+// RUNBOOK.md was moved under docs/ by the root-markdown cleanup (SR-115).
 const RUNBOOK = path.join(ROOT, 'docs', 'RUNBOOK.md');
 
 const RULE_FILES = [

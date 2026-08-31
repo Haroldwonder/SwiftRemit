@@ -4,8 +4,6 @@
 
 ---
 
-# OpenAPI Documentation
-
 This document describes the OpenAPI 3.0 specification implementation for SwiftRemit services.
 
 ## Overview

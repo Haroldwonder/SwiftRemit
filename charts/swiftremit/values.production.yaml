@@ -116,6 +116,15 @@ frontend:
     VITE_EURC_ISSUER: ""
     VITE_USDC_TOKEN_ID: ""
 
+# SR-214 — page on-call for production incidents. In production the Slack URL and
+# PagerDuty routing key come from AWS Secrets Manager via External Secrets
+# Operator: create an ExternalSecret whose target is `swiftremit-alertmanager`
+# with keys `slack_api_url` and `pagerduty_routing_key`, and leave
+# alertmanager.secrets unset here so the chart does not template a Secret.
+alertmanager:
+  enabled: true
+  secretName: swiftremit-alertmanager
+
 ingress:
   enabled: true
   className: nginx
