@@ -1,6 +1,6 @@
 # Roadmap
 
-Tracked as **SR-005** in [ISSUES.md](https://github.com/richardiyamura/SwiftRemit/blob/main/ISSUES.md).
+Tracked as **SR-005** in [ISSUES.md](https://github.com/topsonDev/SwiftRemit/blob/main/ISSUES.md).
 
 Every checked item below links to the code that implements it. Every unchecked item has
 no implementation in `src/` yet.
@@ -22,10 +22,11 @@ no implementation in `src/` yet.
 - [x] Dispute resolution mechanism —
       [`raise_dispute`](src/lib.rs), [`resolve_dispute`](src/lib.rs)
       (tests: [`src/test_dispute.rs`](src/test_dispute.rs))
+- [x] Oracle-backed FX rates — [`src/oracle.rs`](src/oracle.rs)
+      ([`set_oracle`](src/lib.rs), [`get_oracle`](src/lib.rs), [`get_fx_rate_guarded`](src/oracle.rs))
 
 ## Pending
 
 - [ ] Mainnet security audit
-- [ ] Oracle-backed FX rates (current corridor fees are admin-configured, not oracle-fed)
 - [ ] Time-locked escrow tiers (today's `create_escrow` has a single global TTL, not
       per-tier lock durations)
