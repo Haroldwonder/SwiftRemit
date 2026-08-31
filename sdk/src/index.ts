@@ -110,6 +110,8 @@ export {
   pauseReasonToScVal,
   // SR-195: recipient hash builder
   computeRecipientHash,
+  // SR-197: decode a created ID from a submitted transaction's return value
+  parseU64ReturnValue,
 } from "./convert.js";
 
 /** Stellar network passphrases for convenience. */
