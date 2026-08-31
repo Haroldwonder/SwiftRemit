@@ -449,48 +449,55 @@ See [`frontend/.env.example`](../frontend/.env.example) for the full list with i
 
 ---
 
-## Container Image Retention (GHCR) — SR-215
+## GHCR Image Retention
 
-[`deploy-staging.yml`](../.github/workflows/deploy-staging.yml) pushes an immutable
-per-commit image on every merge to `main`:
+`deploy-staging.yml` pushes two tags per service image to
+`ghcr.io/<repo>/{backend,api,frontend}` on every push to `main`:
 
+| Tag | Mutability | Purpose |
+|---|---|---|
+| `:staging` | Mutable (overwritten each deploy) | What `docker-compose` pulls on the staging VM |
+| `:<sha_short>` | Immutable | Pinned image the staging deploy actually runs; used for manual rollback |
+
+Without pruning, the immutable per-commit tags accumulate forever across three
+image repositories. `.github/workflows/ghcr-cleanup.yml` enforces the retention
+policy below.
+
+### Policy
+
+- **Runs:** weekly, Monday 08:00 UTC (plus manual `workflow_dispatch`, which
+  defaults to a dry run).
+- **Deletes:** image versions whose `updated_at` is older than **30 days**.
+- **Always keeps:**
+  - the `:staging` tag (and `:latest` / `:main` if ever introduced);
+  - any tag matching `v*` or `*.*.*` (semver / release tags);
+  - the **10 most recent** tagged versions of each image, regardless of age —
+    this is the rollback floor. **You can safely roll back to any per-commit
+    tag from roughly the last 30 days, or the last 10 builds, whichever reaches
+    further back.** Older tags may have been pruned.
+- **Also removes:** dangling untagged manifests left behind when a tag is
+  re-pushed.
+
+### Required secret
+
+The cleanup action needs the `!`/`*` tag-filter operators, which GitHub's
+ephemeral `GITHUB_TOKEN` does not support. Create a **classic personal access
+token** with the `write:packages` and `delete:packages` scopes and add it as the
+repository secret `GHCR_RETENTION_TOKEN`. The workflow fails fast with an
+explanatory error if the secret is missing.
+
+### Manual rollback
+
+```bash
+# On the staging VM — pin to an older known-good commit tag
+export BACKEND_IMAGE=ghcr.io/haroldwonder/swiftremit/backend:<sha_short>
+export API_IMAGE=ghcr.io/haroldwonder/swiftremit/api:<sha_short>
+export FRONTEND_IMAGE=ghcr.io/haroldwonder/swiftremit/frontend:<sha_short>
+docker compose pull && docker compose up -d --remove-orphans
 ```
-ghcr.io/Haroldwonder/SwiftRemit/backend:<sha_short>
-ghcr.io/Haroldwonder/SwiftRemit/api:<sha_short>
-ghcr.io/Haroldwonder/SwiftRemit/frontend:<sha_short>
-```
 
-alongside the mutable `:staging` tag that [`docker-compose.yml`](../docker-compose.yml)
-runs on the staging VM.
-
-[`ghcr-cleanup.yml`](../.github/workflows/ghcr-cleanup.yml) runs weekly (Mondays
-08:00 UTC) and prunes those per-commit tags on the following policy:
-
-| Rule | Value |
-|------|-------|
-| Retention window | Per-commit (`<sha_short>`) tags are deleted **30 days** after they were pushed |
-| Rollback buffer | The **10 most recent** versions per image are always kept, even if older than 30 days |
-| Never deleted | `:staging`, `:latest`, `:main`, `:develop`, and any `v*` semver tag (Git release tags referenced by [`deploy-mainnet.yml`](../.github/workflows/deploy-mainnet.yml)) |
-
-### What this means for on-call
-
-- You can manually roll a staging image back to **any commit merged in the last
-  30 days**, or to one of the last 10 merges regardless of age, by setting
-  `BACKEND_IMAGE` / `API_IMAGE` / `FRONTEND_IMAGE` to
-  `ghcr.io/Haroldwonder/SwiftRemit/<service>:<sha_short>` and running
-  `docker compose up -d` on the staging host.
-- To roll back further than the window allows, re-run `deploy-staging.yml` from
-  the desired commit (Actions → Deploy to Staging → Run workflow), which
-  rebuilds and re-pushes that SHA tag.
-- Before a large manual pin outside the buffer, trigger `ghcr-cleanup.yml` with
-  **Run workflow → dry run = true** to confirm the tag you need has not been
-  pruned.
-
-### Changing the policy
-
-Edit `RETENTION_DAYS` / `KEEP_MOST_RECENT` in
-[`ghcr-cleanup.yml`](../.github/workflows/ghcr-cleanup.yml) and update the table
-above in the same PR.
+If the tag you need has already been pruned, re-run `deploy-staging.yml` from
+the target commit to rebuild and re-push it.
 
 ---
 

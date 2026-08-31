@@ -13,16 +13,18 @@ on:
     branches: [main]
     paths:
       - "mobile/**"
-      - ".github/workflows/mobile-ci.yml"
-  # SR-212: nightly verification that the most recent EAS build for each
-  # platform actually completed successfully, independent of PR-time runs.
+  # Daily health check that the most recent EAS build for each platform
+  # actually completed — catches native build-config regressions that a
+  # --no-wait PR build would not surface. See the eas-build-health job.
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
 # Cancel in-progress runs for the same PR/branch to save minutes.
+# Scheduled/manual health-check runs get their own group so they are never
+# cancelled by a concurrent PR run.
 concurrency:
-  group: mobile-ci-${{ github.ref }}
+  group: mobile-ci-${{ github.event_name == 'schedule' && 'health' || github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -43,6 +45,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Scheduled/manual runs only exercise the eas-build-health job.
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
 
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +73,7 @@ jobs:
     name: Type-check
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
 
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +98,7 @@ jobs:
     name: Test & Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
 
     steps:
       - uses: actions/checkout@v4
@@ -209,54 +215,80 @@ jobs:
         id: build
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # Block on the real EAS build result for merges to main so a broken
+          # native iOS build config fails this job. Keep PRs fast with --no-wait.
+          EAS_WAIT: ${{ github.event_name == 'push' && 'true' || 'false' }}
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "push" ]; then
-            WAIT_FLAGS="--wait"
+          # No `|| true`: a failed submission must fail the job immediately.
+          if [ "$EAS_WAIT" = "true" ]; then
+            eas build \
+              --platform ios \
+              --profile preview \
+              --non-interactive \
+              --wait \
+              --json > /tmp/eas-ios-build.json
           else
-            WAIT_FLAGS="--no-wait"
+            eas build \
+              --platform ios \
+              --profile preview \
+              --non-interactive \
+              --no-wait \
+              --json > /tmp/eas-ios-build.json
           fi
 
-          eas build \
-            --platform ios \
-            --profile preview \
-            --non-interactive \
-            $WAIT_FLAGS \
-            --json > "$RUNNER_TEMP/eas-ios-build.json"
+          cat /tmp/eas-ios-build.json
 
-          echo "--- EAS response ---"
-          cat "$RUNNER_TEMP/eas-ios-build.json"
-
-          BUILD_ID=$(jq -r '.[0].id // .id // empty' "$RUNNER_TEMP/eas-ios-build.json")
+          BUILD_ID=$(jq -r '.[0].id // empty' /tmp/eas-ios-build.json)
+          BUILD_STATUS=$(jq -r '.[0].status // empty' /tmp/eas-ios-build.json)
           echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "iOS build $BUILD_ID reported status: $BUILD_STATUS"
 
-          # `eas build --wait` already exits non-zero on a failed build; assert
-          # the reported status explicitly too so a schema change can't mask it.
-          if [ "${{ github.event_name }}" = "push" ]; then
-            STATUS=$(jq -r '.[0].status // .status // empty' "$RUNNER_TEMP/eas-ios-build.json")
-            echo "EAS iOS build status: $STATUS"
-            if [ "$STATUS" != "FINISHED" ]; then
-              echo "::error::EAS iOS build did not finish successfully (status: ${STATUS:-unknown})"
-              exit 1
-            fi
-          else
-            echo "EAS iOS build submitted ($BUILD_ID). Nightly verify job will confirm completion."
+          if [ -z "$BUILD_ID" ]; then
+            echo "::error::EAS did not return a build id — submission failed."
+            exit 1
           fi
 
+          if [ "$EAS_WAIT" = "true" ]; then
+            # EAS reports FINISHED only on a successful native build.
+            case "$BUILD_STATUS" in
+              FINISHED|finished)
+                echo "✅ iOS native build finished successfully" ;;
+              *)
+                echo "::error::iOS native build did not finish successfully (status: $BUILD_STATUS)"
+                exit 1 ;;
+            esac
+          else
+            echo "EAS iOS build submitted (--no-wait). Verified by the scheduled eas-build-health job."
+          fi
+
+      # On merges to main the build has finished by now — pull the simulator
+      # archive down so it is attached to the run instead of only living on Expo.
       - name: Download iOS build artifact
+        id: download
         if: github.event_name == 'push' && steps.build.outputs.build_id != ''
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
-          eas build:download --id "${{ steps.build.outputs.build_id }}" --output ./ios-build.tar.gz
+          eas build:download \
+            --id "${{ steps.build.outputs.build_id }}" \
+            --non-interactive \
+            --json > /tmp/eas-ios-download.json
+          cat /tmp/eas-ios-download.json
+          ARTIFACT_PATH=$(jq -r '.path // empty' /tmp/eas-ios-download.json)
+          if [ -z "$ARTIFACT_PATH" ]; then
+            echo "::error::No application archive available for build ${{ steps.build.outputs.build_id }}"
+            exit 1
+          fi
+          echo "artifact_path=$ARTIFACT_PATH" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push' && steps.build.outputs.build_id != ''
+        if: github.event_name == 'push' && steps.download.outputs.artifact_path != ''
         with:
           name: ios-preview-build
-          path: mobile/ios-build.tar.gz
+          path: ${{ steps.download.outputs.artifact_path }}
           retention-days: 14
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -295,62 +327,91 @@ jobs:
         id: build
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # Block on the real EAS build result for merges to main so a broken
+          # native Android build config fails this job. Keep PRs fast with --no-wait.
+          EAS_WAIT: ${{ github.event_name == 'push' && 'true' || 'false' }}
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "push" ]; then
-            WAIT_FLAGS="--wait"
+          # No `|| true`: a failed submission must fail the job immediately.
+          if [ "$EAS_WAIT" = "true" ]; then
+            eas build \
+              --platform android \
+              --profile preview \
+              --non-interactive \
+              --wait \
+              --json > /tmp/eas-android-build.json
           else
-            WAIT_FLAGS="--no-wait"
+            eas build \
+              --platform android \
+              --profile preview \
+              --non-interactive \
+              --no-wait \
+              --json > /tmp/eas-android-build.json
           fi
 
-          eas build \
-            --platform android \
-            --profile preview \
-            --non-interactive \
-            $WAIT_FLAGS \
-            --json > "$RUNNER_TEMP/eas-android-build.json"
+          cat /tmp/eas-android-build.json
 
-          echo "--- EAS response ---"
-          cat "$RUNNER_TEMP/eas-android-build.json"
-
-          BUILD_ID=$(jq -r '.[0].id // .id // empty' "$RUNNER_TEMP/eas-android-build.json")
+          BUILD_ID=$(jq -r '.[0].id // empty' /tmp/eas-android-build.json)
+          BUILD_STATUS=$(jq -r '.[0].status // empty' /tmp/eas-android-build.json)
           echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "Android build $BUILD_ID reported status: $BUILD_STATUS"
 
-          if [ "${{ github.event_name }}" = "push" ]; then
-            STATUS=$(jq -r '.[0].status // .status // empty' "$RUNNER_TEMP/eas-android-build.json")
-            echo "EAS Android build status: $STATUS"
-            if [ "$STATUS" != "FINISHED" ]; then
-              echo "::error::EAS Android build did not finish successfully (status: ${STATUS:-unknown})"
-              exit 1
-            fi
-          else
-            echo "EAS Android build submitted ($BUILD_ID). Nightly verify job will confirm completion."
+          if [ -z "$BUILD_ID" ]; then
+            echo "::error::EAS did not return a build id — submission failed."
+            exit 1
           fi
 
+          if [ "$EAS_WAIT" = "true" ]; then
+            # EAS reports FINISHED only on a successful native build.
+            case "$BUILD_STATUS" in
+              FINISHED|finished)
+                echo "✅ Android native build finished successfully" ;;
+              *)
+                echo "::error::Android native build did not finish successfully (status: $BUILD_STATUS)"
+                exit 1 ;;
+            esac
+          else
+            echo "EAS Android build submitted (--no-wait). Verified by the scheduled eas-build-health job."
+          fi
+
+      # On merges to main the build has finished by now — pull the APK down
+      # so it is attached to the run instead of only living on Expo.
       - name: Download Android build artifact
+        id: download
         if: github.event_name == 'push' && steps.build.outputs.build_id != ''
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
-          eas build:download --id "${{ steps.build.outputs.build_id }}" --output ./android-build.apk
+          eas build:download \
+            --id "${{ steps.build.outputs.build_id }}" \
+            --non-interactive \
+            --json > /tmp/eas-android-download.json
+          cat /tmp/eas-android-download.json
+          ARTIFACT_PATH=$(jq -r '.path // empty' /tmp/eas-android-download.json)
+          if [ -z "$ARTIFACT_PATH" ]; then
+            echo "::error::No application archive available for build ${{ steps.build.outputs.build_id }}"
+            exit 1
+          fi
+          echo "artifact_path=$ARTIFACT_PATH" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push' && steps.build.outputs.build_id != ''
+        if: github.event_name == 'push' && steps.download.outputs.artifact_path != ''
         with:
           name: android-preview-build
-          path: mobile/android-build.apk
+          path: ${{ steps.download.outputs.artifact_path }}
           retention-days: 14
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 6b. Nightly EAS build verification (SR-212)
-  #     Confirms the most recent EAS build for each platform finished
-  #     successfully. Catches native-build-config regressions that slipped
-  #     through the --no-wait PR submissions.
+  # 7. EAS build health check (scheduled / manual)
+  #    PR builds run with --no-wait for fast feedback, which means a native
+  #    build-config regression on a PR is invisible until someone looks at the
+  #    Expo dashboard. This job runs daily (and on demand) and fails if the most
+  #    recent EAS build for either platform did not finish successfully.
   # ───────────────────────────────────────────────────────────────────────────
-  verify-eas-builds:
-    name: Verify latest EAS builds
+  eas-build-health:
+    name: EAS Build Health — ${{ matrix.platform }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -365,52 +426,50 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: .
 
       - name: Install EAS CLI
         run: npm install --global eas-cli@latest
 
-      - name: Check most recent ${{ matrix.platform }} build
+      - name: Verify latest ${{ matrix.platform }} build finished successfully
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           set -euo pipefail
 
+          # Look at the last few builds so an in-progress build at the top of the
+          # list doesn't mask the last completed one.
           eas build:list \
             --platform ${{ matrix.platform }} \
-            --limit 1 \
+            --limit 5 \
             --non-interactive \
-            --json > "$RUNNER_TEMP/latest.json"
+            --json > /tmp/eas-${{ matrix.platform }}-latest.json
 
-          cat "$RUNNER_TEMP/latest.json"
+          cat /tmp/eas-${{ matrix.platform }}-latest.json
 
-          COUNT=$(jq 'length' "$RUNNER_TEMP/latest.json")
-          if [ "$COUNT" -eq 0 ]; then
-            echo "::warning::No EAS builds found for ${{ matrix.platform }} — nothing to verify."
+          # First build that has reached a terminal state.
+          TERMINAL=$(jq -c '
+            [.[] | select(.status | test("FINISHED|ERRORED|CANCELED|CANCELLED"; "i"))] | .[0] // empty
+          ' /tmp/eas-${{ matrix.platform }}-latest.json)
+
+          if [ -z "$TERMINAL" ]; then
+            echo "::warning::No completed ${{ matrix.platform }} EAS build in the last 5 — nothing to verify yet"
             exit 0
           fi
 
-          STATUS=$(jq -r '.[0].status' "$RUNNER_TEMP/latest.json")
-          CREATED=$(jq -r '.[0].createdAt // "unknown"' "$RUNNER_TEMP/latest.json")
-          echo "Latest ${{ matrix.platform }} build: $STATUS (created $CREATED)"
+          STATUS=$(echo "$TERMINAL" | jq -r '.status')
+          BUILD_ID=$(echo "$TERMINAL" | jq -r '.id')
+          echo "Most recent completed ${{ matrix.platform }} build: $BUILD_ID ($STATUS)"
 
           case "$STATUS" in
-            FINISHED)
-              echo "✅ Latest ${{ matrix.platform }} EAS build is healthy." ;;
-            NEW|IN_QUEUE|IN_PROGRESS|PENDING_CANCEL)
-              echo "::warning::Latest ${{ matrix.platform }} build is still $STATUS — will re-check tomorrow." ;;
+            FINISHED|finished)
+              echo "✅ Latest completed ${{ matrix.platform }} EAS build succeeded" ;;
             *)
-              echo "::error::Latest ${{ matrix.platform }} EAS build is in state '$STATUS' — native build config may be broken."
+              echo "::error::Latest completed ${{ matrix.platform }} EAS build is '$STATUS' (build $BUILD_ID) — investigate the native build config"
               exit 1 ;;
           esac
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 7. Summary gate — required status check for branch protection
+  # 8. Summary gate — required status check for branch protection
   # ───────────────────────────────────────────────────────────────────────────
   mobile-ci:
     name: Mobile CI
