@@ -26,7 +26,7 @@
     "i18next": "^26.4.0",
     "jspdf": "^2.5.2",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react-dom": "^19.2.8",
     "react-i18next": "^17.0.12"
   },
   "devDependencies": {
@@ -44,7 +44,7 @@
     "@testing-library/user-event": "^14.6.6",
     "@types/jest-axe": "^3.5.9",
     "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react-dom": "^19.2.7",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitejs/plugin-react": "^4.3.4",
