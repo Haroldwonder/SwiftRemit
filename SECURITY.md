@@ -5,6 +5,63 @@ and records the findings of the security audit conducted against issue #937.
 
 ---
 
+## Production Firewall Rules (#1565)
+
+Production deployments must restrict inbound network access so that only the public
+HTTP(S) entrypoint is reachable from the internet. Backend and database ports must
+never be exposed publicly. These rules complement the Security Checklist in
+`SETUP_GUIDE.md`.
+
+### Inbound rules
+
+| Port | Service | Allowed source | Notes |
+|------|---------|----------------|-------|
+| 443 | HTTPS (reverse proxy / load balancer) | `0.0.0.0/0`, `::/0` | Public entrypoint only |
+| 80 | HTTP (redirect to HTTPS) | `0.0.0.0/0`, `::/0` | Redirect to 443; disable if TLS terminates upstream |
+| 22 | SSH | Operator/VPN CIDR only | Never `0.0.0.0/0`; prefer bastion or VPN |
+| 3000 | Backend API | Private network / proxy only | Not publicly reachable |
+| 5432 | PostgreSQL | Private network / app subnet only | Not publicly reachable |
+
+### Default policy
+
+- **Inbound:** deny by default; allow only the rules above.
+- **Outbound:** allow established/related; restrict egress to required services.
+- Bind backend and database listeners to private interfaces (e.g. `127.0.0.1` or the
+  private subnet address), not `0.0.0.0`.
+- Database access is limited to the backend application subnet/security group.
+
+### Example (ufw)
+
+```sh
+# Default deny inbound, allow outbound
+ufw default deny incoming
+ufw default allow outgoing
+
+# Public web entrypoint
+ufw allow 443/tcp
+ufw allow 80/tcp
+
+# SSH from operator network only
+ufw allow from <OPERATOR_CIDR> to any port 22 proto tcp
+
+# Backend API and PostgreSQL: private network only
+ufw allow from <PRIVATE_SUBNET_CIDR> to any port 3000 proto tcp
+ufw allow from <PRIVATE_SUBNET_CIDR> to any port 5432 proto tcp
+
+ufw enable
+```
+
+### Example (AWS security groups)
+
+- `web-sg`: inbound 443/80 from `0.0.0.0/0`; inbound 22 from operator CIDR.
+- `api-sg`: inbound 3000 from `web-sg` only.
+- `db-sg`: inbound 5432 from `api-sg` only.
+
+Verify after applying: `nmap -Pn <host>` from an external network must show only
+ports 80/443 (and 22 if intentionally exposed).
+
+---
+
 ## External Security Audit (SR-109)
 
 An external security audit of the smart contract is required before mainnet deployment.
@@ -146,6 +203,7 @@ immediately on a single admin signature:
 | Migration guard | `MigrationInProgress` flag blocks concurrent writes during data migration |
 | Token whitelist | Only whitelisted tokens accepted for new remittances |
 | Admin count guard | `CannotRemoveLastAdmin` error prevents admin lockout |
+| Network firewall | Production inbound rules restrict backend/database ports (see above) |
 
 ---
 
@@ -165,19 +223,6 @@ Key controls:
 
 ## Key Management
 
-See [docs/KEY_MANAGEMENT_POLICY.md](docs/KEY_MANAGEMENT_POLICY.md) for the admin key custody, rotation, and compromise response procedures (SR-111). All mainnet admin keys require hardware wallet (Ledger/Trezor) or HSM custody. Private key material must never exist in plaintext on any server, CI/CD system, or cloud environment.
+See [docs/KEY_MANAGEMENT_POLICY.md](docs/KEY_MANAGEMENT_POLICY.md) for the admin key custody, rotation, and compromise response procedures (SR-111). All mainnet admin keys require h
 
-Key controls at a glance:
-
-- **Custody:** Hardware wallet or HSM for all mainnet `Admin` and Treasury keys.
-- **Rotation:** Quarterly minimum and before every mainnet upgrade. Rehearsal script: `scripts/rehearse-key-rotation.sh`.
-- **Compromise response:** Target RTO 2 hours. Rehearsal script: `scripts/rehearse-compromise-response.sh`.
-- **CI/CD keys:** Testnet-only scope; stored as GitHub Actions Secrets; rotated every 90 days and on team-member departure.
-- **Multi-sig:** High-impact operations (`withdraw_fees`, `update_fee`, `add_admin`, WASM upgrade) require M ≥ 2 admin approvals.
-
----
-
-## Reporting vulnerabilities
-
-Please email **security@swiftremit.example** or open a GitHub Security Advisory.
-Do not open public issues for potential security vulnerabilities.
+/* … truncated 925 chars — edit only what you need near the top … */
