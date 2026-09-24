@@ -1,102 +1,82 @@
 # Setup Guide
 
-This guide walks through setting up the project for local development and production deployment.
+## Security Checklist
 
-## Prerequisites
+Before going to production, verify each item below:
 
-- Node.js 18+
-- PostgreSQL 14+
-- npm or yarn
+- [ ] **Change the default admin secret key.** The sample value shown in this guide (`change-me-admin-secret`) is a placeholder only. Never deploy to production with the default/sample admin secret key. Generate a strong, unique secret and set it via the `ADMIN_SECRET_KEY` environment variable.
+- [ ] Enable the firewall and restrict inbound traffic to required ports only.
+- [ ] Use HTTPS/TLS for all public endpoints.
+- [ ] Rotate credentials and API keys regularly.
 
-## Local Development Setup
+## Firewall Rules
 
-1. Clone the repository:
+Restrict inbound access so that only the public web entrypoint is reachable from the internet. The backend API and database ports must **not** be publicly accessible; allow them only from trusted hosts (the reverse proxy / application servers).
 
-   ```bash
-   git clone https://github.com/your-org/your-repo.git
-   cd your-repo
-   ```
+| Port | Service | Inbound access |
+| --- | --- | --- |
+| 80 | HTTP (redirect to HTTPS) | Public |
+| 443 | HTTPS | Public |
+| 8000 | Backend API | Private only (reverse proxy / app servers) |
+| 5432 | PostgreSQL | Private only (app servers) |
 
-2. Install dependencies:
+Example using `ufw` (adjust the trusted source ranges to your network):
 
-   ```bash
-   npm install
-   ```
+```sh
+# Default deny inbound, allow outbound
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
 
-3. Copy the example environment file and fill in your local values:
+# Public web entrypoints
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
 
-   ```bash
-   cp .env.example .env
-   ```
+# Backend API: only from the reverse proxy / app servers
+sudo ufw allow from 10.0.0.0/24 to any port 8000 proto tcp
 
-4. Start the local database and run migrations:
+# PostgreSQL: only from the app servers
+sudo ufw allow from 10.0.0.0/24 to any port 5432 proto tcp
 
-   ```bash
-   npm run db:migrate
-   ```
+sudo ufw enable
+sudo ufw status verbose
+```
 
-5. Start the development server:
+Equivalent `iptables` rules:
 
-   ```bash
-   npm run dev
-   ```
+```sh
+# Allow established connections
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Public web entrypoints
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+
+# Backend API: only from the reverse proxy / app servers
+iptables -A INPUT -p tcp --dport 8000 -s 10.0.0.0/24 -j ACCEPT
+
+# PostgreSQL: only from the app servers
+iptables -A INPUT -p tcp --dport 5432 -s 10.0.0.0/24 -j ACCEPT
+
+# Drop everything else
+iptables -A INPUT -j DROP
+```
+
+If your provider offers a cloud firewall / security group, apply the same policy there: expose only 80/443 publicly and keep 8000 and 5432 restricted to trusted sources.
 
 ## Environment Variables
 
-| Variable | Description | Required |
-| --- | --- | --- |
-| `DATABASE_URL` | PostgreSQL connection string | Yes |
-| `DB_SSL` | Enable SSL/TLS for database connections (`true`/`false`) | No (defaults to `false` locally) |
-| `DB_SSL_REJECT_UNAUTHORIZED` | Reject self-signed/untrusted certificates (`true`/`false`) | No (defaults to `true`) |
-| `NODE_ENV` | Runtime environment (`development`/`production`) | Yes |
+Create a `.env` file (or set these in your deployment environment) and replace every placeholder value with a real, secret value:
 
-## Database SSL/TLS Configuration
-
-Database connections **must** use SSL/TLS in production. Local development continues to work without SSL so contributors do not need to provision certificates.
-
-### Production
-
-Set the following environment variables in your production environment:
-
-```bash
-NODE_ENV=production
-DB_SSL=true
-DB_SSL_REJECT_UNAUTHORIZED=true
+```env
+# REQUIRED: replace with a strong, unique secret before production.
+# Do NOT use the sample value below in production.
+ADMIN_SECRET_KEY=change-me-admin-secret
 ```
 
-When `NODE_ENV=production`, SSL is enabled automatically even if `DB_SSL` is not explicitly set. `DB_SSL_REJECT_UNAUTHORIZED=true` ensures the server certificate is validated against a trusted CA; do not disable this in production unless you fully understand the risk.
+Generate a strong secret, for example:
 
-If your managed database provider requires a specific CA bundle, point the connection at it via `DATABASE_SSL_CA` (path to the PEM file) and keep `DB_SSL_REJECT_UNAUTHORIZED=true`.
+```sh
+openssl rand -hex 32
+```
 
-### Local Development
-
-No changes are required. SSL is disabled by default when `NODE_ENV` is not `production`, so local connections to `localhost` continue to work without certificates.
-
-To test SSL locally, set `DB_SSL=true` and, if using a self-signed certificate, `DB_SSL_REJECT_UNAUTHORIZED=false`.
-
-## Security Checklist
-
-- [x] Database connections require SSL/TLS in production (see [Database SSL/TLS Configuration](#database-ssltls-configuration))
-- [ ] Secrets are stored in a managed secret store, not in the repository
-- [ ] Authentication endpoints are rate limited
-- [ ] Dependencies are scanned for known vulnerabilities in CI
-
-## Deployment
-
-1. Build the application:
-
-   ```bash
-   npm run build
-   ```
-
-2. Run migrations against the production database (with SSL enabled as described above):
-
-   ```bash
-   NODE_ENV=production npm run db:migrate
-   ```
-
-3. Start the production server:
-
-   ```bash
-   NODE_ENV=production npm start
-   ```
+Then set `ADMIN_SECRET_KEY` to the generated value. The application should refuse to start (or log a fatal error) if `ADMIN_SECRET_KEY` is unset or still equal to the sample placeholder.
