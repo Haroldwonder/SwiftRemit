@@ -33,21 +33,23 @@ list every role they accept.
 
 | Method | Route | Guard | Notes |
 |---|---|---|---|
-| POST | `/api/auth/login` | `public` | Rate-limited; 5 failures locks the identity for 15 min |
-| POST | `/api/auth/refresh` | `public` (cookie) | Rotates the token; reuse revokes the whole family |
-| POST | `/api/auth/logout` | `public` | Revokes the refresh family and the presented access token |
+| POST | `/api/auth/login` | `public` | Rate-limited; 5 failures locks the identity for 15 min; audit-logged |
+| POST | `/api/auth/refresh` | `public` (cookie) | Rotates the token; reuse revokes the whole family; audit-logged |
+| POST | `/api/auth/logout` | `public` | Revokes the refresh family and the presented access token; audit-logged |
 | GET | `/api/remittances` | `requireAuth` + scoping | Non-admins see only rows where they are the agent |
 | GET | `/api/remittances/:id/receipt` | `requireAuth` + `ownership` | Non-admins must be the remittance sender |
 | POST | `/api/agents` | `adminApiKey \|\| agent/admin token` | Audit-logged |
 | GET | `/api/agents/:id` | `public` | Returns only non-sensitive registration data |
 | PUT | `/api/agents/:id/payout-address` | `adminApiKey \|\| agent/admin token` | Redirects money — audit-logged |
+| GET | `/api/agents/:id/reputation` | `public` | Aggregated reputation score and history; no sensitive data |
+| POST | `/api/agents/:id/reputation` | `adminApiKey \|\| agent/admin token` | Records a reputation event — audit-logged |
 | GET | `/api/accounts/:address/stellar-fees` | `requireAuth` | Exposes per-account chain data |
-| GET | `/api/analytics/corridors` | `adminApiKey` | Pre-existing |
-| GET | `/api/analytics/timeseries` | `adminApiKey` | Pre-existing |
-| POST | `/api/anchors/admin` | `adminApiKey` | Pre-existing |
-| PUT | `/api/anchors/admin/:id` | `adminApiKey` | Pre-existing |
-| POST | `/api/anchors/admin/:id/deactivate` | `adminApiKey` | Pre-existing |
-| DELETE | `/api/anchors/admin/:id` | `adminApiKey` | Pre-existing |
+| GET | `/api/analytics/corridors` | `adminApiKey` | Pre-existing; audit-logged |
+| GET | `/api/analytics/timeseries` | `adminApiKey` | Pre-existing; audit-logged |
+| POST | `/api/anchors/admin` | `adminApiKey` | Pre-existing; audit-logged |
+| PUT | `/api/anchors/admin/:id` | `adminApiKey` | Pre-existing; audit-logged |
+| POST | `/api/anchors/admin/:id/deactivate` | `adminApiKey` | Pre-existing; audit-logged |
+| DELETE | `/api/anchors/admin/:id` | `adminApiKey` | Pre-existing; audit-logged |
 | GET | `/api/anchors` | `public` | Public anchor directory |
 | GET | `/api/currencies` | `public` | Static reference data |
 | GET | `/api/limits` | `public` | Static reference data |
@@ -55,6 +57,39 @@ list every role they accept.
 | POST | `/api/graphql` | `requireAuth` + field-level | See "GraphQL" below |
 | GET | `/api/graphql` | `public` | Endpoint metadata only; no data |
 | GET | `/api/docs` | `public` | API documentation |
+
+## Audit logging
+
+Per the security checklist in `SETUP_GUIDE.md`, every admin and
+security-sensitive operation emits a structured audit record. Records are
+written by `services/auditLog.ts` and carry:
+
+| Field | Meaning |
+|---|---|
+| `actor` | `token.sub` for token auth, or `api-key:<id>` for `adminApiKey` |
+| `action` | Stable verb, e.g. `auth.login`, `agent.payout_address.update`, `anchor.deactivate` |
+| `target` | Resource identifier the action applied to, when applicable |
+| `timestamp` | ISO-8601 UTC, server clock |
+| `outcome` | `success` or `failure` (with a reason code) |
+
+Audit records are append-only and never include secrets, tokens, or password
+material. The routes marked "audit-logged" above are the ones that must emit a
+record; `src/__tests__/audit-log.test.ts` asserts each one does.
+
+## Agent reputation
+
+The agent reputation system (roadmap item #1570) exposes a per-agent score
+derived from append-only reputation events. It follows the same authorisation
+and audit rules as the rest of the agent surface:
+
+- `GET /api/agents/:id/reputation` is `public` and returns only the aggregate
+  score, event count, and non-sensitive event history — never payout addresses,
+  credentials, or other private registration data.
+- `POST /api/agents/:id/reputation` records a new event and is restricted to
+  `adminApiKey` or an `agent`/`admin` token, matching the other agent-mutating
+  routes. Every write is audit-logged with action `agent.reputation.record`.
+- Reputation events are append-only; the score is recomputed from the event log
+  rather than mutated in place, so history cannot be silently rewritten.
 
 ## GraphQL
 

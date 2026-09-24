@@ -168,6 +168,68 @@ caller authentication and are omitted.
 
 ---
 
+## Audit logging for security-sensitive operations (#1568)
+
+Per the Security Checklist in `SETUP_GUIDE.md`, every admin and security-sensitive
+operation must emit a structured audit record. Audit records are emitted as Soroban
+contract events so they are captured by the indexer and retained off-chain.
+
+### Audit record schema
+
+Each audit event carries the following fields:
+
+| Field | Description |
+|-------|-------------|
+| `actor` | Address that initiated the operation (the authenticated caller) |
+| `action` | Stable action identifier (see table below) |
+| `target` | Address, token, or config key affected by the operation |
+| `timestamp` | Ledger timestamp at which the operation executed |
+| `outcome` | `success` or `failure` (with error code when applicable) |
+
+### Audited operations
+
+| Action | Trigger | Actor | Target |
+|--------|---------|-------|--------|
+| `admin.add` | `add_admin` | Admin | New admin address |
+| `admin.remove` | `remove_admin` | Admin | Removed admin address |
+| `agent.register` | `register_agent` | Admin | Agent address |
+| `agent.remove` | `remove_agent` | Admin | Agent address |
+| `role.assign` | `assign_role` | Role admin | Target address |
+| `role.remove` | `remove_role` | Role admin | Target address |
+| `config.fee.update` | `update_fee`, `update_protocol_fee`, `update_fee_strategy` | Admin | Fee config key |
+| `config.treasury.update` | `update_treasury` | Admin | Treasury address |
+| `config.limit.update` | `set_daily_limit`, `update_rate_limit`, `update_rate_limit_config` | Admin | Limit config key |
+| `config.whitelist.add` | `add_whitelisted_token` | Admin | Token address |
+| `config.whitelist.remove` | `remove_whitelisted_token` | Admin | Token address |
+| `config.asset_verification` | `set_asset_verification` | Admin | Token address |
+| `circuit_breaker.pause` | `pause` | Admin | — |
+| `circuit_breaker.unpause` | `unpause` | Admin | — |
+| `fees.withdraw` | `withdraw_fees` | Admin | Destination address |
+| `blacklist.add` | `blacklist_user` | Admin | Target address |
+| `blacklist.remove` | `remove_from_blacklist` | Admin | Target address |
+| `multisig.config` | `set_multisig_config` | Admin | — |
+| `multisig.propose` | `propose_operation` | Admin | Operation id |
+| `multisig.approve` | `approve_operation` | Admin | Operation id |
+| `multisig.execute` | threshold reached | — | Operation id |
+| `multisig.expire` | `expire_operation` | Any | Operation id |
+| `migration.export` | `export_migration_snapshot` | Admin | — |
+| `migration.import` | `import_migration_batch` | Admin | Batch id |
+
+### Verification
+
+- Audit events are emitted **after** authorization succeeds and **before** the
+  state mutation is committed, so a failed authorization never produces a
+  `success` record.
+- Failed authorization attempts emit an audit record with `outcome = failure`
+  and the corresponding error code.
+- The multi-sig flow already emits `msig/proposed`, `msig/approved`,
+  `msig/executed`, and `msig/expired` events; these are the canonical audit
+  records for high-impact operations and must not be suppressed.
+- Audit logging must remain enabled in all environments, including testnet and
+  mainnet; it is not gated behind a feature flag.
+
+---
+
 ## Multi-signature protection for high-impact operations (#253)
 
 The following operations go through the M-of-N multi-sig flow rather than executing

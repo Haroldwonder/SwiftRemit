@@ -905,3 +905,7 @@ import { VerificationBadge } from './components/VerificationBadge';
 See [ROADMAP.md](ROADMAP.md) for shipped features (with links to the implementing code)
 and genuinely pending work.
 
+## Handsoff notes
+
+<!-- handsoff-issue-1559 -->
+- #1559: Roadmap: Integration with fiat on/off ramps
