@@ -75,6 +75,31 @@ use soroban_sdk::{Address, Bytes, BytesN, Env};
 /// See [`MIGRATION.md § Hash Schema Upgrades`] for the full migration checklist.
 pub const HASH_SCHEMA_VERSION: u32 = 1;
 
+/// Serialize an Address to its canonical byte representation.
+///
+/// Uses Soroban's XDR encoding for deterministic, cross-platform
+/// compatibility. External systems must use Stellar XDR encoding to
+/// reproduce this serialization.
+fn address_to_bytes(env: &Env, address: &Address) -> Bytes {
+    use soroban_sdk::xdr::ToXdr;
+    address.to_xdr(env)
+}
+
+/// Append a u64 to `buf` in canonical big-endian (8-byte) form.
+fn append_u64(buf: &mut Bytes, value: u64) {
+    buf.extend_from_array(&value.to_be_bytes());
+}
+
+/// Append an i128 to `buf` in canonical big-endian (16-byte) form.
+fn append_i128(buf: &mut Bytes, value: i128) {
+    buf.extend_from_array(&value.to_be_bytes());
+}
+
+/// Append an optional u64 to `buf`, encoding `None` as 8 zero bytes.
+fn append_optional_u64(buf: &mut Bytes, value: Option<u64>) {
+    append_u64(buf, value.unwrap_or(0));
+}
+
 /// Generate a deterministic settlement ID from remittance fields.
 ///
 /// This is the single canonical implementation. External systems must
@@ -103,32 +128,30 @@ pub fn compute_settlement_id(
     let mut buf = Bytes::new(env);
 
     // Field 1: remittance_id — u64 big-endian (8 bytes)
-    buf.extend_from_array(&remittance_id.to_be_bytes());
+    append_u64(&mut buf, remittance_id);
 
     // Field 2: sender address bytes
-    let sender_bytes = address_to_bytes(env, sender);
-    buf.append(&sender_bytes);
+    buf.append(&address_to_bytes(env, sender));
 
     // Field 3: agent address bytes
-    let agent_bytes = address_to_bytes(env, agent);
-    buf.append(&agent_bytes);
+    buf.append(&address_to_bytes(env, agent));
 
     // Field 4: amount — i128 big-endian (16 bytes)
-    buf.extend_from_array(&amount.to_be_bytes());
+    append_i128(&mut buf, amount);
 
     // Field 5: fee — i128 big-endian (16 bytes)
-    buf.extend_from_array(&fee.to_be_bytes());
+    append_i128(&mut buf, fee);
 
     // Field 6: expiry — u64 big-endian (8 bytes), 0 if None
-    let expiry_val: u64 = expiry.unwrap_or(0);
-    buf.extend_from_array(&expiry_val.to_be_bytes());
+    append_optional_u64(&mut buf, expiry);
 
     // SHA-256 over the canonical byte sequence
     env.crypto().sha256(&buf).into()
 }
 
 /// Compute settlement ID directly from a Remittance struct.
-/// Convenience wrapper around compute_settlement_id.
+///
+/// Convenience wrapper around [`compute_settlement_id`].
 pub fn compute_settlement_id_from_remittance(
     env: &Env,
     remittance: &crate::Remittance,
@@ -144,16 +167,8 @@ pub fn compute_settlement_id_from_remittance(
     )
 }
 
-/// Serialize an Address to its canonical byte representation.
-/// Uses Soroban's XDR encoding for deterministic, cross-platform compatibility.
-///
-/// External systems must use Stellar XDR encoding to reproduce this serialization.
-fn address_to_bytes(env: &Env, address: &Address) -> Bytes {
-    use soroban_sdk::xdr::ToXdr;
-    address.to_xdr(env)
-}
-
 /// Compute a deterministic hash from remittance creation request parameters.
+///
 /// Used for idempotency key validation to detect payload changes.
 ///
 /// # Arguments
@@ -175,16 +190,10 @@ pub fn compute_request_hash(
     let mut buf = Bytes::new(env);
 
     // Serialize request parameters in canonical order
-    let sender_bytes = address_to_bytes(env, sender);
-    buf.append(&sender_bytes);
-
-    let agent_bytes = address_to_bytes(env, agent);
-    buf.append(&agent_bytes);
-
-    buf.extend_from_array(&amount.to_be_bytes());
-
-    let expiry_val: u64 = expiry.unwrap_or(0);
-    buf.extend_from_array(&expiry_val.to_be_bytes());
+    buf.append(&address_to_bytes(env, sender));
+    buf.append(&address_to_bytes(env, agent));
+    append_i128(&mut buf, amount);
+    append_optional_u64(&mut buf, expiry);
 
     env.crypto().sha256(&buf).into()
 }
@@ -224,14 +233,15 @@ mod tests {
         let sender = Address::generate(&env);
         let agent = Address::generate(&env);
 
-        let hash1 = compute_settlement_id(&env, 1, &sender, &agent, 1000, 25, None);
-        let hash2 = compute_settlement_id(&env, 1, &agent, &sender, 1000, 25, None);
+        // Swapping amount and fee must change the resulting hash.
+        let hash1 = compute_settlement_id(&env, 1, &sender, &agent, 1000, 25, Some(1234567890));
+        let hash2 = compute_settlement_id(&env, 1, &sender, &agent, 25, 1000, Some(1234567890));
 
-        assert_ne!(hash1, hash2, "Field order must affect hash output");
+        assert_ne!(hash1, hash2, "Field order must affect the resulting hash");
     }
 
     #[test]
-    fn test_deterministic_hash_expiry_none_vs_zero() {
+    fn test_none_expiry_matches_zero_expiry() {
         let env = Env::default();
         let sender = Address::generate(&env);
         let agent = Address::generate(&env);
@@ -239,6 +249,18 @@ mod tests {
         let hash_none = compute_settlement_id(&env, 1, &sender, &agent, 1000, 25, None);
         let hash_zero = compute_settlement_id(&env, 1, &sender, &agent, 1000, 25, Some(0));
 
-        assert_eq!(hash_none, hash_zero, "None and Some(0) must produce identical hashes");
+        assert_eq!(hash_none, hash_zero, "None expiry must encode as 8 zero bytes");
+    }
+
+    #[test]
+    fn test_request_hash_is_deterministic() {
+        let env = Env::default();
+        let sender = Address::generate(&env);
+        let agent = Address::generate(&env);
+
+        let hash1 = compute_request_hash(&env, &sender, &agent, 1000, Some(1234567890));
+        let hash2 = compute_request_hash(&env, &sender, &agent, 1000, Some(1234567890));
+
+        assert_eq!(hash1, hash2, "Same request inputs must produce identical hashes");
     }
 }
