@@ -910,8 +910,11 @@ and genuinely pending work.
 <!-- handsoff-issue-1559 -->
 - #1559: Roadmap: Integration with fiat on/off ramps
 
-<!-- handsoff-issue-1473 -->
-- #1473: Idempotency protection: Write property test for key acceptance
+<!-- handsoff-issue-1458 -->
+- #1458: Idempotency protection: Modify create_remittance function for idempotency
 
-<!-- handsoff-issue-1476 -->
-- #1476: Idempotency protection: Write unit tests for backward compatibility
+<!-- handsoff-issue-1459 -->
+- #1459: Idempotency protection: Add idempotency_key parameter
+
+<!-- handsoff-issue-1460 -->
+- #1460: Idempotency protection: Implement idempotency check logic
