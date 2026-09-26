@@ -912,3 +912,9 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1461 -->
 - #1461: Idempotency protection: Implement idempotency record storage
+
+<!-- handsoff-issue-1471 -->
+- #1471: Idempotency protection: Implement backward compatibility and validation
+
+<!-- handsoff-issue-1472 -->
+- #1472: Idempotency protection: Add idempotency key validation
