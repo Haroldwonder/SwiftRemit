@@ -910,5 +910,11 @@ and genuinely pending work.
 <!-- handsoff-issue-1559 -->
 - #1559: Roadmap: Integration with fiat on/off ramps
 
-<!-- handsoff-issue-1465 -->
-- #1465: Idempotency protection: Write unit tests for idempotency scenarios
+<!-- handsoff-issue-1466 -->
+- #1466: Idempotency protection: Implement expiration handling
+
+<!-- handsoff-issue-1467 -->
+- #1467: Idempotency protection: Add expiration check in idempotency lookup
+
+<!-- handsoff-issue-1468 -->
+- #1468: Idempotency protection: Write property test for expired key behavior
