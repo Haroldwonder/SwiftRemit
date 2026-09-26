@@ -916,5 +916,11 @@ and genuinely pending work.
 <!-- handsoff-issue-1459 -->
 - #1459: Idempotency protection: Add idempotency_key parameter
 
-<!-- handsoff-issue-1460 -->
-- #1460: Idempotency protection: Implement idempotency check logic
+<!-- handsoff-issue-1468 -->
+- #1468: Idempotency protection: Write property test for expired key behavior
+
+<!-- handsoff-issue-1478 -->
+- #1478: Idempotency protection: Implement set_idempotency_ttl admin function
+
+<!-- handsoff-issue-1480 -->
+- #1480: Off-chain proof validation: Create `ProofData` struct in `src/types.rs` with fields: `signature: BytesN<64>`, `payload: Bytes`, `signer: Address`
