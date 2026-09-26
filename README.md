@@ -912,3 +912,6 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1461 -->
 - #1461: Idempotency protection: Implement idempotency record storage
+
+<!-- handsoff-issue-1455 -->
+- #1455: Idempotency protection: Write property tests for hash computation
