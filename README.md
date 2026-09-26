@@ -912,3 +912,6 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1466 -->
 - #1466: Idempotency protection: Implement expiration handling
+
+<!-- handsoff-issue-1467 -->
+- #1467: Idempotency protection: Add expiration check in idempotency lookup
