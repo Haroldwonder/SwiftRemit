@@ -909,3 +909,6 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1559 -->
 - #1559: Roadmap: Integration with fiat on/off ramps
+
+<!-- handsoff-issue-1466 -->
+- #1466: Idempotency protection: Implement expiration handling
