@@ -909,3 +909,6 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1559 -->
 - #1559: Roadmap: Integration with fiat on/off ramps
+
+<!-- handsoff-issue-1465 -->
+- #1465: Idempotency protection: Write unit tests for idempotency scenarios
