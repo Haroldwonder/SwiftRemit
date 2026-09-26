@@ -8,6 +8,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "backend/src/__tests__/fee-calculation-property.test.ts"
+      - "backend/src/__tests__/idempotency-property.test.ts"
       - "backend/package.json"
       - ".github/workflows/property-tests.yml"
   pull_request:
@@ -17,6 +18,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "backend/src/__tests__/fee-calculation-property.test.ts"
+      - "backend/src/__tests__/idempotency-property.test.ts"
       - "backend/package.json"
       - ".github/workflows/property-tests.yml"
 
@@ -86,3 +88,30 @@ jobs:
           # fast-check numRuns is configured inline in the test file; this env
           # var is exposed so tests can override the count if needed.
           FC_NUM_RUNS: "100000"
+
+  # ── TypeScript fast-check idempotency invariants ────────────────────────────
+  typescript-idempotency-property-tests:
+    name: TypeScript Idempotency Property Tests (fast-check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+        working-directory: .
+
+      - name: Run fast-check idempotency property tests
+        run: npx vitest run src/__tests__/idempotency-property.test.ts --reporter=verbose
+        env:
+          # fast-check numRuns is configured inline in the test file; this env
+          # var is exposed so tests can override the count if needed.
+          FC_NUM_RUNS: "1000"
