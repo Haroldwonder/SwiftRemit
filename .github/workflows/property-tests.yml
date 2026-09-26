@@ -62,6 +62,33 @@ jobs:
       - name: Run state machine property tests
         run: cargo test test_state_machine_property -- --nocapture
 
+  # ── Rust proptest idempotency conflict detection ────────────────────────────
+  rust-idempotency-property-tests:
+    name: Rust Idempotency Property Tests (conflict detection)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-proptest-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run idempotency conflict detection property tests
+        run: cargo test --features legacy-tests test_idempotency_conflict_property -- --nocapture
+
   # ── TypeScript fast-check fee invariants ────────────────────────────────────
   typescript-fee-property-tests:
     name: TypeScript Fee Property Tests (fast-check, 100k runs)
