@@ -161,6 +161,31 @@ pub fn get_idempotency_ttl(store: &IdempotencyStore) -> Duration {
 mod tests {
     use super::*;
 
+    /// Minimal deterministic PRNG so the property test does not depend on an
+    /// external crate. Uses a SplitMix64-style generator.
+    struct Rng(u64);
+
+    impl Rng {
+        fn new(seed: u64) -> Self {
+            Rng(seed)
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+
+        /// Returns a value in `[low, high]` (inclusive).
+        fn range(&mut self, low: u64, high: u64) -> u64 {
+            debug_assert!(low <= high);
+            let span = high - low + 1;
+            low + (self.next_u64() % span)
+        }
+    }
+
     #[test]
     fn default_ttl_is_used_on_new_store() {
         let store = IdempotencyStore::new();
@@ -211,5 +236,77 @@ mod tests {
         }
         set_idempotency_ttl(&store, MIN_TTL_SECONDS).expect("valid ttl");
         assert!(store.get("key-1").is_none());
+    }
+
+    /// Property test (task 6.3): a record's expiration timestamp is exactly
+    /// `created_at + ttl`. For any generated age and TTL, the record must be
+    /// reported as expired if and only if its age strictly exceeds the TTL.
+    #[test]
+    fn prop_expiration_timestamp_matches_created_at_plus_ttl() {
+        let mut rng = Rng::new(0x1234_5678_9ABC_DEF0);
+
+        for _ in 0..1000 {
+            // Generate an age in seconds and a TTL in seconds.
+            let age_secs = rng.range(0, 10 * 24 * 60 * 60);
+            let ttl_secs = rng.range(0, 10 * 24 * 60 * 60);
+            let ttl = Duration::from_secs(ttl_secs);
+
+            // Build a record whose created_at is `age_secs` in the past.
+            let created_at = SystemTime::now()
+                .checked_sub(Duration::from_secs(age_secs))
+                .expect("now minus age is representable");
+            let record = IdempotencyRecord {
+                response: "response".to_string(),
+                created_at,
+            };
+
+            // The expiration timestamp is created_at + ttl; the record is
+            // expired iff the current time is past that timestamp, i.e. iff
+            // the elapsed age strictly exceeds the TTL.
+            let expected_expired = age_secs > ttl_secs;
+            assert_eq!(
+                record.is_expired(ttl),
+                expected_expired,
+                "age={}s ttl={}s: expiration timestamp must be created_at + ttl",
+                age_secs,
+                ttl_secs
+            );
+        }
+    }
+
+    /// Property test (task 6.3): the store honors the expiration timestamp.
+    /// A record is retrievable exactly while its age does not exceed the TTL,
+    /// and is dropped once the TTL has elapsed.
+    #[test]
+    fn prop_store_respects_expiration_timestamp() {
+        let mut rng = Rng::new(0xDEAD_BEEF_CAFE_F00D);
+
+        for _ in 0..500 {
+            let age_secs = rng.range(0, 10 * 24 * 60 * 60);
+            let ttl_secs = rng.range(0, 10 * 24 * 60 * 60);
+
+            let store = IdempotencyStore::new();
+            store.put("key", "response".to_string());
+            {
+                let mut records = store.records.lock().unwrap();
+                let record = records.get_mut("key").expect("record was just inserted");
+                record.created_at = SystemTime::now()
+                    .checked_sub(Duration::from_secs(age_secs))
+                    .expect("now minus age is representable");
+            }
+            {
+                let mut ttl = store.ttl.lock().unwrap();
+                *ttl = Duration::from_secs(ttl_secs);
+            }
+
+            let expected_present = age_secs <= ttl_secs;
+            assert_eq!(
+                store.get("key").is_some(),
+                expected_present,
+                "age={}s ttl={}s: store must honor the expiration timestamp",
+                age_secs,
+                ttl_secs
+            );
+        }
     }
 }
