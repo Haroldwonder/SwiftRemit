@@ -909,3 +909,6 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1559 -->
 - #1559: Roadmap: Integration with fiat on/off ramps
+
+<!-- handsoff-issue-1458 -->
+- #1458: Idempotency protection: Modify create_remittance function for idempotency
