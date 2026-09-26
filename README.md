@@ -912,3 +912,6 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1473 -->
 - #1473: Idempotency protection: Write property test for key acceptance
+
+<!-- handsoff-issue-1476 -->
+- #1476: Idempotency protection: Write unit tests for backward compatibility
