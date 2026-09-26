@@ -9,6 +9,7 @@ on:
       - "Cargo.lock"
       - "backend/src/__tests__/fee-calculation-property.test.ts"
       - "backend/src/__tests__/idempotency-property.test.ts"
+      - "backend/src/__tests__/idempotency-hash-sensitivity.test.ts"
       - "backend/package.json"
       - ".github/workflows/property-tests.yml"
   pull_request:
@@ -19,6 +20,7 @@ on:
       - "Cargo.lock"
       - "backend/src/__tests__/fee-calculation-property.test.ts"
       - "backend/src/__tests__/idempotency-property.test.ts"
+      - "backend/src/__tests__/idempotency-hash-sensitivity.test.ts"
       - "backend/package.json"
       - ".github/workflows/property-tests.yml"
 
@@ -89,6 +91,9 @@ jobs:
       - name: Run idempotency conflict detection property tests
         run: cargo test --features legacy-tests test_idempotency_conflict_property -- --nocapture
 
+      - name: Run idempotency hash sensitivity property tests
+        run: cargo test --features legacy-tests test_idempotency_hash_sensitivity_property -- --nocapture
+
   # ── TypeScript fast-check fee invariants ────────────────────────────────────
   typescript-fee-property-tests:
     name: TypeScript Fee Property Tests (fast-check, 100k runs)
@@ -138,6 +143,13 @@ jobs:
 
       - name: Run fast-check idempotency property tests
         run: npx vitest run src/__tests__/idempotency-property.test.ts --reporter=verbose
+        env:
+          # fast-check numRuns is configured inline in the test file; this env
+          # var is exposed so tests can override the count if needed.
+          FC_NUM_RUNS: "1000"
+
+      - name: Run fast-check idempotency hash sensitivity property tests
+        run: npx vitest run src/__tests__/idempotency-hash-sensitivity.test.ts --reporter=verbose
         env:
           # fast-check numRuns is configured inline in the test file; this env
           # var is exposed so tests can override the count if needed.
