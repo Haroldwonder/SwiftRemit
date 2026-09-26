@@ -918,3 +918,6 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1468 -->
 - #1468: Idempotency protection: Write property test for expired key behavior
+
+<!-- handsoff-issue-1478 -->
+- #1478: Idempotency protection: Implement set_idempotency_ttl admin function
