@@ -912,3 +912,9 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1461 -->
 - #1461: Idempotency protection: Implement idempotency record storage
+
+<!-- handsoff-issue-1481 -->
+- #1481: Off-chain proof validation: Create `SettlementConfig` struct in `src/types.rs` with fields: `require_proof: bool`, `oracle_address: Option<Address>`
+
+<!-- handsoff-issue-1482 -->
+- #1482: Off-chain proof validation: Add `settlement_config: Option<SettlementConfig>` field to `Remittance` struct in `src/types.rs`

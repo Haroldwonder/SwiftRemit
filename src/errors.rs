@@ -204,6 +204,10 @@ pub enum ContractError {
 
     /// Settlement counter overflow.
     /// Cause: Settlement counter would exceed u64::MAX.
-    SettlementCounterO
+    SettlementCounterOverflow = 40,
 
-/* … truncated 72 chars — edit only what you need near the top … */
+    /// Off-chain proof validation failed.
+    /// Cause: The provided off-chain/oracle proof is missing, malformed, or does not
+    /// satisfy the required verification conditions for settlement.
+    InvalidProof = 24,
+}
