@@ -915,3 +915,6 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1467 -->
 - #1467: Idempotency protection: Add expiration check in idempotency lookup
+
+<!-- handsoff-issue-1468 -->
+- #1468: Idempotency protection: Write property test for expired key behavior
