@@ -910,11 +910,11 @@ and genuinely pending work.
 <!-- handsoff-issue-1559 -->
 - #1559: Roadmap: Integration with fiat on/off ramps
 
-<!-- handsoff-issue-1466 -->
-- #1466: Idempotency protection: Implement expiration handling
+<!-- handsoff-issue-1458 -->
+- #1458: Idempotency protection: Modify create_remittance function for idempotency
 
-<!-- handsoff-issue-1467 -->
-- #1467: Idempotency protection: Add expiration check in idempotency lookup
+<!-- handsoff-issue-1459 -->
+- #1459: Idempotency protection: Add idempotency_key parameter
 
 <!-- handsoff-issue-1468 -->
 - #1468: Idempotency protection: Write property test for expired key behavior
