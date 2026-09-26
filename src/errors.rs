@@ -206,4 +206,4 @@ pub enum ContractError {
     /// Cause: Settlement counter would exceed u64::MAX.
     SettlementCounterO
 
-/* … truncated 5292 chars — edit only what you need near the top … */
+/* … truncated 72 chars — edit only what you need near the top … */
