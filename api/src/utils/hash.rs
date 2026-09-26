@@ -15,6 +15,23 @@ pub fn compute_request_hash<T: Serialize>(request: &T) -> String {
     hex_encode(&digest)
 }
 
+/// Computes the idempotency hash for a `create_remittance` request.
+///
+/// Combines the caller-supplied idempotency key with the canonical hash of the
+/// request payload so that retries carrying the same key and the same payload
+/// resolve to the same value, while a reused key with a different payload does
+/// not collide. This is the value used to detect duplicate remittance
+/// submissions.
+pub fn compute_idempotency_hash<T: Serialize>(idempotency_key: &str, request: &T) -> String {
+    let request_hash = compute_request_hash(request);
+    let mut hasher = Sha256::new();
+    hasher.update(idempotency_key.as_bytes());
+    hasher.update(b":");
+    hasher.update(request_hash.as_bytes());
+    let digest = hasher.finalize();
+    hex_encode(&digest)
+}
+
 /// Serializes a value into a canonical JSON string with object keys sorted
 /// recursively, ensuring a stable byte representation regardless of the
 /// original field ordering.
@@ -108,5 +125,54 @@ mod tests {
             "amount": 100
         });
         assert_eq!(compute_request_hash(&a), compute_request_hash(&b));
+    }
+
+    #[test]
+    fn same_key_and_payload_produce_identical_idempotency_hashes() {
+        let a = Sample {
+            amount: 100,
+            currency: "USD".to_string(),
+            recipient: "acct_123".to_string(),
+        };
+        let b = Sample {
+            amount: 100,
+            currency: "USD".to_string(),
+            recipient: "acct_123".to_string(),
+        };
+        assert_eq!(
+            compute_idempotency_hash("key-1", &a),
+            compute_idempotency_hash("key-1", &b)
+        );
+    }
+
+    #[test]
+    fn different_keys_produce_different_idempotency_hashes() {
+        let a = Sample {
+            amount: 100,
+            currency: "USD".to_string(),
+            recipient: "acct_123".to_string(),
+        };
+        assert_ne!(
+            compute_idempotency_hash("key-1", &a),
+            compute_idempotency_hash("key-2", &a)
+        );
+    }
+
+    #[test]
+    fn same_key_with_different_payload_produces_different_idempotency_hashes() {
+        let a = Sample {
+            amount: 100,
+            currency: "USD".to_string(),
+            recipient: "acct_123".to_string(),
+        };
+        let b = Sample {
+            amount: 101,
+            currency: "USD".to_string(),
+            recipient: "acct_123".to_string(),
+        };
+        assert_ne!(
+            compute_idempotency_hash("key-1", &a),
+            compute_idempotency_hash("key-1", &b)
+        );
     }
 }
