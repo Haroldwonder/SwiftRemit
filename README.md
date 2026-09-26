@@ -912,3 +912,9 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1461 -->
 - #1461: Idempotency protection: Implement idempotency record storage
+
+<!-- handsoff-issue-1451 -->
+- #1451: Idempotency protection: Implement storage helper functions
+
+<!-- handsoff-issue-1452 -->
+- #1452: Idempotency protection: Write property test for storage functions
