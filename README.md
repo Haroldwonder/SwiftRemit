@@ -912,3 +912,6 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1458 -->
 - #1458: Idempotency protection: Modify create_remittance function for idempotency
+
+<!-- handsoff-issue-1459 -->
+- #1459: Idempotency protection: Add idempotency_key parameter
