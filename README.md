@@ -915,3 +915,6 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1459 -->
 - #1459: Idempotency protection: Add idempotency_key parameter
+
+<!-- handsoff-issue-1460 -->
+- #1460: Idempotency protection: Implement idempotency check logic
