@@ -28,13 +28,13 @@
   },
   "dependencies": {
     "@swiftremit/sdk": "*",
-    "typedoc-plugin-markdown": "^4.13.0"
+    "typedoc-plugin-markdown": "^4.13.1"
   },
   "devDependencies": {
     "@stellar/stellar-sdk": "^13.0.0",
     "@types/jest": "^29.5.12",
     "@types/react": "^18.0.0",
-    "@types/react-native": "^0.72.0",
+    "@types/react-native": "^0.73.0",
     "typescript": "^5.8.3"
   }
 }
