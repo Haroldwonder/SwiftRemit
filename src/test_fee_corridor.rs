@@ -147,6 +147,7 @@ fn test_create_remittance_uses_corridor_fee() {
     let id = contract.create_remittance_with_corridor(
         &sender, &agent, &10_000, &None,
         &Some(s(&env, "US")), &Some(s(&env, "MX")),
+        &None,
     );
     // Corridor fee: 5% of 10_000 = 500
     assert_eq!(contract.get_remittance(&id).fee, 500);
@@ -165,7 +166,7 @@ fn test_create_remittance_falls_back_to_global_fee_without_corridor() {
 
     // No corridor set, global strategy: 2.5%
     let id = contract.create_remittance_with_corridor(
-        &sender, &agent, &10_000, &None, &None, &None,
+        &sender, &agent, &10_000, &None, &None, &None, &None,
     );
     // Global fee: 2.5% of 10_000 = 250
     assert_eq!(contract.get_remittance(&id).fee, 250);
@@ -186,6 +187,7 @@ fn test_create_remittance_falls_back_when_corridor_not_configured() {
     let id = contract.create_remittance_with_corridor(
         &sender, &agent, &10_000, &None,
         &Some(s(&env, "US")), &Some(s(&env, "NG")),
+        &None,
     );
     // Falls back to global 2.5%
     assert_eq!(contract.get_remittance(&id).fee, 250);
