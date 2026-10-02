@@ -590,6 +590,7 @@ impl SwiftRemitContract {
             amount,
         )?;
 
+        // Task 4.2: Validate that if settlement_config.require_proof is true, then oracle_address must be Some(Address)
         // Validate settlement config
         if let Some(ref config) = settlement_config {
             if config.require_proof && config.oracle_address.is_none() {
