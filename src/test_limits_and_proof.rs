@@ -108,8 +108,14 @@ fn test_confirm_payout_valid_commitment_proof() {
         &None,
     );
 
-    let remittance = contract.get_remittance(&remittance_id);
-    let proof = crate::verification::compute_payout_commitment(&env, &remittance);
+    // #1497: construct a valid ProofData signed by the oracle (admin)
+    let payload = soroban_sdk::Bytes::from_slice(&env, b"valid-settlement-proof");
+    let signature = crate::verification::compute_proof_signature(&env, &admin, &payload);
+    let proof = crate::types::ProofData {
+        signature,
+        payload,
+        signer: admin.clone(),
+    };
 
     contract.confirm_payout(&remittance_id, &Some(proof), &None);
 }
@@ -137,7 +143,14 @@ fn test_confirm_payout_invalid_commitment_proof() {
         &None,
     );
 
-    let bad_proof = soroban_sdk::BytesN::from_array(&env, &[7u8; 32]);
+    // #1497: invalid ProofData — wrong signer causes verify_proof to return false
+    let bad_signature = soroban_sdk::BytesN::from_array(&env, &[7u8; 64]);
+    let bad_payload = soroban_sdk::Bytes::from_slice(&env, b"bad");
+    let bad_proof = crate::types::ProofData {
+        signature: bad_signature,
+        payload: bad_payload,
+        signer: soroban_sdk::Address::generate(&env), // not the oracle
+    };
     let result = contract.try_confirm_payout(&remittance_id, &Some(bad_proof), &None);
     assert_eq!(result.unwrap_err().unwrap(), ContractError::InvalidProof);
 }
@@ -446,7 +459,14 @@ fn test_proof_validation_rejected_before_rate_limit_consumed() {
     let (requests_before, max_req, window) = contract.get_rate_limit_status(&agent);
 
     // Submit an invalid proof — should be rejected with InvalidProof.
-    let bad_proof = soroban_sdk::BytesN::from_array(&env, &[0xddu8; 32]);
+    // #1497: invalid ProofData with wrong signer
+    let bad_signature = soroban_sdk::BytesN::from_array(&env, &[0xddu8; 64]);
+    let bad_payload = soroban_sdk::Bytes::from_slice(&env, b"bad");
+    let bad_proof = crate::types::ProofData {
+        signature: bad_signature,
+        payload: bad_payload,
+        signer: soroban_sdk::Address::generate(&env), // not the oracle
+    };
     let result = contract.try_confirm_payout(&remittance_id, &Some(bad_proof), &None);
     assert_eq!(result.unwrap_err().unwrap(), ContractError::InvalidProof);
 
@@ -508,13 +528,24 @@ fn test_valid_proof_still_gated_by_rate_limit() {
     );
 
     // Settle the first remittance — this consumes the one allowed slot.
-    let proof1 =
-        crate::verification::compute_payout_commitment(&env, &contract.get_remittance(&id1));
+    // #1497: construct valid ProofData signed by the oracle (admin)
+    let payload1 = soroban_sdk::Bytes::from_slice(&env, b"settlement-1");
+    let signature1 = crate::verification::compute_proof_signature(&env, &admin, &payload1);
+    let proof1 = crate::types::ProofData {
+        signature: signature1,
+        payload: payload1,
+        signer: admin.clone(),
+    };
     contract.confirm_payout(&id1, &Some(proof1), &None);
 
     // The second call has a valid proof but must be blocked by the rate limiter.
-    let proof2 =
-        crate::verification::compute_payout_commitment(&env, &contract.get_remittance(&id2));
+    let payload2 = soroban_sdk::Bytes::from_slice(&env, b"settlement-2");
+    let signature2 = crate::verification::compute_proof_signature(&env, &admin, &payload2);
+    let proof2 = crate::types::ProofData {
+        signature: signature2,
+        payload: payload2,
+        signer: admin.clone(),
+    };
     let result = contract.try_confirm_payout(&id2, &Some(proof2), &None);
     assert!(
         result.is_err(),
@@ -593,8 +624,14 @@ fn test_multiple_settlement_attempts_with_same_proof_are_rejected() {
         &None,
     );
 
-    let proof =
-        crate::verification::compute_payout_commitment(&env, &contract.get_remittance(&remittance_id));
+    // #1497: construct valid ProofData signed by the oracle (admin)
+    let payload = soroban_sdk::Bytes::from_slice(&env, b"duplicate-proof");
+    let signature = crate::verification::compute_proof_signature(&env, &admin, &payload);
+    let proof = crate::types::ProofData {
+        signature,
+        payload,
+        signer: admin.clone(),
+    };
 
     // First settlement with the valid proof succeeds.
     contract.confirm_payout(&remittance_id, &Some(proof.clone()), &None);
@@ -637,12 +674,25 @@ fn test_duplicate_settlement_blocked_with_different_proof() {
     );
 
     // Settle once with a valid proof.
-    let proof =
-        crate::verification::compute_payout_commitment(&env, &contract.get_remittance(&remittance_id));
+    // #1497: construct valid ProofData signed by the oracle (admin)
+    let payload = soroban_sdk::Bytes::from_slice(&env, b"first-settlement");
+    let signature = crate::verification::compute_proof_signature(&env, &admin, &payload);
+    let proof = crate::types::ProofData {
+        signature,
+        payload,
+        signer: admin.clone(),
+    };
     contract.confirm_payout(&remittance_id, &Some(proof), &None);
 
     // Attempt a second settlement with a completely different proof value.
-    let different_proof = soroban_sdk::BytesN::from_array(&env, &[0xaau8; 32]);
+    // #1497: different ProofData (different signer)
+    let different_signature = soroban_sdk::BytesN::from_array(&env, &[0xaau8; 64]);
+    let different_payload = soroban_sdk::Bytes::from_slice(&env, b"different");
+    let different_proof = crate::types::ProofData {
+        signature: different_signature,
+        payload: different_payload,
+        signer: soroban_sdk::Address::generate(&env),
+    };
     let result = contract.try_confirm_payout(&remittance_id, &Some(different_proof), &None);
     assert_eq!(
         result.unwrap_err().unwrap(),
@@ -679,13 +729,26 @@ fn test_failed_proof_does_not_poison_settlement_slot() {
     );
 
     // First attempt: wrong proof — must fail.
-    let bad_proof = soroban_sdk::BytesN::from_array(&env, &[0x00u8; 32]);
+    // #1497: invalid ProofData with wrong signer
+    let bad_signature = soroban_sdk::BytesN::from_array(&env, &[0x00u8; 64]);
+    let bad_payload = soroban_sdk::Bytes::from_slice(&env, b"bad");
+    let bad_proof = crate::types::ProofData {
+        signature: bad_signature,
+        payload: bad_payload,
+        signer: soroban_sdk::Address::generate(&env), // not the oracle
+    };
     let bad_result = contract.try_confirm_payout(&remittance_id, &Some(bad_proof), &None);
     assert_eq!(bad_result.unwrap_err().unwrap(), ContractError::InvalidProof);
 
     // Second attempt: correct proof — must succeed (settlement slot is still free).
-    let good_proof =
-        crate::verification::compute_payout_commitment(&env, &contract.get_remittance(&remittance_id));
+    // #1497: construct valid ProofData signed by the oracle (admin)
+    let good_payload = soroban_sdk::Bytes::from_slice(&env, b"good-proof");
+    let good_signature = crate::verification::compute_proof_signature(&env, &admin, &good_payload);
+    let good_proof = crate::types::ProofData {
+        signature: good_signature,
+        payload: good_payload,
+        signer: admin.clone(),
+    };
     contract.confirm_payout(&remittance_id, &Some(good_proof), &None);
     assert_eq!(
         contract.get_remittance(&remittance_id).status,
@@ -747,8 +810,14 @@ fn test_proof_validation_when_contract_is_paused() {
         &None,
     );
 
-    let remittance = contract.get_remittance(&remittance_id);
-    let proof = crate::verification::compute_payout_commitment(&env, &remittance);
+    // #1497: construct valid ProofData signed by the oracle (admin)
+    let payload = soroban_sdk::Bytes::from_slice(&env, b"paused-proof");
+    let signature = crate::verification::compute_proof_signature(&env, &admin, &payload);
+    let proof = crate::types::ProofData {
+        signature,
+        payload,
+        signer: admin.clone(),
+    };
 
     contract.pause();
 
@@ -813,8 +882,14 @@ fn test_proof_validation_paused_contract_rejects_valid_proof() {
     );
 
     // Compute a valid proof while the contract is still active.
-    let proof =
-        crate::verification::compute_payout_commitment(&env, &contract.get_remittance(&remittance_id));
+    // #1497: construct valid ProofData signed by the oracle (admin)
+    let payload = soroban_sdk::Bytes::from_slice(&env, b"pause-reject-proof");
+    let signature = crate::verification::compute_proof_signature(&env, &admin, &payload);
+    let proof = crate::types::ProofData {
+        signature,
+        payload,
+        signer: admin.clone(),
+    };
 
     // Pause the contract.
     contract.pause();
@@ -864,8 +939,14 @@ fn test_proof_validation_resumes_after_unpause() {
     );
 
     // Capture proof before pause.
-    let proof =
-        crate::verification::compute_payout_commitment(&env, &contract.get_remittance(&remittance_id));
+    // #1497: construct valid ProofData signed by the oracle (admin)
+    let payload = soroban_sdk::Bytes::from_slice(&env, b"resume-proof");
+    let signature = crate::verification::compute_proof_signature(&env, &admin, &payload);
+    let proof = crate::types::ProofData {
+        signature,
+        payload,
+        signer: admin.clone(),
+    };
 
     // Pause and immediately unpause (legacy wrappers bypass timelock/quorum).
     contract.pause();

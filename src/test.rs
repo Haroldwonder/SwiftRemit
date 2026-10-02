@@ -6692,8 +6692,14 @@ fn test_settlement_with_valid_proof() {
         &None,
     );
 
-    let remittance = contract.get_remittance(&remittance_id);
-    let proof = crate::verification::compute_payout_commitment(&env, &remittance);
+    // #1497: construct a valid ProofData (signature + payload + signer)
+    let payload = soroban_sdk::Bytes::from_slice(&env, b"settlement-attestation");
+    let signature = crate::verification::compute_proof_signature(&env, &admin, &payload);
+    let proof = crate::types::ProofData {
+        signature,
+        payload,
+        signer: admin.clone(),
+    };
 
     contract.confirm_payout(&remittance_id, &Some(proof), &None);
 
@@ -6740,7 +6746,14 @@ fn test_settlement_with_invalid_proof() {
         &None,
     );
 
-    let invalid_proof = soroban_sdk::BytesN::from_array(&env, &[0x07u8; 32]);
+    // #1497: invalid ProofData — wrong signer causes verify_proof to return false
+    let invalid_signature = soroban_sdk::BytesN::from_array(&env, &[0x07u8; 64]);
+    let invalid_payload = soroban_sdk::Bytes::from_slice(&env, b"bad-payload");
+    let invalid_proof = crate::types::ProofData {
+        signature: invalid_signature,
+        payload: invalid_payload,
+        signer: Address::generate(&env), // wrong signer (not admin/oracle)
+    };
 
     let result =
         contract.try_confirm_payout(&remittance_id, &Some(invalid_proof), &None);
