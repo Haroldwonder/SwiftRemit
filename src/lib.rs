@@ -1003,7 +1003,7 @@ impl SwiftRemitContract {
         env: Env,
         agent: Address,
         remittance_id: u64,
-        proof: Option<soroban_sdk::BytesN<32>>,
+        proof: Option<crate::types::ProofData>,
         recipient_details_hash: Option<BytesN<32>>,
     ) -> Result<(), ContractError> {
         Self::confirm_payout_inner(env, agent, remittance_id, proof, recipient_details_hash, true)
@@ -1021,7 +1021,7 @@ impl SwiftRemitContract {
         env: Env,
         agent: Address,
         remittance_id: u64,
-        proof: Option<soroban_sdk::BytesN<32>>,
+        proof: Option<crate::types::ProofData>,
         recipient_details_hash: Option<BytesN<32>>,
         check_abuse: bool,
     ) -> Result<(), ContractError> {
@@ -1040,31 +1040,38 @@ impl SwiftRemitContract {
         // before any state mutation occurs.
         transaction_controller::TransactionController::pre_confirm_validation(&env, &remittance)?;
 
-        // #1501 / #1502: Validate proof against settlement config if required.
+        // #1501 / #1502 / #1497: Validate proof against settlement config if required.
         // Only remittances whose SettlementConfig has require_proof=true are
         // gated here; all other remittances (MaybeSettlementConfig::None, or
         // require_proof=false) pass through unchanged — preserving backward
         // compatibility for settlements created before proof validation was
         // introduced (#1502).
         //
+        // #1497: proof is now Option<ProofData> (signature + payload + signer).
+        // When ProofData is provided, validation uses verification::verify_proof
+        // which checks signer match, payload non-emptiness, and signature
+        // validity against the configured oracle address.
+        //
         // When require_proof is true:
         //   - Missing proof  → ContractError::MissingProof
         //   - Invalid proof  → ContractError::InvalidProof  (#1501)
-        //   - No stored commitment (pre-validation remittance) → accepted (#1502)
+        //   - Invalid oracle address in config → ContractError::InvalidOracleAddress
         if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
             if config.require_proof {
                 match proof {
                     None => return Err(ContractError::MissingProof),
-                    Some(ref submitted) => {
-                        let expected = get_payout_commitment(&env, remittance_id);
-                        if let Some(ref expected_hash) = expected {
-                            // #1501: verify_proof_commitment returns false → InvalidProof
-                            if !verification::verify_proof_commitment(submitted, expected_hash) {
-                                return Err(ContractError::InvalidProof);
-                            }
+                    Some(ref submitted_proof) => {
+                        // #1497: Use verification::verify_proof for ProofData
+                        // validation instead of the old commitment hash comparison.
+                        let expected_signer = config
+                            .oracle_address
+                            .as_ref()
+                            .ok_or(ContractError::InvalidOracleAddress)?;
+                        match verification::verify_proof(&env, submitted_proof, expected_signer) {
+                            Ok(true) => {}
+                            Ok(false) => return Err(ContractError::InvalidProof),
+                            Err(e) => return Err(e),
                         }
-                        // #1502: no commitment stored → pre-dates proof validation;
-                        // accept to maintain backward compatibility.
                     }
                 }
             }
