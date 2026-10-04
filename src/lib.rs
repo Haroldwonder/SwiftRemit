@@ -701,6 +701,24 @@ impl SwiftRemitContract {
         Ok(remittance_id)
     }
 
+    /// Alias for create_remittance to satisfy legacy/external interfaces
+    pub fn create_settlement(
+        env: Env,
+        sender: Address,
+        agent: Address,
+        amount: i128,
+        expiry: Option<u64>,
+        token: Option<Address>,
+        idempotency_key: Option<String>,
+        settlement_config: Option<SettlementConfig>,
+        recipient_hash: Option<BytesN<32>>,
+        integrator: Option<Address>,
+    ) -> Result<u64, ContractError> {
+        Self::create_remittance(
+            env, sender, agent, amount, expiry, token, idempotency_key, settlement_config, recipient_hash, integrator
+        )
+    }
+
     /// Creates a remittance using corridor-specific fees when available.
     ///
     /// If a corridor is configured for the given country pair, its fee strategy
@@ -713,6 +731,7 @@ impl SwiftRemitContract {
         expiry: Option<u64>,
         from_country: Option<String>,
         to_country: Option<String>,
+        settlement_config: Option<SettlementConfig>,
     ) -> Result<u64, ContractError> {
         // SR-128: Block while a migration is in progress (parity with create_remittance).
         if crate::storage::is_migration_in_progress(&env) {
@@ -747,6 +766,13 @@ impl SwiftRemitContract {
             &limit_country,
             amount,
         )?;
+
+        // Validate settlement config
+        if let Some(ref config) = settlement_config {
+            if config.require_proof && config.oracle_address.is_none() {
+                return Err(ContractError::InvalidOracleAddress);
+            }
+        }
 
         let corridor = match (&from_country, &to_country) {
             (Some(from), Some(to)) => storage::get_fee_corridor(&env, from, to),
@@ -783,7 +809,7 @@ impl SwiftRemitContract {
             fee,
             status: RemittanceStatus::Pending,
             expiry,
-            settlement_config: crate::MaybeSettlementConfig::None,
+            settlement_config: settlement_config.into(),
             token: usdc_token.clone(),
             created_at: corridor_created_at,
             failed_at: None,
