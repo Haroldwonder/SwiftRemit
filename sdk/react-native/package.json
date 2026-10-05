@@ -4,7 +4,11 @@
   "description": "React Native wrapper for the SwiftRemit TypeScript SDK",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "src", "CHANGELOG.md"],
+  "files": [
+    "dist",
+    "src",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "jest"
@@ -28,6 +32,7 @@
   },
   "dependencies": {
     "@swiftremit/sdk": "*",
+    "@types/node": "^26.6.4",
     "typedoc-plugin-markdown": "^4.13.0"
   },
   "devDependencies": {
