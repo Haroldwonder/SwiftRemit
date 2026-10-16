@@ -1,9 +1,15 @@
 /**
  * Agent registration and management endpoints (Issue #880, SR-158, SR-159).
  *
+<<<<<<< HEAD
  * POST /api/agents                     - Register agent (admin approval; admin API key or admin JWT required)
  * GET  /api/agents/:id                 - Get agent profile (auth required; payout_address restricted to owner/admin)
  * PUT  /api/agents/:id/payout-address  - Update payout address (admin API key or admin JWT required)
+=======
+ * POST /api/agents                     - Register agent (admin API key or admin/agent JWT)
+ * GET  /api/agents/:id                 - Get agent profile (auth required; payout_address restricted to owner/admin)
+ * PUT  /api/agents/:id/payout-address  - Update payout address (admin API key or admin/agent JWT)
+>>>>>>> 6f033701 (docs(api): align agents OpenAPI spec and auth matrix with JWT and API key guards (#1710))
  */
 
 import { Router, Request, Response } from 'express';

@@ -13,7 +13,9 @@ import yaml from 'js-yaml';
 import request from 'supertest';
 import { createApp } from '../app';
 import { initializeCurrencyConfig } from '../config';
-import { Application } from 'express';
+import express, { Application } from 'express';
+import { createAgentsRouter, InMemoryAgentStore } from '../routes/agents';
+import { bearer, useTestJwtSecret } from './helpers/authTestUtils';
 
 const OPENAPI_PATH = join(__dirname, '../../openapi.yaml');
 
@@ -56,11 +58,26 @@ describe('OpenAPI spec — structural validity (Issue #881)', () => {
     }
   });
 
-  it('has ApiKeyAuth security scheme', () => {
+  it('has ApiKeyAuth and BearerAuth security schemes', () => {
     const schemes = (spec.components as any).securitySchemes;
     expect(schemes.ApiKeyAuth).toBeDefined();
     expect(schemes.ApiKeyAuth.type).toBe('apiKey');
     expect(schemes.ApiKeyAuth.name).toBe('x-api-key');
+    expect(schemes.BearerAuth).toBeDefined();
+    expect(schemes.BearerAuth.type).toBe('http');
+    expect(schemes.BearerAuth.scheme).toBe('bearer');
+  });
+
+  it('documents both ApiKeyAuth and BearerAuth on POST /api/agents and PUT /api/agents/{id}/payout-address', () => {
+    const paths = (spec as any).paths as Record<string, any>;
+    expect(paths['/api/agents'].post.security).toEqual([
+      { ApiKeyAuth: [] },
+      { BearerAuth: [] },
+    ]);
+    expect(paths['/api/agents/{id}/payout-address'].put.security).toEqual([
+      { ApiKeyAuth: [] },
+      { BearerAuth: [] },
+    ]);
   });
 
   it('documents all required paths', () => {
@@ -211,3 +228,56 @@ describe('OpenAPI spec — route existence against live app (Issue #881)', () =>
     expect(res.status).toBe(401);
   });
 });
+
+describe('Agents router — OpenAPI auth alignment (Issue #1710)', () => {
+  const VALID_ADDRESS = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
+
+  it('accepts x-api-key, agent JWT, and admin JWT while rejecting user JWT on POST /api/agents and PUT /api/agents/:id/payout-address', async () => {
+    useTestJwtSecret();
+    process.env.ADMIN_API_KEY = 'test-admin-key';
+    const store = new InMemoryAgentStore();
+    const routerApp = express();
+    routerApp.use(express.json());
+    routerApp.use('/api/agents', createAgentsRouter({ store }));
+
+    const userPost = await request(routerApp)
+      .post('/api/agents')
+      .set('Authorization', bearer('user-1', { role: 'user' }))
+      .send({ stellar_address: VALID_ADDRESS, payout_address: 'addr1', name: 'Agent' });
+    expect(userPost.status).toBe(401);
+
+    const agentPost = await request(routerApp)
+      .post('/api/agents')
+      .set('Authorization', bearer(VALID_ADDRESS, { role: 'agent' }))
+      .send({ stellar_address: VALID_ADDRESS, payout_address: 'addr1', name: 'Agent' });
+    expect(agentPost.status).toBe(201);
+
+    const userPut = await request(routerApp)
+      .put(`/api/agents/${VALID_ADDRESS}/payout-address`)
+      .set('Authorization', bearer('user-1', { role: 'user' }))
+      .send({ payout_address: 'bad' });
+    expect(userPut.status).toBe(401);
+
+    const agentPut = await request(routerApp)
+      .put(`/api/agents/${VALID_ADDRESS}/payout-address`)
+      .set('Authorization', bearer(VALID_ADDRESS, { role: 'agent' }))
+      .send({ payout_address: 'agent-payout' });
+    expect(agentPut.status).toBe(200);
+    expect(agentPut.body.data.payout_address).toBe('agent-payout');
+
+    const adminPut = await request(routerApp)
+      .put(`/api/agents/${VALID_ADDRESS}/payout-address`)
+      .set('Authorization', bearer('admin-1', { role: 'admin' }))
+      .send({ payout_address: 'admin-payout' });
+    expect(adminPut.status).toBe(200);
+    expect(adminPut.body.data.payout_address).toBe('admin-payout');
+
+    const apiKeyPut = await request(routerApp)
+      .put(`/api/agents/${VALID_ADDRESS}/payout-address`)
+      .set('x-api-key', 'test-admin-key')
+      .send({ payout_address: 'apikey-payout' });
+    expect(apiKeyPut.status).toBe(200);
+    expect(apiKeyPut.body.data.payout_address).toBe('apikey-payout');
+  });
+});
+
