@@ -4,7 +4,11 @@
   "description": "React Native wrapper for the SwiftRemit TypeScript SDK",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "src", "CHANGELOG.md"],
+  "files": [
+    "dist",
+    "src",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "jest"
@@ -24,11 +28,11 @@
   "peerDependencies": {
     "@stellar/stellar-sdk": ">=14.0.0",
     "react": ">=18.0.0",
-    "react-native": "^0.87.1"
+    "react-native": "^0.88.0"
   },
   "dependencies": {
     "@swiftremit/sdk": "*",
-    "typedoc-plugin-markdown": "^4.13.0"
+    "typedoc-plugin-markdown": "^4.14.0"
   },
   "devDependencies": {
     "@stellar/stellar-sdk": "^13.0.0",
