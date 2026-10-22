@@ -1051,6 +1051,12 @@ pub fn get_daily_limit(env: &Env, currency: &String, country: &String) -> Option
         .get(&DataKey::DailyLimit(currency.clone(), country.clone()))
 }
 
+pub fn remove_daily_limit(env: &Env, currency: &String, country: &String) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::DailyLimit(currency.clone(), country.clone()));
+}
+
 pub fn get_user_transfers(env: &Env, user: &Address) -> Vec<TransferRecord> {
     env.storage()
         .persistent()

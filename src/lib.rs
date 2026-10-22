@@ -2622,6 +2622,21 @@ impl SwiftRemitContract {
         Ok(())
     }
 
+    /// Removes a configured daily send limit for a currency/country pair (admin only) (#1659).
+    pub fn remove_daily_limit(
+        env: Env,
+        currency: String,
+        country: String,
+    ) -> Result<(), ContractError> {
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+        let old_limit = crate::storage::get_daily_limit(&env, &currency, &country)
+            .map(|cfg| cfg.limit);
+        crate::storage::remove_daily_limit(&env, &currency, &country);
+        crate::events::emit_daily_limit_updated(&env, currency, country, old_limit, 0, admin);
+        Ok(())
+    }
+
     /// Set the maximum batch size for process_expired_remittances (admin only).
     ///
     /// # Arguments
