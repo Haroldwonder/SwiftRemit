@@ -755,9 +755,11 @@ impl SwiftRemitContract {
         sender.require_auth();
 
         let limit_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
-        let limit_country = to_country
-            .clone()
-            .unwrap_or_else(|| String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY));
+        let default_country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
+        let limit_country = to_country.clone().unwrap_or_else(|| default_country.clone());
+        if limit_country != default_country {
+            enforce_daily_send_limit(&env, &sender, &limit_currency, &default_country, amount)?;
+        }
         enforce_daily_send_limit(&env, &sender, &limit_currency, &limit_country, amount)?;
 
         // SR-128: Enforce corridor/global volume cap (parity with create_remittance).
