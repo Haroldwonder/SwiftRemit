@@ -1083,12 +1083,8 @@ impl SwiftRemitContract {
         // Require Settler role
         require_role_settler(&env, &remittance.agent)?;
 
-        // Fix #379: Optimistic lock — atomically claim this settlement before any token
-        // transfer. A second concurrent call will find the hash already set and fail with
-        // DuplicateSettlement, preventing double-payout.
-        if has_settlement_hash(&env, remittance_id) {
-            return Err(ContractError::DuplicateSettlement);
-        }
+        // Fix #379 & #1685: validate_confirm_payout_request already verified
+        // validate_no_duplicate_settlement; record the settlement hash once here.
         set_settlement_hash(&env, remittance_id);
         
         // Transition to Processing state
