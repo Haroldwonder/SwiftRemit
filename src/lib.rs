@@ -2718,7 +2718,6 @@ impl SwiftRemitContract {
         extend_by_ledgers: u32,
     ) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
-        caller.require_auth();
         crate::storage::extend_critical_ttls(&env, extend_by_ledgers);
         Ok(())
     }
