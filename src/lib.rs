@@ -1987,11 +1987,13 @@ impl SwiftRemitContract {
                 &remittance.amount,
             );
 
+            let refunded_amount = remittance.amount;
             crate::transitions::transition_status(
                 &env,
                 &mut remittance,
                 RemittanceStatus::Cancelled,
             )?;
+            remittance.amount = 0;
             set_remittance(&env, remittance_id, &remittance);
 
             emit_remittance_cancelled(
@@ -2000,7 +2002,7 @@ impl SwiftRemitContract {
                 remittance.sender.clone(),
                 remittance.agent.clone(),
                 usdc_token.clone(),
-                remittance.amount,
+                refunded_amount,
             );
             emit_remittance_cancelled_with_reason(
                 &env,
@@ -2008,13 +2010,14 @@ impl SwiftRemitContract {
                 remittance.sender,
                 remittance.agent,
                 usdc_token.clone(),
-                remittance.amount,
+                refunded_amount,
                 String::from_str(&env, "expired"),
             );
 
             if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
                 storage::remove_idempotency_record(&env, &idem_key);
             }
+            transaction_controller::TransactionController::post_cancel_cleanup(&env, remittance_id)?;
 
             processed_ids.push_back(remittance_id);
         }
