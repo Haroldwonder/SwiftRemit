@@ -1183,6 +1183,11 @@ pub fn set_admin_role(env: &Env, address: &Address, is_admin: bool) {
     env.storage()
         .persistent()
         .set(&DataKey::AdminRole(address.clone()), &is_admin);
+    if is_admin {
+        add_admin_to_list(env, address);
+    } else {
+        remove_admin_from_list(env, address);
+    }
 }
 
 pub fn get_admin_count(env: &Env) -> u32 {
