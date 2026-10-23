@@ -910,16 +910,15 @@ impl SwiftRemitContract {
             (Some(from), Some(to)) => storage::get_fee_corridor(&env, from, to),
             _ => None,
         };
+        let usdc_token = get_usdc_token(&env)?;
         let fee = fee_service::calculate_fees_with_breakdown_for_sender(
             &env,
             &sender,
             amount,
-            Some(&get_usdc_token(&env)?),
+            Some(&usdc_token),
             corridor.as_ref(),
         )?
         .platform_fee;
-
-        let usdc_token = get_usdc_token(&env)?;
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&sender, &env.current_contract_address(), &amount);
 
