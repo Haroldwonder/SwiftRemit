@@ -2736,8 +2736,17 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         recipient: Address,
         amount: i128,
     ) -> Result<u64, ContractError> {
+        if crate::storage::is_migration_in_progress(&env) {
+            return Err(ContractError::MigrationInProgress);
+        }
         // #1264: Block new escrow creation while the circuit-breaker is active.
         validate_not_paused(&env)?;
+        if sender == recipient {
+            return Err(ContractError::SelfTransferNotAllowed);
+        }
+        if is_user_blacklisted(&env, &sender) || is_user_blacklisted(&env, &recipient) {
+            return Err(ContractError::UserBlacklisted);
+        }
         sender.require_auth();
 
         if amount <= 0 {
