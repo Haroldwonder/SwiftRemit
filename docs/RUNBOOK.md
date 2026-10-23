@@ -831,3 +831,13 @@ Treat any suspected compromise as confirmed until proven otherwise. Use out-of-b
 | T+2 h | `vote_unpause` to quorum; verify `get_admin_list` and `health()` |
 | T+4 h | Notify users and regulators per compliance requirements |
 | T+24 h | Publish post-mortem (GitHub issue: `incident`, `P0`, `post-mortem`) |
+
+## Pause Policy Matrix (`#1690`)
+
+| Entrypoint | Allowed While Paused | Rationale |
+|---|---|---|
+| `create_remittance` / `create_remittance_with_corridor` | No (`ContractPaused`) | Blocks new fund inflows during incident response |
+| `confirm_payout` / `confirm_partial_payout` | No (`ContractPaused`) | Halts outbound settlement disbursements while paused |
+| `cancel_remittance` | Yes | Allows senders to recover pending escrowed funds safely |
+| `pause` / `unpause` / `extend_storage_ttl` | Yes (Admin) | Emergency administration and storage maintenance |
+| Read-only queries (`get_remittance`, `get_health`, etc.) | Yes | Observability and reconciliation remain active |
