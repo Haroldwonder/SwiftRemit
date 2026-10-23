@@ -4029,7 +4029,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         Self::set_blacklist_status(&env, user, false)
     }
 
-    /// Set user blacklist status (admin only)
+    /// Sets a user's blacklist status (admin only).
     ///
     /// # Deprecated
     /// Thin wrapper over `set_blacklist_status`. Scheduled for removal in the
