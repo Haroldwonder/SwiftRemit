@@ -153,7 +153,7 @@ pub fn validate_create_remittance_request(
     // address validation is required or possible at the contract level.
     validate_amount(amount)?;
     validate_agent_registered(env, agent)?;
-    if is_user_blacklisted(env, sender) {
+    if is_user_blacklisted(env, sender) || is_user_blacklisted(env, agent) {
         return Err(ContractError::UserBlacklisted);
     }
     Ok(())
@@ -170,6 +170,9 @@ pub fn validate_confirm_payout_request(
     // confirm_payout is only valid from Pending (transitions Pending → Processing → Completed)
     if remittance.status != RemittanceStatus::Pending {
         return Err(ContractError::InvalidStatus);
+    }
+    if is_user_blacklisted(env, &remittance.sender) || is_user_blacklisted(env, &remittance.agent) {
+        return Err(ContractError::UserBlacklisted);
     }
     validate_no_duplicate_settlement(env, remittance_id)?;
     validate_settlement_not_expired(env, remittance.expiry)?;
