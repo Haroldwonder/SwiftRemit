@@ -645,16 +645,18 @@ impl SwiftRemitContract {
         sender.require_auth();
 
         // Replay existing requests before enforcing or recording any usage limits.
-        if let Some(ref key) = idempotency_key {
-            if let Some(record) = storage::get_idempotency_record(&env, key) {
-                let request_hash =
-                    hashing::compute_request_hash(&env, &sender, &agent, amount, expiry);
+        let idempotency_ctx = if let Some(key) = idempotency_key {
+            let request_hash = hashing::compute_request_hash(&env, &sender, &agent, amount, expiry);
+            if let Some(record) = storage::get_idempotency_record(&env, &key) {
                 if request_hash != record.request_hash {
                     return Err(ContractError::IdempotencyConflict);
                 }
                 return Ok(record.remittance_id);
             }
-        }
+            Some((key, request_hash))
+        } else {
+            None
+        };
 
         // SR-123: Apply abuse-protection sliding-window rate limit and cooldown for Transfer.
         abuse_protection::check_rate_limit(&env, &sender, ActionType::Transfer)?;
@@ -749,8 +751,7 @@ impl SwiftRemitContract {
         set_transfer_state(&env, remittance_id, RemittanceStatus::Pending)?;
 
         // Store idempotency record if key provided
-        if let Some(key) = idempotency_key {
-            let request_hash = hashing::compute_request_hash(&env, &sender, &agent, amount, expiry);
+        if let Some((key, request_hash)) = idempotency_ctx {
             let ttl = storage::get_idempotency_ttl(&env);
             let expires_at = env
                 .ledger()
