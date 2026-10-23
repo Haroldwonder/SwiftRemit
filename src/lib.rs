@@ -1915,8 +1915,8 @@ impl SwiftRemitContract {
         // SR-123: Record the cancellation action for cooldown tracking.
         record_action(&env, &remittance.sender, ActionType::Cancellation);
 
-        // Event: Remittance cancelled with the amount returned to the sender.
-        // Used by off-chain systems to track cancellations and update transaction status
+        // #1656: Emit the pre-zeroing refunded amount returned to the sender
+        // rather than the zeroed `remittance.amount` field.
         emit_remittance_cancelled(
             &env,
             remittance_id,
