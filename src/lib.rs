@@ -3157,6 +3157,9 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         agent: Address,
         entries: Vec<BatchSettlementEntry>,
     ) -> Result<BatchSettlementResult, ContractError> {
+        if crate::storage::is_migration_in_progress(&env) {
+            return Err(ContractError::MigrationInProgress);
+        }
         if is_paused(&env) {
             return Err(ContractError::ContractPaused);
         }
