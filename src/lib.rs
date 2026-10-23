@@ -1512,9 +1512,8 @@ impl SwiftRemitContract {
 
         let failed_at = remittance.failed_at.ok_or(ContractError::InvalidStatus)?;
         let window = get_dispute_window(&env);
-        // #1650: saturating_add keeps this comparison safe even if `failed_at`
-        // is close to u64::MAX, instead of panicking (overflow checks on) or
-        // wrapping around (overflow checks off).
+        // #1650: Use saturating_add so `failed_at + window` stays bounded at
+        // u64::MAX without panicking or wrapping around.
         if env.ledger().timestamp() > failed_at.saturating_add(window) {
             return Err(ContractError::DisputeWindowExpired);
         }
