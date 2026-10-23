@@ -885,6 +885,10 @@ impl SwiftRemitContract {
 
         sender.require_auth();
 
+        abuse_protection::check_rate_limit(&env, &sender, ActionType::RemittanceCreation)?;
+        check_cooldown(&env, &sender, ActionType::RemittanceCreation)?;
+        record_action(&env, &sender, ActionType::RemittanceCreation);
+
         let limit_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
         let limit_country = to_country
             .clone()
