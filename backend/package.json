@@ -62,7 +62,7 @@
     "@types/csv-stringify": "^1.4.3",
     "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^20.10.0",
+    "@types/node": "^26.6.4",
     "@types/node-cache": "^4.2.5",
     "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.23.1",
