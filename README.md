@@ -176,8 +176,8 @@ The contract exposes 134 public functions from a single `#[contractimpl] impl Sw
 
 | Function | Description | Auth |
 |---|---|---|
-| `create_remittance(sender, agent, amount, integrator, expiry?, token?, idempotency_key?, settlement_config?, recipient_hash?)` | Creates a pending remittance: validates agent/reputation/token whitelist, enforces daily send limit and corridor caps, checks idempotency, records the integrator for fee splitting, and moves funds into escrow | sender auth required |
-| `create_remittance_with_corridor(sender, agent, amount, expiry?, from_country?, to_country?)` | Like `create_remittance`, but applies a country-pair fee corridor if one is configured | sender auth required |
+| `create_remittance(sender, agent, amount, expiry?, token?, idempotency_key?, settlement_config?, recipient_hash?, integrator?)` | Creates a pending remittance: validates agent/reputation/token whitelist, enforces daily send limit and corridor caps, checks idempotency, records the integrator for fee splitting, and moves funds into escrow | sender auth required |
+| `create_remittance_with_corridor(sender, agent, amount, expiry?, from_country?, to_country?, settlement_config?)` | Like `create_remittance`, but applies a country-pair fee corridor if one is configured | sender auth required |
 | `confirm_payout(agent, remittance_id, proof?, recipient_details_hash?)` | Agent confirms payout: transitions Pending → Processing → Completed, pays the agent (minus fees), pays the treasury protocol fee, and locks the settlement hash against double payout | agent auth required (must be the remittance's assigned, registered agent) |
 | `mark_failed(remittance_id)` | Marks the remittance `Failed` while retaining escrow during the sender's dispute window | agent auth required (assigned agent) |
 | `raise_dispute(remittance_id, evidence_hash)` | Sender disputes a remittance in the `Failed` status, within the dispute window | sender auth required |
