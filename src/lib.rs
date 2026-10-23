@@ -3173,11 +3173,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
         // Validate batch size
         let batch_size = entries.len();
-        if batch_size == 0 {
-            return Err(ContractError::InvalidAmount);
-        }
-        if batch_size > MAX_BATCH_SIZE {
-            return Err(ContractError::InvalidAmount);
+        if batch_size == 0 || batch_size > MAX_BATCH_SIZE {
+            return Err(ContractError::InvalidBatchSize);
         }
 
         // SR-122: Validate the caller is either admin or a registered Settler-role agent.
