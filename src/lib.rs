@@ -834,6 +834,9 @@ impl SwiftRemitContract {
     /// # Authorization
     ///
     /// Requires authentication from the `sender` address (`sender.require_auth()`).
+    #[deprecated(
+        note = "use `create_remittance` instead; this alias will be removed in a future release"
+    )]
     pub fn create_settlement(
         env: Env,
         sender: Address,
