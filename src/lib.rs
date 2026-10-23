@@ -3389,7 +3389,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                 storage::remove_idempotency_record(&env, &idem_key);
             }
 
-            // #1666: `payout_amount` previously computed here was never read; removed.
+            // Emit individual remittance completion event (#1666: dead payout_amount removed).
             emit_remittance_completed(&env, remittance.id, remittance.sender, remittance.agent);
 
             settled_ids.push_back(remittance.id);
