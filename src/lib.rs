@@ -3057,9 +3057,13 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         // When nothing has been sent in the window (`used == 0`) the full limit is
         // available, so there is nothing to reset: return 0 rather than a
         // misleading `now + 24h`.
-        let resets_at = match oldest_in_window {
-            Some(oldest) => oldest.saturating_add(DAILY_LIMIT_WINDOW_SECONDS),
-            None => 0,
+        let resets_at = if used == 0 {
+            0
+        } else {
+            match oldest_in_window {
+                Some(oldest) => oldest.saturating_add(DAILY_LIMIT_WINDOW_SECONDS),
+                None => 0,
+            }
         };
 
         (limit, used, remaining, resets_at)
