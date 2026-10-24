@@ -39,7 +39,7 @@ list every role they accept.
 | GET | `/api/remittances` | `requireAuth` + scoping | Non-admins see only rows where they are the agent |
 | GET | `/api/remittances/:id/receipt` | `requireAuth` + `ownership` | Non-admins must be the remittance sender |
 | POST | `/api/agents` | `adminApiKey \|\| agent/admin token` | Audit-logged |
-| GET | `/api/agents/:id` | `public` | Returns only non-sensitive registration data |
+| GET | `/api/agents/:id` | `requireAuth` + scoping | `payout_address` returned only to owner or admin (SR-158) |
 | PUT | `/api/agents/:id/payout-address` | `adminApiKey \|\| agent/admin token` | Redirects money — audit-logged |
 | GET | `/api/agents/:id/reputation` | `public` | Aggregated reputation score and history; no sensitive data |
 | POST | `/api/agents/:id/reputation` | `adminApiKey \|\| agent/admin token` | Records a reputation event — audit-logged |
