@@ -70,6 +70,9 @@ pub const DEFAULT_DISPUTE_WINDOW_SECONDS: u64 = 72 * 3600; // 72 hours
 /// `raise_dispute` can never overflow (#1650).
 pub const MAX_DISPUTE_WINDOW_SECONDS: u64 = 30 * 24 * 60 * 60;
 
+/// Time after which a recorded dispute loss decays by one (30 days).
+pub const DISPUTE_LOSS_DECAY_SECONDS: u64 = 30 * 24 * 60 * 60;
+
 /// How long an admin nomination stays valid before it must be re-issued.
 pub const ADMIN_NOMINATION_EXPIRY_SECONDS: u64 = 48 * 3600;
 
@@ -254,6 +257,10 @@ enum DataKey {
     MinAgentReputation,
     // === Dispute ===
     DisputeWindow,
+    /// Number of disputes an agent has lost (resolved against them), indexed by agent address (persistent storage)
+    AgentDisputesLost(Address),
+    /// Timestamp of the last recorded dispute loss for an agent (persistent storage), used for time decay
+    AgentLastDisputeLossAt(Address),
     // === Partial Payout ===
     DisbursedAmount(u64),
     PartialPayoutHistory(u64),
