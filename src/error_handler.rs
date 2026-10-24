@@ -585,6 +585,12 @@ impl ErrorHandler {
                 ErrorCategory::Validation,
                 ErrorSeverity::Medium,
             ),
+            ContractError::EscrowNotYetExpired => (
+                85,
+                SorobanString::from_str(env, "Escrow refund rejected: lock period has not elapsed"),
+                ErrorCategory::Validation,
+                ErrorSeverity::Low,
+            ),
 
             // ── Arithmetic / extended ─────────────────────────────────────────
             ContractError::Underflow => (

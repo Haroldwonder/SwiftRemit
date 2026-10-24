@@ -330,4 +330,7 @@ pub enum ContractError {
 
     /// Dispute window exceeds the maximum permitted duration.
     DisputeWindowTooLong = 84,
+
+    /// Escrow refund rejected: lock/expiry period has not elapsed yet.
+    EscrowNotYetExpired = 85,
 }

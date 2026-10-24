@@ -2742,6 +2742,24 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         validate_not_paused(&env)?;
         sender.require_auth();
 
+        // #1662: Block during migration to prevent state corruption.
+        if crate::storage::is_migration_in_progress(&env) {
+            return Err(ContractError::MigrationInProgress);
+        }
+
+        // #1662: Blacklisted users must not move funds through escrow.
+        if is_user_blacklisted(&env, &sender) {
+            return Err(ContractError::UserBlacklisted);
+        }
+        if is_user_blacklisted(&env, &recipient) {
+            return Err(ContractError::UserBlacklisted);
+        }
+
+        // #1662: Prevent self-transfers via escrow.
+        if sender == recipient {
+            return Err(ContractError::InvalidAddress);
+        }
+
         if amount <= 0 {
             return Err(ContractError::InvalidAmount);
         }
@@ -2819,6 +2837,19 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
         if escrow.status != EscrowStatus::Pending {
             return Err(ContractError::InvalidEscrowStatus);
+        }
+
+        // #1661: Sender may only reclaim after the escrow has expired.
+        // Without this guard the sender can front-run release_escrow and the
+        // escrow provides no guarantee to the recipient.
+        match escrow.expiry {
+            Some(expiry) => {
+                if env.ledger().timestamp() < expiry {
+                    return Err(ContractError::EscrowNotYetExpired);
+                }
+            }
+            // No TTL configured: treat as permanent lock — admin must release.
+            None => return Err(ContractError::EscrowNotYetExpired),
         }
 
         let usdc_token = get_usdc_token(&env)?;
@@ -3176,10 +3207,10 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         // Validate batch size
         let batch_size = entries.len();
         if batch_size == 0 {
-            return Err(ContractError::InvalidAmount);
+            return Err(ContractError::InvalidBatchSize);
         }
         if batch_size > MAX_BATCH_SIZE {
-            return Err(ContractError::InvalidAmount);
+            return Err(ContractError::InvalidBatchSize);
         }
 
         // SR-122: Validate the caller is either admin or a registered Settler-role agent.
@@ -3289,22 +3320,18 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             current_fees = current_fees
                 .checked_add(transfer.total_fees)
                 .ok_or(ContractError::Overflow)?;
+        }
 
-            // Emit settlement event (using remittance ID from the transfer)
-            // Note: In batch processing, we use the first remittance ID as reference
-            let remittance_id = if i < remittances.len() {
-                remittances.get_unchecked(i).id
-            } else {
-                0
-            };
-            emit_settlement_completed(
-                &env,
-                remittance_id,
-                from,
-                to,
-                usdc_token.clone(),
-                payout_amount,
-            );
+        // #1664: Emit one net_settlement event that lists every participating
+        // remittance ID.  Doing it here (after the net-transfer loop, before the
+        // per-remittance bookkeeping loop) means all IDs are collected and the
+        // event is emitted once per batch rather than once per net-transfer pair.
+        {
+            let mut participating_ids = Vec::new(&env);
+            for k in 0..remittances.len() {
+                participating_ids.push_back(remittances.get_unchecked(k).id);
+            }
+            emit_net_settlement(&env, &participating_ids);
         }
 
         // Write accumulated fees once at the end

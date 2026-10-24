@@ -22,7 +22,7 @@
 //! emit_event!(env, "domain", "action", field1, field2);
 //! ```
 
-use soroban_sdk::{symbol_short, Address, Env, String, Symbol};
+use soroban_sdk::{symbol_short, Address, Env, String, Symbol, Vec};
 
 // ============================================================================
 // Event Schema Version
@@ -686,5 +686,17 @@ pub fn emit_operation_expired(env: &Env, op_id: u64, op_type_tag: u32) {
             op_id,
             op_type_tag,
         ),
+    );
+}
+
+/// Emits a single net_settlement event listing every remittance ID that
+/// participated in a netting batch (#1664).
+///
+/// Off-chain reconciliation systems should consume this event to map net
+/// transfer payouts back to the correct set of remittances.
+pub fn emit_net_settlement(env: &Env, remittance_ids: &Vec<u64>) {
+    env.events().publish(
+        (Symbol::new(env, "net_settlement"),),
+        (remittance_ids.clone(),),
     );
 }
