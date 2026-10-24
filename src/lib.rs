@@ -1258,7 +1258,9 @@ impl SwiftRemitContract {
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         // Check rate limit for sender
-        check_settlement_rate_limit(&env, &remittance.sender)?;
+        if check_abuse {
+            check_settlement_rate_limit(&env, &remittance.sender)?;
+        }
 
         // SR-123: Apply abuse-protection per-action sliding-window rate limit and cooldown
         // for Settlement. This complements the simpler storage::check_settlement_rate_limit
