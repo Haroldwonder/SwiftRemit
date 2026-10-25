@@ -53,6 +53,7 @@ mod test_fee_property;
 mod test_integrator_fees;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_limits_and_proof;
+mod test_issues_1656_1658_1659_1660;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_migration;
 #[cfg(all(test, feature = "legacy-tests"))]
@@ -208,6 +209,54 @@ fn enforce_daily_send_limit(
     set_user_transfers(env, sender, &pruned);
 
     Ok(())
+}
+
+/// Releases a previously recorded transfer amount from the sender's rolling
+/// daily-limit window (#1658).
+///
+/// On cancellation or expiry the funds are returned to the sender, so the
+/// consumed capacity should be returned too. This function removes the
+/// *oldest* matching `TransferRecord` whose `amount`, `currency`, and
+/// `country` match the supplied values — exactly the record that
+/// `enforce_daily_send_limit` appended at creation time.
+///
+/// Records that have already aged out of the window are pruned first, so
+/// stale entries never inflate the released capacity.
+fn release_daily_send_limit(
+    env: &Env,
+    sender: &Address,
+    currency: &String,
+    country: &String,
+    amount: i128,
+) {
+    let now = env.ledger().timestamp();
+    let window_start = now.saturating_sub(DAILY_LIMIT_WINDOW_SECONDS);
+
+    let transfers = get_user_transfers(env, sender);
+    let mut updated = Vec::new(env);
+    let mut released = false;
+
+    for i in 0..transfers.len() {
+        let record = transfers.get_unchecked(i);
+        // Drop records that have aged out of the window regardless.
+        if record.timestamp <= window_start {
+            continue;
+        }
+        // Remove the first matching record to release the capacity.
+        if !released
+            && record.amount == amount
+            && record.currency == *currency
+            && record.country == *country
+        {
+            released = true;
+            continue;
+        }
+        updated.push_back(record);
+    }
+
+    if released {
+        set_user_transfers(env, sender, &updated);
+    }
 }
 
 /// The main SwiftRemit contract for managing cross-border remittances.
@@ -1691,7 +1740,15 @@ impl SwiftRemitContract {
         if seconds > storage::MAX_DISPUTE_WINDOW_SECONDS {
             return Err(ContractError::DisputeWindowTooLong);
         }
+        let old = storage::get_dispute_window(&env);
         storage::set_dispute_window(&env, seconds);
+        crate::events::emit_config_updated(
+            &env,
+            soroban_sdk::symbol_short!("disp_win"),
+            old,
+            seconds,
+            caller,
+        );
         Ok(())
     }
 
@@ -1917,6 +1974,15 @@ impl SwiftRemitContract {
         // SR-123: Record the cancellation action for cooldown tracking.
         record_action(&env, &remittance.sender, ActionType::Cancellation);
 
+        // #1658: Release the consumed daily-limit capacity so a cancelled
+        // remittance does not lock the sender out for the remainder of the
+        // rolling 24-hour window.
+        {
+            let currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
+            let country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
+            release_daily_send_limit(&env, &remittance.sender, &currency, &country, refund_amount);
+        }
+
         // Event: Remittance cancelled with the amount returned to the sender.
         // Used by off-chain systems to track cancellations and update transaction status
         emit_remittance_cancelled(
@@ -1995,6 +2061,13 @@ impl SwiftRemitContract {
                 RemittanceStatus::Cancelled,
             )?;
             set_remittance(&env, remittance_id, &remittance);
+
+            // #1658: Release the expired remittance's daily-limit capacity.
+            {
+                let currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
+                let country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
+                release_daily_send_limit(&env, &remittance.sender, &currency, &country, remittance.amount);
+            }
 
             emit_remittance_cancelled(
                 &env,
@@ -2880,7 +2953,15 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
         validate_escrow_ttl(ttl)?;
+        let old = get_escrow_ttl(&env).unwrap_or(0);
         set_escrow_ttl(&env, ttl);
+        crate::events::emit_config_updated(
+            &env,
+            soroban_sdk::symbol_short!("esc_ttl"),
+            old,
+            ttl,
+            caller,
+        );
         Ok(())
     }
 
@@ -2943,7 +3024,15 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         let admin = get_admin(&env)?;
         admin.require_auth();
 
+        let old = get_rate_limit_cooldown(&env).unwrap_or(0);
         set_rate_limit_cooldown(&env, cooldown_seconds);
+        crate::events::emit_config_updated(
+            &env,
+            soroban_sdk::symbol_short!("rate_lim"),
+            old,
+            cooldown_seconds,
+            admin,
+        );
 
         Ok(())
     }
@@ -3010,6 +3099,29 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         Ok(())
     }
 
+    /// Remove a daily send limit for a currency/country corridor (admin only, #1659).
+    ///
+    /// After this call the corridor is unrestricted — transfers of any amount
+    /// are accepted until a new limit is configured via `set_daily_limit`.
+    ///
+    /// Returns `ContractError::NotFound` when no limit exists for the corridor
+    /// so callers can distinguish a successful removal from a no-op.
+    pub fn remove_daily_limit(
+        env: Env,
+        currency: String,
+        country: String,
+    ) -> Result<(), ContractError> {
+        let admin = get_admin(&env)?;
+        admin.require_auth();
+
+        let old_limit = crate::storage::get_daily_limit(&env, &currency, &country)
+            .ok_or(ContractError::NotFound)?
+            .limit;
+        crate::storage::remove_daily_limit(&env, &currency, &country);
+        crate::events::emit_daily_limit_removed(&env, currency, country, old_limit, admin);
+        Ok(())
+    }
+
     /// Set the maximum batch size for process_expired_remittances (admin only).
     ///
     /// # Arguments
@@ -3028,7 +3140,15 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         }
         let admin = get_admin(&env)?;
         admin.require_auth();
+        let old = crate::storage::get_max_expired_batch_size(&env) as u64;
         crate::storage::set_max_expired_batch_size(&env, size);
+        crate::events::emit_config_updated(
+            &env,
+            soroban_sdk::symbol_short!("exp_batch"),
+            old,
+            size as u64,
+            admin,
+        );
         Ok(())
     }
 
@@ -3501,7 +3621,15 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         if threshold > 100 { return Err(ContractError::InvalidReputationScore); }
         let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
+        let old = storage::get_min_agent_reputation(&env) as u64;
         storage::set_min_agent_reputation(&env, threshold);
+        crate::events::emit_config_updated(
+            &env,
+            soroban_sdk::symbol_short!("min_rep"),
+            old,
+            threshold as u64,
+            caller,
+        );
         Ok(())
     }
 

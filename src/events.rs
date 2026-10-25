@@ -228,6 +228,37 @@ pub fn emit_daily_limit_updated(
     emit_event!(env, "limit", "updated", currency, country, old_limit, new_limit, admin);
 }
 
+/// Emits an event when a daily send limit is removed by an admin (#1659).
+///
+/// Topics: `("limit", "removed")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, currency, country, old_limit, admin)`
+pub fn emit_daily_limit_removed(
+    env: &Env,
+    currency: String,
+    country: String,
+    old_limit: i128,
+    admin: Address,
+) {
+    emit_event!(env, "limit", "removed", currency, country, old_limit, admin);
+}
+
+/// Emits an event when a config value is updated by an admin (#1660).
+///
+/// Topics: `("config", "updated")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, key, old_value, new_value, admin)`
+///
+/// `key` identifies which setting changed (e.g. `"dispute_win"`, `"escrow_ttl"`,
+/// `"rate_limit"`, `"exp_batch"`, `"min_rep"`).
+pub fn emit_config_updated(
+    env: &Env,
+    key: soroban_sdk::Symbol,
+    old_value: u64,
+    new_value: u64,
+    admin: Address,
+) {
+    emit_event!(env, "config", "updated", key, old_value, new_value, admin);
+}
+
 /// Emits an event when the platform fee is updated.
 pub fn emit_fee_updated(env: &Env, fee_bps: u32) {
     emit_event!(env, "fee", "updated", fee_bps);
