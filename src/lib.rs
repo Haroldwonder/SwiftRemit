@@ -1658,12 +1658,25 @@ impl SwiftRemitContract {
                 .min(escrow_remaining);
             token_client.transfer(&env.current_contract_address(), &remittance.agent, &owed);
 
-            // What is left of the escrow after paying the agent is the platform fee.
+            // Split the retained escrow into protocol fee (sent to treasury)
+            // and platform fee (added to accumulated_fees) (#1631).
             let retained = escrow_remaining
                 .checked_sub(owed)
                 .ok_or(ContractError::Underflow)?;
-            if retained > 0 {
-                crate::fee_management::safe_add_accumulated_fee(&env, retained)?;
+            let protocol_fee_to_send = fee_breakdown.protocol_fee.min(retained);
+            if protocol_fee_to_send > 0 {
+                let treasury = get_treasury(&env)?;
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &treasury,
+                    &protocol_fee_to_send,
+                );
+            }
+            let platform_fee_retained = retained
+                .checked_sub(protocol_fee_to_send)
+                .ok_or(ContractError::Underflow)?;
+            if platform_fee_retained > 0 {
+                crate::fee_management::safe_add_accumulated_fee(&env, platform_fee_retained)?;
             }
             // SR-125: Route status mutation through the canonical state machine.
             crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
@@ -4547,5 +4560,61 @@ impl SwiftRemitContract {
             timelock_seconds: storage::get_governance_timelock(&env),
             proposal_ttl_seconds: storage::get_proposal_ttl(&env),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_issue_1631 {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, BytesN, Env,
+    };
+
+    #[test]
+    fn test_1631_resolve_dispute_agent_splits_protocol_and_platform_fee() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let fee_recipient = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        token::StellarAssetClient::new(&env, &token_id).mint(&sender, &10_000_000);
+        let token_client = token::Client::new(&env, &token_id);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract);
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        // 250 bps platform fee, 50 bps protocol fee
+        client.initialize(&admin, &token_id, &250, &0, &50, &treasury);
+        client.register_agent(&agent, &None);
+
+        let rem_id = client.create_remittance(
+            &sender, &agent, &1_000_000, &None, &None, &None, &None, &None, &None,
+        );
+        let rem = client.get_remittance(&rem_id);
+        let expected_net = rem.amount - rem.fee - rem.protocol_fee;
+        assert!(rem.protocol_fee > 0);
+
+        client.mark_failed(&rem_id);
+        let evidence = BytesN::from_array(&env, &[7u8; 32]);
+        client.raise_dispute(&rem_id, &evidence);
+
+        client.resolve_dispute(&rem_id, &false);
+
+        assert_eq!(token_client.balance(&agent), expected_net);
+        assert_eq!(token_client.balance(&treasury), rem.protocol_fee);
+        assert_eq!(client.get_accumulated_fees(), rem.fee);
+
+        // Admin can withdraw all accumulated platform fees cleanly without draining other escrow
+        client.withdraw_fees(&fee_recipient);
+        assert_eq!(token_client.balance(&fee_recipient), rem.fee);
+        assert_eq!(token_client.balance(&contract_id), 0);
     }
 }
