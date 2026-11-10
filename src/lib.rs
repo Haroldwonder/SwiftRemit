@@ -1847,13 +1847,44 @@ impl SwiftRemitContract {
             // Update accumulated fees with overflow protection and automatic flush
             safe_add_accumulated_fee(&env, remittance.fee)?;
 
+            // #1630: Accrue integrator share (10% of platform fee) on partial-payout completion.
+            if let Some(intg) = storage::get_remittance_integrator(&env, remittance_id) {
+                let integrator_share = remittance.fee / 10;
+                if integrator_share > 0 {
+                    storage::add_integrator_balance(&env, &intg, integrator_share);
+                }
+            }
+
             // Move volume from in-flight to completed
             storage::sub_processing_volume(&env, remittance.amount)?;
             storage::add_completed_volume(&env, remittance.amount)?;
 
+            // Update agent stats on completion
+            let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
+            stats.total_settlements = stats.total_settlements.saturating_add(1);
+            stats.total_settlement_time = stats.total_settlement_time.saturating_add(
+                env.ledger()
+                    .timestamp()
+                    .saturating_sub(remittance.created_at),
+            );
+            stats.last_active_timestamp = env.ledger().timestamp();
+            let successful = stats
+                .total_settlements
+                .saturating_sub(stats.failed_settlements);
+            stats.success_rate_bps = successful
+                .saturating_mul(10000)
+                .checked_div(stats.total_settlements)
+                .unwrap_or(10000);
+            crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
+
             crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
             set_remittance(&env, remittance_id, &remittance);
             set_settlement_hash(&env, remittance_id);
+
+            // #1630: Clean up idempotency record on terminal state (Completed).
+            if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
+                storage::remove_idempotency_record(&env, &idem_key);
+            }
 
             emit_remittance_completed(&env, remittance_id, remittance.sender, remittance.agent);
         } else {
@@ -4547,5 +4578,80 @@ impl SwiftRemitContract {
             timelock_seconds: storage::get_governance_timelock(&env),
             proposal_ttl_seconds: storage::get_proposal_ttl(&env),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_issue_1630 {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, Env, String,
+    };
+
+    #[test]
+    fn test_1630_partial_payout_completion_accrues_integrator_fee_and_cleans_idempotency() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+        let admin = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let integrator = Address::generate(&env);
+        let integrator_recipient = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        token::StellarAssetClient::new(&env, &token_id).mint(&sender, &10_000_000);
+        let token_client = token::Client::new(&env, &token_id);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract);
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &0, &0, &admin);
+        client.register_agent(&agent, &None);
+
+        let idem = String::from_str(&env, "idem-key-1630");
+        let rem_id = client.create_remittance(
+            &sender,
+            &agent,
+            &1_000_000,
+            &None,
+            &None,
+            &Some(idem.clone()),
+            &None,
+            &None,
+            &Some(integrator.clone()),
+        );
+        let rem = client.get_remittance(&rem_id);
+        let net_payout = rem.amount - rem.fee - rem.protocol_fee;
+        let half = net_payout / 2;
+
+        client.confirm_partial_payout(&rem_id, &half);
+        client.confirm_partial_payout(&rem_id, &(net_payout - half));
+
+        assert_eq!(client.get_remittance(&rem_id).status, RemittanceStatus::Completed);
+
+        // Integrator share (10% of rem.fee) was accrued and can be withdrawn
+        let expected_integrator_share = rem.fee / 10;
+        assert!(expected_integrator_share > 0);
+        client.withdraw_integrator_fees(&integrator, &integrator_recipient);
+        assert_eq!(token_client.balance(&integrator_recipient), expected_integrator_share);
+
+        // Idempotency key was cleaned up on completion so a new remittance with different payload can reuse it
+        env.ledger().with_mut(|l| l.timestamp = 2_000);
+        let rem_id2 = client.create_remittance(
+            &sender,
+            &agent,
+            &500_000,
+            &None,
+            &None,
+            &Some(idem),
+            &None,
+            &None,
+            &None,
+        );
+        assert_ne!(rem_id2, rem_id);
     }
 }
