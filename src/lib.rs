@@ -1788,6 +1788,8 @@ impl SwiftRemitContract {
             return Err(ContractError::InvalidStatus);
         }
 
+        validate_settlement_not_expired(&env, remittance.effective_expiry())?;
+
         if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
             if config.require_proof {
                 return Err(ContractError::MissingProof);
@@ -2040,7 +2042,7 @@ impl SwiftRemitContract {
                 continue;
             }
 
-            let is_expired = match remittance.expiry {
+            let is_expired = match remittance.effective_expiry() {
                 Some(expiry) => now > expiry,
                 None => false,
             };
@@ -3377,7 +3379,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             }
 
             // Check expiry
-            if let Some(expiry_time) = remittance.expiry {
+            if let Some(expiry_time) = remittance.effective_expiry() {
                 let current_time = env.ledger().timestamp();
                 if current_time > expiry_time {
                     return Err(ContractError::SettlementExpired);
@@ -4593,5 +4595,177 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             timelock_seconds: storage::get_governance_timelock(&env),
             proposal_ttl_seconds: storage::get_proposal_ttl(&env),
         }
+    }
+
+    /// Sets the default remittance expiry window in seconds (admin only).
+    pub fn set_remittance_expiry_window(env: Env, seconds: u64) -> Result<(), ContractError> {
+        let caller = get_admin(&env)?;
+        require_admin(&env, &caller)?;
+        let old = storage::get_remittance_expiry_window(&env);
+        storage::set_remittance_expiry_window(&env, seconds);
+        crate::events::emit_config_updated(
+            &env,
+            soroban_sdk::symbol_short!("exp_win"),
+            old,
+            seconds,
+            caller,
+        );
+        Ok(())
+    }
+
+    /// Returns the default remittance expiry window in seconds (0 = disabled).
+    pub fn get_remittance_expiry_window(env: Env) -> u64 {
+        storage::get_remittance_expiry_window(&env)
+    }
+}
+
+#[cfg(test)]
+mod tests_issue_1632 {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, Env, Vec,
+    };
+
+    #[test]
+    fn test_1632_expires_at_enforced_across_payout_and_expiry_paths() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+        let admin = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let sender2 = Address::generate(&env);
+        let sender3 = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        token::StellarAssetClient::new(&env, &token_id).mint(&sender, &10_000_000);
+        token::StellarAssetClient::new(&env, &token_id).mint(&sender2, &10_000_000);
+        token::StellarAssetClient::new(&env, &token_id).mint(&sender3, &10_000_000);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract);
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &0, &0, &admin);
+        client.register_agent(&agent, &None);
+        client.assign_role(&admin, &agent, &Role::Settler);
+        client.set_remittance_expiry_window(&600);
+        assert_eq!(client.get_remittance_expiry_window(), 600);
+
+        // 1. expiry: None -> effective_expiry() = expires_at (1_600)
+        let rem_id = client.create_remittance(
+            &sender, &agent, &1_000_000, &None, &None, &None, &None, &None, &None,
+        );
+        let rem = client.get_remittance(&rem_id);
+        assert_eq!(rem.expiry, None);
+        assert_eq!(rem.expires_at, Some(1_600));
+        assert_eq!(rem.effective_expiry(), Some(1_600));
+
+        // 2. expiry: Some(5_000) > expires_at (1_600) -> effective_expiry() = 1_600
+        let rem_id2 = client.create_remittance(
+            &sender2,
+            &agent,
+            &1_000_000,
+            &Some(5_000),
+            &None,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+        assert_eq!(client.get_remittance(&rem_id2).effective_expiry(), Some(1_600));
+
+        // 3. expiry: Some(1_200) < expires_at (1_600) -> effective_expiry() = 1_200
+        let rem_id3 = client.create_remittance(
+            &sender3,
+            &agent,
+            &1_000_000,
+            &Some(1_200),
+            &None,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+        assert_eq!(client.get_remittance(&rem_id3).effective_expiry(), Some(1_200));
+
+        // At t = 1_201, rem_id3 is expired while rem_id and rem_id2 are still live
+        env.ledger().with_mut(|l| l.timestamp = 1_201);
+        assert_eq!(
+            client.try_confirm_payout(&agent, &rem_id3, &None, &None),
+            Err(Ok(ContractError::SettlementExpired))
+        );
+        let mut early_ids = Vec::new(&env);
+        early_ids.push_back(rem_id);
+        early_ids.push_back(rem_id3);
+        let early_processed = client.process_expired_remittances(&early_ids);
+        assert_eq!(early_processed.len(), 1);
+        assert_eq!(early_processed.get_unchecked(0), rem_id3);
+        assert_eq!(client.get_remittance(&rem_id).status, RemittanceStatus::Pending);
+        assert_eq!(client.get_remittance(&rem_id3).status, RemittanceStatus::Cancelled);
+
+        // At exact boundary t = 1_600, process_expired_remittances must NOT expire rem_id
+        env.ledger().with_mut(|l| l.timestamp = 1_600);
+        let mut boundary_ids = Vec::new(&env);
+        boundary_ids.push_back(rem_id);
+        assert_eq!(client.process_expired_remittances(&boundary_ids).len(), 0);
+
+        // Advance past expires_at (t = 1_601)
+        env.ledger().with_mut(|l| l.timestamp = 1_601);
+
+        // confirm_payout, confirm_partial_payout, and batch_settle_with_netting must reject
+        assert_eq!(
+            client.try_confirm_payout(&agent, &rem_id, &None, &None),
+            Err(Ok(ContractError::SettlementExpired))
+        );
+        assert_eq!(
+            client.try_confirm_partial_payout(&rem_id2, &100_000),
+            Err(Ok(ContractError::SettlementExpired))
+        );
+        let mut net_entries = Vec::new(&env);
+        net_entries.push_back(BatchSettlementEntry { remittance_id: rem_id });
+        assert!(matches!(
+            client.try_batch_settle_with_netting(&admin, &net_entries),
+            Err(Ok(ContractError::SettlementExpired))
+        ));
+
+        // process_expired_remittances must refund both rem_id and rem_id2 using effective_expiry()
+        let mut ids = Vec::new(&env);
+        ids.push_back(rem_id);
+        ids.push_back(rem_id2);
+        let processed = client.process_expired_remittances(&ids);
+        assert_eq!(processed.len(), 2);
+        assert_eq!(client.get_remittance(&rem_id).status, RemittanceStatus::Cancelled);
+        assert_eq!(client.get_remittance(&rem_id2).status, RemittanceStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_1632_transaction_controller_populates_expires_at() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        env.ledger().with_mut(|l| l.timestamp = 2_000);
+
+        let admin = Address::generate(&env);
+        let user = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        token::StellarAssetClient::new(&env, &token_id).mint(&user, &10_000_000);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract);
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &0, &0, &admin);
+        client.register_agent(&agent, &None);
+        client.set_kyc_approved(&user, &true, &10_000);
+        client.set_remittance_expiry_window(&300);
+
+        let record = client.execute_transaction(&user, &agent, &500_000, &None);
+        let rem = client.get_remittance(&record.remittance_id.unwrap());
+        assert_eq!(rem.expires_at, Some(2_300));
+        assert_eq!(rem.effective_expiry(), Some(2_300));
     }
 }

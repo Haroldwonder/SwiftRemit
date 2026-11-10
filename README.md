@@ -187,7 +187,9 @@ The contract exposes 134 public functions from a single `#[contractimpl] impl Sw
 | `confirm_partial_payout(remittance_id, amount)` | Disburses a partial amount toward a remittance; auto-completes once fully disbursed | agent auth required (assigned agent) |
 | `finalize_remittance(caller, remittance_id)` | Verifies a remittance is in the `Completed` status | admin only |
 | `cancel_remittance(remittance_id)` | Sender cancels a pending remittance for a full refund, or recovers the remaining escrow from a `Failed` remittance after its dispute window expires | sender auth required |
-| `process_expired_remittances(remittance_ids)` | Batch-refunds expired pending remittances from the given ID list (max batch size configurable, see `set_max_expired_batch_size`) | none (callable by anyone) |
+| `process_expired_remittances(remittance_ids)` | Batch-refunds expired pending remittances from the given ID list using `min(expiry, expires_at)` (max batch size configurable, see `set_max_expired_batch_size`) | none (callable by anyone) |
+| `set_remittance_expiry_window(seconds)` | Sets the default auto-expiry window in seconds applied to newly created remittances (`0` = disabled) | admin only |
+| `get_remittance_expiry_window()` | Returns the default remittance auto-expiry window in seconds (`0` = disabled) | none (public query) |
 | `get_remittance(remittance_id)` | Fetches a remittance record | none (public query) |
 | `get_remittances_by_sender(sender, offset, limit)` | Paginated list of a sender's remittance IDs (max page 100) | none (public query) |
 | `get_remittances_by_agent(agent, offset, limit)` | Paginated list of an agent's remittance IDs (max page 100) | none (public query) |
