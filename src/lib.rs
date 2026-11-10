@@ -4595,3 +4595,97 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         }
     }
 }
+
+#[cfg(test)]
+mod test_issue_1646 {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        token, Address, Env, String,
+    };
+
+    #[test]
+    fn test_corridor_volume_cap_advances_across_three_windows() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+        let admin = Address::generate(&env);
+        let sender1 = Address::generate(&env);
+        let sender2 = Address::generate(&env);
+        let agent = Address::generate(&env);
+
+        let token_id = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let token_admin = token::StellarAssetClient::new(&env, &token_id);
+        token_admin.mint(&sender1, &1_000_000);
+        token_admin.mint(&sender2, &1_000_000);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &3600, &0, &admin);
+        client.register_agent(&agent, &None);
+
+        let currency = String::from_str(&env, "USDC");
+        let country = String::from_str(&env, "GLOBAL");
+        // Cap = 1,000 per 3,600s window starting at t = 1_000
+        env.as_contract(&contract_id, || {
+            storage::set_corridor_volume_cap(
+                &env,
+                &currency,
+                &country,
+                &storage::CorridorVolumeCap {
+                    max_volume: 1_000,
+                    window_seconds: 3_600,
+                    window_start: 1_000,
+                },
+            );
+        });
+
+        // Window 1 (t = 1_000..4_600): 600 + 400 succeeds, next 100 fails
+        client.create_remittance(
+            &sender1, &agent, &600, &None, &None, &None, &None, &None, &None,
+        );
+        client.create_remittance(
+            &sender2, &agent, &400, &None, &None, &None, &None, &None, &None,
+        );
+        env.ledger().with_mut(|li| li.timestamp = 1_020);
+        assert_eq!(
+            client.try_create_remittance(
+                &sender1, &agent, &100, &None, &None, &None, &None, &None, &None
+            ),
+            Err(Ok(ContractError::DailySendLimitExceeded))
+        );
+
+        // Advance to Window 2 (t = 5_000): window resets and cap.window_start updates to 5_000
+        env.ledger().with_mut(|li| li.timestamp = 5_000);
+        client.create_remittance(
+            &sender1, &agent, &700, &None, &None, &None, &None, &None, &None,
+        );
+        // Second transfer of 400 in Window 2 must still be rejected (700 + 400 > 1_000)!
+        // Before #1646, window_start stayed at 1_000 so every transfer in Window 2 reset volume to 0.
+        env.ledger().with_mut(|li| li.timestamp = 5_100);
+        assert_eq!(
+            client.try_create_remittance(
+                &sender2, &agent, &400, &None, &None, &None, &None, &None, &None
+            ),
+            Err(Ok(ContractError::DailySendLimitExceeded))
+        );
+        // 300 fits within remaining capacity of Window 2 (700 + 300 == 1_000)
+        client.create_remittance(
+            &sender2, &agent, &300, &None, &None, &None, &None, &None, &None,
+        );
+
+        // Advance to Window 3 (t = 9_000 >= 5_000 + 3_600): window resets again and enforces cap
+        env.ledger().with_mut(|li| li.timestamp = 9_000);
+        client.create_remittance(
+            &sender1, &agent, &800, &None, &None, &None, &None, &None, &None,
+        );
+        env.ledger().with_mut(|li| li.timestamp = 9_500);
+        assert_eq!(
+            client.try_create_remittance(
+                &sender2, &agent, &300, &None, &None, &None, &None, &None, &None
+            ),
+            Err(Ok(ContractError::DailySendLimitExceeded))
+        );
+    }
+}

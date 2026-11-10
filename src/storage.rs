@@ -2176,16 +2176,17 @@ pub fn check_and_increment_corridor_volume(
     country: &String,
     amount: i128,
 ) -> Result<(), ContractError> {
-    let cap = match get_corridor_volume_cap(env, currency, country) {
+    let mut cap = match get_corridor_volume_cap(env, currency, country) {
         Some(c) => c,
         None => return Ok(()), // No cap configured for this corridor.
     };
 
     let now = env.ledger().timestamp();
     let window_end = cap.window_start.saturating_add(cap.window_seconds);
+    let window_elapsed = now >= window_end;
 
-    let current_volume = if now >= window_end {
-        // Window has elapsed — reset the accumulator.
+    let current_volume = if window_elapsed {
+        // Window has elapsed — reset the accumulator and advance window_start (#1646).
         0i128
     } else {
         get_corridor_volume_accumulated(env, currency, country)
@@ -2197,6 +2198,11 @@ pub fn check_and_increment_corridor_volume(
 
     if new_volume > cap.max_volume {
         return Err(ContractError::DailySendLimitExceeded);
+    }
+
+    if window_elapsed {
+        cap.window_start = now;
+        set_corridor_volume_cap(env, currency, country, &cap);
     }
 
     env.storage()
