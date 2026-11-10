@@ -1774,11 +1774,21 @@ impl SwiftRemitContract {
         if amount <= 0 {
             return Err(ContractError::InvalidAmount);
         }
+        if crate::storage::is_migration_in_progress(&env) {
+            return Err(ContractError::MigrationInProgress);
+        }
         // #1264: Partial payouts are a form of settlement; block while paused.
         validate_not_paused(&env)?;
 
         let mut remittance = get_remittance(&env, remittance_id)?;
         crate::storage::require_agent_authorized(&env, &remittance.agent)?;
+
+        // #1628: Enforce Settler role, blacklist checks, and pre-confirm validation
+        // just like confirm_payout.
+        require_role_settler(&env, &remittance.agent)?;
+        validate_not_blacklisted(&env, &remittance.sender)?;
+        validate_not_blacklisted(&env, &remittance.agent)?;
+        transaction_controller::TransactionController::pre_confirm_validation(&env, &remittance)?;
 
         if remittance.status != RemittanceStatus::Pending
             && remittance.status != RemittanceStatus::Processing
@@ -1791,6 +1801,7 @@ impl SwiftRemitContract {
                 return Err(ContractError::MissingProof);
             }
         }
+        recipient_verification::verify_recipient_hash(&env, remittance_id, &remittance.agent, None)?;
 
         // Enforce per-agent daily cap
         storage::check_and_record_agent_withdrawal(&env, &remittance.agent, amount)?;
@@ -4547,5 +4558,66 @@ impl SwiftRemitContract {
             timelock_seconds: storage::get_governance_timelock(&env),
             proposal_ttl_seconds: storage::get_proposal_ttl(&env),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_issue_1628 {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, Env,
+    };
+
+    #[test]
+    fn test_1628_confirm_partial_payout_enforces_settler_role_and_blacklist() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+        let admin = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        token::StellarAssetClient::new(&env, &token_id).mint(&sender, &10_000_000);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract);
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &0, &0, &admin);
+        client.register_agent(&agent, &None);
+
+        let rem_id = client.create_remittance(
+            &sender, &agent, &1_000_000, &None, &None, &None, &None, &None, &None,
+        );
+
+        // Revoking Settler role blocks confirm_partial_payout
+        client.remove_role(&admin, &agent, &Role::Settler);
+        assert_eq!(
+            client.try_confirm_partial_payout(&rem_id, &100_000),
+            Err(Ok(ContractError::Unauthorized))
+        );
+
+        // Restore Settler role, then blacklist sender -> blocked with UserBlacklisted
+        client.assign_role(&admin, &agent, &Role::Settler);
+        client.blacklist_user(&sender);
+        assert_eq!(
+            client.try_confirm_partial_payout(&rem_id, &100_000),
+            Err(Ok(ContractError::UserBlacklisted))
+        );
+
+        // Unblacklisting without KYC approval fails pre_confirm_validation with KycNotApproved
+        client.remove_from_blacklist(&sender);
+        assert_eq!(
+            client.try_confirm_partial_payout(&rem_id, &100_000),
+            Err(Ok(ContractError::KycNotApproved))
+        );
+
+        // Approving sender KYC allows partial payout
+        client.set_kyc_approved(&sender, &true, &99_999);
+        client.confirm_partial_payout(&rem_id, &100_000);
+        assert_eq!(client.get_remittance(&rem_id).status, RemittanceStatus::Processing);
     }
 }
