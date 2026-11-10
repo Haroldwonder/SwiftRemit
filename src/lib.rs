@@ -1299,11 +1299,7 @@ impl SwiftRemitContract {
             .timestamp()
             .saturating_sub(remittance.created_at);
         stats.last_active_timestamp = env.ledger().timestamp();
-        let successful = stats.total_settlements.saturating_sub(stats.failed_settlements);
-        stats.success_rate_bps = successful
-            .saturating_mul(10000)
-            .checked_div(stats.total_settlements)
-            .unwrap_or(10000);
+        stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         // Check rate limit for sender
@@ -1532,15 +1528,7 @@ impl SwiftRemitContract {
         let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
         stats.failed_settlements += 1;
         stats.last_active_timestamp = env.ledger().timestamp();
-        let successful = stats.total_settlements.saturating_sub(stats.failed_settlements);
-        stats.success_rate_bps = if stats.total_settlements == 0 {
-            10000
-        } else {
-            successful
-                .saturating_mul(10000)
-                .checked_div(stats.total_settlements)
-                .unwrap_or(0)
-        };
+        stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         emit_remittance_failed(&env, remittance_id, remittance.agent);
@@ -1622,17 +1610,7 @@ impl SwiftRemitContract {
             let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
             stats.failed_settlements = stats.failed_settlements.saturating_add(1);
             stats.last_active_timestamp = env.ledger().timestamp();
-            let successful = stats
-                .total_settlements
-                .saturating_sub(stats.failed_settlements);
-            stats.success_rate_bps = if stats.total_settlements == 0 {
-                10000
-            } else {
-                successful
-                    .saturating_mul(10000)
-                    .checked_div(stats.total_settlements)
-                    .unwrap_or(0)
-            };
+            stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
             crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
         } else {
             // Honour the fee quoted at creation rather than re-pricing, and pay
@@ -1666,13 +1644,7 @@ impl SwiftRemitContract {
             let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
             stats.total_settlements = stats.total_settlements.saturating_add(1);
             stats.last_active_timestamp = env.ledger().timestamp();
-            let successful = stats
-                .total_settlements
-                .saturating_sub(stats.failed_settlements);
-            stats.success_rate_bps = successful
-                .saturating_mul(10000)
-                .checked_div(stats.total_settlements)
-                .unwrap_or(10000);
+            stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
             crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
         }
 
@@ -3496,11 +3468,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                 .timestamp()
                 .saturating_sub(remittance.created_at);
             stats.last_active_timestamp = env.ledger().timestamp();
-            let successful = stats.total_settlements.saturating_sub(stats.failed_settlements);
-            stats.success_rate_bps = successful
-                .saturating_mul(10000)
-                .checked_div(stats.total_settlements)
-                .unwrap_or(10000);
+            stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
             crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
             // #1665b: Accrue treasury protocol fee from the per-remittance platform fee.
@@ -4592,6 +4560,92 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             quorum: storage::get_governance_quorum(&env),
             timelock_seconds: storage::get_governance_timelock(&env),
             proposal_ttl_seconds: storage::get_proposal_ttl(&env),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test_issue_1647 {
+    use super::*;
+    use proptest::prelude::*;
+    use soroban_sdk::{testutils::Address as _, token, Address, Env};
+
+    fn make_stats(total: u32, failed: u32) -> AgentStats {
+        let mut s = AgentStats {
+            total_settlements: total,
+            failed_settlements: failed,
+            total_settlement_time: 0,
+            dispute_count: 0,
+            success_rate_bps: 10000,
+            last_active_timestamp: 0,
+        };
+        s.success_rate_bps = storage::compute_success_rate_bps(&s);
+        s
+    }
+
+    #[test]
+    fn test_zero_successes_with_failures_is_zero_percent() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let agent = Address::generate(&env);
+
+        let token_id = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        token::StellarAssetClient::new(&env, &token_id).mint(&sender, &100_000);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &3600, &0, &admin);
+        client.register_agent(&agent, &None);
+
+        let id = client.create_remittance(
+            &sender, &agent, &1_000, &None, &None, &None, &None, &None, &None,
+        );
+        client.mark_failed(&id);
+
+        let stats = client.get_agent_stats(&agent);
+        assert_eq!(stats.total_settlements, 0);
+        assert_eq!(stats.failed_settlements, 1);
+        assert_eq!(stats.success_rate_bps, 0);
+
+        // Reputation with 0 successes and 1 failure: completion_pct = 0 (weight 50%),
+        // time_score = 100 (weight 30%), dispute_score = 100 (weight 20%) -> 50 (not 100!)
+        let rep = client.get_agent_reputation(&agent);
+        assert_eq!(rep, 50);
+    }
+
+    #[test]
+    fn test_mixed_successes_and_failures_uses_attempts_denominator() {
+        // 10 successes + 2 failures => 10 / 12 = 8333 bps, completion_pct = 83%
+        let stats = make_stats(10, 2);
+        assert_eq!(stats.success_rate_bps, 8333);
+        let rep = storage::compute_agent_reputation(&stats);
+        // (83 * 50 + 100 * 25 + 100 * 25 + 50) / 100 = 92
+        assert_eq!(rep, 92);
+    }
+
+    proptest! {
+        #[test]
+        fn prop_reputation_and_success_rate_monotonic_in_failures(
+            successes in 0u32..10_000u32,
+            failures in 0u32..10_000u32,
+            extra_failures in 1u32..1_000u32,
+        ) {
+            let s1 = make_stats(successes, failures);
+            let s2 = make_stats(successes, failures.saturating_add(extra_failures));
+
+            prop_assert!(s1.success_rate_bps <= 10000);
+            prop_assert!(s2.success_rate_bps <= s1.success_rate_bps);
+
+            let rep1 = storage::compute_agent_reputation(&s1);
+            let rep2 = storage::compute_agent_reputation(&s2);
+            prop_assert!(rep1 <= 100);
+            prop_assert!(rep2 <= rep1);
+
+            if successes == 0 && failures > 0 {
+                prop_assert_eq!(s1.success_rate_bps, 0);
+            }
         }
     }
 }

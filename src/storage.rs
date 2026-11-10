@@ -1508,16 +1508,24 @@ pub fn set_agent_stats(env: &Env, agent: &Address, stats: &AgentStats) {
         .set(&DataKey::AgentStats(agent.clone()), stats);
 }
 
+/// Computes agent success rate in basis points (`0..=10000`) using
+/// `attempts = total_settlements + failed_settlements` as the denominator (#1647).
+pub fn compute_success_rate_bps(stats: &AgentStats) -> u32 {
+    let attempts = stats.total_settlements.saturating_add(stats.failed_settlements);
+    if attempts == 0 {
+        10000
+    } else {
+        ((stats.total_settlements as u64) * 10000 / (attempts as u64)) as u32
+    }
+}
+
 pub fn compute_agent_reputation(stats: &AgentStats) -> u32 {
     let total = stats.total_settlements;
-    let successful = total.saturating_sub(stats.failed_settlements);
-    let success_score = if total == 0 {
+    let attempts = total.saturating_add(stats.failed_settlements);
+    let success_score = if attempts == 0 {
         100
     } else {
-        successful
-            .saturating_mul(100)
-            .checked_div(total)
-            .unwrap_or(0)
+        ((total as u64) * 100 / (attempts as u64)) as u32
     };
 
     let avg_time = if total == 0 {
