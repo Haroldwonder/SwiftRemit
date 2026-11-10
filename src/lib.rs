@@ -3314,7 +3314,7 @@ impl SwiftRemitContract {
         // SR-122: Validate the caller is either admin or a registered Settler-role agent.
         let is_admin_caller = storage::is_admin(&env, &agent);
         if !is_admin_caller {
-            crate::storage::require_agent_authorized(&env, &agent)?;
+            validate_agent_registered(&env, &agent)?;
             require_role_settler(&env, &agent)?;
         }
 
@@ -3361,6 +3361,25 @@ impl SwiftRemitContract {
                     return Err(ContractError::SettlementExpired);
                 }
             }
+
+            // #1626: Enforce blacklist, pre-confirm validation (sender eligibility + KYC),
+            // proof requirement, and recipient-hash requirement in batch_settle_with_netting.
+            validate_not_blacklisted(&env, &remittance.sender)?;
+            validate_not_blacklisted(&env, &remittance.agent)?;
+            transaction_controller::TransactionController::pre_confirm_validation(&env, &remittance)?;
+
+            if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
+                if config.require_proof {
+                    return Err(ContractError::MissingProof);
+                }
+            }
+
+            recipient_verification::verify_recipient_hash(
+                &env,
+                remittance_id,
+                &remittance.agent,
+                None,
+            )?;
 
             // SR-122: Enforce per-agent daily withdrawal cap for each entry.
             storage::check_and_record_agent_withdrawal(&env, &remittance.agent, remittance.amount)?;
@@ -4547,5 +4566,105 @@ impl SwiftRemitContract {
             timelock_seconds: storage::get_governance_timelock(&env),
             proposal_ttl_seconds: storage::get_proposal_ttl(&env),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_issue_1626 {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, BytesN, Env, Vec,
+    };
+
+    #[test]
+    fn test_1626_batch_settle_with_netting_enforces_proof_recipient_hash_and_pre_confirm() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+        let admin = Address::generate(&env);
+        let sender1 = Address::generate(&env);
+        let sender2 = Address::generate(&env);
+        let sender3 = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let asset_client = token::StellarAssetClient::new(&env, &token_id);
+        asset_client.mint(&sender1, &10_000_000);
+        asset_client.mint(&sender2, &10_000_000);
+        asset_client.mint(&sender3, &10_000_000);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract);
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &0, &0, &admin);
+        client.register_agent(&agent, &None);
+        client.set_kyc_approved(&sender1, &true, &99_999);
+        client.set_kyc_approved(&sender2, &true, &99_999);
+        client.set_kyc_approved(&sender3, &true, &99_999);
+
+        // 1. Remittance requiring proof must be rejected with MissingProof
+        let proof_cfg = SettlementConfig {
+            require_proof: true,
+            oracle_address: Some(oracle),
+        };
+        let rem_proof = client.create_remittance(
+            &sender1,
+            &agent,
+            &1_000_000,
+            &None,
+            &None,
+            &None,
+            &Some(proof_cfg),
+            &None,
+            &None,
+        );
+        let mut entries = Vec::new(&env);
+        entries.push_back(BatchSettlementEntry {
+            remittance_id: rem_proof,
+        });
+        assert_eq!(
+            client.try_batch_settle_with_netting(&agent, &entries),
+            Err(Ok(ContractError::MissingProof))
+        );
+
+        // 2. Remittance requiring recipient hash must be rejected with MissingRecipientHash
+        let rec_hash = BytesN::from_array(&env, &[0xABu8; 32]);
+        let rem_hash = client.create_remittance(
+            &sender2,
+            &agent,
+            &1_000_000,
+            &None,
+            &None,
+            &None,
+            &None,
+            &Some(rec_hash),
+            &None,
+        );
+        let mut entries2 = Vec::new(&env);
+        entries2.push_back(BatchSettlementEntry {
+            remittance_id: rem_hash,
+        });
+        assert_eq!(
+            client.try_batch_settle_with_netting(&agent, &entries2),
+            Err(Ok(ContractError::MissingRecipientHash))
+        );
+
+        // 3. Remittance whose sender is blacklisted after creation must be rejected with UserBlacklisted
+        let rem_plain = client.create_remittance(
+            &sender3, &agent, &1_000_000, &None, &None, &None, &None, &None, &None,
+        );
+        client.blacklist_user(&sender3);
+        let mut entries3 = Vec::new(&env);
+        entries3.push_back(BatchSettlementEntry {
+            remittance_id: rem_plain,
+        });
+        assert_eq!(
+            client.try_batch_settle_with_netting(&agent, &entries3),
+            Err(Ok(ContractError::UserBlacklisted))
+        );
     }
 }

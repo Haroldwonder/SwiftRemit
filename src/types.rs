@@ -318,7 +318,7 @@ pub struct BatchCreateEntry {
 /// Result of a batch settlement operation.
 /// Contains the IDs of successfully settled remittances.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BatchSettlementResult {
     /// List of successfully settled remittance IDs
     pub settled_ids: Vec<u64>,
