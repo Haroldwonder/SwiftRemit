@@ -1792,6 +1792,9 @@ impl SwiftRemitContract {
             }
         }
 
+        // #1625: Reject recipient-hash-gated remittances on the unverified partial payout endpoint.
+        recipient_verification::verify_recipient_hash(&env, remittance_id, &remittance.agent, None)?;
+
         // Enforce per-agent daily cap
         storage::check_and_record_agent_withdrawal(&env, &remittance.agent, amount)?;
 
@@ -4547,5 +4550,88 @@ impl SwiftRemitContract {
             timelock_seconds: storage::get_governance_timelock(&env),
             proposal_ttl_seconds: storage::get_proposal_ttl(&env),
         }
+    }
+
+    /// Returns the cumulative amount disbursed so far via `confirm_partial_payout`.
+    pub fn get_disbursed_amount(env: Env, remittance_id: u64) -> i128 {
+        storage::get_disbursed_amount(&env, remittance_id)
+    }
+}
+
+#[cfg(test)]
+mod tests_issue_1625 {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, BytesN, Env,
+    };
+
+    #[test]
+    fn test_1625_confirm_partial_payout_rejects_proof_and_recipient_hash_gated_remittances() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+        let admin = Address::generate(&env);
+        let sender1 = Address::generate(&env);
+        let sender2 = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let asset_client = token::StellarAssetClient::new(&env, &token_id);
+        asset_client.mint(&sender1, &10_000_000);
+        asset_client.mint(&sender2, &10_000_000);
+        let token_client = token::Client::new(&env, &token_id);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract);
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &0, &0, &admin);
+        client.register_agent(&agent, &None);
+
+        let proof_cfg = SettlementConfig {
+            require_proof: true,
+            oracle_address: Some(oracle),
+        };
+        let rem_proof = client.create_remittance(
+            &sender1,
+            &agent,
+            &1_000_000,
+            &None,
+            &None,
+            &None,
+            &Some(proof_cfg),
+            &None,
+            &None,
+        );
+
+        assert_eq!(
+            client.try_confirm_partial_payout(&rem_proof, &100_000),
+            Err(Ok(ContractError::MissingProof))
+        );
+        assert_eq!(client.get_remittance(&rem_proof).status, RemittanceStatus::Pending);
+        assert_eq!(client.get_disbursed_amount(&rem_proof), 0);
+        assert_eq!(token_client.balance(&agent), 0);
+
+        let rec_hash = BytesN::from_array(&env, &[0x42u8; 32]);
+        let rem_hash = client.create_remittance(
+            &sender2,
+            &agent,
+            &1_000_000,
+            &None,
+            &None,
+            &None,
+            &None,
+            &Some(rec_hash),
+            &None,
+        );
+        assert_eq!(
+            client.try_confirm_partial_payout(&rem_hash, &100_000),
+            Err(Ok(ContractError::MissingRecipientHash))
+        );
+        assert_eq!(client.get_remittance(&rem_hash).status, RemittanceStatus::Pending);
+        assert_eq!(client.get_disbursed_amount(&rem_hash), 0);
     }
 }
