@@ -333,4 +333,13 @@ pub enum ContractError {
 
     /// Escrow refund rejected: lock/expiry period has not elapsed yet.
     EscrowNotYetExpired = 85,
+
+    /// Processing recovery timeout has not elapsed yet.
+    ProcessingTimeoutNotReached = 86,
+
+    /// Admin nomination proposal has expired.
+    AdminProposalExpired = 87,
+
+    /// Expiry timestamp is invalid or already in the past.
+    InvalidExpiry = 88,
 }

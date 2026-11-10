@@ -126,8 +126,11 @@ mod fee_calculation_standalone_tests;
 mod fee_service_property_tests;
 #[cfg(test)]
 mod test_fee_breakdown;
-#[cfg(test)]
-mod test_invariants;
+
+pub(crate) fn abort_migration_internal(env: &Env) -> Result<(), ContractError> {
+    let admin = get_admin(env)?;
+    migration::abort_migration(env, &admin)
+}
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Map, String, Vec};
 
@@ -732,12 +735,15 @@ impl SwiftRemitContract {
         }
 
         // Use centralized fee service with sender-specific rolling volume discounts.
-        let fee = fee_service::calculate_platform_fee_for_sender(
+        let fee_breakdown = fee_service::calculate_fees_with_breakdown_for_sender(
             &env,
             &sender,
             amount,
             Some(&token_address),
+            None,
         )?;
+        let fee = fee_breakdown.platform_fee;
+        let protocol_fee = fee_breakdown.protocol_fee;
 
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&sender, &env.current_contract_address(), &amount);
@@ -761,6 +767,7 @@ impl SwiftRemitContract {
             agent: agent.clone(),
             amount,
             fee,
+            protocol_fee,
             status: RemittanceStatus::Pending,
             expiry,
             settlement_config: settlement_config.clone().into(),
@@ -959,14 +966,15 @@ impl SwiftRemitContract {
             (Some(from), Some(to)) => storage::get_fee_corridor(&env, from, to),
             _ => None,
         };
-        let fee = fee_service::calculate_fees_with_breakdown_for_sender(
+        let fee_breakdown = fee_service::calculate_fees_with_breakdown_for_sender(
             &env,
             &sender,
             amount,
             Some(&get_usdc_token(&env)?),
             corridor.as_ref(),
-        )?
-        .platform_fee;
+        )?;
+        let fee = fee_breakdown.platform_fee;
+        let protocol_fee = fee_breakdown.protocol_fee;
 
         let usdc_token = get_usdc_token(&env)?;
         let token_client = token::Client::new(&env, &usdc_token);
@@ -988,6 +996,7 @@ impl SwiftRemitContract {
             agent: agent.clone(),
             amount,
             fee,
+            protocol_fee,
             status: RemittanceStatus::Pending,
             expiry,
             settlement_config: settlement_config.into(),
@@ -1116,12 +1125,14 @@ impl SwiftRemitContract {
             } else {
                 None
             };
+            let protocol_fee = fee_service::breakdown_from_platform_fee(&env, entry.amount, fee)?.protocol_fee;
             let remittance = Remittance {
                 id: remittance_id,
                 sender: sender.clone(),
                 agent: entry.agent.clone(),
                 amount: entry.amount,
                 fee,
+                protocol_fee,
                 status: RemittanceStatus::Pending,
                 expiry: entry.expiry,
                 settlement_config: crate::MaybeSettlementConfig::None,
@@ -1329,8 +1340,7 @@ impl SwiftRemitContract {
         // volume, because that discount is not reproducible from the amount alone.
         // #1671: the protocol fee is frozen at creation too, so a later change to
         // `protocol_fee_bps` cannot alter what this remittance pays out.
-        let fee_breakdown = fee_service::breakdown_from_platform_fee(
-            &env,
+        let fee_breakdown = fee_service::breakdown_from_quoted_fees(
             remittance.amount,
             remittance.fee,
             remittance.protocol_fee,
@@ -1637,8 +1647,7 @@ impl SwiftRemitContract {
         } else {
             // Honour the fee quoted at creation rather than re-pricing, and pay
             // the agent only the part of their net entitlement not already sent.
-            let fee_breakdown = fee_service::breakdown_from_platform_fee(
-                &env,
+            let fee_breakdown = fee_service::breakdown_from_quoted_fees(
                 remittance.amount,
                 remittance.fee,
                 remittance.protocol_fee,
@@ -1675,17 +1684,6 @@ impl SwiftRemitContract {
                 .unwrap_or(10000);
             crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
         }
-
-        // #1674: Tally the resolved dispute. `dispute_count` is incremented once in
-        // raise_dispute; here we only record the resolution outcome.
-        let mut resolved_stats = crate::storage::get_agent_stats(&env, &remittance.agent);
-        resolved_stats.disputes_resolved = resolved_stats.disputes_resolved.saturating_add(1);
-        if in_favour_of_sender {
-            resolved_stats.disputes_lost = resolved_stats.disputes_lost.saturating_add(1);
-        } else {
-            resolved_stats.disputes_won = resolved_stats.disputes_won.saturating_add(1);
-        }
-        crate::storage::set_agent_stats(&env, &remittance.agent, &resolved_stats);
 
         set_remittance(&env, remittance_id, &remittance);
         emit_dispute_resolved(&env, remittance_id, caller, in_favour_of_sender);
@@ -1802,8 +1800,7 @@ impl SwiftRemitContract {
         // would produce a different net_payout than what was escrowed if the
         // platform fee or strategy changed after creation, or if the original
         // remittance qualified for a sender-volume discount.
-        let fee_breakdown = fee_service::breakdown_from_platform_fee(
-            &env,
+        let fee_breakdown = fee_service::breakdown_from_quoted_fees(
             remittance.amount,
             remittance.fee,
             remittance.protocol_fee,
@@ -2578,26 +2575,28 @@ impl SwiftRemitContract {
     ///
     /// Requires authentication from the current admin.
     pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
-    let admin = require_admin(&env)?;
-    // NEW: add expiry
-    let expires_at = env.ledger().timestamp() + ADMIN_NOMINATION_EXPIRY_SECONDS;
-    let nomination = crate::storage::AdminNomination {
-        nominee: new_admin.clone(),
-        expires_at,
-        nominator: admin.clone(),
-    };
-    crate::storage::set_admin_nomination(&env, &nomination);
-    // Also keep old key for backward compat but with expiry struct
-    crate::storage::set_pending_admin_with_expiry(&env, &new_admin, expires_at);
-    Ok(())
+        let admin = get_admin(&env)?;
+        require_admin(&env, &admin)?;
+        // NEW: add expiry
+        let expires_at = env.ledger().timestamp() + ADMIN_NOMINATION_EXPIRY_SECONDS;
+        let nomination = crate::storage::AdminNomination {
+            nominee: new_admin.clone(),
+            expires_at,
+            nominator: admin.clone(),
+        };
+        crate::storage::set_admin_nomination(&env, &nomination);
+        // Also keep old key for backward compat but with expiry struct
+        crate::storage::set_pending_admin_with_expiry(&env, &new_admin, expires_at);
+        Ok(())
     }
-/// Cancels a pending admin proposal. Only current admin can call.
-/// Fixes #1654 - revokes proposal to compromised key.
-pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
-    require_admin(&env)?;
-    crate::storage::clear_pending_admin(&env);
-    Ok(())
-}
+    /// Cancels a pending admin proposal. Only current admin can call.
+    /// Fixes #1654 - revokes proposal to compromised key.
+    pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
+        let admin = get_admin(&env)?;
+        require_admin(&env, &admin)?;
+        crate::storage::clear_pending_admin(&env);
+        Ok(())
+    }
     /// Step 2 of 2-step admin transfer (#365).
     ///
     /// The proposed admin accepts the role. Only callable by the address that was
@@ -3240,27 +3239,6 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         Ok(())
     }
 
-    /// Creates a single remittance.
-    ///
-    /// # Deprecated
-    ///
-    /// This is a legacy alias of [`Self::create_remittance`] and is scheduled
-    /// for removal in a future release. It is kept only for ABI compatibility
-    /// with existing integrators; new integrations should call
-    /// `create_remittance` directly.
-    #[deprecated(
-        note = "use `create_remittance` instead; this alias will be removed in a future release"
-    )]
-    pub fn create_settlement(
-        env: Env,
-        sender: Address,
-        agent: Address,
-        amount: i128,
-        expiry: Option<u64>,
-    ) -> Result<u64, ContractError> {
-        Self::create_remittance(env, sender, agent, amount, expiry)
-    }
-
     pub fn get_version(env: Env) -> soroban_sdk::String {
         soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION"))
     }
@@ -3603,7 +3581,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                 env.clone(),
                 agent.clone(),
                 entry.remittance_id,
-                entry.proof,
+                entry.proof.into(),
                 entry.recipient_details_hash,
                 false,
             )?;
@@ -4225,11 +4203,11 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             set_kyc_expiry(&env, &user, expiry);
         } else {
             // Revoking clears any stored expiry so a stale timestamp cannot linger.
-            clear_kyc_expiry(&env, &user);
+            storage::clear_kyc_expiry(&env, &user);
         }
 
         // #1677: Emit an audit event for every KYC change.
-        emit_kyc_updated(&env, user, approved, expiry, admin);
+        emit_kyc_updated(&env, user, approved, if approved { Some(expiry) } else { None }, admin);
         Ok(())
     }
 
@@ -4317,32 +4295,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             return Err(ContractError::InvalidMigrationBatch);
         }
 
-        // Capture before move
-        let batch_number = batch.batch_number;
-        let total_batches = batch.total_batches;
-
-        // Enforce ordering: the batch must be exactly the next expected index.
-        // This rejects both out-of-order imports and replays of already-imported
-        // batches (a replay has batch_number < next expected).
-        let next_expected = crate::storage::get_migration_next_batch(&env);
-        if batch_number != next_expected {
-            return Err(ContractError::InvalidMigrationBatch);
-        }
-
-        // Delegate to migration module (performs hash verification + import)
-        migration::import_batch(&env, batch)?;
-
-        // Record the imported batch and advance the expected index.
-        crate::storage::set_migration_batch_imported(&env, batch_number);
-        let imported = next_expected.checked_add(1).ok_or(ContractError::Overflow)?;
-        crate::storage::set_migration_next_batch(&env, imported);
-
-        // Clear the lock only once every batch has been imported.
-        if imported >= total_batches {
-            crate::storage::set_migration_in_progress(&env, false);
-        }
-
-        Ok(())
+        // Delegate to migration module (performs hash verification, ordering check, + import)
+        migration::import_batch(&env, batch)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

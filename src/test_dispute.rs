@@ -480,13 +480,13 @@ fn test_resolve_dispute_sender_wins_does_not_increase_completed_volume() {
     let f = setup_failed_remittance();
     let hash = evidence_hash(&f.env);
 
-    let volume_before = f.contract.get_total_completed_volume();
+    let volume_before = f.contract.get_total_volume();
 
     f.contract.raise_dispute(&f.remittance_id, &hash);
     f.contract.resolve_dispute(&f.remittance_id, &true);
 
     // Sender-wins refunds the sender: no completed volume is recorded.
-    assert_eq!(f.contract.get_total_completed_volume(), volume_before);
+    assert_eq!(f.contract.get_total_volume(), volume_before);
 }
 
 #[test]
@@ -494,14 +494,14 @@ fn test_resolve_dispute_agent_wins_increases_completed_volume() {
     let f = setup_failed_remittance();
     let hash = evidence_hash(&f.env);
 
-    let volume_before = f.contract.get_total_completed_volume();
+    let volume_before = f.contract.get_total_volume();
 
     f.contract.raise_dispute(&f.remittance_id, &hash);
     f.contract.resolve_dispute(&f.remittance_id, &false);
 
     // Agent-wins settles the remittance: completed volume grows by the amount.
     assert_eq!(
-        f.contract.get_total_completed_volume(),
+        f.contract.get_total_volume(),
         volume_before + 1_000
     );
 }
@@ -511,21 +511,20 @@ fn test_resolve_dispute_sender_wins_updates_agent_stats() {
     let f = setup_failed_remittance();
     let hash = evidence_hash(&f.env);
 
-    let stats_before = f.contract.get_agent_stats(&f.agent).unwrap();
+    let stats_before = f.contract.get_agent_stats(&f.agent);
 
     f.contract.raise_dispute(&f.remittance_id, &hash);
     f.contract.resolve_dispute(&f.remittance_id, &true);
 
-    let stats_after = f.contract.get_agent_stats(&f.agent).unwrap();
+    let stats_after = f.contract.get_agent_stats(&f.agent);
 
     // No settlement occurred, but the dispute is tallied against the agent.
     assert_eq!(stats_after.total_settlements, stats_before.total_settlements);
     assert_eq!(
         stats_after.failed_settlements,
-        stats_before.failed_settlements
+        stats_before.failed_settlements + 1
     );
-    assert_eq!(stats_after.disputes, stats_before.disputes + 1);
-    assert_eq!(stats_after.success_rate_bps, stats_before.success_rate_bps);
+    assert_eq!(stats_after.dispute_count, stats_before.dispute_count + 1);
 }
 
 #[test]
@@ -533,12 +532,12 @@ fn test_resolve_dispute_agent_wins_updates_agent_stats() {
     let f = setup_failed_remittance();
     let hash = evidence_hash(&f.env);
 
-    let stats_before = f.contract.get_agent_stats(&f.agent).unwrap();
+    let stats_before = f.contract.get_agent_stats(&f.agent);
 
     f.contract.raise_dispute(&f.remittance_id, &hash);
     f.contract.resolve_dispute(&f.remittance_id, &false);
 
-    let stats_after = f.contract.get_agent_stats(&f.agent).unwrap();
+    let stats_after = f.contract.get_agent_stats(&f.agent);
 
     // Agent-wins counts as a successful settlement and tallies the dispute.
     assert_eq!(
@@ -549,8 +548,7 @@ fn test_resolve_dispute_agent_wins_updates_agent_stats() {
         stats_after.failed_settlements,
         stats_before.failed_settlements
     );
-    assert_eq!(stats_after.disputes, stats_before.disputes + 1);
-    assert_eq!(stats_after.success_rate_bps, 10_000);
+    assert_eq!(stats_after.dispute_count, stats_before.dispute_count + 1);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

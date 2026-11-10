@@ -5,6 +5,8 @@
 
 #[cfg(test)]
 mod property_tests {
+    extern crate std;
+    use std::format;
     use super::super::fee_service::*;
     use crate::config::{FEE_DIVISOR, MAX_FEE_BPS, MIN_FEE};
     use crate::{ContractError, FeeStrategy};
@@ -295,9 +297,9 @@ mod property_tests {
             let to_str = String::from_str(&env, &to_country);
             
             let corridor_id = format_corridor_id(&env, &from_str, &to_str);
-            let expected = format!("{}-{}", from_country, to_country);
+            let expected = String::from_str(&env, &format!("{}-{}", from_country, to_country));
             
-            prop_assert_eq!(corridor_id.to_string(), expected);
+            prop_assert_eq!(corridor_id, expected);
         }
 
         /// Test fee breakdown validation edge cases

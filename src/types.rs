@@ -260,6 +260,32 @@ pub struct SenderVolumeEntry {
     pub amount: i128,
 }
 
+/// Contracttype-compatible Option wrapper for ProofData.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MaybeProofData {
+    None,
+    Some(ProofData),
+}
+
+impl From<Option<ProofData>> for MaybeProofData {
+    fn from(opt: Option<ProofData>) -> Self {
+        match opt {
+            None => MaybeProofData::None,
+            Some(v) => MaybeProofData::Some(v),
+        }
+    }
+}
+
+impl From<MaybeProofData> for Option<ProofData> {
+    fn from(m: MaybeProofData) -> Self {
+        match m {
+            MaybeProofData::None => None,
+            MaybeProofData::Some(v) => Some(v),
+        }
+    }
+}
+
 /// Per-item entry for `confirm_batch_payout` (#1668).
 ///
 /// Carries the remittance ID together with optional proof and recipient-details
@@ -271,7 +297,7 @@ pub struct BatchPayoutEntry {
     /// The unique ID of the remittance to confirm.
     pub remittance_id: u64,
     /// Optional cryptographic proof required by proof-gated remittances.
-    pub proof: Option<ProofData>,
+    pub proof: MaybeProofData,
     /// Optional recipient-details hash for recipient-verified remittances.
     pub recipient_details_hash: Option<soroban_sdk::BytesN<32>>,
 }
@@ -350,6 +376,8 @@ pub enum AdminOperationType {
     /// fields carry the new values). Required once the current threshold is > 1 so that
     /// a single admin cannot unilaterally weaken the quorum protection.
     UpdateMultisigConfig,
+    /// Abort an in-progress migration.
+    AbortMigration,
 }
 
 /// A pending multi-sig admin operation awaiting sufficient approvals.

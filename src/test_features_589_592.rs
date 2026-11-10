@@ -104,7 +104,11 @@ fn remit(f: &F, amount: i128) -> u64 {
     ];
     let ids = f.c.create_batch_remittance(&f.sender, &entries);
     let before = bal(&f.env, &f.tok, &f.agent);
-    f.c.confirm_batch_payout(&f.agent, &ids);
+    let payout_entries = soroban_sdk::vec![&f.env,
+        crate::BatchPayoutEntry { remittance_id: ids.get(0).unwrap(), proof: crate::MaybeProofData::None, recipient_details_hash: None },
+        crate::BatchPayoutEntry { remittance_id: ids.get(1).unwrap(), proof: crate::MaybeProofData::None, recipient_details_hash: None },
+    ];
+    f.c.confirm_batch_payout(&f.agent, &payout_entries);
     assert!(bal(&f.env, &f.tok, &f.agent) > before);
     assert_eq!(f.c.get_remittance(&ids.get(0).unwrap()).status, crate::RemittanceStatus::Completed);
     assert_eq!(f.c.get_remittance(&ids.get(1).unwrap()).status, crate::RemittanceStatus::Completed);

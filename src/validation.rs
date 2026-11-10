@@ -248,7 +248,7 @@ pub fn validate_evidence_hash(hash: &soroban_sdk::Bytes) -> Result<(), ContractE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::Env;
+    use soroban_sdk::{testutils::Address as _, Env};
 
     #[test]
     fn test_validate_fee_bps_valid() {
@@ -292,18 +292,24 @@ mod tests {
     #[test]
     fn test_validate_not_blacklisted_allows_clean_address() {
         let env = Env::default();
+        let contract_id = env.register_contract(None, crate::SwiftRemitContract);
         let address = Address::generate(&env);
-        assert!(validate_not_blacklisted(&env, &address).is_ok());
+        env.as_contract(&contract_id, || {
+            assert!(validate_not_blacklisted(&env, &address).is_ok());
+        });
     }
 
     #[test]
     fn test_validate_not_blacklisted_rejects_blacklisted_address() {
         let env = Env::default();
+        let contract_id = env.register_contract(None, crate::SwiftRemitContract);
         let address = Address::generate(&env);
-        crate::add_to_blacklist(&env, &address);
-        assert_eq!(
-            validate_not_blacklisted(&env, &address),
-            Err(ContractError::UserBlacklisted)
-        );
+        env.as_contract(&contract_id, || {
+            crate::storage::set_user_blacklisted(&env, &address, true);
+            assert_eq!(
+                validate_not_blacklisted(&env, &address),
+                Err(ContractError::UserBlacklisted)
+            );
+        });
     }
 }

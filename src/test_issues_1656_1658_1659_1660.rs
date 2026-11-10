@@ -53,33 +53,14 @@ fn test_1656_cancel_event_carries_refund_amount() {
 
     let (contract, _token, _admin, sender, agent) = setup(&env);
 
-    let id = contract.create_remittance(&sender, &agent, &500, &None, &None, &None, &None, &None);
+    let id = contract.create_remittance(&sender, &agent, &500, &None, &None, &None, &None, &None, &None);
     contract.cancel_remittance(&id);
 
-    // Find the cancel event and verify amount != 0
-    let events = env.events().all();
-    let cancel_event = events.iter().find(|(_, topics, _)| {
-        // topics is a Vec; look for ("remit", "cancel") pair
-        if let soroban_sdk::Val::from(topics) = topics.clone() {
-            let _ = topics; // suppress lint
-        }
-        // Simple check: event payload should contain 500 (the refund amount)
-        true // we verify via assert below
-    });
-    let _ = cancel_event; // existence checked implicitly by cancel not panicking
-
-    // The definitive check: re-create and cancel, then inspect the last event.
-    // Because the contract zeroes remittance.amount before the emit call,
-    // the fix is that refund_amount is captured *before* zeroing.
-    // We verify via the get_remittance view — after cancel, stored amount is 0,
-    // meaning the event must have used the pre-zero capture.
     let remittance = contract.get_remittance(&id);
     assert_eq!(
         remittance.amount, 0,
         "stored amount should be zeroed after cancel (Fix #378)"
     );
-    // The test proves the fix: cancel_remittance passes `refund_amount` (captured
-    // before zeroing) to emit_remittance_cancelled, not remittance.amount.
 }
 
 // ── #1658 ────────────────────────────────────────────────────────────────────
@@ -98,11 +79,11 @@ fn test_1658_cancel_releases_daily_limit_capacity() {
     contract.set_daily_limit(&currency, &country, &600);
 
     // Create a remittance that consumes most of the limit.
-    let id = contract.create_remittance(&sender, &agent, &500, &None, &None, &None, &None, &None);
+    let id = contract.create_remittance(&sender, &agent, &500, &None, &None, &None, &None, &None, &None);
 
     // Trying to send 200 more would exceed the 600 limit (500 + 200 = 700).
     let over = contract.try_create_remittance(
-        &sender, &agent, &200, &None, &None, &None, &None, &None,
+        &sender, &agent, &200, &None, &None, &None, &None, &None, &None,
     );
     assert_eq!(
         over.unwrap_err().unwrap(),
@@ -114,7 +95,7 @@ fn test_1658_cancel_releases_daily_limit_capacity() {
 
     // Now the full 600 is available again; 500 should succeed.
     let result = contract.try_create_remittance(
-        &sender, &agent, &500, &None, &None, &None, &None, &None,
+        &sender, &agent, &500, &None, &None, &None, &None, &None, &None,
     );
     assert!(
         result.is_ok(),
@@ -137,7 +118,7 @@ fn test_1658_expiry_releases_daily_limit_capacity() {
     // Create with an expiry 1 second from now.
     let now = env.ledger().timestamp();
     let id = contract.create_remittance(
-        &sender, &agent, &500, &Some(now + 1), &None, &None, &None, &None,
+        &sender, &agent, &500, &Some(now + 1), &None, &None, &None, &None, &None,
     );
 
     // Advance time past expiry.
@@ -150,7 +131,7 @@ fn test_1658_expiry_releases_daily_limit_capacity() {
 
     // Capacity should be released.
     let result = contract.try_create_remittance(
-        &sender, &agent, &500, &None, &None, &None, &None, &None,
+        &sender, &agent, &500, &None, &None, &None, &None, &None, &None,
     );
     assert!(
         result.is_ok(),
@@ -174,7 +155,7 @@ fn test_1659_remove_daily_limit_lifts_cap() {
 
     // Over-limit transfer is rejected.
     let over = contract.try_create_remittance(
-        &sender, &agent, &200, &None, &None, &None, &None, &None,
+        &sender, &agent, &200, &None, &None, &None, &None, &None, &None,
     );
     assert_eq!(
         over.unwrap_err().unwrap(),
@@ -193,7 +174,7 @@ fn test_1659_remove_daily_limit_lifts_cap() {
 
     // Previously-blocked transfer now goes through.
     let result = contract.try_create_remittance(
-        &sender, &agent, &200, &None, &None, &None, &None, &None,
+        &sender, &agent, &200, &None, &None, &None, &None, &None, &None,
     );
     assert!(result.is_ok(), "transfer should succeed after limit removed");
 }
@@ -223,9 +204,9 @@ fn test_1660_set_dispute_window_emits_event() {
 
     let (contract, _token, _admin, _sender, _agent) = setup(&env);
 
-    let before_count = env.events().all().len();
+    let before_count = env.events().all().events().len();
     contract.set_dispute_window(&3600);
-    let after_count = env.events().all().len();
+    let after_count = env.events().all().events().len();
 
     assert!(
         after_count > before_count,
@@ -241,9 +222,9 @@ fn test_1660_update_escrow_ttl_emits_event() {
 
     let (contract, _token, _admin, _sender, _agent) = setup(&env);
 
-    let before_count = env.events().all().len();
+    let before_count = env.events().all().events().len();
     contract.update_escrow_ttl(&7200);
-    let after_count = env.events().all().len();
+    let after_count = env.events().all().events().len();
 
     assert!(
         after_count > before_count,
@@ -259,9 +240,9 @@ fn test_1660_update_rate_limit_emits_event() {
 
     let (contract, _token, _admin, _sender, _agent) = setup(&env);
 
-    let before_count = env.events().all().len();
+    let before_count = env.events().all().events().len();
     contract.update_rate_limit(&60);
-    let after_count = env.events().all().len();
+    let after_count = env.events().all().events().len();
 
     assert!(
         after_count > before_count,
@@ -277,9 +258,9 @@ fn test_1660_set_max_expired_batch_size_emits_event() {
 
     let (contract, _token, _admin, _sender, _agent) = setup(&env);
 
-    let before_count = env.events().all().len();
+    let before_count = env.events().all().events().len();
     contract.set_max_expired_batch_size(&100);
-    let after_count = env.events().all().len();
+    let after_count = env.events().all().events().len();
 
     assert!(
         after_count > before_count,
@@ -295,9 +276,9 @@ fn test_1660_set_min_agent_reputation_emits_event() {
 
     let (contract, _token, _admin, _sender, _agent) = setup(&env);
 
-    let before_count = env.events().all().len();
+    let before_count = env.events().all().events().len();
     contract.set_min_agent_reputation(&50);
-    let after_count = env.events().all().len();
+    let after_count = env.events().all().events().len();
 
     assert!(
         after_count > before_count,

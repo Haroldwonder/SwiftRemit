@@ -428,7 +428,7 @@ fn get_effective_fee_strategy_for_strategy(
 ///
 /// * `Ok(i128)` - Calculated fee
 /// * `Err(ContractError::Overflow)` - Arithmetic overflow
-fn calculate_fee_by_strategy(amount: i128, strategy: &FeeStrategy) -> Result<i128, ContractError> {
+pub(crate) fn calculate_fee_by_strategy(amount: i128, strategy: &FeeStrategy) -> Result<i128, ContractError> {
     match strategy {
         FeeStrategy::Percentage(fee_bps) => {
             // Fee = amount * fee_bps / 10000, with a minimum of MIN_FEE stroop
@@ -480,7 +480,7 @@ fn calculate_fee_by_strategy(amount: i128, strategy: &FeeStrategy) -> Result<i12
 ///
 /// * `Ok(i128)` - Calculated protocol fee
 /// * `Err(ContractError::Overflow)` - Arithmetic overflow
-fn calculate_protocol_fee(amount: i128, protocol_fee_bps: u32) -> Result<i128, ContractError> {
+pub(crate) fn calculate_protocol_fee(amount: i128, protocol_fee_bps: u32) -> Result<i128, ContractError> {
     if protocol_fee_bps == 0 {
         return Ok(0);
     }
@@ -503,7 +503,7 @@ fn calculate_protocol_fee(amount: i128, protocol_fee_bps: u32) -> Result<i128, C
 /// # Returns
 ///
 /// Formatted corridor ID (e.g., "US-MX")
-fn format_corridor_id(env: &Env, from: &String, to: &String) -> String {
+pub(crate) fn format_corridor_id(env: &Env, from: &String, to: &String) -> String {
     let from_len = from.len() as usize;
     let to_len = to.len() as usize;
     let total = from_len + 1 + to_len;

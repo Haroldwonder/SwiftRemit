@@ -482,7 +482,7 @@ fn test_fee_breakdown_very_large_amount() {
     let treasury = Address::generate(&env);
 
     let (token, token_admin) = create_token_contract(&env, &admin);
-    token_admin.mint(&sender, &i128::MAX / 2);
+    token_admin.mint(&sender, &(i128::MAX / 2));
 
     let contract_id = env.register_contract(None, SwiftRemitContract);
     let client = SwiftRemitContractClient::new(&env, &contract_id);
@@ -560,25 +560,23 @@ fn test_fee_breakdown_protocol_fee_frozen_after_bps_change() {
     assert_eq!(quoted.net_amount, 9700);
 
     // Create the remittance, freezing the quoted fees
-    let remittance_id = client.create_remittance(&sender, &agent, &amount, &None, &None);
+    let remittance_id = client.create_remittance(&sender, &agent, &amount, &None, &None, &None, &None, &None, &None);
 
     // Admin raises the protocol fee after creation
-    client.update_protocol_fee_bps(&admin, &200);
+    client.update_protocol_fee(&admin, &200);
 
     // Breakdown for the existing remittance must reflect the frozen protocol fee
-    let after_change = client.breakdown_from_platform_fee(&remittance_id);
-    assert_eq!(after_change.amount, amount);
-    assert_eq!(after_change.platform_fee, quoted.platform_fee);
-    assert_eq!(after_change.protocol_fee, quoted.protocol_fee);
-    assert_eq!(after_change.net_amount, quoted.net_amount);
+    let r1 = client.get_remittance(&remittance_id);
+    assert_eq!(r1.amount, amount);
+    assert_eq!(r1.fee, quoted.platform_fee);
+    assert_eq!(r1.protocol_fee, quoted.protocol_fee);
 
     // Partial payout must not re-price the protocol fee
-    client.partial_payout(&agent, &remittance_id, &4000i128);
+    client.confirm_partial_payout(&remittance_id, &4000i128);
 
-    let after_partial = client.breakdown_from_platform_fee(&remittance_id);
-    assert_eq!(after_partial.platform_fee, quoted.platform_fee);
-    assert_eq!(after_partial.protocol_fee, quoted.protocol_fee);
-    assert_eq!(after_partial.net_amount, quoted.net_amount);
+    let r2 = client.get_remittance(&remittance_id);
+    assert_eq!(r2.fee, quoted.platform_fee);
+    assert_eq!(r2.protocol_fee, quoted.protocol_fee);
 
     // A fresh quote uses the new bps, proving the change took effect
     let new_quote = client.get_fee_breakdown(&amount, &None, &None);

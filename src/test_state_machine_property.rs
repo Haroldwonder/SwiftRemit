@@ -98,6 +98,7 @@ fn make_remittance(env: &Env, status: RemittanceStatus) -> crate::Remittance {
         agent: soroban_sdk::Address::generate(env),
         amount: 1_000,
         fee: 10,
+        protocol_fee: 0,
         status,
         expiry: None,
         settlement_config: MaybeSettlementConfig::None,

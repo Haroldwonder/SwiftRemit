@@ -2382,6 +2382,7 @@ pub fn clear_admin_nomination(env: &Env) {
 /// Clears the pending admin proposal.
 pub fn clear_pending_admin(env: &Env) {
     env.storage().instance().remove(&DataKey::PendingAdmin);
+    env.storage().instance().remove(&DataKey::NominatedAdmin);
 }
 
 /// Extend TTLs for critical instance and persistent storage keys.
@@ -2758,18 +2759,68 @@ pub fn sub_processing_volume(env: &Env, amount: i128) -> Result<(), ContractErro
     Ok(())
 }
 pub fn set_pending_admin_with_expiry(env: &Env, new_admin: &Address, expires_at: u64) {
-    let admin = get_admin(env).unwrap_or_else(|| new_admin.clone());
+    let admin = get_admin(env).unwrap_or_else(|_| new_admin.clone());
     let nomination = AdminNomination { nominee: new_admin.clone(), expires_at, nominator: admin };
     set_admin_nomination(env, &nomination);
     env.storage().instance().set(&DataKey::PendingAdmin, new_admin);
 }
-pub fn get_pending_admin(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&DataKey::PendingAdmin)
+
+pub fn get_processing_timeout(env: &Env) -> u64 {
+    get_processing_recovery_timeout(env)
 }
-pub fn get_admin_nomination(env: &Env) -> Option<AdminNomination> {
-    env.storage().instance().get(&DataKey::NominatedAdmin)
+
+pub fn set_processing_timeout(env: &Env, seconds: u64) {
+    set_processing_recovery_timeout(env, seconds);
 }
-pub fn clear_pending_admin(env: &Env) {
-    env.storage().instance().remove(&DataKey::PendingAdmin);
-    env.storage().instance().remove(&DataKey::NominatedAdmin);
+
+pub fn get_processing_started_at(env: &Env, remittance_id: u64) -> Option<u64> {
+    get_last_partial_payout_at(env, remittance_id)
+}
+
+pub fn set_processing_started_at(env: &Env, remittance_id: u64, timestamp: u64) {
+    set_last_partial_payout_at(env, remittance_id, timestamp);
+}
+
+pub fn get_sender_remittances_paged(
+    env: &Env,
+    sender: &Address,
+    offset: u32,
+    limit: u32,
+) -> soroban_sdk::Vec<u64> {
+    let all = get_sender_remittances(env, sender);
+    let total = all.len();
+    if offset >= total || limit == 0 {
+        return soroban_sdk::Vec::new(env);
+    }
+    let end = offset.saturating_add(limit).min(total);
+    let mut out = soroban_sdk::Vec::new(env);
+    for i in offset..end {
+        out.push_back(all.get_unchecked(i));
+    }
+    out
+}
+
+pub fn get_agent_remittances_paged(
+    env: &Env,
+    agent: &Address,
+    offset: u32,
+    limit: u32,
+) -> soroban_sdk::Vec<u64> {
+    let all = get_agent_remittances(env, agent);
+    let total = all.len();
+    if offset >= total || limit == 0 {
+        return soroban_sdk::Vec::new(env);
+    }
+    let end = offset.saturating_add(limit).min(total);
+    let mut out = soroban_sdk::Vec::new(env);
+    for i in offset..end {
+        out.push_back(all.get_unchecked(i));
+    }
+    out
+}
+
+pub fn clear_kyc_expiry(env: &Env, user: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::KycExpiry(user.clone()));
 }
