@@ -1895,6 +1895,9 @@ impl SwiftRemitContract {
         crate::storage::compute_agent_reputation(&stats)
     }
 
+    /// Finalizes a completed remittance by reclaiming transient auxiliary storage
+    /// (payout commitments, partial payout tracking, and idempotency keys) and
+    /// emitting a `("remit", "finalized")` audit event (#1655).
     pub fn finalize_remittance(
         env: Env,
         caller: Address,
@@ -1908,7 +1911,16 @@ impl SwiftRemitContract {
             return Err(ContractError::InvalidStateTransition);
         }
 
-        // Remittance is already completed, no further action needed
+        // Reclaim transient auxiliary storage for the completed remittance
+        storage::archive_remittance_storage(&env, remittance_id);
+
+        if let Ok(mut record) = storage::get_transaction_record(&env, remittance_id) {
+            record.state = transaction_controller::TransactionState::Completed;
+            let _ = storage::set_transaction_record(&env, remittance_id, &record);
+        }
+
+        events::emit_remittance_finalized(&env, remittance_id, caller);
+
         Ok(())
     }
 
@@ -4593,5 +4605,89 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             timelock_seconds: storage::get_governance_timelock(&env),
             proposal_ttl_seconds: storage::get_proposal_ttl(&env),
         }
+    }
+}
+
+#[cfg(test)]
+mod test_issue_1655 {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Events as _},
+        token,
+        xdr::{ContractEventBody, ScSymbol, ScVal, StringM},
+        Address, BytesN, Env,
+    };
+
+    fn has_event(env: &Env, t0: &str, t1: &str) -> bool {
+        let sym0 = ScVal::Symbol(ScSymbol(StringM::try_from(t0).unwrap()));
+        let sym1 = ScVal::Symbol(ScSymbol(StringM::try_from(t1).unwrap()));
+        env.events().all().events().iter().any(|e| {
+            let ContractEventBody::V0(body) = &e.body;
+            body.topics.len() >= 2 && body.topics[0] == sym0 && body.topics[1] == sym1
+        })
+    }
+
+    fn setup(env: &Env) -> (SwiftRemitContractClient<'_>, Address, Address, Address, Address) {
+        let admin = Address::generate(env);
+        let sender = Address::generate(env);
+        let agent = Address::generate(env);
+        let token_id = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let token_admin = token::StellarAssetClient::new(env, &token_id);
+        token_admin.mint(&sender, &100_000);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
+        let client = SwiftRemitContractClient::new(env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &3600, &0, &admin);
+        client.register_agent(&agent, &None);
+        env.as_contract(&contract_id, || {
+            storage::assign_role(env, &agent, &Role::Settler);
+        });
+        (client, contract_id, admin, sender, agent)
+    }
+
+    #[test]
+    fn test_finalize_remittance_reclaims_storage_and_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, contract_id, admin, sender, agent) = setup(&env);
+
+        let id = client.create_remittance(
+            &sender, &agent, &1_000, &None, &None, &None, &None, &None, &None,
+        );
+        client.confirm_partial_payout(&id, &975);
+
+        let commitment = BytesN::from_array(&env, &[0x42u8; 32]);
+        env.as_contract(&contract_id, || {
+            storage::set_payout_commitment(&env, id, &commitment);
+            assert!(storage::get_payout_commitment(&env, id).is_some());
+            assert_eq!(storage::get_disbursed_amount(&env, id), 975);
+        });
+
+        client.finalize_remittance(&admin, &id);
+
+        assert!(
+            has_event(&env, "remit", "finalized"),
+            "expected ('remit', 'finalized') event to be emitted"
+        );
+
+        env.as_contract(&contract_id, || {
+            assert!(storage::get_payout_commitment(&env, id).is_none());
+            assert_eq!(storage::get_disbursed_amount(&env, id), 0);
+            assert!(storage::get_last_partial_payout_at(&env, id).is_none());
+            assert_eq!(storage::get_partial_payout_history(&env, id).len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_finalize_remittance_rejects_non_completed() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, _, admin, sender, agent) = setup(&env);
+
+        let id = client.create_remittance(
+            &sender, &agent, &1_000, &None, &None, &None, &None, &None, &None,
+        );
+        let res = client.try_finalize_remittance(&admin, &id);
+        assert_eq!(res, Err(Ok(ContractError::InvalidStateTransition)));
     }
 }

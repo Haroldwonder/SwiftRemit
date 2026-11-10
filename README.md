@@ -185,7 +185,7 @@ The contract exposes 134 public functions from a single `#[contractimpl] impl Sw
 | `set_dispute_window(seconds)` | Sets how long after failure a sender may raise a dispute (bounded at 30 days) | admin only |
 | `get_dispute_window()` | Returns the current dispute window in seconds | none (public query) |
 | `confirm_partial_payout(remittance_id, amount)` | Disburses a partial amount toward a remittance; auto-completes once fully disbursed | agent auth required (assigned agent) |
-| `finalize_remittance(caller, remittance_id)` | Verifies a remittance is in the `Completed` status | admin only |
+| `finalize_remittance(caller, remittance_id)` | Finalizes a completed remittance by reclaiming transient auxiliary storage (payout commitment, partial payout tracking, and idempotency keys) and emitting a finalized event | admin only |
 | `cancel_remittance(remittance_id)` | Sender cancels a pending remittance for a full refund, or recovers the remaining escrow from a `Failed` remittance after its dispute window expires | sender auth required |
 | `process_expired_remittances(remittance_ids)` | Batch-refunds expired pending remittances from the given ID list (max batch size configurable, see `set_max_expired_batch_size`) | none (callable by anyone) |
 | `get_remittance(remittance_id)` | Fetches a remittance record | none (public query) |

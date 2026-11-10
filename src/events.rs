@@ -344,6 +344,15 @@ pub fn emit_remittance_recovered(
     emit_event!(env, "remit", "recovered", remittance_id, sender, agent, token, refund_amount);
 }
 
+/// Emits an event when a completed remittance is finalized and its transient
+/// auxiliary storage is reclaimed by the admin (#1655).
+///
+/// Topics: `("remit", "finalized")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, remittance_id, caller)`
+pub fn emit_remittance_finalized(env: &Env, remittance_id: u64, caller: Address) {
+    emit_event!(env, "remit", "finalized", remittance_id, caller);
+}
+
 pub fn emit_agent_cap_set(env: &Env, agent: Address, cap: i128, caller: Address) {
     env.events().publish(
         (Symbol::new(env, "agent_cap_set"),),

@@ -148,6 +148,16 @@
       "access": "agent_auth"
     },
     {
+      "name": "finalize_remittance",
+      "doc": "Finalizes a completed remittance by reclaiming transient auxiliary storage and emitting a finalized event. Admin only.",
+      "inputs": [
+        { "name": "caller",        "type": "Address" },
+        { "name": "remittance_id", "type": "u64" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin_only"
+    },
+    {
       "name": "mark_failed",
       "doc": "Marks payout as failed and auto-refunds escrow to sender. Agent only.",
       "inputs": [

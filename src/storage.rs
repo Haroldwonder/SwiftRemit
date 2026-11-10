@@ -1837,6 +1837,30 @@ pub fn get_payout_commitment(env: &Env, remittance_id: u64) -> Option<soroban_sd
         .get(&DataKey::PayoutCommitment(remittance_id))
 }
 
+/// Removes the payout commitment for a remittance when finalized (#1655).
+pub fn remove_payout_commitment(env: &Env, remittance_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::PayoutCommitment(remittance_id));
+}
+
+/// Reclaims transient auxiliary storage entries for a completed remittance (#1655).
+pub fn archive_remittance_storage(env: &Env, remittance_id: u64) {
+    remove_payout_commitment(env, remittance_id);
+    env.storage()
+        .persistent()
+        .remove(&DataKey::DisbursedAmount(remittance_id));
+    env.storage()
+        .persistent()
+        .remove(&DataKey::PartialPayoutHistory(remittance_id));
+    env.storage()
+        .persistent()
+        .remove(&DataKey::LastPartialPayoutAt(remittance_id));
+    if let Some(idem_key) = take_remittance_idempotency_key(env, remittance_id) {
+        remove_idempotency_record(env, &idem_key);
+    }
+}
+
 // === Analytics Counters ===
 
 /// Returns the total number of remittances ever created.
