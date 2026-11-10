@@ -1786,6 +1786,10 @@ impl SwiftRemitContract {
             return Err(ContractError::InvalidStatus);
         }
 
+        // #1627: Reject partial payouts once the remittance expiry has passed.
+        validate_settlement_not_expired(&env, remittance.expiry)?;
+        validate_settlement_not_expired(&env, remittance.expires_at)?;
+
         if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
             if config.require_proof {
                 return Err(ContractError::MissingProof);
@@ -4547,5 +4551,59 @@ impl SwiftRemitContract {
             timelock_seconds: storage::get_governance_timelock(&env),
             proposal_ttl_seconds: storage::get_proposal_ttl(&env),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_issue_1627 {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, Env,
+    };
+
+    #[test]
+    fn test_1627_confirm_partial_payout_rejects_expired_remittance() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+        let admin = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        token::StellarAssetClient::new(&env, &token_id).mint(&sender, &10_000_000);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract);
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &0, &0, &admin);
+        client.register_agent(&agent, &None);
+
+        let rem_id = client.create_remittance(
+            &sender,
+            &agent,
+            &1_000_000,
+            &Some(2_000),
+            &None,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+
+        // Before expiry: first partial payout succeeds
+        env.ledger().with_mut(|l| l.timestamp = 1_500);
+        client.confirm_partial_payout(&rem_id, &100_000);
+        assert_eq!(client.get_remittance(&rem_id).status, RemittanceStatus::Processing);
+
+        // After expiry: second partial payout fails with SettlementExpired
+        env.ledger().with_mut(|l| l.timestamp = 2_001);
+        assert_eq!(
+            client.try_confirm_partial_payout(&rem_id, &100_000),
+            Err(Ok(ContractError::SettlementExpired))
+        );
     }
 }
