@@ -1844,6 +1844,16 @@ impl SwiftRemitContract {
 
         // If fully disbursed, collect fee and complete
         if new_total >= net_payout {
+            // #1629: Transfer protocol fee to treasury on partial-payout completion.
+            if fee_breakdown.protocol_fee > 0 {
+                let treasury = get_treasury(&env)?;
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &treasury,
+                    &fee_breakdown.protocol_fee,
+                );
+            }
+
             // Update accumulated fees with overflow protection and automatic flush
             safe_add_accumulated_fee(&env, remittance.fee)?;
 
@@ -4547,5 +4557,59 @@ impl SwiftRemitContract {
             timelock_seconds: storage::get_governance_timelock(&env),
             proposal_ttl_seconds: storage::get_proposal_ttl(&env),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_issue_1629 {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, Env,
+    };
+
+    #[test]
+    fn test_1629_partial_payout_completion_transfers_protocol_fee_to_treasury() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let agent = Address::generate(&env);
+        let fee_recipient = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        token::StellarAssetClient::new(&env, &token_id).mint(&sender, &10_000_000);
+        let token_client = token::Client::new(&env, &token_id);
+
+        let contract_id = env.register_contract(None, SwiftRemitContract);
+        let client = SwiftRemitContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &250, &0, &50, &treasury);
+        client.register_agent(&agent, &None);
+
+        let rem_id = client.create_remittance(
+            &sender, &agent, &1_000_000, &None, &None, &None, &None, &None, &None,
+        );
+        let rem = client.get_remittance(&rem_id);
+        assert!(rem.protocol_fee > 0);
+        let net_payout = rem.amount - rem.fee - rem.protocol_fee;
+        let half = net_payout / 2;
+
+        client.confirm_partial_payout(&rem_id, &half);
+        assert_eq!(token_client.balance(&treasury), 0);
+
+        client.confirm_partial_payout(&rem_id, &(net_payout - half));
+        assert_eq!(client.get_remittance(&rem_id).status, RemittanceStatus::Completed);
+        assert_eq!(token_client.balance(&agent), net_payout);
+        assert_eq!(token_client.balance(&treasury), rem.protocol_fee);
+        assert_eq!(client.get_accumulated_fees(), rem.fee);
+
+        client.withdraw_fees(&fee_recipient);
+        assert_eq!(token_client.balance(&fee_recipient), rem.fee);
+        assert_eq!(token_client.balance(&contract_id), 0);
     }
 }
