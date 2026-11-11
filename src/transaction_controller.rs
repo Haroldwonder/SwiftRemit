@@ -224,6 +224,13 @@ impl TransactionController {
         // Create remittance record
         let counter = crate::storage::get_remittance_counter(env)?;
         let remittance_id = counter.checked_add(1).ok_or(ContractError::Overflow)?;
+        let created_at = env.ledger().timestamp();
+        let expiry_window = crate::storage::get_remittance_expiry_window(env);
+        let expires_at = if expiry_window > 0 {
+            Some(created_at.saturating_add(expiry_window))
+        } else {
+            None
+        };
 
         let remittance = Remittance {
             id: remittance_id,
@@ -235,10 +242,10 @@ impl TransactionController {
             expiry,
             settlement_config: crate::MaybeSettlementConfig::None,
             token: usdc_token.clone(),
-            created_at: env.ledger().timestamp(),
+            created_at,
             failed_at: None,
             dispute_evidence: crate::MaybeBytes32::None,
-            expires_at: None,
+            expires_at,
         };
 
         crate::storage::set_remittance(env, remittance_id, &remittance);

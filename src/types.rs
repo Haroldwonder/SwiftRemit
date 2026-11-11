@@ -230,6 +230,19 @@ pub struct Remittance {
     pub expires_at: Option<u64>,
 }
 
+impl Remittance {
+    /// Returns the effective deadline for this remittance, taking the earlier
+    /// of the caller-supplied `expiry` and the window-derived `expires_at`.
+    pub fn effective_expiry(&self) -> Option<u64> {
+        match (self.expiry, self.expires_at) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        }
+    }
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentStats {

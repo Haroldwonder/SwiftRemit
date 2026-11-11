@@ -172,7 +172,7 @@ pub fn validate_confirm_payout_request(
         return Err(ContractError::InvalidStatus);
     }
     validate_no_duplicate_settlement(env, remittance_id)?;
-    validate_settlement_not_expired(env, remittance.expiry)?;
+    validate_settlement_not_expired(env, remittance.effective_expiry())?;
     // Enforce the blacklist at payout time: a sender or agent blacklisted after
     // the remittance was created must not be able to settle it.
     validate_not_blacklisted(env, &remittance.sender)?;
