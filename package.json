@@ -25,7 +25,7 @@
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^8.57.0",
-    "rimraf": "^6.0.1",
+    "rimraf": "^6.1.4",
     "syncpack": "^13.0.0",
     "typescript": "^5.8.3",
     "vitest": "^3.1.1"
