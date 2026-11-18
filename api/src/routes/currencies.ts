@@ -225,6 +225,22 @@ router.get('/:from/rates/:to', async (req: Request, res: Response) => {
       return res.status(404).json(errorResponse);
     }
 
+    // Identical canonical currencies require no provider or cache lookup (#1876).
+    // Resolve aliases first so DOLLAR/USD also takes this path.
+    if (fromCurrency.code === toCurrency.code) {
+      return res.json({
+        success: true,
+        data: {
+          from: fromCurrency.code,
+          to: toCurrency.code,
+          rate: 1,
+          provider: 'identity',
+          fetched_at: new Date().toISOString(),
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     const rateService = getConversionRateService();
     const conversionRate = await rateService.getRate(fromCurrency.code, toCurrency.code);
 

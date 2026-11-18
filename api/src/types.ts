@@ -22,6 +22,8 @@ export interface ConversionRate {
   from: string;
   to: string;
   rate: number;
+  /** Present for locally resolved conversions, such as same-currency identity rates. */
+  provider?: string;
   /** ISO-8601 timestamp of when this rate was fetched / computed. */
   fetched_at: string;
 }
