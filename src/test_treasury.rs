@@ -86,3 +86,113 @@ fn test_update_treasury_emits_event() {
     let found = has_event(&env, "treasury", "upd");
     assert!(found, "treasury_upd event was not emitted");
 }
+
+fn fund_fees(env: &Env, contract: &SwiftRemitContractClient, token_client: &token::StellarAssetClient, amount: i128) {
+    // Seed the contract with fees by transferring tokens directly and
+    // recording them through the contract's fee accounting path.
+    token_client.mint(&contract.address, &amount);
+    contract.record_fees(&amount);
+}
+
+#[test]
+fn test_withdraw_fees_partial() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin) = setup(&env);
+    let token_client = token::StellarAssetClient::new(&env, &contract.get_token());
+    let to = Address::generate(&env);
+
+    fund_fees(&env, &contract, &token_client, 1000);
+    assert_eq!(contract.get_accumulated_fees(), 1000);
+
+    contract.withdraw_fees(&admin, &to, &Some(400));
+
+    assert_eq!(contract.get_accumulated_fees(), 600);
+    assert_eq!(token_client.balance(&to), 400);
+
+    let found = has_event(&env, "fees", "wd");
+    assert!(found, "fees_wd event was not emitted");
+}
+
+#[test]
+fn test_withdraw_fees_full_via_some() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin) = setup(&env);
+    let token_client = token::StellarAssetClient::new(&env, &contract.get_token());
+    let to = Address::generate(&env);
+
+    fund_fees(&env, &contract, &token_client, 1000);
+
+    contract.withdraw_fees(&admin, &to, &Some(1000));
+
+    assert_eq!(contract.get_accumulated_fees(), 0);
+    assert_eq!(token_client.balance(&to), 1000);
+}
+
+#[test]
+fn test_withdraw_fees_none_withdraws_all() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin) = setup(&env);
+    let token_client = token::StellarAssetClient::new(&env, &contract.get_token());
+    let to = Address::generate(&env);
+
+    fund_fees(&env, &contract, &token_client, 750);
+
+    contract.withdraw_fees(&admin, &to, &None);
+
+    assert_eq!(contract.get_accumulated_fees(), 0);
+    assert_eq!(token_client.balance(&to), 750);
+}
+
+#[test]
+fn test_withdraw_fees_over_withdrawal_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin) = setup(&env);
+    let token_client = token::StellarAssetClient::new(&env, &contract.get_token());
+    let to = Address::generate(&env);
+
+    fund_fees(&env, &contract, &token_client, 500);
+
+    let result = contract.try_withdraw_fees(&admin, &to, &Some(501));
+    assert_eq!(result, Err(Ok(ContractError::InvalidAmount)));
+    assert_eq!(contract.get_accumulated_fees(), 500);
+}
+
+#[test]
+fn test_withdraw_fees_zero_amount_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin) = setup(&env);
+    let token_client = token::StellarAssetClient::new(&env, &contract.get_token());
+    let to = Address::generate(&env);
+
+    fund_fees(&env, &contract, &token_client, 500);
+
+    let result = contract.try_withdraw_fees(&admin, &to, &Some(0));
+    assert_eq!(result, Err(Ok(ContractError::InvalidAmount)));
+    assert_eq!(contract.get_accumulated_fees(), 500);
+}
+
+#[test]
+fn test_withdraw_fees_negative_amount_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin) = setup(&env);
+    let token_client = token::StellarAssetClient::new(&env, &contract.get_token());
+    let to = Address::generate(&env);
+
+    fund_fees(&env, &contract, &token_client, 500);
+
+    let result = contract.try_withdraw_fees(&admin, &to, &Some(-1));
+    assert_eq!(result, Err(Ok(ContractError::InvalidAmount)));
+    assert_eq!(contract.get_accumulated_fees(), 500);
+}

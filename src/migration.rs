@@ -170,6 +170,10 @@ enum MigrationKey {
     /// migration. Used to reject replays and to require every batch before the
     /// migration lock is cleared.
     ImportedBatches,
+    /// Stores the `total_batches` declared by the first batch of a cross-contract
+    /// migration. Every subsequent batch must agree with this value so a batch
+    /// cannot end the migration early by lying about the total.
+    MigrationTotalBatches,
 }
 
 fn get_schema_version(env: &Env) -> u32 {
@@ -255,6 +259,26 @@ fn clear_imported_batches(env: &Env) {
     env.storage()
         .instance()
         .remove(&MigrationKey::ImportedBatches);
+}
+
+// ─── Total batches helpers ────────────────────────────────────────────────────
+
+fn get_migration_total_batches(env: &Env) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&MigrationKey::MigrationTotalBatches)
+}
+
+fn set_migration_total_batches(env: &Env, total_batches: u32) {
+    env.storage()
+        .instance()
+        .set(&MigrationKey::MigrationTotalBatches, &total_batches);
+}
+
+fn clear_migration_total_batches(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&MigrationKey::MigrationTotalBatches);
 }
 
 // ─── Migration state helpers ──────────────────────────────────────────────────
@@ -560,9 +584,10 @@ pub fn abort_migration(env: &Env, caller: &Address) -> Result<(), ContractError>
     // Reset state machine to Idle.
     set_migration_in_progress(env, false);
 
-    // Reset batch ordering counter and imported batch set.
+    // Reset batch ordering counter, imported batch set and stored total.
     clear_expected_next_batch(env);
     clear_imported_batches(env);
+    clear_migration_total_batches(env);
 
     env.events().publish(
         (soroban_sdk::Symbol::new(env, "mig"), soroban_sdk::Symbol::new(env, "aborted")),
@@ -777,6 +802,19 @@ pub fn import_batch(env: &Env, batch: MigrationBatch) -> Result<(), ContractErro
         return Err(ContractError::InvalidMigrationBatch);
     }
 
+    // Enforce a consistent `total_batches` across the whole migration. The first
+    // batch pins the value; every later batch must agree with it. This must run
+    // before any writes so a lying batch cannot end the migration early.
+    let total_batches = if batch.batch_number == 0 {
+        set_migration_total_batches(env, batch.total_batches);
+        batch.total_batches
+    } else {
+        match get_migration_total_batches(env) {
+            Some(stored) if stored == batch.total_batches => stored,
+            _ => return Err(ContractError::InvalidMigrationBatch),
+        }
+    };
+
     // Set migration flag on first batch
     if batch.batch_number == 0 {
         set_migration_in_progress(env, true);
@@ -792,9 +830,10 @@ pub fn import_batch(env: &Env, batch: MigrationBatch) -> Result<(), ContractErro
     mark_batch_imported(env, batch.batch_number);
     set_expected_next_batch(env, expected + 1);
 
-    // Only unlock once every batch in 0..total_batches has been imported.
-    let mut all_imported = batch.total_batches > 0;
-    for n in 0..batch.total_batches {
+    // Only unlock once every batch in 0..total_batches has been imported, using
+    // the pinned total rather than the current batch's (untrusted) field.
+    let mut all_imported = total_batches > 0;
+    for n in 0..total_batches {
         if !is_batch_imported(env, n) {
             all_imported = false;
             break;
@@ -804,6 +843,7 @@ pub fn import_batch(env: &Env, batch: MigrationBatch) -> Result<(), ContractErro
     if all_imported {
         clear_expected_next_batch(env);
         clear_imported_batches(env);
+        clear_migration_total_batches(env);
         set_migration_in_progress(env, false);
     }
 

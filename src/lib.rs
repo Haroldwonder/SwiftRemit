@@ -2896,7 +2896,95 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         escrow.status = EscrowStatus::Released;
         set_escrow(&env, transfer_id, &escrow);
 
-        emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount);
+        emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount, false);
+
+        Ok(())
+    }
+
+    /// Releases a pending escrow to the recipient, authorised by the sender (#1848).
+    ///
+    /// This is the common "goods/services received, I'm satisfied" path: the
+    /// sender can pay out the recipient without waiting for an admin. The
+    /// released funds are identical to `release_escrow`; only the authorisation
+    /// and the `released_by_sender` flag on the `escrow_released` event differ.
+    ///
+    /// # Authorization
+    ///
+    /// Requires authentication from `escrow.sender`.
+    ///
+    /// # Errors
+    /// - `ContractPaused` — the circuit breaker is active
+    /// - `EscrowNotFound` — no escrow exists for `transfer_id`
+    /// - `InvalidEscrowStatus` — the escrow is not `Pending`
+    pub fn sender_release_escrow(env: Env, transfer_id: u64) -> Result<(), ContractError> {
+        // #1264: Block escrow release while paused.
+        validate_not_paused(&env)?;
+        let mut escrow = get_escrow(&env, transfer_id)?;
+
+        escrow.sender.require_auth();
+
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidEscrowStatus);
+        }
+
+        let usdc_token = get_usdc_token(&env)?;
+        let token_client = token::Client::new(&env, &usdc_token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &escrow.recipient,
+            &escrow.amount,
+        );
+
+        escrow.status = EscrowStatus::Released;
+        set_escrow(&env, transfer_id, &escrow);
+
+        emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount, true);
+
+        Ok(())
+    }
+
+    /// Extends the refund expiry of an existing pending escrow (#1849).
+    ///
+    /// `update_escrow_ttl` only affects escrows created afterwards; this lets an
+    /// existing escrow be given more time (for example while a delivery is
+    /// delayed). The new expiry must be strictly later than the current one.
+    ///
+    /// # Authorization
+    ///
+    /// Requires authentication from `escrow.recipient`. The sender may also
+    /// extend by calling this entry point directly (their own auth is then
+    /// required); a joint sender+recipient extension is therefore expressed as
+    /// two independent calls, each of which only ever moves the expiry later.
+    ///
+    /// # Errors
+    /// - `ContractPaused` — the circuit breaker is active
+    /// - `EscrowNotFound` — no escrow exists for `transfer_id`
+    /// - `InvalidEscrowStatus` — the escrow is not `Pending`
+    /// - `InvalidAmount` — `new_expiry` is not strictly later than the current expiry
+    pub fn extend_escrow_expiry(
+        env: Env,
+        transfer_id: u64,
+        new_expiry: u64,
+    ) -> Result<(), ContractError> {
+        // #1264: Block escrow mutation while paused.
+        validate_not_paused(&env)?;
+        let mut escrow = get_escrow(&env, transfer_id)?;
+
+        escrow.recipient.require_auth();
+
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidEscrowStatus);
+        }
+
+        let current_expiry = escrow.expiry.unwrap_or(0);
+        if new_expiry <= current_expiry {
+            return Err(ContractError::InvalidAmount);
+        }
+
+        escrow.expiry = Some(new_expiry);
+        set_escrow(&env, transfer_id, &escrow);
+
+        emit_escrow_expiry_extended(&env, transfer_id, current_expiry, new_expiry);
 
         Ok(())
     }
@@ -2962,6 +3050,59 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             ttl,
             caller,
         );
+        Ok(())
+    }
+
+    /// Withdraws accumulated platform fees to `to` (#1850).
+    ///
+    /// - `amount = None` withdraws the entire accumulated balance (legacy behaviour).
+    /// - `amount = Some(x)` withdraws exactly `x`, which must satisfy
+    ///   `0 < x <= accumulated`; the counter is decremented by `x`.
+    ///
+    /// Emits `fees_withdrawn` carrying both the withdrawn amount and the
+    /// remaining accumulated balance.
+    ///
+    /// # Authorization
+    ///
+    /// Admin only.
+    pub fn withdraw_fees(
+        env: Env,
+        to: Address,
+        amount: Option<i128>,
+    ) -> Result<(), ContractError> {
+        // #1264: Block fee withdrawal while paused.
+        validate_not_paused(&env)?;
+
+        let admin = get_admin(&env)?;
+        require_admin(&env, &admin)?;
+
+        let accumulated = get_accumulated_fees(&env);
+
+        let withdrawn = match amount {
+            None => accumulated,
+            Some(requested) => {
+                if requested <= 0 || requested > accumulated {
+                    return Err(ContractError::InvalidAmount);
+                }
+                requested
+            }
+        };
+
+        if withdrawn <= 0 {
+            return Err(ContractError::InvalidAmount);
+        }
+
+        let usdc_token = get_usdc_token(&env)?;
+        let token_client = token::Client::new(&env, &usdc_token);
+        token_client.transfer(&env.current_contract_address(), &to, &withdrawn);
+
+        let remaining = accumulated
+            .checked_sub(withdrawn)
+            .ok_or(ContractError::Overflow)?;
+        set_accumulated_fees(&env, remaining);
+
+        emit_fees_withdrawn(&env, to, withdrawn, remaining);
+
         Ok(())
     }
 

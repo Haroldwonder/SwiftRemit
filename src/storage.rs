@@ -381,6 +381,11 @@ enum DataKey {
     /// Set while a storage migration is in progress (instance storage).
     MigrationInProgress,
 
+    /// Authoritative `total_batches` for the in-flight migration, captured from
+    /// the first imported batch (instance storage). Every subsequent batch must
+    /// agree with this value so a batch cannot end the migration early.
+    MigrationTotalBatches,
+
     // === Recipient Verification ===
     /// Recipient hash record for a remittance (persistent storage).
     RecipientHash(u64),
@@ -1182,6 +1187,29 @@ pub fn set_migration_in_progress(env: &Env, in_progress: bool) {
     env.storage()
         .instance()
         .set(&DataKey::MigrationInProgress, &in_progress);
+}
+
+/// Returns the authoritative `total_batches` recorded for the in-flight
+/// migration, if one has been captured from the first imported batch.
+pub fn get_migration_total_batches(env: &Env) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&DataKey::MigrationTotalBatches)
+}
+
+/// Records the authoritative `total_batches` for the in-flight migration.
+pub fn set_migration_total_batches(env: &Env, total_batches: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MigrationTotalBatches, &total_batches);
+}
+
+/// Clears the recorded `total_batches` (called when the migration completes or
+/// is rolled back).
+pub fn clear_migration_total_batches(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::MigrationTotalBatches);
 }
 
 // === Admin Role Management ===
@@ -2762,12 +2790,6 @@ pub fn set_pending_admin_with_expiry(env: &Env, new_admin: &Address, expires_at:
     let nomination = AdminNomination { nominee: new_admin.clone(), expires_at, nominator: admin };
     set_admin_nomination(env, &nomination);
     env.storage().instance().set(&DataKey::PendingAdmin, new_admin);
-}
-pub fn get_pending_admin(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&DataKey::PendingAdmin)
-}
-pub fn get_admin_nomination(env: &Env) -> Option<AdminNomination> {
-    env.storage().instance().get(&DataKey::NominatedAdmin)
 }
 pub fn clear_pending_admin(env: &Env) {
     env.storage().instance().remove(&DataKey::PendingAdmin);
