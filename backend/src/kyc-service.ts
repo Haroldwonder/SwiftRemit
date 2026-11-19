@@ -2,7 +2,7 @@ import axios, { AxiosResponse } from 'axios';
 import { KycStatus, DbUserKycStatus, AnchorKycConfig } from './types';
 import { getAnchorKycConfigs, getUsersNeedingKycCheck, saveUserKycStatus, getApprovedUsers, getPool, saveAnchorPollFailure } from './database';
 import { getMetricsService } from './metrics';
-import { updateKycStatusOnChain } from './stellar';
+import { updateKycStatusOnChain, batchUpdateKycStatusOnChain } from './stellar';
 import { getAnchorCircuitBreaker } from './anchor-circuit-breaker';
 
 interface Sep12KycResponse {
@@ -16,6 +16,15 @@ interface Sep12KycResponse {
 const DEFAULT_INTER_REQUEST_DELAY_MS = 1000;
 const MAX_BACKOFF_MS = 32000;
 const BACKOFF_MULTIPLIER = 2;
+
+/** Maximum number of KYC status updates submitted in a single on-chain batch. */
+const MAX_KYC_BATCH_SIZE = 50;
+
+/** A pending on-chain KYC status update accumulated during a poll cycle. */
+interface PendingKycUpdate {
+  userId: string;
+  approved: boolean;
+}
 
 /** Returns a promise that resolves after `ms` milliseconds. */
 function sleep(ms: number): Promise<void> {
@@ -74,6 +83,10 @@ export class KycService {
 
     console.log(`Checking KYC status for ${usersToCheck.length} users on anchor ${anchorId} (base delay: ${baseDelayMs}ms)`);
 
+    // Accumulate on-chain updates so they can be submitted in batches rather than
+    // one transaction per user.
+    const pendingUpdates: PendingKycUpdate[] = [];
+
     for (const userKyc of usersToCheck) {
       let attempt = 0;
       let success = false;
@@ -94,19 +107,16 @@ export class KycService {
 
             await saveUserKycStatus(updatedStatus);
 
-            // Update on-chain status if approved or rejected
+            // Queue on-chain status update if approved or rejected
             if (updatedStatus.status === 'approved') {
-              try {
-                await updateKycStatusOnChain(userKyc.user_id, true);
-              } catch (error) {
-                console.error(`Failed to update on-chain KYC status for user ${userKyc.user_id}:`, error);
-              }
+              pendingUpdates.push({ userId: userKyc.user_id, approved: true });
             } else if (updatedStatus.status === 'rejected') {
-              try {
-                await updateKycStatusOnChain(userKyc.user_id, false);
-              } catch (error) {
-                console.error(`Failed to update on-chain KYC status for user ${userKyc.user_id}:`, error);
-              }
+              pendingUpdates.push({ userId: userKyc.user_id, approved: false });
+            }
+
+            // Flush once a full batch has accumulated to bound memory usage
+            if (pendingUpdates.length >= MAX_KYC_BATCH_SIZE) {
+              await this.flushOnChainKycUpdates(pendingUpdates.splice(0, MAX_KYC_BATCH_SIZE));
             }
           }
 
@@ -131,6 +141,44 @@ export class KycService {
             console.error(`Failed to check KYC status for user ${userKyc.user_id} on anchor ${anchorId}:`, error);
             success = true; // Don't retry on non-429 errors; move to next user
           }
+        }
+      }
+    }
+
+    // Flush any remaining updates for this anchor
+    if (pendingUpdates.length > 0) {
+      await this.flushOnChainKycUpdates(pendingUpdates.splice(0, pendingUpdates.length));
+    }
+  }
+
+  /**
+   * Submits accumulated KYC status updates on-chain in a single batch transaction.
+   * Falls back to per-user updates if the batch call fails so that a single bad
+   * entry does not prevent the rest from being applied.
+   */
+  private async flushOnChainKycUpdates(updates: PendingKycUpdate[]): Promise<void> {
+    if (updates.length === 0) {
+      return;
+    }
+
+    const entries: Array<[string, boolean, number]> = updates.map(update => [
+      update.userId,
+      update.approved,
+      Math.floor(Date.now() / 1000),
+    ]);
+
+    try {
+      await batchUpdateKycStatusOnChain(entries);
+    } catch (error) {
+      console.error(
+        `Failed to batch update on-chain KYC status for ${updates.length} users; falling back to individual updates:`,
+        error
+      );
+      for (const update of updates) {
+        try {
+          await updateKycStatusOnChain(update.userId, update.approved);
+        } catch (individualError) {
+          console.error(`Failed to update on-chain KYC status for user ${update.userId}:`, individualError);
         }
       }
     }

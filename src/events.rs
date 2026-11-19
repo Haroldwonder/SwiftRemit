@@ -634,6 +634,23 @@ pub fn emit_kyc_updated(
     emit_event!(env, "kyc", "updated", agent, approved, expiry, caller);
 }
 
+/// Emits an event when a user's KYC approval status is updated.
+///
+/// Used by `batch_set_kyc_approved` to emit exactly one event per user in the
+/// batch (#1857).
+///
+/// Topics: `("kyc", "approve")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, user, approved, timestamp, caller)`
+pub fn emit_kyc_approval_updated(
+    env: &Env,
+    user: Address,
+    approved: bool,
+    timestamp: u64,
+    caller: Address,
+) {
+    emit_event!(env, "kyc", "approve", user, approved, timestamp, caller);
+}
+
 // ── Admin Transfer Events (#365) ───────────────────────────────────
 
 /// Emits an event when an admin proposes a new admin (step 1 of 2-step transfer).

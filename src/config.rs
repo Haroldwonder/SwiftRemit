@@ -41,6 +41,14 @@ pub const MAX_MIGRATION_BATCH_SIZE: u32 = 100;
 /// excessive gas consumption or ledger timeouts.
 pub const MAX_NETTING_BATCH_SIZE: u32 = 50;
 
+/// Maximum number of KYC approval entries that can be processed in a single
+/// `batch_set_kyc_approved` call.
+///
+/// This limit prevents excessive resource consumption during bulk KYC updates.
+/// Each entry emits its own event, so the cap also bounds the number of events
+/// produced by a single transaction.
+pub const MAX_KYC_BATCH_SIZE: u32 = 100;
+
 /// Maximum size of timestamp vector in rate limiting sliding window.
 ///
 /// Caps the Vec size to prevent unbounded growth and O(n²) pruning behavior
@@ -226,6 +234,8 @@ mod tests {
         assert!(MAX_EXPIRED_BATCH_SIZE > 0);
         assert!(MAX_MIGRATION_BATCH_SIZE > 0);
         assert!(MAX_EXPIRED_BATCH_SIZE <= MAX_BATCH_SIZE);
+        assert!(MAX_KYC_BATCH_SIZE > 0);
+        assert!(MAX_KYC_BATCH_SIZE <= MAX_BATCH_SIZE);
     }
 
     #[test]

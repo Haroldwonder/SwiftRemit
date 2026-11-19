@@ -20,6 +20,23 @@ interface HealthStatus {
   pause_reason?: string
 }
 
+// Mirrors the on-chain `ContractConfig` struct returned by the `get_config` view.
+interface ContractConfig {
+  platform_fee_bps: number
+  protocol_fee_bps: number
+  dispute_window: number
+  processing_timeout: number
+  escrow_ttl: number
+  rate_limit_config: {
+    max_requests: number
+    window_seconds: number
+  }
+  min_agent_reputation: number
+  cooldown_period: number
+  treasury: string
+  oracle: string
+}
+
 interface ContractHealthProps {
   walletAddress?: string
   contractId: string
@@ -35,6 +52,8 @@ const ContractHealth: FC<ContractHealthProps> = ({ walletAddress, contractId, on
   const [withdrawResult, setWithdrawResult] = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [showWithdrawConfirm, setShowWithdrawConfirm] = useState(false)
+  const [config, setConfig] = useState<ContractConfig | null>(null)
+  const [configError, setConfigError] = useState<string | null>(null)
 
   const fetchHealth = useCallback(async (): Promise<boolean> => {
     if (!contractId) return false
@@ -58,12 +77,31 @@ const ContractHealth: FC<ContractHealthProps> = ({ walletAddress, contractId, on
     }
   }, [contractId, onPausedChange])
 
+  // Fetch every admin-tunable parameter in a single `get_config` call.
+  const fetchConfig = useCallback(async (): Promise<boolean> => {
+    if (!contractId) return false
+    setConfigError(null)
+    try {
+      const apiBase = import.meta.env.VITE_API_URL || ''
+      const res = await fetch(`${apiBase}/api/contract/config?contractId=${encodeURIComponent(contractId)}`)
+      if (!res.ok) throw new Error(`Config fetch failed: ${res.status}`)
+      const data: ContractConfig = await res.json()
+      setConfig(data)
+      return true
+    } catch (err) {
+      setConfigError((err instanceof Error ? err.message : String(err)) || 'Failed to fetch contract config')
+      return false
+    }
+  }, [contractId])
+
   useEffect(() => {
     fetchHealth()
-  }, [fetchHealth])
+    fetchConfig()
+  }, [fetchHealth, fetchConfig])
 
   // Refresh in the background; pauses while the tab is hidden and backs off on errors.
   usePolling(fetchHealth, { intervalMs: AUTO_REFRESH_MS, enabled: !!contractId })
+  usePolling(fetchConfig, { intervalMs: AUTO_REFRESH_MS, enabled: !!contractId })
 
   const handleWithdraw = async (): Promise<void> => {
     setWithdrawing(true)
@@ -129,6 +167,27 @@ const ContractHealth: FC<ContractHealthProps> = ({ walletAddress, contractId, on
           <p><strong>Total Remittances:</strong> {health.total_remittances}</p>
           <p><strong>Accumulated Fees:</strong> {(health.accumulated_fees / 10_000_000).toFixed(2)} USDC</p>
           {lastChecked && <p><small style={{ color: '#999' }}>Last checked: {lastChecked.toLocaleTimeString()}</small></p>}
+        </div>
+      )}
+
+      {configError && <p style={{ color: '#d32f2f' }}>{configError}</p>}
+
+      {config && (
+        <div style={{ marginTop: '12px', fontSize: '0.9em', lineHeight: '1.6' }}>
+          <h4 style={{ margin: '0 0 8px' }}>Configuration</h4>
+          <p><strong>Platform Fee:</strong> {config.platform_fee_bps} bps</p>
+          <p><strong>Protocol Fee:</strong> {config.protocol_fee_bps} bps</p>
+          <p><strong>Dispute Window:</strong> {config.dispute_window}s</p>
+          <p><strong>Processing Timeout:</strong> {config.processing_timeout}s</p>
+          <p><strong>Escrow TTL:</strong> {config.escrow_ttl}s</p>
+          <p>
+            <strong>Rate Limit:</strong> {config.rate_limit_config.max_requests} requests /{' '}
+            {config.rate_limit_config.window_seconds}s
+          </p>
+          <p><strong>Min Agent Reputation:</strong> {config.min_agent_reputation}</p>
+          <p><strong>Cooldown Period:</strong> {config.cooldown_period}s</p>
+          <p><strong>Treasury:</strong> <code>{config.treasury}</code></p>
+          <p><strong>Oracle:</strong> <code>{config.oracle}</code></p>
         </div>
       )}
 

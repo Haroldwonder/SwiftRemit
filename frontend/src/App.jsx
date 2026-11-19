@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import './App.css'
 import WalletConnect from './components/WalletConnect'
 import CreateRemittance from './components/CreateRemittance.tsx'
-import RemittanceList from './components/RemittanceList.tsx'
+import RemittanceHistory from './components/RemittanceHistory.tsx'
 import AgentPanel from './components/AgentPanel.tsx'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
 import CorridorAnalytics from './components/CorridorAnalytics.tsx'
@@ -62,7 +62,7 @@ function App() {
             </div>
 
             <ErrorBoundary>
-            <RemittanceList 
+            <RemittanceHistory 
               walletAddress={walletAddress}
               contractId={contractId}
             />
