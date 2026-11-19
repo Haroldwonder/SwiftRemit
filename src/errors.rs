@@ -333,4 +333,11 @@ pub enum ContractError {
 
     /// Escrow refund rejected: lock/expiry period has not elapsed yet.
     EscrowNotYetExpired = 85,
+
+    /// Address does not implement the SEP-41 token interface.
+    ///
+    /// Returned when an address is being whitelisted as a token but probing
+    /// the SEP-41 interface (e.g. `decimals()` / `symbol()`) fails, meaning
+    /// the address is not a valid token contract.
+    TokenNotSep41 = 86,
 }

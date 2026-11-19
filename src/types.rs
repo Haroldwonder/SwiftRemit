@@ -575,3 +575,81 @@ pub enum MaybePauseReason {
     None,
     Some(PauseReason),
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Admin configuration snapshot (#1854)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Snapshot of every admin-tunable parameter, returned by `get_config`.
+///
+/// Admin dashboards previously had to issue one call per parameter
+/// (`get_platform_fee_bps`, `get_protocol_fee_bps`, `get_dispute_window`, ...).
+/// This struct aggregates them into a single view so a dashboard can render
+/// the full configuration with one RPC simulation.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractConfig {
+    /// Platform fee in basis points, deducted from each remittance.
+    pub platform_fee_bps: u32,
+    /// Protocol fee in basis points, frozen into each remittance at creation.
+    pub protocol_fee_bps: u32,
+    /// Seconds a sender has to dispute a failed payout.
+    pub dispute_window: u64,
+    /// Seconds an agent has to process a remittance before it can be expired.
+    pub processing_timeout: u64,
+    /// Default escrow time-to-live in seconds.
+    pub escrow_ttl: u64,
+    /// Rate-limit configuration (window length and per-window caps).
+    pub rate_limit_config: RateLimitConfig,
+    /// Minimum agent reputation required to accept remittances.
+    pub min_agent_reputation: u32,
+    /// Post-unpause cooldown period in seconds (0 = disabled).
+    pub cooldown_period: u64,
+    /// Address that receives protocol fees.
+    pub treasury: Address,
+    /// Settlement oracle address, if one is configured.
+    pub oracle: Option<Address>,
+    /// Minimum amount accepted by `create_remittance`.
+    pub min_amount: i128,
+    /// Maximum amount accepted by `create_remittance`.
+    pub max_amount: i128,
+    /// Whether the contract is currently paused.
+    pub is_paused: bool,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Batch KYC approval (#1857)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A single entry for `batch_set_kyc_approved`.
+///
+/// Carries the user, the desired approval flag, and the ledger timestamp at
+/// which the off-chain KYC decision was made (propagated to the per-user event).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KycApprovalEntry {
+    /// The user whose KYC status is being updated.
+    pub address: Address,
+    /// `true` to approve, `false` to revoke.
+    pub approved: bool,
+    /// Ledger timestamp of the off-chain KYC decision.
+    pub timestamp: u64,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Token whitelist (#1852)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A whitelisted token together with its cached SEP-41 decimals.
+///
+/// `decimals` is read from the token contract at whitelisting time (which also
+/// proves the address implements SEP-41) and cached so amount validation does
+/// not need a cross-contract call on every remittance.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistEntry {
+    /// The token contract address.
+    pub token: Address,
+    /// Decimals reported by the token contract when it was whitelisted.
+    pub decimals: u32,
+}

@@ -53,6 +53,8 @@ import type {
   FeeBreakdown,
   AdminOperationType,
   PendingOperation,
+  ContractConfig,
+  KycApprovalEntry,
 } from "./types.js";
 import { parseContractError, SwiftRemitError, ErrorCode, TransactionTimeoutError } from "./errors.js";
 import { withRetry, withRetryPolicy } from "./retry.js";
@@ -90,10 +92,17 @@ import {
   batchSettlementEntryToScVal,
   adminOperationTypeToScVal,
   parsePendingOperation,
+  parseContractConfig,
 } from "./convert.js";
 
 /** Maximum number of entries allowed in a single batch remittance call. */
 export const MAX_BATCH_SIZE = 50;
+
+/** Maximum number of entries allowed in a single batch KYC update call. */
+export const MAX_KYC_BATCH_SIZE = 50;
+
+/** Maximum number of records returned by a paginated remittance-record view. */
+export const MAX_REMITTANCE_RECORDS_LIMIT = 100;
 
 /** Delay between confirmation polls after a transaction is submitted. */
 export const CONFIRMATION_POLL_INTERVAL_MS = 1_000;
@@ -536,6 +545,72 @@ export class SwiftRemitClient {
     return (scValToNative(val) as number[]).map(BigInt);
   }
 
+  /**
+   * Get paginated full remittance records for a sender.
+   *
+   * Unlike {@link getRemittancesBySender}, which returns only IDs and forces a
+   * follow-up `getRemittance` simulation per item, this view returns the full
+   * records in a single call — ideal for history pages.
+   *
+   * @param sourceAddress - Query account address
+   * @param sender - Sender address to filter remittances
+   * @param offset - Pagination offset
+   * @param limit - Maximum number of records to return (capped at 100 by the contract)
+   * @returns Array of full remittance records for the sender
+   */
+  async getRemittanceRecordsBySender(
+    sourceAddress: string,
+    sender: string,
+    offset: bigint,
+    limit: bigint
+  ): Promise<Remittance[]> {
+    const val = await this.simulateCall(
+      sourceAddress,
+      "get_remittance_records_by_sender",
+      [
+        addressToScVal(sender),
+        u64ToScVal(offset),
+        u64ToScVal(limit),
+      ]
+    );
+    const native = scValToNative(val) as unknown[];
+    return native.map((_, i) => parseRemittance(xdr.ScVal.scvVec(
+      (val.vec() ?? []).map((v) => v)
+    ).vec()![i]));
+  }
+
+  /**
+   * Get paginated full remittance records for an agent.
+   *
+   * Unlike {@link getRemittancesByAgent}, which returns only IDs and forces a
+   * follow-up `getRemittance` simulation per item, this view returns the full
+   * records in a single call — ideal for history pages.
+   *
+   * @param sourceAddress - Query account address
+   * @param agent - Agent address to filter remittances
+   * @param offset - Pagination offset
+   * @param limit - Maximum number of records to return (capped at 100 by the contract)
+   * @returns Array of full remittance records for the agent
+   */
+  async getRemittanceRecordsByAgent(
+    sourceAddress: string,
+    agent: string,
+    offset: bigint,
+    limit: bigint
+  ): Promise<Remittance[]> {
+    const val = await this.simulateCall(
+      sourceAddress,
+      "get_remittance_records_by_agent",
+      [
+        addressToScVal(agent),
+        u64ToScVal(offset),
+        u64ToScVal(limit),
+      ]
+    );
+    const vec = val.vec() ?? [];
+    return vec.map((item) => parseRemittance(item));
+  }
+
   /** Get total accumulated platform fees. */
   async getAccumulatedFees(sourceAddress: string): Promise<bigint> {
     const val = await this.simulateCall(
@@ -618,6 +693,23 @@ export class SwiftRemitClient {
   async health(sourceAddress: string): Promise<HealthStatus> {
     const val = await this.simulateCall(sourceAddress, "health", []);
     return parseHealthStatus(val);
+  }
+
+  /**
+   * Get all admin-tunable configuration parameters in a single call.
+   *
+   * Replaces a fan-out of individual getters (`getPlatformFeeBps`,
+   * `getProtocolFeeBps`, `getDisputeWindow`, `getProcessingTimeout`,
+   * `getEscrowTtl`, `getRateLimitConfig`, `getMinAgentReputation`,
+   * `getCooldownPeriod`, `getTreasury`, `getOracle`, ...) with one simulation —
+   * ideal for admin dashboards and `ContractHealth` views.
+   *
+   * @param sourceAddress - Query account address
+   * @returns The full contract configuration
+   */
+  async getConfig(sourceAddress: string): Promise<ContractConfig> {
+    const val = await this.simulateCall(sourceAddress, "get_config", []);
+    return parseContractConfig(val);
   }
 
   /** Get agent stats. */

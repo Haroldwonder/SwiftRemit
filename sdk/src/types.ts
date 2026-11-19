@@ -542,6 +542,57 @@ export interface PendingOperation {
   withdrawTo: string | null;
 }
 
+// ─── Contract configuration ─────────────────────────────────────────────────
+
+/**
+ * Snapshot of every admin-tunable contract parameter, returned by the
+ * `get_config` view. Mirrors the Rust `ContractConfig` struct.
+ */
+export interface ContractConfig {
+  /** Platform fee in basis points (10000 = 100%). */
+  platformFeeBps: number;
+  /** Protocol fee in basis points (10000 = 100%). */
+  protocolFeeBps: number;
+  /** Seconds a dispute stays open before it can be resolved by default. */
+  disputeWindowSeconds: bigint;
+  /** Seconds a remittance may stay in Processing before it is considered timed out. */
+  processingTimeoutSeconds: bigint;
+  /** Seconds an escrow remains locked before it can be refunded. */
+  escrowTtlSeconds: bigint;
+  /** Rate limiting configuration. */
+  rateLimitConfig: RateLimitConfig;
+  /** Minimum reputation score (0-100) an agent needs to receive remittances. */
+  minAgentReputation: number;
+  /** Seconds that must elapse between governance-sensitive admin actions. */
+  cooldownPeriodSeconds: bigint;
+  /** Address that receives accumulated protocol fees. */
+  treasury: string;
+  /** Address of the settlement oracle, or `null` when none is configured. */
+  oracle: string | null;
+}
+
+// ─── Batch KYC ──────────────────────────────────────────────────────────────
+
+/** A single entry for `batch_set_kyc_approved`. */
+export interface KycApprovalEntry {
+  /** User whose KYC status is being set. */
+  user: string;
+  /** Whether the user is KYC approved. */
+  approved: boolean;
+  /** Ledger timestamp at which the approval was verified. */
+  timestamp: bigint;
+}
+
+// ─── Token whitelist ────────────────────────────────────────────────────────
+
+/** A whitelisted token and its display metadata. */
+export interface WhitelistedToken {
+  /** Token contract address. */
+  address: string;
+  /** Number of decimal places the token uses. */
+  decimals: number;
+}
+
 // ─── Recipient verification (SR-195) ────────────────────────────────────────
 
 /**

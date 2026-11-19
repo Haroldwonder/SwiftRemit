@@ -84,6 +84,12 @@ export type {
   RecipientDetails,
   WalletRecipient,
   BankRecipient,
+  // #1854: aggregate of all admin-tunable parameters
+  ContractConfig,
+  // #1857: bulk KYC approval entry
+  KycApprovalEntry,
+  // token whitelist entry
+  TokenWhitelistEntry,
 } from "./types.js";
 export { RetryPolicies, RECIPIENT_HASH_SCHEMA_VERSION } from "./types.js";
 export {
