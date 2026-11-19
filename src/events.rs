@@ -265,8 +265,24 @@ pub fn emit_fee_updated(env: &Env, fee_bps: u32) {
 }
 
 /// Emits an event when accumulated fees are withdrawn.
-pub fn emit_fees_withdrawn(env: &Env, caller: Address, to: Address, token: Address, amount: i128) {
-    emit_event!(env, "fee", "withdraw", caller, to, token, amount);
+///
+/// Topics: `("fee", "withdraw")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, caller, to, token, withdrawn_amount, remaining_balance)`
+///
+/// `withdrawn_amount` is the amount transferred in this call and
+/// `remaining_balance` is the fee balance left in the contract afterwards.
+pub fn emit_fees_withdrawn(
+    env: &Env,
+    caller: Address,
+    to: Address,
+    token: Address,
+    withdrawn_amount: i128,
+    remaining_balance: i128,
+) {
+    emit_event!(
+        env, "fee", "withdraw",
+        caller, to, token, withdrawn_amount, remaining_balance
+    );
 }
 
 /// Emits an event when accumulated fees are automatically flushed to treasury.
@@ -476,15 +492,37 @@ pub fn emit_escrow_created(
 }
 
 /// Emits an event when an escrow transfer is released to the recipient.
+///
+/// `released_by` identifies who authorised the release (the admin for
+/// `release_escrow`, the sender for `sender_release_escrow`), letting
+/// off-chain consumers distinguish the two paths.
 pub fn emit_escrow_released(
     env: &Env,
     transfer_id: u64,
     recipient: Address,
     amount: i128,
+    released_by: Address,
 ) {
     env.events().publish(
         (Symbol::new(env, "escrow_released"), transfer_id),
-        (recipient, amount),
+        (recipient, amount, released_by),
+    );
+}
+
+/// Emits an event when the expiry of an existing pending escrow is extended.
+///
+/// Topics: `("escrow", "expiry_ext")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, transfer_id, old_expiry, new_expiry, caller)`
+pub fn emit_escrow_expiry_extended(
+    env: &Env,
+    transfer_id: u64,
+    old_expiry: u64,
+    new_expiry: u64,
+    caller: Address,
+) {
+    emit_event!(
+        env, "escrow", "expiry_ext",
+        transfer_id, old_expiry, new_expiry, caller
     );
 }
 

@@ -425,6 +425,131 @@ fn test_import_batch_rejects_duplicate_batch_index() {
     );
 }
 
+// ─── Issue #1851 — total_batches consistency across batches ─────────────────
+
+/// Builds a batch with an explicit `batch_number` / `total_batches` and a
+/// correctly computed hash over the given remittances.
+fn build_batch_with_totals(
+    env: &Env,
+    remittances: &soroban_sdk::Vec<crate::Remittance>,
+    batch_number: u32,
+    total_batches: u32,
+) -> MigrationBatch {
+    let batch_hash = {
+        let mut data = Bytes::new(env);
+        data.append(&Bytes::from_array(env, &batch_number.to_be_bytes()));
+        for i in 0..remittances.len() {
+            let r = remittances.get_unchecked(i);
+            data.append(&Bytes::from_array(env, &r.id.to_be_bytes()));
+            data.append(&r.sender.clone().to_xdr(env));
+            data.append(&r.agent.clone().to_xdr(env));
+            data.append(&Bytes::from_array(env, &r.amount.to_be_bytes()));
+            data.append(&Bytes::from_array(env, &r.fee.to_be_bytes()));
+            let status_byte: u8 = match r.status {
+                RemittanceStatus::Pending => 0,
+                RemittanceStatus::Completed => 1,
+                RemittanceStatus::Cancelled => 2,
+                _ => 3,
+            };
+            data.append(&Bytes::from_array(env, &[status_byte]));
+            if let Some(expiry) = r.expiry {
+                data.append(&Bytes::from_array(env, &expiry.to_be_bytes()));
+            }
+        }
+        let hash_bytes = env.crypto().sha256(&data);
+        BytesN::from_array(env, &hash_bytes.to_array())
+    };
+
+    MigrationBatch {
+        batch_number,
+        total_batches,
+        remittances: remittances.clone(),
+        batch_hash,
+    }
+}
+
+#[test]
+fn test_import_batch_rejects_inconsistent_total_batches() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin, token) = setup(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    token.mint(&sender, &100_000);
+    contract.register_agent(&agent, &None);
+
+    contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None, &None, &None);
+    contract.create_remittance(&sender, &agent, &20_000, &None, &None, &None, &None, &None);
+
+    let snapshot = contract.export_migration_snapshot(&admin);
+    let remittances = snapshot.persistent_data.remittances.clone();
+
+    // Batch 0 of 2 — establishes total_batches = 2.
+    let batch_0 = build_batch_with_totals(&env, &remittances, 0, 2);
+    contract.import_migration_batch(&admin, &batch_0);
+
+    // Batch 1 lies: claims total_batches = 1 (would end the migration early).
+    let lying_batch = build_batch_with_totals(&env, &remittances, 1, 1);
+    let result = contract.try_import_migration_batch(&admin, &lying_batch);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        ContractError::InvalidMigrationBatch
+    );
+
+    // The lock must still be held — the migration is not complete.
+    let blocked = contract.try_create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
+    assert_eq!(
+        blocked.unwrap_err().unwrap(),
+        ContractError::MigrationInProgress
+    );
+
+    // The imported counter must not have advanced: batch 1 is still expected.
+    let batch_1 = build_batch_with_totals(&env, &remittances, 1, 2);
+    contract.import_migration_batch(&admin, &batch_1);
+
+    // Now the migration is complete and the lock is cleared.
+    let id = contract.create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
+    assert_eq!(id, 3);
+}
+
+#[test]
+fn test_import_batch_consistent_multi_batch_completes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin, token) = setup(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    token.mint(&sender, &100_000);
+    contract.register_agent(&agent, &None);
+
+    contract.create_remittance(&sender, &agent, &10_000, &None, &None, &None, &None, &None);
+    contract.create_remittance(&sender, &agent, &20_000, &None, &None, &None, &None, &None);
+
+    let snapshot = contract.export_migration_snapshot(&admin);
+    let remittances = snapshot.persistent_data.remittances.clone();
+
+    // Batch 0 of 2 — lock stays.
+    let batch_0 = build_batch_with_totals(&env, &remittances, 0, 2);
+    contract.import_migration_batch(&admin, &batch_0);
+    let blocked = contract.try_create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
+    assert_eq!(
+        blocked.unwrap_err().unwrap(),
+        ContractError::MigrationInProgress
+    );
+
+    // Batch 1 of 2 — consistent total_batches, completes the migration.
+    let batch_1 = build_batch_with_totals(&env, &remittances, 1, 2);
+    contract.import_migration_batch(&admin, &batch_1);
+
+    // Lock cleared — normal ops resume.
+    let id = contract.create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
+    assert_eq!(id, 3);
+}
+
 // ─── Issue #1671 — protocol_fee backfill migration ──────────────────────────
 
 #[test]

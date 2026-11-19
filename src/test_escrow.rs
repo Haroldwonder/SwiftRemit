@@ -242,6 +242,232 @@ fn test_escrow_events_emitted() {
     assert!(has_event(&env, "escrow", "released"), "escrow released event not emitted");
 }
 
+// ── Issue #1848: sender-initiated escrow release ─────────────────────────────
+
+#[test]
+fn test_sender_release_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500);
+    contract.sender_release_escrow(&transfer_id);
+
+    let escrow = contract.get_escrow(&transfer_id);
+    assert_eq!(escrow.status, EscrowStatus::Released);
+    assert_eq!(token_balance(&token, &recipient), 500);
+    assert_eq!(token_balance(&token, &contract.address), 0);
+    assert!(has_event(&env, "escrow", "released"), "escrow released event not emitted");
+}
+
+#[test]
+fn test_sender_release_escrow_requires_sender_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500);
+    contract.sender_release_escrow(&transfer_id);
+
+    let auths = env.auths();
+    let expected = AuthorizedInvocation {
+        function: AuthorizedFunction::Contract((
+            contract.address.clone(),
+            Symbol::new(&env, "sender_release_escrow"),
+            (transfer_id,).into_val(&env),
+        )),
+        sub_invocations: std::vec![],
+    };
+    assert!(
+        auths.iter().any(|(addr, inv)| addr == &sender && inv == &expected),
+        "sender auth not required for sender_release_escrow"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_sender_release_escrow_non_sender_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500);
+
+    // Only the original sender may release their own escrow.
+    contract.sender_release_escrow(&transfer_id);
+    let _ = attacker;
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #39)")]
+fn test_sender_release_escrow_non_pending_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500);
+    contract.refund_escrow(&transfer_id);
+
+    // Escrow is no longer Pending — sender release must be rejected.
+    contract.sender_release_escrow(&transfer_id);
+}
+
+#[test]
+#[should_panic]
+fn test_sender_release_escrow_paused_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500);
+    contract.pause(&admin);
+
+    contract.sender_release_escrow(&transfer_id);
+}
+
+// ── Issue #1849: extend expiry of a pending escrow ───────────────────────────
+
+#[test]
+fn test_extend_escrow_expiry_by_recipient() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500);
+    let current = contract.get_escrow(&transfer_id).expiry.unwrap();
+    let new_expiry = current + 3600;
+
+    contract.extend_escrow_expiry(&transfer_id, &new_expiry);
+
+    assert_eq!(contract.get_escrow(&transfer_id).expiry, Some(new_expiry));
+    assert!(has_event(&env, "escrow", "expiry_extended"), "expiry extended event not emitted");
+}
+
+#[test]
+#[should_panic]
+fn test_extend_escrow_expiry_non_increasing_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500);
+    let current = contract.get_escrow(&transfer_id).expiry.unwrap();
+
+    // New expiry must be strictly later than the current one.
+    contract.extend_escrow_expiry(&transfer_id, &current);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #39)")]
+fn test_extend_escrow_expiry_non_pending_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500);
+    let current = contract.get_escrow(&transfer_id).expiry.unwrap();
+    contract.refund_escrow(&transfer_id);
+
+    // Escrow is no longer Pending — extending must be rejected.
+    contract.extend_escrow_expiry(&transfer_id, &(current + 3600));
+}
+
+#[test]
+#[should_panic]
+fn test_extend_escrow_expiry_paused_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500);
+    let current = contract.get_escrow(&transfer_id).expiry.unwrap();
+    contract.pause(&admin);
+
+    contract.extend_escrow_expiry(&transfer_id, &(current + 3600));
+}
+
 #[test]
 fn test_raise_dispute_increments_agent_dispute_count() {
     let env = Env::default();
