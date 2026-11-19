@@ -451,3 +451,239 @@ fn test_zero_net_position_produces_no_transfer() {
         "zero-value net position must not produce a NetTransfer"
     );
 }
+
+// ── Issue #1844: whitelisted tokens other than USDC in escrow ────────────────
+
+#[test]
+fn test_escrow_lifecycle_with_non_usdc_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let usdc = create_token_contract(&env, &admin);
+    let eurc = create_token_contract(&env, &admin);
+    eurc.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &usdc.address, &250, &3600, &0, &admin);
+    contract.add_token_to_whitelist(&eurc.address);
+
+    // Create in EURC.
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500, &Some(eurc.address.clone()));
+    let escrow = contract.get_escrow(&transfer_id);
+    assert_eq!(escrow.token, eurc.address);
+    assert_eq!(token_balance(&eurc, &sender), 500);
+    assert_eq!(token_balance(&eurc, &contract.address), 500);
+    assert_eq!(token_balance(&usdc, &contract.address), 0);
+
+    // Release pays out in EURC.
+    contract.release_escrow(&transfer_id);
+    assert_eq!(contract.get_escrow(&transfer_id).status, EscrowStatus::Released);
+    assert_eq!(token_balance(&eurc, &recipient), 500);
+    assert_eq!(token_balance(&eurc, &contract.address), 0);
+
+    // A second escrow refunds in EURC.
+    let transfer_id2 = contract.create_escrow(&sender, &recipient, &200, &Some(eurc.address.clone()));
+    contract.refund_escrow(&transfer_id2);
+    assert_eq!(contract.get_escrow(&transfer_id2).status, EscrowStatus::Refunded);
+    assert_eq!(token_balance(&eurc, &sender), 800);
+    assert_eq!(token_balance(&eurc, &contract.address), 0);
+}
+
+#[test]
+fn test_create_escrow_defaults_to_usdc() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let usdc = create_token_contract(&env, &admin);
+    usdc.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &usdc.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500, &None);
+    assert_eq!(contract.get_escrow(&transfer_id).token, usdc.address);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #41)")]
+fn test_create_escrow_rejects_non_whitelisted_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let usdc = create_token_contract(&env, &admin);
+    let rogue = create_token_contract(&env, &admin);
+    rogue.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &usdc.address, &250, &3600, &0, &admin);
+
+    contract.create_escrow(&sender, &recipient, &500, &Some(rogue.address.clone()));
+}
+
+// ── Issue #1845: paginated escrow views ──────────────────────────────────────
+
+#[test]
+fn test_get_escrows_by_sender_and_recipient_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let id1 = contract.create_escrow(&sender, &recipient, &100, &None);
+    let id2 = contract.create_escrow(&sender, &recipient, &100, &None);
+    let id3 = contract.create_escrow(&sender, &recipient, &100, &None);
+
+    let by_sender = contract.get_escrows_by_sender(&sender, &0, &2);
+    assert_eq!(by_sender.len(), 2);
+    assert_eq!(by_sender.get_unchecked(0), id1);
+    assert_eq!(by_sender.get_unchecked(1), id2);
+
+    let by_sender_page2 = contract.get_escrows_by_sender(&sender, &2, &2);
+    assert_eq!(by_sender_page2.len(), 1);
+    assert_eq!(by_sender_page2.get_unchecked(0), id3);
+
+    let by_recipient = contract.get_escrows_by_recipient(&recipient, &0, &10);
+    assert_eq!(by_recipient.len(), 3);
+
+    // Out-of-range offset yields an empty page.
+    let empty = contract.get_escrows_by_sender(&sender, &10, &10);
+    assert_eq!(empty.len(), 0);
+}
+
+#[test]
+fn test_get_escrows_by_sender_caps_page_size() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &100_000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    for _ in 0..105 {
+        contract.create_escrow(&sender, &recipient, &100, &None);
+    }
+
+    let page = contract.get_escrows_by_sender(&sender, &0, &1000);
+    assert_eq!(page.len(), 100);
+}
+
+// ── Issue #1846: create_escrow compliance checks ────────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_create_escrow_rejects_unverified_kyc() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+    contract.set_kyc_required(&true);
+
+    contract.create_escrow(&sender, &recipient, &500, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")]
+fn test_create_escrow_rejects_daily_limit_exceeded() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+    contract.set_daily_limit(&sender, &100);
+
+    contract.create_escrow(&sender, &recipient, &500, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_create_escrow_rejects_rate_limit_exceeded() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+    contract.set_rate_limit(&sender, &1, &3600);
+
+    contract.create_escrow(&sender, &recipient, &100, &None);
+    contract.create_escrow(&sender, &recipient, &100, &None);
+}
+
+// ── Issue #1847: release to a recipient blacklisted after creation ──────────
+
+#[test]
+fn test_release_escrow_rejects_recipient_blacklisted_after_creation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token = create_token_contract(&env, &admin);
+    token.mint(&sender, &1000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &3600, &0, &admin);
+
+    let transfer_id = contract.create_escrow(&sender, &recipient, &500, &None);
+    contract.blacklist_address(&recipient);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        contract.release_escrow(&transfer_id);
+    }));
+    assert!(result.is_err(), "release to blacklisted recipient must fail");
+    assert_eq!(contract.get_escrow(&transfer_id).status, EscrowStatus::Pending);
+
+    // The sender can still reclaim via the normal refund path.
+    contract.refund_escrow(&transfer_id);
+    assert_eq!(contract.get_escrow(&transfer_id).status, EscrowStatus::Refunded);
+    assert_eq!(token_balance(&token, &sender), 1000);
+}

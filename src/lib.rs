@@ -2813,11 +2813,23 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     // Design notes for escrow tiers and the #1557 dispute plan live in
     // docs/design/ and the tracking GitHub issues; see those for rationale.
 
+    /// Creates an escrow that locks `amount` of `token` (defaults to USDC) until
+    /// it is released by an admin or refunded to the sender after expiry.
+    ///
+    /// #1844: any whitelisted token may be used; non-whitelisted tokens are
+    /// rejected with `TokenNotWhitelisted`.
+    /// #1846: the same KYC, daily-limit and abuse/rate-limit checks applied by
+    /// `create_remittance` are enforced here, so escrow cannot be used to
+    /// bypass compliance controls.
+    /// #1845: the new escrow ID is appended to the sender and recipient
+    /// indexes so it can be listed via `get_escrows_by_sender` /
+    /// `get_escrows_by_recipient`.
     pub fn create_escrow(
         env: Env,
         sender: Address,
         recipient: Address,
         amount: i128,
+        token: Option<Address>,
     ) -> Result<u64, ContractError> {
         // #1264: Block new escrow creation while the circuit-breaker is active.
         validate_not_paused(&env)?;
@@ -2845,8 +2857,34 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             return Err(ContractError::InvalidAmount);
         }
 
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
+        // #1844: Resolve the escrow token, defaulting to USDC, and require it to
+        // be whitelisted before any funds move.
+        let escrow_token = match token {
+            Some(address) => address,
+            None => get_usdc_token(&env)?,
+        };
+        if !is_token_whitelisted(&env, &escrow_token) {
+            return Err(ContractError::TokenNotWhitelisted);
+        }
+
+        // #1846: Mirror the compliance checks performed by `create_remittance`.
+        if !is_kyc_approved(&env, &sender) {
+            return Err(ContractError::KycNotApproved);
+        }
+        if is_kyc_expired(&env, &sender) {
+            return Err(ContractError::KycExpired);
+        }
+
+        // #1846: Abuse protection / per-sender rate limit.
+        check_rate_limit(&env, &sender)?;
+
+        // #1846: Daily send limit, keyed on the token address as the corridor
+        // currency so escrow volume counts against the same rolling window.
+        let currency = String::from_str(&env, "escrow");
+        let country = String::from_str(&env, "escrow");
+        enforce_daily_send_limit(&env, &sender, &currency, &country, amount)?;
+
+        let token_client = token::Client::new(&env, &escrow_token);
         token_client.transfer(&sender, &env.current_contract_address(), &amount);
 
         let counter = get_escrow_counter(&env)?;
@@ -2869,12 +2907,17 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             sender: sender.clone(),
             recipient: recipient.clone(),
             amount,
+            token: escrow_token,
             expiry,
             status: EscrowStatus::Pending,
         };
 
         set_escrow(&env, transfer_id, &escrow);
         set_escrow_counter(&env, transfer_id);
+
+        // #1845: Maintain the per-user escrow indexes.
+        crate::storage::append_escrow_by_sender(&env, &sender, transfer_id);
+        crate::storage::append_escrow_by_recipient(&env, &recipient, transfer_id);
 
         emit_escrow_created(&env, transfer_id, sender, recipient, amount);
 
@@ -2893,8 +2936,15 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             return Err(ContractError::InvalidEscrowStatus);
         }
 
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
+        // #1847: Re-check the recipient blacklist at release time. A recipient
+        // blacklisted after the escrow was created must not receive funds; the
+        // sender can still reclaim via `refund_escrow` once the escrow expires.
+        if is_user_blacklisted(&env, &escrow.recipient) {
+            return Err(ContractError::UserBlacklisted);
+        }
+
+        // #1844: Pay out in the token stored on the escrow.
+        let token_client = token::Client::new(&env, &escrow.token);
         token_client.transfer(
             &env.current_contract_address(),
             &escrow.recipient,
@@ -2933,8 +2983,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             None => return Err(ContractError::EscrowNotYetExpired),
         }
 
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
+        // #1844: Refund in the token stored on the escrow.
+        let token_client = token::Client::new(&env, &escrow.token);
         token_client.transfer(
             &env.current_contract_address(),
             &escrow.sender,
@@ -2951,6 +3001,48 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
     pub fn get_escrow(env: Env, transfer_id: u64) -> Result<Escrow, ContractError> {
         crate::storage::get_escrow(&env, transfer_id)
+    }
+
+    /// Returns a page of escrows created by `sender` (#1845).
+    ///
+    /// `limit` is capped at 100 items per page. Returns the full `Escrow`
+    /// records for the requested window, in creation order.
+    pub fn get_escrows_by_sender(
+        env: Env,
+        sender: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<Escrow> {
+        let ids = crate::storage::get_escrows_by_sender_paged(&env, &sender, offset, limit);
+        let mut escrows = Vec::new(&env);
+        for i in 0..ids.len() {
+            let id = ids.get_unchecked(i);
+            if let Ok(escrow) = crate::storage::get_escrow(&env, id) {
+                escrows.push_back(escrow);
+            }
+        }
+        escrows
+    }
+
+    /// Returns a page of escrows addressed to `recipient` (#1845).
+    ///
+    /// `limit` is capped at 100 items per page. Returns the full `Escrow`
+    /// records for the requested window, in creation order.
+    pub fn get_escrows_by_recipient(
+        env: Env,
+        recipient: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<Escrow> {
+        let ids = crate::storage::get_escrows_by_recipient_paged(&env, &recipient, offset, limit);
+        let mut escrows = Vec::new(&env);
+        for i in 0..ids.len() {
+            let id = ids.get_unchecked(i);
+            if let Ok(escrow) = crate::storage::get_escrow(&env, id) {
+                escrows.push_back(escrow);
+            }
+        }
+        escrows
     }
 
     pub fn get_escrow_ttl(env: Env) -> Result<u64, ContractError> {
@@ -2989,8 +3081,6 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         }
 
         let now = env.ledger().timestamp();
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
         let mut processed_ids = Vec::new(&env);
 
         for i in 0..transfer_ids.len() {
@@ -3013,6 +3103,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                 continue;
             }
 
+            // #1844: Refund in the token stored on the escrow.
+            let token_client = token::Client::new(&env, &escrow.token);
             token_client.transfer(
                 &env.current_contract_address(),
                 &escrow.sender,

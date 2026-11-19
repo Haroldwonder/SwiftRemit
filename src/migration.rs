@@ -43,7 +43,7 @@ use crate::{config::MAX_MIGRATION_BATCH_SIZE, AgentStats, ContractError, Remitta
 
 /// Current on-chain schema version.  Bump this whenever a storage key layout
 /// changes that requires a `migrate()` pass.
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -377,7 +377,10 @@ pub fn migrate(env: &Env) -> Result<(), ContractError> {
     if current_version < 3 {
         migrate_v2_to_v3(env)?;
     }
-    // Future: if current_version < 4 { migrate_v3_to_v4(env)?; }
+    if current_version < 4 {
+        migrate_v3_to_v4(env)?;
+    }
+    // Future: if current_version < 5 { migrate_v4_to_v5(env)?; }
 
     // ── Step 3: validate — every agent in the snapshot must still be readable ─
     let mut failed_count: u32 = 0;
@@ -484,6 +487,61 @@ fn migrate_v2_to_v3(env: &Env) -> Result<(), ContractError> {
                     remittance.protocol_fee = 0;
                     crate::storage::set_remittance(env, remittance.id, &remittance);
                 }
+            }
+        }
+
+        start_id = end_id + 1;
+    }
+
+    Ok(())
+}
+
+/// v3 → v4: Backfill `Escrow.token` and rebuild the escrow sender/recipient indexes.
+///
+/// Prior to schema v4, `Escrow` records did not store the token they were
+/// denominated in — every escrow was implicitly denominated in the contract's
+/// configured USDC token.  This step walks every stored escrow and:
+///
+/// - writes the contract's configured USDC token into `Escrow.token` when the
+///   field is absent (i.e. the record predates the field), and
+/// - (re)inserts the escrow ID into the sender and recipient indexes so the
+///   paginated `get_escrows_by_sender` / `get_escrows_by_recipient` views
+///   return pre-upgrade escrows.
+///
+/// The backfill is idempotent: re-running it on already-migrated records is a
+/// no-op because their `token` is already set and the index insertion helpers
+/// skip IDs that are already present.
+fn migrate_v3_to_v4(env: &Env) -> Result<(), ContractError> {
+    let counter = crate::storage::get_escrow_counter(env).unwrap_or(0);
+    if counter == 0 {
+        return Ok(());
+    }
+
+    // Escrows created before v4 were always denominated in the configured USDC
+    // token.  If it is missing there is nothing sensible to backfill with, so
+    // leave the records untouched rather than writing a bogus token.
+    let default_token = match crate::storage::get_usdc_token(env) {
+        Ok(token) => token,
+        Err(_) => return Ok(()),
+    };
+
+    let batch_size = MAX_MIGRATION_BATCH_SIZE as u64;
+    let mut start_id: u64 = 1;
+
+    while start_id <= counter {
+        let end_id = (start_id + batch_size - 1).min(counter);
+
+        for id in start_id..=end_id {
+            if let Ok(mut escrow) = crate::storage::get_escrow(env, id) {
+                // Only backfill records that predate the field.
+                if escrow.token.is_none() {
+                    escrow.token = Some(default_token.clone());
+                    crate::storage::set_escrow(env, escrow.id, &escrow);
+                }
+
+                // Rebuild the paginated indexes. Both helpers are idempotent.
+                crate::storage::add_escrow_to_sender_index(env, &escrow.sender, escrow.id);
+                crate::storage::add_escrow_to_recipient_index(env, &escrow.recipient, escrow.id);
             }
         }
 

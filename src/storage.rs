@@ -236,6 +236,19 @@ enum DataKey {
     /// Escrow record indexed by transfer ID (persistent storage)
     Escrow(u64),
 
+    /// Escrow transfer IDs created by a sender (persistent storage).
+    /// Used by `get_escrows_by_sender` to page through a user's escrows.
+    EscrowBySender(Address),
+
+    /// Escrow transfer IDs where an address is the recipient (persistent storage).
+    /// Used by `get_escrows_by_recipient` to page through a user's escrows.
+    EscrowByRecipient(Address),
+
+    /// Token contract address an escrow is denominated in (persistent storage).
+    /// Absent for escrows created before multi-token support (#1844); those
+    /// default to the configured USDC token.
+    EscrowToken(u64),
+
     // === Transfer State Registry ===
     /// Transfer state indexed by transfer ID (persistent storage)
     TransferState(u64),
@@ -1607,6 +1620,72 @@ pub fn set_escrow(env: &Env, transfer_id: u64, escrow: &crate::Escrow) {
     env.storage()
         .persistent()
         .set(&DataKey::Escrow(transfer_id), escrow);
+}
+
+// === Escrow Per-User Indexes (#1845) ===
+
+/// Returns the escrow transfer IDs created by `sender`, in creation order.
+pub fn get_escrows_by_sender(env: &Env, sender: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::EscrowBySender(sender.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Appends `transfer_id` to the sender's escrow index.
+pub fn append_escrow_by_sender(env: &Env, sender: &Address, transfer_id: u64) {
+    let key = DataKey::EscrowBySender(sender.clone());
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    ids.push_back(transfer_id);
+    env.storage().persistent().set(&key, &ids);
+}
+
+/// Returns the escrow transfer IDs where `recipient` is the recipient, in creation order.
+pub fn get_escrows_by_recipient(env: &Env, recipient: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::EscrowByRecipient(recipient.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Appends `transfer_id` to the recipient's escrow index.
+pub fn append_escrow_by_recipient(env: &Env, recipient: &Address, transfer_id: u64) {
+    let key = DataKey::EscrowByRecipient(recipient.clone());
+    let mut ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    ids.push_back(transfer_id);
+    env.storage().persistent().set(&key, &ids);
+}
+
+// === Escrow Token Field (#1844) ===
+
+/// Returns the token an escrow is denominated in.
+///
+/// Escrows created before multi-token support (#1844) have no stored token;
+/// those records are treated as USDC, which is the historical default.
+pub fn get_escrow_token(env: &Env, transfer_id: u64) -> Result<Address, ContractError> {
+    if let Some(token) = env
+        .storage()
+        .persistent()
+        .get::<DataKey, Address>(&DataKey::EscrowToken(transfer_id))
+    {
+        return Ok(token);
+    }
+    get_usdc_token(env)
+}
+
+/// Stores the token an escrow is denominated in.
+pub fn set_escrow_token(env: &Env, transfer_id: u64, token: &Address) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::EscrowToken(transfer_id), token);
 }
 
 // === Role-Based Authorization ===

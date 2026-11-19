@@ -640,3 +640,66 @@ fn test_abort_migration_allows_confirm_payout() {
     contract.abort_migration(&admin);
     contract.confirm_payout(&remittance_id, &None, &None);
 }
+
+// ─── Issue #1844/#1845 — escrow token backfill + sender/recipient indexes ────
+
+#[test]
+fn test_escrow_token_backfill_migration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, admin, token) = setup(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    token.mint(&sender, &100_000);
+
+    // Seed legacy escrow records that predate the `token` field.
+    let id1 = contract.create_escrow(&sender, &recipient, &10_000, &None, &None);
+    let id2 = contract.create_escrow(&sender, &recipient, &20_000, &None, &None);
+
+    // Run the backfill migration: every legacy escrow must receive the
+    // default token (USDC) and be indexed by sender and recipient.
+    contract.backfill_escrow_token(&admin);
+
+    let usdc = token.address.clone();
+
+    // Each escrow now carries the default token.
+    let e1 = contract.get_escrow(&id1);
+    let e2 = contract.get_escrow(&id2);
+    assert_eq!(e1.token, usdc);
+    assert_eq!(e2.token, usdc);
+
+    // Sender index is populated and returns both escrows.
+    let by_sender = contract.get_escrows_by_sender(&sender, &0, &100);
+    assert_eq!(by_sender.len(), 2);
+    assert_eq!(by_sender.get(0).unwrap().id, id1);
+    assert_eq!(by_sender.get(1).unwrap().id, id2);
+
+    // Recipient index is populated and returns both escrows.
+    let by_recipient = contract.get_escrows_by_recipient(&recipient, &0, &100);
+    assert_eq!(by_recipient.len(), 2);
+    assert_eq!(by_recipient.get(0).unwrap().id, id1);
+    assert_eq!(by_recipient.get(1).unwrap().id, id2);
+
+    // The backfill is idempotent — running it again must not duplicate index
+    // entries.
+    contract.backfill_escrow_token(&admin);
+    assert_eq!(contract.get_escrows_by_sender(&sender, &0, &100).len(), 2);
+    assert_eq!(
+        contract.get_escrows_by_recipient(&recipient, &0, &100).len(),
+        2
+    );
+}
+
+#[test]
+fn test_escrow_token_backfill_requires_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _admin, _token) = setup(&env);
+    let non_admin = Address::generate(&env);
+
+    let result = contract.try_backfill_escrow_token(&non_admin);
+    assert!(result.is_err());
+}

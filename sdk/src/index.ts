@@ -62,6 +62,9 @@ export type {
   ProposalState,
   // SR-194: previously unexported domain types
   Escrow,
+  // SR-1845: paginated escrow listing results
+  EscrowPage,
+  EscrowPageOptions,
   AssetVerification,
   VerificationStatus,
   PauseRecord,

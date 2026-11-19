@@ -385,6 +385,34 @@ export interface Escrow {
   amount: bigint;
   expiry: bigint | null;
   status: EscrowStatus;
+  /**
+   * Contract address of the token the escrow is denominated in.
+   * Escrows created before token support was added default to USDC.
+   */
+  token: string;
+}
+
+/** Parameters for the paginated escrow lookup views. */
+export interface GetEscrowsParams {
+  /** Zero-based index of the first escrow to return. */
+  offset: number;
+  /** Maximum number of escrows to return. Capped at 100 by the contract. */
+  limit: number;
+}
+
+/** Maximum page size accepted by get_escrows_by_sender / get_escrows_by_recipient. */
+export const ESCROW_PAGE_LIMIT_MAX = 100;
+
+/** A single page of escrows returned by the paginated escrow lookup views. */
+export interface EscrowPage {
+  /** Escrows in this page, in contract index order. */
+  escrows: Escrow[];
+  /** Offset that was requested. */
+  offset: number;
+  /** Limit that was requested (before the contract's 100-item cap is applied). */
+  limit: number;
+  /** True when more escrows exist beyond this page. */
+  hasMore: boolean;
 }
 
 // ─── Asset verification ─────────────────────────────────────────────────────
