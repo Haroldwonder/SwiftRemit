@@ -76,6 +76,8 @@ mod test_transitions;
 mod test_treasury;
 #[cfg(test)]
 mod test_multisig;
+#[cfg(test)]
+mod test_issues_1852_1853_1854_1857;
 
 
 mod transaction_controller;
@@ -164,6 +166,12 @@ pub use contract_upgrade::{
 pub use types::*;
 pub use validation::*;
 pub use verification::*;
+
+/// Maximum number of entries accepted by `batch_set_kyc_approved` (#1857).
+pub const MAX_KYC_BATCH_SIZE: u32 = 50;
+
+/// Maximum page size accepted by the full-record remittance views (#1853).
+pub const MAX_REMITTANCE_PAGE_SIZE: u32 = 100;
 
 fn enforce_daily_send_limit(
     env: &Env,
@@ -2949,6 +2957,11 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         crate::storage::get_escrow_ttl(&env)
     }
 
+    /// Returns the decimals recorded for a whitelisted token (#1852).
+    pub fn get_whitelisted_token_decimals(env: Env, token: Address) -> Option<u32> {
+        get_whitelisted_token_decimals(&env, &token)
+    }
+
     pub fn update_escrow_ttl(env: Env, ttl: u64) -> Result<(), ContractError> {
         let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
@@ -3073,6 +3086,63 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         limit: u32,
     ) -> Vec<u64> {
         storage::get_agent_remittances_paged(&env, &agent, offset, limit)
+    }
+
+    /// Returns a page of full remittance records created by `sender` (#1853).
+    ///
+    /// Unlike [`Self::get_sender_remittances`], which returns only IDs, this
+    /// view returns the complete [`Remittance`] records so a history page can
+    /// be rendered in a single RPC simulation. `limit` is capped at
+    /// `MAX_REMITTANCE_PAGE_SIZE` (100).
+    pub fn get_remittance_records_by_sender(
+        env: Env,
+        sender: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<Remittance>, ContractError> {
+        if limit == 0 || limit > MAX_REMITTANCE_PAGE_SIZE {
+            return Err(ContractError::InvalidBatchSize);
+        }
+        storage::get_remittance_records_by_sender(&env, &sender, offset, limit)
+    }
+
+    /// Returns a page of full remittance records assigned to `agent` (#1853).
+    ///
+    /// Agent-side equivalent of [`Self::get_remittance_records_by_sender`].
+    /// `limit` is capped at `MAX_REMITTANCE_PAGE_SIZE` (100).
+    pub fn get_remittance_records_by_agent(
+        env: Env,
+        agent: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<Remittance>, ContractError> {
+        if limit == 0 || limit > MAX_REMITTANCE_PAGE_SIZE {
+            return Err(ContractError::InvalidBatchSize);
+        }
+        storage::get_remittance_records_by_agent(&env, &agent, offset, limit)
+    }
+
+    /// Returns every admin-tunable parameter in a single call (#1854).
+    ///
+    /// Aggregates the individual `get_*` views so admin dashboards and
+    /// `ContractHealth` need only one RPC simulation. Read-only.
+    pub fn get_config(env: Env) -> ContractConfig {
+        let rate_limit = get_rate_limit_config(&env);
+        ContractConfig {
+            platform_fee_bps: get_platform_fee_bps(&env),
+            protocol_fee_bps: get_protocol_fee_bps(&env),
+            dispute_window: get_dispute_window(&env),
+            processing_timeout: get_processing_timeout(&env),
+            escrow_ttl: crate::storage::get_escrow_ttl(&env).unwrap_or(0),
+            rate_limit_config: rate_limit,
+            min_agent_reputation: get_min_agent_reputation(&env),
+            cooldown_period: circuit_breaker_storage::get_cooldown_period(&env),
+            treasury: get_treasury(&env),
+            oracle: get_oracle_address(&env),
+            max_expired_batch_size: crate::storage::get_max_expired_batch_size(&env),
+            paused: crate::storage::is_paused(&env),
+            admin_count: storage::get_admin_count(&env),
+        }
     }
 
     /// Set daily send limit for a currency/country pair (admin only).
@@ -4233,9 +4303,94 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         Ok(())
     }
 
+    /// Bulk KYC approval/revocation (#1857).
+    ///
+    /// Applies the same validation as [`Self::set_kyc_approved`] to every entry
+    /// *before* any state is written, so a single invalid entry reverts the
+    /// whole batch. Emits one `kyc/updated` event per user.
+    ///
+    /// # Arguments
+    /// * `caller` - Admin address (must be authorised)
+    /// * `entries` - `(user, approved, expiry)` tuples; max `MAX_KYC_BATCH_SIZE`
+    ///
+    /// # Errors
+    /// - `Unauthorized` — caller is not an admin
+    /// - `InvalidBatchSize` — empty batch or larger than `MAX_KYC_BATCH_SIZE`
+    /// - `InvalidExpiry` — an approval entry has `expiry <= now`
+    pub fn batch_set_kyc_approved(
+        env: Env,
+        caller: Address,
+        entries: Vec<(Address, bool, u64)>,
+    ) -> Result<(), ContractError> {
+        require_admin(&env, &caller)?;
+
+        let len = entries.len();
+        if len == 0 || len > MAX_KYC_BATCH_SIZE {
+            return Err(ContractError::InvalidBatchSize);
+        }
+
+        let now = env.ledger().timestamp();
+
+        // Validate every entry before mutating any state.
+        for i in 0..len {
+            let (_, approved, expiry) = entries.get_unchecked(i);
+            if approved && expiry <= now {
+                return Err(ContractError::InvalidExpiry);
+            }
+        }
+
+        // Apply all updates and emit one event per user.
+        for i in 0..len {
+            let (user, approved, expiry) = entries.get_unchecked(i);
+            set_kyc_approved(&env, &user, approved);
+            if approved {
+                set_kyc_expiry(&env, &user, expiry);
+            } else {
+                clear_kyc_expiry(&env, &user);
+            }
+            emit_kyc_updated(&env, user, approved, expiry, caller.clone());
+        }
+
+        Ok(())
+    }
+
     /// Check if user KYC is approved
     pub fn is_kyc_approved(env: Env, user: Address) -> bool {
         is_kyc_approved(&env, &user) && !is_kyc_expired(&env, &user)
+    }
+
+    /// Adds a token to the whitelist (#1852).
+    ///
+    /// Before whitelisting, the address is probed with SEP-41 `decimals()` so
+    /// that an account address or a non-token contract is rejected up front
+    /// rather than failing later during a remittance. The probed decimals are
+    /// persisted for amount validation.
+    ///
+    /// # Errors
+    /// - `Unauthorized` — caller is not an admin
+    /// - `TokenNotSep41` — the address does not implement SEP-41
+    pub fn add_whitelisted_token(env: Env, token: Address) -> Result<(), ContractError> {
+        let caller = get_admin(&env)?;
+        require_admin(&env, &caller)?;
+
+        if is_token_whitelisted(&env, &token) {
+            return Ok(());
+        }
+
+        // Probe the SEP-41 interface. A non-token address (account or plain
+        // contract) has no `decimals` export, so the call traps and we map it
+        // to a clear error instead of whitelisting a broken address.
+        let token_client = token::Client::new(&env, &token);
+        let decimals = match token_client.try_decimals() {
+            Ok(Ok(value)) => value,
+            _ => return Err(ContractError::TokenNotSep41),
+        };
+
+        set_whitelisted_token_decimals(&env, &token, decimals);
+        add_whitelisted_token(&env, &token);
+
+        emit_token_whitelisted(&env, token, caller);
+        Ok(())
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

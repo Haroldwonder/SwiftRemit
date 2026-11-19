@@ -414,7 +414,17 @@ enum DataKey {
     /// Maps a whitelisted token contract Address → (asset_code, issuer) so that
     /// create_remittance can look up on-chain verification status by token address.
     TokenAssetInfo(Address),
+
+    // === Token Decimals Cache ===
+    /// Cached SEP-41 decimals for a whitelisted token contract (#1852).
+    /// Populated by add_whitelisted_token after verifying the address implements
+    /// the token interface, so amount validation can avoid re-simulating decimals().
+    TokenDecimals(Address),
 }
+
+/// Maximum number of full remittance records returned by a single paginated
+/// history view (#1853). Mirrors the cap used by the ID-only index views.
+pub const MAX_REMITTANCE_PAGE_SIZE: u32 = 100;
 
 /// Checks if the contract has an admin configured.
 /// * `true` - Admin is configured
@@ -1282,6 +1292,27 @@ pub fn get_all_whitelisted_tokens(env: &Env) -> Vec<Address> {
         .instance()
         .get(&DataKey::WhitelistedTokensList)
         .unwrap_or(Vec::new(env))
+}
+
+/// Stores the cached SEP-41 decimals for a whitelisted token (#1852).
+pub fn set_token_decimals(env: &Env, token: &Address, decimals: u32) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::TokenDecimals(token.clone()), &decimals);
+}
+
+/// Returns the cached SEP-41 decimals for a whitelisted token, if known (#1852).
+pub fn get_token_decimals(env: &Env, token: &Address) -> Option<u32> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TokenDecimals(token.clone()))
+}
+
+/// Removes the cached decimals for a token (called when it is de-whitelisted).
+pub fn remove_token_decimals(env: &Env, token: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::TokenDecimals(token.clone()));
 }
 
 /// Associates a token contract address with its (asset_code, issuer) tuple so that
@@ -2678,6 +2709,71 @@ pub fn get_total_processing_volume(env: &Env) -> i128 {
         .unwrap_or(0)
 }
 
+// === Paginated Full-Record History Views (#1853) ===
+
+/// Clamps a caller-supplied page size to `MAX_REMITTANCE_PAGE_SIZE`.
+fn clamp_page_size(limit: u32) -> u32 {
+    if limit > MAX_REMITTANCE_PAGE_SIZE {
+        MAX_REMITTANCE_PAGE_SIZE
+    } else {
+        limit
+    }
+}
+
+/// Reads a page of full `Remittance` records from a list of IDs.
+///
+/// IDs that no longer resolve to a stored remittance are skipped so a page
+/// never contains holes. The returned vector holds at most `limit` records
+/// (capped at `MAX_REMITTANCE_PAGE_SIZE`).
+fn read_remittance_page(env: &Env, ids: &soroban_sdk::Vec<u64>, offset: u32, limit: u32) -> Vec<Remittance> {
+    let mut records: Vec<Remittance> = Vec::new(env);
+    let page_size = clamp_page_size(limit);
+    if page_size == 0 {
+        return records;
+    }
+
+    let total = ids.len();
+    let mut index = offset;
+    while index < total && records.len() < page_size {
+        let id = ids.get_unchecked(index);
+        if let Ok(remittance) = get_remittance(env, id) {
+            records.push_back(remittance);
+        }
+        index += 1;
+    }
+
+    records
+}
+
+/// Returns a page of full remittance records created by `sender` (#1853).
+///
+/// `offset` is a zero-based index into the sender's remittance index and
+/// `limit` is clamped to `MAX_REMITTANCE_PAGE_SIZE` (100). This lets a client
+/// render a history page with a single RPC simulation instead of N+1 calls.
+pub fn get_remittance_records_by_sender(
+    env: &Env,
+    sender: &Address,
+    offset: u32,
+    limit: u32,
+) -> Vec<Remittance> {
+    let ids = get_sender_remittances(env, sender);
+    read_remittance_page(env, &ids, offset, limit)
+}
+
+/// Returns a page of full remittance records assigned to `agent` (#1853).
+///
+/// `offset` is a zero-based index into the agent's remittance index and
+/// `limit` is clamped to `MAX_REMITTANCE_PAGE_SIZE` (100).
+pub fn get_remittance_records_by_agent(
+    env: &Env,
+    agent: &Address,
+    offset: u32,
+    limit: u32,
+) -> Vec<Remittance> {
+    let ids = get_agent_remittances(env, agent);
+    read_remittance_page(env, &ids, offset, limit)
+}
+
 pub fn remove_agent_from_list(env: &Env, agent: &Address) {
     let list = get_agent_list(env);
     let mut new_list: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(env);
@@ -2772,4 +2868,82 @@ pub fn get_admin_nomination(env: &Env) -> Option<AdminNomination> {
 pub fn clear_pending_admin(env: &Env) {
     env.storage().instance().remove(&DataKey::PendingAdmin);
     env.storage().instance().remove(&DataKey::NominatedAdmin);
+}
+
+// === Aggregated Configuration View (#1854) ===
+
+/// Snapshot of every admin-tunable parameter, returned by `get_config()`.
+///
+/// Admin dashboards can render their settings page from a single RPC
+/// simulation instead of one call per parameter.
+#[contracttype]
+#[derive(Clone)]
+pub struct ContractConfig {
+    /// Contract administrator address.
+    pub admin: Address,
+    /// USDC (or primary settlement) token contract address.
+    pub usdc_token: Address,
+    /// Platform fee in basis points.
+    pub platform_fee_bps: u32,
+    /// Protocol fee in basis points.
+    pub protocol_fee_bps: u32,
+    /// Treasury address receiving protocol fees.
+    pub treasury: Address,
+    /// Dispute window in seconds.
+    pub dispute_window: u64,
+    /// Processing-recovery timeout in seconds.
+    pub processing_timeout: u64,
+    /// Escrow TTL in seconds (0 = expiry disabled).
+    pub escrow_ttl: u64,
+    /// Global rate-limit configuration.
+    pub rate_limit_config: crate::RateLimitConfig,
+    /// Minimum agent reputation required to accept remittances.
+    pub min_agent_reputation: u32,
+    /// Cooldown period in seconds between settlements per sender.
+    pub cooldown_period: u64,
+    /// Oracle contract address, if configured.
+    pub oracle: Option<Address>,
+    /// Oracle staleness window in ledgers, if explicitly configured.
+    pub oracle_staleness_window: Option<u32>,
+    /// Multi-sig approval threshold.
+    pub multisig_threshold: u32,
+    /// Multi-sig pending-operation TTL in seconds.
+    pub multisig_ttl_seconds: u64,
+    /// Governance quorum (minimum approvals).
+    pub governance_quorum: u32,
+    /// Governance timelock in seconds.
+    pub governance_timelock: u64,
+    /// Whether the contract is currently paused.
+    pub paused: bool,
+}
+
+/// Reads every admin-tunable parameter into a single `ContractConfig` (#1854).
+///
+/// Returns `Err(ContractError::NotInitialized)` when the contract has not been
+/// initialized (admin or token missing).
+pub fn get_contract_config(env: &Env) -> Result<ContractConfig, ContractError> {
+    let admin = get_admin(env)?;
+    let usdc_token = get_usdc_token(env)?;
+    let treasury = get_treasury(env)?;
+
+    Ok(ContractConfig {
+        admin,
+        usdc_token,
+        platform_fee_bps: get_platform_fee_bps(env)?,
+        protocol_fee_bps: get_protocol_fee_bps(env),
+        treasury,
+        dispute_window: get_dispute_window(env),
+        processing_timeout: get_processing_recovery_timeout(env),
+        escrow_ttl: get_escrow_ttl(env).unwrap_or(0),
+        rate_limit_config: crate::rate_limit::get_rate_limit_config(env),
+        min_agent_reputation: get_min_agent_reputation(env),
+        cooldown_period: get_rate_limit_cooldown(env).unwrap_or(0),
+        oracle: get_oracle_address(env),
+        oracle_staleness_window: get_oracle_staleness_window(env),
+        multisig_threshold: get_multisig_threshold(env),
+        multisig_ttl_seconds: get_multisig_ttl_seconds(env),
+        governance_quorum: get_governance_quorum(env),
+        governance_timelock: get_governance_timelock(env),
+        paused: is_paused(env),
+    })
 }

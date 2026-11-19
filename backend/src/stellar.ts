@@ -250,10 +250,55 @@ export async function cancelRemittanceOnChain(remittanceId: number): Promise<voi
   });
 }
 
-export async function updateKycStatusOnChain(
-  userId: string,
-  approved: boolean
+/** Maximum number of KYC entries accepted in a single batch transaction. */
+export const MAX_KYC_BATCH_SIZE = 50;
+
+export interface KycBatchEntry {
+  userId: string;
+  approved: boolean;
+  timestamp: number;
+}
+
+/**
+ * Validate a single KYC batch entry. Throws on invalid input so that a bad
+ * entry rejects the whole batch before any transaction is submitted.
+ */
+function validateKycBatchEntry(entry: KycBatchEntry): void {
+  if (!entry || typeof entry !== 'object') {
+    throw new Error('Invalid KYC batch entry: entry must be an object');
+  }
+  if (typeof entry.userId !== 'string' || entry.userId.length === 0) {
+    throw new Error('Invalid KYC batch entry: userId must be a non-empty string');
+  }
+  // Throws if the address is not a valid Stellar address.
+  new Address(entry.userId);
+  if (typeof entry.approved !== 'boolean') {
+    throw new Error('Invalid KYC batch entry: approved must be a boolean');
+  }
+  if (
+    typeof entry.timestamp !== 'number' ||
+    !Number.isInteger(entry.timestamp) ||
+    entry.timestamp < 0
+  ) {
+    throw new Error('Invalid KYC batch entry: timestamp must be a non-negative integer');
+  }
+}
+
+/**
+ * Approve/revoke KYC for many users in a single `batch_set_kyc_approved`
+ * transaction. Entries are chunked by MAX_KYC_BATCH_SIZE; each chunk is one
+ * transaction and the contract emits one event per user.
+ */
+export async function batchUpdateKycStatusOnChain(
+  entries: KycBatchEntry[]
 ): Promise<void> {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw new Error('KYC batch must contain at least one entry');
+  }
+
+  // Validate the entire batch up front so an invalid entry rejects everything.
+  entries.forEach(validateKycBatchEntry);
+
   const contractId = process.env.CONTRACT_ID;
   if (!contractId) {
     throw new Error('CONTRACT_ID not configured');
@@ -267,52 +312,69 @@ export async function updateKycStatusOnChain(
   const adminKeypair = Keypair.fromSecret(adminSecret);
   const contract = new Contract(contractId);
 
-  // Get admin account
-  const account = await server.getAccount(adminKeypair.publicKey());
+  for (let offset = 0; offset < entries.length; offset += MAX_KYC_BATCH_SIZE) {
+    const chunk = entries.slice(offset, offset + MAX_KYC_BATCH_SIZE);
 
+    // Get admin account (fresh sequence number per transaction)
+    const account = await server.getAccount(adminKeypair.publicKey());
+
+    const batchScVal = xdr.ScVal.scvVec(
+      chunk.map((entry) =>
+        xdr.ScVal.scvVec([
+          new Address(entry.userId).toScVal(),
+          nativeToScVal(entry.approved, { type: 'bool' }),
+          nativeToScVal(entry.timestamp, { type: 'u64' }),
+        ])
+      )
+    );
+
+    const tx = new TransactionBuilder(account, {
+      fee: await getBaseFee(),
+      networkPassphrase,
+    })
+      .addOperation(contract.call('batch_set_kyc_approved', batchScVal))
+      .setTimeout(30)
+      .build();
+
+    // Simulate transaction
+    const simulated = await server.simulateTransaction(tx);
+
+    if (SorobanRpc.Api.isSimulationError(simulated)) {
+      throw new Error(`Simulation failed: ${simulated.error}`);
+    }
+
+    // Prepare and sign transaction
+    const prepared = SorobanRpc.assembleTransaction(tx, simulated).build();
+    prepared.sign(adminKeypair);
+
+    // Submit transaction
+    const result = await server.sendTransaction(prepared);
+
+    // Wait for confirmation
+    let status = await server.getTransaction(result.hash);
+    while (status.status === 'NOT_FOUND') {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      status = await server.getTransaction(result.hash);
+    }
+
+    if (status.status === 'FAILED') {
+      throw new Error(`Transaction failed: ${status.resultXdr}`);
+    }
+
+    console.log(
+      `Batch updated KYC status on-chain for ${chunk.length} user(s) (tx ${result.hash})`
+    );
+  }
+}
+
+export async function updateKycStatusOnChain(
+  userId: string,
+  approved: boolean
+): Promise<void> {
   // Calculate expiry (1 year from now)
   const expiry = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
 
-  // Build transaction
-  const tx = new TransactionBuilder(account, {
-    fee: await getBaseFee(),
-    networkPassphrase,
-  })
-    .addOperation(
-      contract.call(
-        'set_kyc_approved',
-        new Address(userId).toScVal(),
-        nativeToScVal(approved, { type: 'bool' }),
-        nativeToScVal(expiry, { type: 'u64' })
-      )
-    )
-    .setTimeout(30)
-    .build();
-
-  // Simulate transaction
-  const simulated = await server.simulateTransaction(tx);
-
-  if (SorobanRpc.Api.isSimulationError(simulated)) {
-    throw new Error(`Simulation failed: ${simulated.error}`);
-  }
-
-  // Prepare and sign transaction
-  const prepared = SorobanRpc.assembleTransaction(tx, simulated).build();
-  prepared.sign(adminKeypair);
-
-  // Submit transaction
-  const result = await server.sendTransaction(prepared);
-
-  // Wait for confirmation
-  let status = await server.getTransaction(result.hash);
-  while (status.status === 'NOT_FOUND') {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    status = await server.getTransaction(result.hash);
-  }
-
-  if (status.status === 'FAILED') {
-    throw new Error(`Transaction failed: ${status.resultXdr}`);
-  }
+  await batchUpdateKycStatusOnChain([{ userId, approved, timestamp: expiry }]);
 
   console.log(`Updated KYC status on-chain for user ${userId}: ${approved ? 'approved' : 'revoked'}`);
 }

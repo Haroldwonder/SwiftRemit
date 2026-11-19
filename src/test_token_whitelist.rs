@@ -206,6 +206,62 @@ fn test_only_admin_can_remove_token() {
 }
 
 #[test]
+fn test_add_whitelisted_token_rejects_non_token_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_, usdc_token) = create_token_contract(&env, &admin);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &usdc_token.address, &250, &3600, &0, &admin);
+
+    // A plain account address does not implement SEP-41
+    let non_token = Address::generate(&env);
+    let result = contract.try_add_whitelisted_token(&non_token);
+
+    assert_eq!(result, Err(Ok(ContractError::TokenNotSep41)));
+    assert!(!contract.is_token_whitelisted(&non_token));
+    assert_eq!(contract.get_whitelisted_tokens().len(), 1);
+}
+
+#[test]
+fn test_add_whitelisted_token_rejects_non_sep41_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_, usdc_token) = create_token_contract(&env, &admin);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &usdc_token.address, &250, &3600, &0, &admin);
+
+    // Register a contract that does not implement SEP-41
+    let non_token_contract = env.register_contract(None, SwiftRemitContract);
+    let result = contract.try_add_whitelisted_token(&non_token_contract);
+
+    assert_eq!(result, Err(Ok(ContractError::TokenNotSep41)));
+    assert!(!contract.is_token_whitelisted(&non_token_contract));
+}
+
+#[test]
+fn test_add_whitelisted_token_accepts_valid_sep41_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_, usdc_token) = create_token_contract(&env, &admin);
+    let (_, eurc_token) = create_token_contract(&env, &admin);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &usdc_token.address, &250, &3600, &0, &admin);
+
+    let result = contract.try_add_whitelisted_token(&eurc_token.address);
+    assert!(result.is_ok());
+    assert!(contract.is_token_whitelisted(&eurc_token.address));
+}
+
+#[test]
 fn test_whitelist_token_add_remove_add_again() {
     let env = Env::default();
     env.mock_all_auths();

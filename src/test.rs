@@ -6884,3 +6884,303 @@ fn test_settlement_without_proof_requirement() {
     let agent_balance = soroban_sdk::token::Client::new(&env, &token.address).balance(&agent);
     assert!(agent_balance > 0);
 }
+
+// ============================================================================
+// #1853: Paginated remittance record views
+// ============================================================================
+
+/// Helper: create `count` remittances from `sender` to `agent` and return their IDs.
+fn create_n_remittances(
+    contract: &SwiftRemitContractClient,
+    sender: &Address,
+    agent: &Address,
+    count: u32,
+) -> alloc::vec::Vec<u64> {
+    let mut ids = alloc::vec::Vec::new();
+    for _ in 0..count {
+        let id = contract.create_remittance(
+            sender,
+            agent,
+            &100,
+            &None,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+        ids.push(id);
+    }
+    ids
+}
+
+#[test]
+fn test_get_remittance_records_by_sender_returns_full_records() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, _admin, sender, agent, _token_admin) = setup(&env);
+
+    let ids = create_n_remittances(&contract, &sender, &agent, 3);
+
+    let records = contract.get_remittance_records_by_sender(&sender, &0, &10);
+    assert_eq!(records.len(), 3);
+
+    for (i, record) in records.iter().enumerate() {
+        let expected_id = ids[i as usize];
+        assert_eq!(record.id, expected_id);
+        assert_eq!(record.sender, sender);
+        assert_eq!(record.agent, agent);
+        assert_eq!(record.amount, 100);
+        // Full record must match the single-record getter.
+        let single = contract.get_remittance(&expected_id);
+        assert_eq!(record.status, single.status);
+        assert_eq!(record.fee, single.fee);
+    }
+}
+
+#[test]
+fn test_get_remittance_records_by_sender_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, _admin, sender, agent, _token_admin) = setup(&env);
+
+    let ids = create_n_remittances(&contract, &sender, &agent, 5);
+
+    // First page
+    let page1 = contract.get_remittance_records_by_sender(&sender, &0, &2);
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1.get(0).unwrap().id, ids[0]);
+    assert_eq!(page1.get(1).unwrap().id, ids[1]);
+
+    // Second page
+    let page2 = contract.get_remittance_records_by_sender(&sender, &2, &2);
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2.get(0).unwrap().id, ids[2]);
+    assert_eq!(page2.get(1).unwrap().id, ids[3]);
+
+    // Offset past the end returns empty
+    let empty = contract.get_remittance_records_by_sender(&sender, &10, &2);
+    assert_eq!(empty.len(), 0);
+
+    // Limit larger than remaining returns the remainder
+    let tail = contract.get_remittance_records_by_sender(&sender, &3, &50);
+    assert_eq!(tail.len(), 2);
+    assert_eq!(tail.get(0).unwrap().id, ids[3]);
+    assert_eq!(tail.get(1).unwrap().id, ids[4]);
+}
+
+#[test]
+fn test_get_remittance_records_by_sender_isolated_per_sender() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, _admin, sender, agent, _token_admin) = setup(&env);
+
+    let other_sender = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let other_token = create_token_contract(&env, &token_admin);
+    other_token.mint(&other_sender, &100_000);
+
+    create_n_remittances(&contract, &sender, &agent, 2);
+    // The other sender has no remittances in this contract.
+    let records = contract.get_remittance_records_by_sender(&other_sender, &0, &10);
+    assert_eq!(records.len(), 0);
+}
+
+#[test]
+fn test_get_remittance_records_by_agent_returns_full_records() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, _admin, sender, agent, _token_admin) = setup(&env);
+
+    let ids = create_n_remittances(&contract, &sender, &agent, 3);
+
+    let records = contract.get_remittance_records_by_agent(&agent, &0, &10);
+    assert_eq!(records.len(), 3);
+
+    for (i, record) in records.iter().enumerate() {
+        let expected_id = ids[i as usize];
+        assert_eq!(record.id, expected_id);
+        assert_eq!(record.sender, sender);
+        assert_eq!(record.agent, agent);
+        assert_eq!(record.amount, 100);
+    }
+}
+
+#[test]
+fn test_get_remittance_records_by_agent_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, _admin, sender, agent, _token_admin) = setup(&env);
+
+    let ids = create_n_remittances(&contract, &sender, &agent, 4);
+
+    let page = contract.get_remittance_records_by_agent(&agent, &1, &2);
+    assert_eq!(page.len(), 2);
+    assert_eq!(page.get(0).unwrap().id, ids[1]);
+    assert_eq!(page.get(1).unwrap().id, ids[2]);
+
+    let empty = contract.get_remittance_records_by_agent(&agent, &100, &10);
+    assert_eq!(empty.len(), 0);
+}
+
+#[test]
+fn test_get_remittance_records_limit_capped_at_100() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, _admin, sender, agent, _token_admin) = setup(&env);
+
+    // Create more than the 100-item cap.
+    create_n_remittances(&contract, &sender, &agent, 105);
+
+    let records = contract.get_remittance_records_by_sender(&sender, &0, &1000);
+    assert_eq!(records.len(), 100, "limit must be capped at 100");
+
+    let agent_records = contract.get_remittance_records_by_agent(&agent, &0, &1000);
+    assert_eq!(agent_records.len(), 100, "limit must be capped at 100");
+
+    // Offset beyond the cap still respects the cap.
+    let offset_records = contract.get_remittance_records_by_sender(&sender, &50, &1000);
+    assert_eq!(offset_records.len(), 55);
+}
+
+// ============================================================================
+// #1854: get_config view
+// ============================================================================
+
+#[test]
+fn test_get_config_matches_individual_getters() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let treasury = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &0, &0, &treasury);
+
+    // Tune a few parameters so the config is not just defaults.
+    contract.update_fee(&300);
+    contract.set_oracle(&oracle);
+
+    let config = contract.get_config();
+
+    assert_eq!(config.platform_fee_bps, contract.get_platform_fee_bps());
+    assert_eq!(config.protocol_fee_bps, contract.get_protocol_fee_bps());
+    assert_eq!(config.dispute_window, contract.get_dispute_window());
+    assert_eq!(config.processing_timeout, contract.get_processing_timeout());
+    assert_eq!(config.escrow_ttl, contract.get_escrow_ttl());
+    assert_eq!(config.min_agent_reputation, contract.get_min_agent_reputation());
+    assert_eq!(config.cooldown_period, contract.get_cooldown_period());
+    assert_eq!(config.treasury, contract.get_treasury());
+    assert_eq!(config.oracle, contract.get_oracle());
+
+    let rate_limit = contract.get_rate_limit_config();
+    assert_eq!(config.rate_limit, rate_limit);
+
+    // Sanity check on the tuned values.
+    assert_eq!(config.platform_fee_bps, 300);
+    assert_eq!(config.oracle, Some(oracle));
+    assert_eq!(config.treasury, treasury);
+}
+
+// ============================================================================
+// #1857: batch_set_kyc_approved
+// ============================================================================
+
+#[test]
+fn test_batch_set_kyc_approved_valid_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250);
+
+    let expiry = env.ledger().timestamp() + 31_536_000;
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    let user_c = Address::generate(&env);
+
+    let mut entries = soroban_sdk::Vec::new(&env);
+    entries.push_back((user_a.clone(), true, expiry));
+    entries.push_back((user_b.clone(), true, expiry));
+    entries.push_back((user_c.clone(), false, 0));
+
+    contract.batch_set_kyc_approved(&entries);
+
+    assert!(contract.is_kyc_approved(&user_a));
+    assert!(contract.is_kyc_approved(&user_b));
+    assert!(!contract.is_kyc_approved(&user_c));
+
+    // One event per user.
+    let events = env.events().all();
+    let kyc_events = events
+        .iter()
+        .filter(|e| e.1.iter().any(|t| t == symbol_short!("kyc_approved").into_val(&env)))
+        .count();
+    assert_eq!(kyc_events, 3, "one event per user in the batch");
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_batch_set_kyc_approved_oversized_batch_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250);
+
+    let expiry = env.ledger().timestamp() + 31_536_000;
+    let mut entries = soroban_sdk::Vec::new(&env);
+    for _ in 0..(crate::MAX_KYC_BATCH_SIZE + 1) {
+        entries.push_back((Address::generate(&env), true, expiry));
+    }
+
+    contract.batch_set_kyc_approved(&entries);
+}
+
+#[test]
+fn test_batch_set_kyc_approved_invalid_entry_reverts_whole_batch() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250);
+
+    let expiry = env.ledger().timestamp() + 31_536_000;
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+
+    // Invalid entry: approving with an expiry in the past.
+    let past_expiry = env.ledger().timestamp().saturating_sub(1);
+
+    let mut entries = soroban_sdk::Vec::new(&env);
+    entries.push_back((user_a.clone(), true, expiry));
+    entries.push_back((user_b.clone(), true, past_expiry));
+
+    let result = contract.try_batch_set_kyc_approved(&entries);
+    assert!(result.is_err(), "batch with an invalid entry must be rejected");
+
+    // No partial updates: neither user is approved.
+    assert!(!contract.is_kyc_approved(&user_a));
+    assert!(!contract.is_kyc_approved(&user_b));
+}
