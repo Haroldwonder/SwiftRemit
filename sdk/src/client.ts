@@ -1527,12 +1527,25 @@ export class SwiftRemitClient {
 
   // ─── Escrow ──────────────────────────────────────────────────────────────────
 
-  /** Locks funds in escrow for `recipient`. Requires sender authorization. */
-  async createEscrow(sender: string, recipient: string, amount: bigint): Promise<Transaction> {
+  /**
+   * Locks funds in escrow for `recipient`. Requires sender authorization.
+   *
+   * @param sender - Sender's Stellar address (must authorize the transaction)
+   * @param recipient - Recipient's Stellar address
+   * @param amount - Amount in stroops of the escrowed token
+   * @param token - Optional whitelisted token contract address (defaults to USDC)
+   */
+  async createEscrow(
+    sender: string,
+    recipient: string,
+    amount: bigint,
+    token?: string
+  ): Promise<Transaction> {
     return this.prepareTransaction(sender, "create_escrow", [
       addressToScVal(sender),
       addressToScVal(recipient),
       i128ToScVal(amount),
+      optionToScVal(token ? addressToScVal(token) : undefined),
     ]);
   }
 
@@ -1550,6 +1563,58 @@ export class SwiftRemitClient {
   async getEscrow(sourceAddress: string, transferId: bigint): Promise<Escrow> {
     const val = await this.simulateCall(sourceAddress, "get_escrow", [u64ToScVal(transferId)]);
     return parseEscrow(val);
+  }
+
+  /**
+   * Get paginated escrows created by `sender`.
+   *
+   * @param sourceAddress - Query account address used for simulation
+   * @param sender - Sender address to filter escrows
+   * @param offset - Pagination offset
+   * @param limit - Maximum results to return (contract caps the page at 100)
+   * @returns Array of escrow records for the sender
+   */
+  async getEscrowsBySender(
+    sourceAddress: string,
+    sender: string,
+    offset: bigint,
+    limit: bigint
+  ): Promise<Escrow[]> {
+    const val = await this.simulateCall(sourceAddress, "get_escrows_by_sender", [
+      addressToScVal(sender),
+      u64ToScVal(offset),
+      u64ToScVal(limit),
+    ]);
+    const native = scValToNative(val) as unknown[];
+    return native.map((entry) =>
+      parseEscrow(xdr.ScVal.fromXDR(entry as Uint8Array))
+    );
+  }
+
+  /**
+   * Get paginated escrows addressed to `recipient`.
+   *
+   * @param sourceAddress - Query account address used for simulation
+   * @param recipient - Recipient address to filter escrows
+   * @param offset - Pagination offset
+   * @param limit - Maximum results to return (contract caps the page at 100)
+   * @returns Array of escrow records for the recipient
+   */
+  async getEscrowsByRecipient(
+    sourceAddress: string,
+    recipient: string,
+    offset: bigint,
+    limit: bigint
+  ): Promise<Escrow[]> {
+    const val = await this.simulateCall(sourceAddress, "get_escrows_by_recipient", [
+      addressToScVal(recipient),
+      u64ToScVal(offset),
+      u64ToScVal(limit),
+    ]);
+    const native = scValToNative(val) as unknown[];
+    return native.map((entry) =>
+      parseEscrow(xdr.ScVal.fromXDR(entry as Uint8Array))
+    );
   }
 
   /** Returns the configured escrow storage TTL in ledgers. */

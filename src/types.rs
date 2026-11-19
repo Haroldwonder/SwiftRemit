@@ -147,6 +147,9 @@ pub struct Escrow {
     pub amount: i128,
     pub expiry: Option<u64>,
     pub status: EscrowStatus,
+    /// The whitelisted token held by this escrow. Legacy records that predate
+    /// this field are migrated to the contract's USDC token.
+    pub token: Address,
 }
 
 /// Contracttype-compatible Option wrapper for SettlementConfig.

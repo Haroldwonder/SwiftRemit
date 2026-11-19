@@ -271,6 +271,32 @@ fn test_sender_blacklisted_after_creation_cannot_batch_settle() {
 }
 
 #[test]
+fn test_release_escrow_blocked_for_blacklisted_recipient_and_sender_can_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _admin, token) = setup(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    token.mint(&sender, &10_000);
+
+    let escrow_id = contract.create_escrow(&sender, &recipient, &1_000, &None, &None);
+
+    contract.blacklist_user(&recipient);
+
+    let result = contract.try_release_escrow(&escrow_id);
+    assert_eq!(result, Err(Ok(ContractError::UserBlacklisted)));
+
+    let sender_balance_before = token.balance(&sender);
+    contract.refund_escrow(&escrow_id);
+    let sender_balance_after = token.balance(&sender);
+
+    assert_eq!(sender_balance_after, sender_balance_before + 1_000);
+    assert_eq!(token.balance(&recipient), 0);
+}
+
+#[test]
 fn test_confirm_payout_blocked_while_paused_and_allowed_after_unpause() {
     let env = Env::default();
     env.mock_all_auths();

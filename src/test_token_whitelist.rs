@@ -206,6 +206,65 @@ fn test_only_admin_can_remove_token() {
 }
 
 #[test]
+fn test_create_escrow_rejects_non_whitelisted_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let (_, usdc_token) = create_token_contract(&env, &admin);
+    let (_, eurc_token) = create_token_contract(&env, &admin);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &usdc_token.address, &250, &3600, &0, &admin);
+
+    // EURC is not whitelisted yet
+    let result = contract.try_create_escrow(
+        &sender,
+        &agent,
+        &1000,
+        &eurc_token.address,
+        &None,
+    );
+
+    assert_eq!(result, Err(Ok(ContractError::TokenNotWhitelisted)));
+}
+
+#[test]
+fn test_create_escrow_with_whitelisted_non_usdc_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let (_, usdc_token) = create_token_contract(&env, &admin);
+    let (eurc_admin, eurc_token) = create_token_contract(&env, &admin);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &usdc_token.address, &250, &3600, &0, &admin);
+
+    // Whitelist EURC and fund the sender
+    contract.add_whitelisted_token(&eurc_token.address);
+    eurc_admin.mint(&sender, &1000);
+
+    let escrow_id = contract.create_escrow(
+        &sender,
+        &agent,
+        &1000,
+        &eurc_token.address,
+        &None,
+    );
+
+    // Escrow should be created and funded in EURC
+    let escrow = contract.get_escrow(&escrow_id);
+    assert_eq!(escrow.amount, 1000);
+    assert_eq!(eurc_token.balance(&sender), 0);
+    assert_eq!(eurc_token.balance(&contract.address), 1000);
+}
+
+#[test]
 fn test_whitelist_token_add_remove_add_again() {
     let env = Env::default();
     env.mock_all_auths();
