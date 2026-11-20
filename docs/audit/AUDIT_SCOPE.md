@@ -86,7 +86,6 @@ All `pub fn` entries in the `#[contractimpl] impl SwiftRemitContract` block in `
 | `raise_dispute` | Dispute window enforcement |
 | `resolve_dispute` | Fund routing to sender vs. agent |
 | `confirm_partial_payout` | Partial disbursement arithmetic, auto-complete logic |
-| `finalize_remittance` | Authorization boundary |
 
 ### 3.2 Escrow
 

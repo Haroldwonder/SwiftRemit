@@ -153,7 +153,6 @@ caller authentication and are omitted.
 | Function | Auth mechanism | Notes |
 |----------|---------------|-------|
 | `confirm_payout` | checks `is_agent_registered` + `agent.require_auth()` | |
-| `finalize_remittance` | checks caller is agent or admin | |
 | `mark_failed` | checks `is_agent_registered` | |
 | `batch_settle_with_netting` | checks `is_agent_registered` | |
 

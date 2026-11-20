@@ -1903,23 +1903,6 @@ impl SwiftRemitContract {
         crate::storage::compute_agent_reputation(&stats)
     }
 
-    pub fn finalize_remittance(
-        env: Env,
-        caller: Address,
-        remittance_id: u64,
-    ) -> Result<(), ContractError> {
-        require_admin(&env, &caller)?;
-        let remittance = get_remittance(&env, remittance_id)?;
-
-        // Verify remittance is in a valid state (Completed)
-        if remittance.status != RemittanceStatus::Completed {
-            return Err(ContractError::InvalidStateTransition);
-        }
-
-        // Remittance is already completed, no further action needed
-        Ok(())
-    }
-
     /// Cancels a pending remittance or recovers a failed remittance after its dispute
     /// window expires, refunding any escrow still held to the sender.
     ///

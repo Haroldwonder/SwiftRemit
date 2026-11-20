@@ -71,4 +71,20 @@ describe('ThemeToggle', () => {
     // Check that theme attribute is set before the component fully renders
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
   });
+
+  it('should not crash when localStorage throws', () => {
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('storage unavailable');
+    });
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('storage unavailable');
+    });
+
+    expect(() => render(<ThemeToggle />)).not.toThrow();
+    expect(() => fireEvent.click(screen.getByRole('button'))).not.toThrow();
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+
+    getItem.mockRestore();
+    setItem.mockRestore();
+  });
 });
