@@ -683,7 +683,10 @@ impl SwiftRemitContract {
             }
         }
 
-        let token_address = token.unwrap_or_else(|| get_usdc_token(&env).unwrap());
+        let token_address = match token {
+            Some(addr) => addr,
+            None => get_usdc_token(&env)?,
+        };
         if !is_token_whitelisted(&env, &token_address) {
             return Err(ContractError::TokenNotWhitelisted);
         }

@@ -6809,6 +6809,40 @@ fn test_settlement_config_validation() {
     );
 }
 
+/// #1637 — create_remittance without an explicit token and without an
+/// initialized USDC token returns NotInitialized instead of panicking.
+#[test]
+fn test_create_remittance_uninitialized_usdc_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    token.mint(&sender, &10_000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.register_agent(&agent, &None);
+
+    let result = contract.try_create_remittance(
+        &sender,
+        &agent,
+        &1_000,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        crate::errors::ContractError::NotInitialized
+    );
+}
+
 
 // ---------------------------------------------------------------------------
 // #1511: test_settlement_missing_required_proof
