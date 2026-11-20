@@ -3649,6 +3649,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         // Load all remittances and validate
         let mut remittances = Vec::new(&env);
         let mut seen_ids = Vec::new(&env);
+        // #1620: netting is only valid within a single token denomination.
+        let mut batch_token: Option<Address> = None;
 
         for i in 0..batch_size {
             let entry = entries.get_unchecked(i);
@@ -3690,6 +3692,17 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                 }
             }
 
+            // #1620: Reject mixed-token batches — netting across different
+            // denominations would pay agents in the wrong asset.
+            match &batch_token {
+                None => batch_token = Some(remittance.token.clone()),
+                Some(token) => {
+                    if *token != remittance.token {
+                        return Err(ContractError::MixedTokenBatch);
+                    }
+                }
+            }
+
             // SR-122: Enforce per-agent daily withdrawal cap for each entry.
             storage::check_and_record_agent_withdrawal(&env, &remittance.agent, remittance.amount)?;
 
@@ -3705,10 +3718,14 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         validate_net_settlement(&remittances, &net_transfers)?;
 
         // Batch read storage values once
-        let usdc_token = get_usdc_token(&env)?;
+        // #1620: settle in the remittance token, not the contract's default USDC.
+        let settlement_token = match batch_token {
+            Some(token) => token,
+            None => get_usdc_token(&env)?,
+        };
         let mut current_fees = get_accumulated_fees(&env)?;
 
-        let token_client = token::Client::new(&env, &usdc_token);
+        let token_client = token::Client::new(&env, &settlement_token);
 
         // Execute net transfers
         for i in 0..net_transfers.len() {
@@ -3816,7 +3833,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                 fee_service::breakdown_from_platform_fee(&env, remittance.amount, remittance.fee)?;
             let protocol_fee = fee_breakdown.protocol_fee;
             if protocol_fee > 0 {
-                let token_client_inner = token::Client::new(&env, &usdc_token);
+                let token_client_inner = token::Client::new(&env, &settlement_token);
                 let treasury = get_treasury(&env)?;
                 token_client_inner.transfer(
                     &env.current_contract_address(),
