@@ -3596,10 +3596,17 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// Result: Single transfer of 10 USDC from A to B, total fees: 3.8
     ///
     /// # Parameters
-    /// - `entries`: Vector of BatchSettlementEntry containing remittance IDs to settle
+    /// - `entries`: Vector of BatchSettlementEntry containing remittance IDs to settle,
+    ///   plus the optional proof and recipient-details hash required by proof-gated or
+    ///   recipient-verified remittances (#1626)
     ///
     /// # Returns
     /// BatchSettlementResult with list of successfully settled remittance IDs
+    ///
+    /// # Validation
+    /// Each entry runs the same pipeline as `confirm_payout`: pre-confirm KYC/eligibility
+    /// hook, proof verification when the settlement config requires it, and the
+    /// recipient-hash check.
     ///
     /// # Errors
     /// - ContractPaused: Contract is in paused state
@@ -3607,6 +3614,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// - RemittanceNotFound: One or more remittance IDs don't exist
     /// - InvalidStatus: One or more remittances are not in Pending status
     /// - DuplicateSettlement: Duplicate remittance IDs in batch
+    /// - MissingProof / InvalidProof: Proof-gated entry without a valid proof
+    /// - MissingRecipientHash / RecipientHashMismatch: Recipient-hash check failed
     /// - Overflow: Arithmetic overflow in calculations
     pub fn batch_settle_with_netting(
         env: Env,
@@ -3686,6 +3695,40 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                     return Err(ContractError::SettlementExpired);
                 }
             }
+
+            // #1626: Run the same validation pipeline as confirm_payout_inner for
+            // each entry — pre-confirm KYC/eligibility hook, proof verification and
+            // recipient-hash check — before any state mutation or token transfer.
+            transaction_controller::TransactionController::pre_confirm_validation(
+                &env, &remittance,
+            )?;
+
+            if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
+                if config.require_proof {
+                    match entry.proof.clone() {
+                        None => return Err(ContractError::MissingProof),
+                        Some(ref submitted_proof) => {
+                            let expected_signer = config
+                                .oracle_address
+                                .as_ref()
+                                .ok_or(ContractError::InvalidOracleAddress)?;
+                            match verification::verify_proof(&env, submitted_proof, expected_signer)
+                            {
+                                Ok(true) => {}
+                                Ok(false) => return Err(ContractError::InvalidProof),
+                                Err(e) => return Err(e),
+                            }
+                        }
+                    }
+                }
+            }
+
+            recipient_verification::verify_recipient_hash(
+                &env,
+                remittance_id,
+                &remittance.agent,
+                entry.recipient_details_hash.clone(),
+            )?;
 
             // SR-122: Enforce per-agent daily withdrawal cap for each entry.
             storage::check_and_record_agent_withdrawal(&env, &remittance.agent, remittance.amount)?;

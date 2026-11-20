@@ -253,6 +253,10 @@ pub struct AgentStats {
 pub struct BatchSettlementEntry {
     /// The unique ID of the remittance to settle
     pub remittance_id: u64,
+    /// Optional cryptographic proof required by proof-gated remittances (#1626).
+    pub proof: Option<ProofData>,
+    /// Optional recipient-details hash for recipient-verified remittances (#1626).
+    pub recipient_details_hash: Option<soroban_sdk::BytesN<32>>,
 }
 
 /// Volume history bucket for rolling sender discount calculations.

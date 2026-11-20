@@ -3047,8 +3047,16 @@ contract.register_agent(&sender_b, &None);
 
     // Create batch settlement entries
     let mut entries = Vec::new(&env);
-    entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
-    entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
+    entries.push_back(crate::BatchSettlementEntry {
+        remittance_id: id1,
+        proof: None,
+        recipient_details_hash: None,
+    });
+    entries.push_back(crate::BatchSettlementEntry {
+        remittance_id: id2,
+        proof: None,
+        recipient_details_hash: None,
+    });
 
     // Execute batch settlement with netting
     let result = contract.batch_settle_with_netting(&admin, &entries);
@@ -3098,8 +3106,16 @@ contract.register_agent(&sender_b, &None);
     let id2 = contract.create_remittance(&sender_b);
 
     let mut entries = Vec::new(&env);
-    entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
-    entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
+    entries.push_back(crate::BatchSettlementEntry {
+        remittance_id: id1,
+        proof: None,
+        recipient_details_hash: None,
+    });
+    entries.push_back(crate::BatchSettlementEntry {
+        remittance_id: id2,
+        proof: None,
+        recipient_details_hash: None,
+    });
 
     let result = contract.batch_settle_with_netting(&admin, &entries);
 
