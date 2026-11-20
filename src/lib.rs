@@ -942,6 +942,11 @@ impl SwiftRemitContract {
 
         sender.require_auth();
 
+        // SR-123: Apply abuse-protection sliding-window rate limit and cooldown for Transfer
+        // (parity with create_remittance).
+        abuse_protection::check_rate_limit(&env, &sender, ActionType::Transfer)?;
+        check_cooldown(&env, &sender, ActionType::Transfer)?;
+
         let limit_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
         let limit_country = to_country
             .clone()
@@ -979,6 +984,9 @@ impl SwiftRemitContract {
         let usdc_token = get_usdc_token(&env)?;
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&sender, &env.current_contract_address(), &amount);
+
+        // SR-123: Record the Transfer action for cooldown tracking (only after funds locked).
+        record_action(&env, &sender, ActionType::Transfer);
 
         let counter = get_remittance_counter(&env)?;
         let remittance_id = counter.checked_add(1).ok_or(ContractError::Overflow)?;
