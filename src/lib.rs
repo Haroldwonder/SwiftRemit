@@ -1348,7 +1348,6 @@ impl SwiftRemitContract {
         let protocol_fee = fee_breakdown.protocol_fee;
 
         let remittance_token = remittance.token.clone();
-        let current_fees = get_accumulated_fees(&env)?;
         let current_time = env.ledger().timestamp();
 
         let token_client = token::Client::new(&env, &remittance_token);
@@ -1367,15 +1366,21 @@ impl SwiftRemitContract {
         }
 
         // Update accumulated fees with overflow protection and automatic flush
-        safe_add_accumulated_fee(&env, remittance.fee)?;
+        safe_add_accumulated_fee(&env, &remittance_token, remittance.fee)?;
 
         // #1263: Accrue a portion of the platform fee to the integrator balance if one
         // was recorded at creation time. We credit 10% of the platform fee (rounded down)
         // to the integrator; the remaining 90% stays in the platform accumulated_fees pot.
+        // #1621: balances are tracked per token so payouts use the matching token.
         if let Some(intg) = storage::get_remittance_integrator(&env, remittance_id) {
             let integrator_share = remittance.fee / 10; // 10% of platform fee
             if integrator_share > 0 {
-                storage::add_integrator_balance(&env, &intg, integrator_share);
+                storage::add_integrator_balance_for_token(
+                    &env,
+                    &intg,
+                    &remittance_token,
+                    integrator_share,
+                )?;
             }
         }
 
@@ -1662,7 +1667,7 @@ impl SwiftRemitContract {
                 .checked_sub(owed)
                 .ok_or(ContractError::Underflow)?;
             if retained > 0 {
-                crate::fee_management::safe_add_accumulated_fee(&env, retained)?;
+                crate::fee_management::safe_add_accumulated_fee(&env, &remittance.token, retained)?;
             }
             // SR-125: Route status mutation through the canonical state machine.
             crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
@@ -1856,7 +1861,7 @@ impl SwiftRemitContract {
         // If fully disbursed, collect fee and complete
         if new_total >= net_payout {
             // Update accumulated fees with overflow protection and automatic flush
-            safe_add_accumulated_fee(&env, remittance.fee)?;
+            safe_add_accumulated_fee(&env, &remittance.token, remittance.fee)?;
 
             // Move volume from in-flight to completed
             storage::sub_processing_volume(&env, remittance.amount)?;
@@ -2105,15 +2110,17 @@ impl SwiftRemitContract {
         Ok(processed_ids)
     }
 
-    /// Withdraws accumulated platform fees to a specified address.
+    /// Withdraws accumulated platform fees for `token` to a specified address.
     ///
-    /// Transfers all accumulated fees to the recipient address and resets the
-    /// fee counter to zero. Only the contract admin can withdraw fees.
+    /// Transfers all fees accumulated in `token` to the recipient address and
+    /// resets that token's fee balance to zero. Only the contract admin can
+    /// withdraw fees.
     ///
     /// # Arguments
     ///
     /// * `env` - The contract execution environment
     /// * `to` - Address to receive the withdrawn fees
+    /// * `token` - Token contract whose accumulated fees are withdrawn (#1621)
     ///
     /// # Returns
     ///
@@ -2125,38 +2132,39 @@ impl SwiftRemitContract {
     /// # Authorization
     ///
     /// Requires authentication from the contract admin.
-    pub fn withdraw_fees(env: Env, to: Address) -> Result<(), ContractError> {
+    pub fn withdraw_fees(env: Env, to: Address, token: Address) -> Result<(), ContractError> {
         // #1264: Block fee withdrawal while paused — prevents draining funds during an incident.
         validate_not_paused(&env)?;
         // Centralized validation before business logic (returns fees to avoid re-read)
-        let fees = validate_withdraw_fees_request(&env, &to)?;
+        let fees = validate_withdraw_fees_request(&env, &to, &token)?;
 
         let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
 
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
+        let token_client = token::Client::new(&env, &token);
         token_client.transfer(&env.current_contract_address(), &to, &fees);
 
-        set_accumulated_fees(&env, 0);
+        storage::set_accumulated_fees_for_token(&env, &token, 0);
 
-        emit_fees_withdrawn(&env, caller, to.clone(), usdc_token, fees);
+        emit_fees_withdrawn(&env, caller, to.clone(), token, fees);
 
         log_withdraw_fees(&env, &to, fees);
 
         Ok(())
     }
 
-    /// Withdraws accumulated integrator fees to a specified address.
+    /// Withdraws accumulated integrator fees for `token` to a specified address.
     ///
-    /// Transfers all accumulated integrator fees to the recipient and resets the
-    /// counter to zero. Only the designated integrator can withdraw their own fees.
+    /// Transfers all integrator fees accumulated in `token` to the recipient and
+    /// resets that token's balance to zero. Only the designated integrator can
+    /// withdraw their own fees.
     ///
     /// # Arguments
     ///
     /// * `env` - The contract execution environment
     /// * `integrator` - Address of the integrator requesting withdrawal (must authenticate)
     /// * `to` - Address to receive the withdrawn fees
+    /// * `token` - Token contract whose integrator fees are withdrawn (#1621)
     ///
     /// # Returns
     ///
@@ -3703,7 +3711,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
         // Batch read storage values once
         let usdc_token = get_usdc_token(&env)?;
-        let mut current_fees = get_accumulated_fees(&env)?;
+        // #1621: fees are tracked per token.
+        let mut current_fees = storage::get_accumulated_fees_for_token(&env, &usdc_token);
 
         let token_client = token::Client::new(&env, &usdc_token);
 
@@ -3761,10 +3770,10 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         // For batch settlement, check if accumulation would exceed MAX_FEES
         if current_fees > MAX_FEES {
             // Flush current accumulated fees and write new total
-            trigger_flush(&env, current_fees)?;
-            set_accumulated_fees(&env, 0);
+            trigger_flush(&env, &usdc_token, current_fees)?;
+            storage::set_accumulated_fees_for_token(&env, &usdc_token, 0);
         } else {
-            set_accumulated_fees(&env, current_fees);
+            storage::set_accumulated_fees_for_token(&env, &usdc_token, current_fees);
         }
 
         // #1665: Complete each remittance through the canonical bookkeeping steps so
