@@ -341,6 +341,25 @@
       "inputs": [],
       "outputs": [{ "type": "Result<(), ContractError>" }],
       "access": "admin"
+    },
+    {
+      "name": "set_blacklist_status",
+      "doc": "Sets a user's blacklist status. Admin only. Emits blacklist/added or blacklist/removed.",
+      "inputs": [
+        { "name": "user",        "type": "Address" },
+        { "name": "blacklisted", "type": "bool" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "is_user_blacklisted",
+      "doc": "Returns whether a user is currently blacklisted.",
+      "inputs": [
+        { "name": "user", "type": "Address" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "access": "readonly"
     }
   ],
   "types": {

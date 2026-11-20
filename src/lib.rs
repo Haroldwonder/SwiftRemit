@@ -340,20 +340,24 @@ pub struct SwiftRemitContract;
 
 #[contractimpl]
 impl SwiftRemitContract {
-    fn set_blacklist_status(
-        env: &Env,
+    /// Set user blacklist status (admin only).
+    ///
+    /// Requires authentication from the configured admin. Emits a
+    /// `blacklist/added` or `blacklist/removed` event.
+    pub fn set_blacklist_status(
+        env: Env,
         user: Address,
         blacklisted: bool,
     ) -> Result<(), ContractError> {
-        let caller = get_admin(env)?;
-        require_admin(env, &caller)?;
+        let caller = get_admin(&env)?;
+        require_admin(&env, &caller)?;
 
-        set_user_blacklisted(env, &user, blacklisted);
+        set_user_blacklisted(&env, &user, blacklisted);
 
         if blacklisted {
-            emit_user_blacklisted(env, user, caller);
+            emit_user_blacklisted(&env, user, caller);
         } else {
-            emit_user_removed_from_blacklist(env, user, caller);
+            emit_user_removed_from_blacklist(&env, user, caller);
         }
 
         Ok(())
@@ -2482,11 +2486,8 @@ impl SwiftRemitContract {
         if breakdown.corridor.is_none() && from_country.is_some() && to_country.is_some() {
             let from = from_country.unwrap();
             let to = to_country.unwrap();
-            // Create corridor identifier string
-            let mut corridor_id = from.clone();
-            // For now, we'll use the from_country as the corridor ID
-            // In a production system with better string handling, this would be "from-to"
-            breakdown.corridor = Some(corridor_id);
+            // Build the corridor identifier as FROM-TO
+            breakdown.corridor = Some(fee_service::format_corridor_id(&env, &from, &to));
         }
 
         Ok(breakdown)
@@ -2915,6 +2916,9 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         set_escrow(&env, transfer_id, &escrow);
         set_escrow_counter(&env, transfer_id);
 
+        // #1855: Track pending escrow volume/count for `health()`.
+        crate::storage::add_pending_escrow(&env, amount)?;
+
         // #1845: Maintain the per-user escrow indexes.
         crate::storage::append_escrow_by_sender(&env, &sender, transfer_id);
         crate::storage::append_escrow_by_recipient(&env, &recipient, transfer_id);
@@ -2953,6 +2957,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
         escrow.status = EscrowStatus::Released;
         set_escrow(&env, transfer_id, &escrow);
+        crate::storage::remove_pending_escrow(&env, escrow.amount);
 
         emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount, false);
 
@@ -2995,6 +3000,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
         escrow.status = EscrowStatus::Released;
         set_escrow(&env, transfer_id, &escrow);
+        crate::storage::remove_pending_escrow(&env, escrow.amount);
 
         emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount, true);
 
@@ -3081,6 +3087,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
         escrow.status = EscrowStatus::Refunded;
         set_escrow(&env, transfer_id, &escrow);
+        crate::storage::remove_pending_escrow(&env, escrow.amount);
 
         emit_escrow_refunded(&env, transfer_id, escrow.sender, escrow.amount);
 
@@ -4464,44 +4471,6 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     }
 
     // === User Management Functions ===
-
-    /// Adds a user to the blacklist.
-    ///
-    /// Requires authentication from the configured admin.
-    ///
-    /// # Deprecated
-    /// Thin wrapper over `set_blacklist_status`. Scheduled for removal in the
-    /// next ABI version — use `set_blacklist_status(user, true)` instead.
-    #[deprecated(note = "use set_blacklist_status(user, true); removed in the next ABI version")]
-    pub fn blacklist_user(env: Env, user: Address) -> Result<(), ContractError> {
-        Self::set_blacklist_status(&env, user, true)
-    }
-
-    /// Removes a user from the blacklist.
-    ///
-    /// Requires authentication from the configured admin.
-    ///
-    /// # Deprecated
-    /// Thin wrapper over `set_blacklist_status`. Scheduled for removal in the
-    /// next ABI version — use `set_blacklist_status(user, false)` instead.
-    #[deprecated(note = "use set_blacklist_status(user, false); removed in the next ABI version")]
-    pub fn remove_from_blacklist(env: Env, user: Address) -> Result<(), ContractError> {
-        Self::set_blacklist_status(&env, user, false)
-    }
-
-    /// Set user blacklist status (admin only)
-    ///
-    /// # Deprecated
-    /// Thin wrapper over `set_blacklist_status`. Scheduled for removal in the
-    /// next ABI version — use `set_blacklist_status(user, blacklisted)` instead.
-    #[deprecated(note = "use set_blacklist_status(user, blacklisted); removed in the next ABI version")]
-    pub fn set_user_blacklisted(
-        env: Env,
-        user: Address,
-        blacklisted: bool,
-    ) -> Result<(), ContractError> {
-        Self::set_blacklist_status(&env, user, blacklisted)
-    }
 
     /// Check if user is blacklisted
     pub fn is_user_blacklisted(env: Env, user: Address) -> bool {

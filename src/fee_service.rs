@@ -503,7 +503,7 @@ fn calculate_protocol_fee(amount: i128, protocol_fee_bps: u32) -> Result<i128, C
 /// # Returns
 ///
 /// Formatted corridor ID (e.g., "US-MX")
-fn format_corridor_id(env: &Env, from: &String, to: &String) -> String {
+pub(crate) fn format_corridor_id(env: &Env, from: &String, to: &String) -> String {
     let from_len = from.len() as usize;
     let to_len = to.len() as usize;
     let total = from_len + 1 + to_len;

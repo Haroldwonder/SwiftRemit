@@ -6014,7 +6014,7 @@ fn test_execute_transaction_user_blacklisted() {
     contract.register_agent(&agent, &None);
 
     // Blacklist user
-    contract.set_user_blacklisted(&user, &true);
+    contract.set_blacklist_status(&user, &true);
 
     // Set up KYC
     let expiry = env.ledger().timestamp() + 31536000;
@@ -6075,7 +6075,7 @@ fn test_execute_transaction_kyc_expired() {
 }
 
 #[test]
-fn test_set_user_blacklisted() {
+fn test_set_blacklist_status() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -6091,11 +6091,11 @@ fn test_set_user_blacklisted() {
     assert!(!contract.is_user_blacklisted(&user));
 
     // Blacklist user
-    contract.set_user_blacklisted(&user, &true);
+    contract.set_blacklist_status(&user, &true);
     assert!(contract.is_user_blacklisted(&user));
 
     // Remove from blacklist
-    contract.set_user_blacklisted(&user, &false);
+    contract.set_blacklist_status(&user, &false);
     assert!(!contract.is_user_blacklisted(&user));
 }
 
@@ -6279,7 +6279,7 @@ fn test_execute_transaction_user_blacklisted() {
     contract.set_kyc_approved(&user, &true, &expiry);
 
     // Blacklist user
-    contract.set_user_blacklisted(&user, &true);
+    contract.set_blacklist_status(&user, &true);
 
     // Should fail
     contract.execute_transaction(&user, &agent, &1000, &None);
@@ -6335,11 +6335,11 @@ fn test_user_blacklist_management() {
     assert!(!contract.is_user_blacklisted(&user));
 
     // Blacklist user
-    contract.set_user_blacklisted(&user, &true);
+    contract.set_blacklist_status(&user, &true);
     assert!(contract.is_user_blacklisted(&user));
 
     // Remove from blacklist
-    contract.set_user_blacklisted(&user, &false);
+    contract.set_blacklist_status(&user, &false);
     assert!(!contract.is_user_blacklisted(&user));
 }
 

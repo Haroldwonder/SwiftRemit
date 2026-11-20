@@ -1492,19 +1492,9 @@ export class SwiftRemitClient {
 
   // ─── Blacklist ───────────────────────────────────────────────────────────────
 
-  /** Blacklists a user, preventing them from transacting. Requires admin. */
-  async blacklistUser(admin: string, user: string): Promise<Transaction> {
-    return this.prepareTransaction(admin, "blacklist_user", [addressToScVal(user)]);
-  }
-
-  /** Removes a user from the blacklist. Requires admin. */
-  async removeFromBlacklist(admin: string, user: string): Promise<Transaction> {
-    return this.prepareTransaction(admin, "remove_from_blacklist", [addressToScVal(user)]);
-  }
-
-  /** Sets a user's blacklist status directly. Requires admin. */
-  async setUserBlacklisted(admin: string, user: string, blacklisted: boolean): Promise<Transaction> {
-    return this.prepareTransaction(admin, "set_user_blacklisted", [
+  /** Sets a user's blacklist status. Requires admin. */
+  async setBlacklistStatus(admin: string, user: string, blacklisted: boolean): Promise<Transaction> {
+    return this.prepareTransaction(admin, "set_blacklist_status", [
       addressToScVal(user),
       boolToScVal(blacklisted),
     ]);
