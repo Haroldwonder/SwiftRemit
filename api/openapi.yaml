@@ -420,6 +420,65 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   /api/agents:
+    get:
+      tags:
+        - Agents
+      summary: List agents (Issue #1870)
+      description: >
+        Admin-only listing of agents ordered by id, with cursor pagination and an
+        optional status filter. Requires an admin-role JWT. `payout_address` is
+        never included in list output.
+      operationId: listAgents
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter by agent status
+          schema:
+            type: string
+            enum: [pending, active, suspended]
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque cursor (last agent id from the previous page)
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Page size (1-100, default 20)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of agents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentListResponse'
+        '400':
+          description: Invalid status or pagination parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Admin role required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     post:
       tags:
         - Agents
@@ -1235,6 +1294,33 @@ components:
           type: boolean
         data:
           $ref: '#/components/schemas/Agent'
+        timestamp:
+          type: string
+          format: date-time
+
+    AgentListResponse:
+      type: object
+      required:
+        - success
+        - data
+        - next_cursor
+        - has_more
+        - page_size
+        - timestamp
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Agent'
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+        page_size:
+          type: integer
         timestamp:
           type: string
           format: date-time
