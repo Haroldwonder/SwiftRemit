@@ -541,7 +541,6 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
       return sendError(res, 400, 'Invalid status', 'INVALID_STATUS');
     }
 
-    const dbUrl = process.env.DATABASE_URL;
     if (!pool) {
       return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
     }
