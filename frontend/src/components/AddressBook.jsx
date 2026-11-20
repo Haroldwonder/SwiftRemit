@@ -1,18 +1,41 @@
 import { useState, useEffect } from 'react'
 import './AddressBook.css'
-import { loadRecipients as readRecipients, saveRecipients as writeRecipients } from '../utils/recipientStorage'
+import {
+  loadRecipients as readRecipients,
+  saveRecipients as writeRecipients,
+  type SavedRecipient,
+} from '../utils/recipientStorage'
+
+export interface AddressBookProps {
+  onSelectRecipient: (recipient: {
+    name: string
+    address: string
+    country: string
+    memo?: string
+  }) => void
+  walletAddress: string | null
+}
+
+interface RecipientFormData {
+  name: string
+  address: string
+  country: string
+  memo: string
+}
+
+const EMPTY_FORM: RecipientFormData = { name: '', address: '', country: '', memo: '' }
 
 /**
  * Saved recipients, scoped to the connected wallet. Without a wallet nothing
  * is persisted. All storage access goes through utils/recipientStorage,
  * which guards against storage exceptions (e.g. private mode).
  */
-export default function AddressBook({ onSelectRecipient, walletAddress }) {
-  const [recipients, setRecipients] = useState([])
+export default function AddressBook({ onSelectRecipient, walletAddress }: AddressBookProps) {
+  const [recipients, setRecipients] = useState<SavedRecipient[]>([])
   const [showForm, setShowForm] = useState(false)
-  const [editingId, setEditingId] = useState(null)
-  const [formData, setFormData] = useState({ name: '', address: '', country: '', memo: '' })
-  const [error, setError] = useState(null)
+  const [editingId, setEditingId] = useState<SavedRecipient['id'] | null>(null)
+  const [formData, setFormData] = useState<RecipientFormData>(EMPTY_FORM)
+  const [error, setError] = useState<string | null>(null)
 
   // Reload whenever the wallet changes so one wallet never sees another's contacts.
   useEffect(() => {
@@ -21,7 +44,7 @@ export default function AddressBook({ onSelectRecipient, walletAddress }) {
     setError(ok ? null : 'Saved recipients are unavailable (browser storage is blocked).')
   }, [walletAddress])
 
-  const saveRecipients = (newRecipients) => {
+  const saveRecipients = (newRecipients: SavedRecipient[]) => {
     // Keep the UI usable even if persisting fails.
     setRecipients(newRecipients)
     if (walletAddress && !writeRecipients(walletAddress, newRecipients)) {
@@ -29,11 +52,11 @@ export default function AddressBook({ onSelectRecipient, walletAddress }) {
     }
   }
 
-  const validateAddress = (addr) => {
+  const validateAddress = (addr: string) => {
     return addr.length === 56 && addr.startsWith('G')
   }
 
-  const handleAddRecipient = (e) => {
+  const handleAddRecipient = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setError(null)
 
@@ -69,15 +92,15 @@ export default function AddressBook({ onSelectRecipient, walletAddress }) {
       saveRecipients([...recipients, newRecipient])
     }
 
-    setFormData({ name: '', address: '', country: '', memo: '' })
+    setFormData(EMPTY_FORM)
     setShowForm(false)
   }
 
-  const handleDeleteRecipient = (id) => {
+  const handleDeleteRecipient = (id: SavedRecipient['id']) => {
     saveRecipients(recipients.filter(r => r.id !== id))
   }
 
-  const handleEditRecipient = (recipient) => {
+  const handleEditRecipient = (recipient: SavedRecipient) => {
     setFormData({
       name: recipient.name,
       address: recipient.address,
@@ -88,7 +111,7 @@ export default function AddressBook({ onSelectRecipient, walletAddress }) {
     setShowForm(true)
   }
 
-  const handleSelectRecipient = (recipient) => {
+  const handleSelectRecipient = (recipient: SavedRecipient) => {
     onSelectRecipient({
       name: recipient.name,
       address: recipient.address,
@@ -100,7 +123,7 @@ export default function AddressBook({ onSelectRecipient, walletAddress }) {
   const handleCancel = () => {
     setShowForm(false)
     setEditingId(null)
-    setFormData({ name: '', address: '', country: '', memo: '' })
+    setFormData(EMPTY_FORM)
     setError(null)
   }
 
