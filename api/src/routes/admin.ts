@@ -6,7 +6,7 @@ import { AdminConfirmationService, HighRiskOperation } from '../admin-confirmati
 import axios from 'axios';
 import { createRateLimitMiddleware } from '../middleware/rateLimitHeaders';
 import { requireAdmin } from '../middleware/auth.js';
-import { sendInternalError } from '../middleware/errorHandler';
+import { sendInternalError, getCorrelationId } from '../middleware/errorHandler';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -445,7 +445,7 @@ function escapeCsvField(field: string | number | null | undefined): string {
   return str;
 }
 
-async function* streamRemittancesCsv(
+export async function* streamRemittancesCsv(
   pool: Pool,
   fromDate?: Date,
   toDate?: Date,
@@ -626,7 +626,6 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
       return sendError(res, 400, 'Invalid status', 'INVALID_STATUS');
     }
 
-    const dbUrl = process.env.DATABASE_URL;
     if (!pool) {
       return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
     }
@@ -636,16 +635,44 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
     // intentional — we borrow a single connection rather than opening a fresh
     // TCP+TLS session.  The connection is released in streamRemittancesCsv's
     // finally block once the stream completes or the client disconnects.
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="remittances-${new Date().toISOString()}.csv"`);
+    const correlationId = getCorrelationId(req);
+    let headersSent = false;
 
     try {
       const generator = streamRemittancesCsv(pool, fromDate, toDate, status);
       for await (const chunk of generator) {
+        if (!headersSent) {
+          res.setHeader('Content-Type', 'text/csv');
+          res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="remittances-${new Date().toISOString()}.csv"`
+          );
+          headersSent = true;
+        }
         res.write(chunk);
       }
-    } finally {
       res.end();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      console.error(`[${correlationId}] CSV export stream failed:`, message, stack);
+
+      if (!headersSent && !res.headersSent) {
+        // Nothing written yet: a clean 500 JSON error is still possible.
+        res.status(500).json({
+          error: {
+            code: 'CSV_EXPORT_FAILED',
+            message: 'Failed to export remittances',
+            correlation_id: correlationId,
+          },
+        });
+        return;
+      }
+
+      // Mid-stream failure: the client already received a 200 + partial body.
+      // Destroy the socket so the truncated download visibly fails instead of
+      // looking like a complete, successful export.
+      res.destroy();
     }
   });
 
