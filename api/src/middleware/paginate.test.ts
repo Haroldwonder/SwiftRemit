@@ -21,9 +21,28 @@ describe('parsePaginationParams', () => {
     expect(params.limit).toBe(MAX_PAGE_SIZE);
   });
 
-  it('defaults negative limit', () => {
-    const params = parsePaginationParams(mockReq({ limit: '-5' }));
-    expect(params.limit).toBe(DEFAULT_PAGE_SIZE);
+  it('rejects negative limit', () => {
+    expect(() => parsePaginationParams(mockReq({ limit: '-5' }))).toThrowError(
+      expect.objectContaining({ statusCode: 400, code: 'INVALID_LIMIT' }),
+    );
+  });
+
+  it('rejects zero limit', () => {
+    expect(() => parsePaginationParams(mockReq({ limit: '0' }))).toThrowError(
+      expect.objectContaining({ statusCode: 400, code: 'INVALID_LIMIT' }),
+    );
+  });
+
+  it('rejects non-integer limit', () => {
+    expect(() => parsePaginationParams(mockReq({ limit: '10.5' }))).toThrowError(
+      expect.objectContaining({ statusCode: 400, code: 'INVALID_LIMIT' }),
+    );
+  });
+
+  it('rejects non-numeric limit', () => {
+    expect(() => parsePaginationParams(mockReq({ limit: 'abc' }))).toThrowError(
+      expect.objectContaining({ statusCode: 400, code: 'INVALID_LIMIT' }),
+    );
   });
 });
 
