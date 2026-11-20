@@ -18,6 +18,7 @@ export class ApiMetrics {
   private durationSum = new Map<string, number>();
   private durationCount = new Map<string, number>();
   private websocketConnectedClients = 0;
+  private payoutAddressAuditFailures = 0;
   private startedAt = Date.now();
 
   /** Escape a Prometheus label value so it cannot break the exposition format. */
@@ -55,6 +56,14 @@ export class ApiMetrics {
     this.websocketConnectedClients = count;
   }
 
+  /**
+   * Record a failed payout-address audit-log write (Issue #1879). A non-zero
+   * rate means payout-address changes are happening without an audit trail.
+   */
+  recordPayoutAddressAuditFailure(): void {
+    this.payoutAddressAuditFailures += 1;
+  }
+
   /** Refresh the WebSocket gauge from the Socket.IO server, if one is attached. */
   async refresh(io?: Server): Promise<void> {
     if (!io) return;
@@ -78,6 +87,15 @@ export class ApiMetrics {
     );
     lines.push('# TYPE swiftremit_api_websocket_connected_clients gauge');
     lines.push(`swiftremit_api_websocket_connected_clients ${this.websocketConnectedClients}`);
+
+    lines.push(
+      '# HELP swiftremit_api_payout_address_audit_failures_total ' +
+        'Payout-address changes whose audit-log write failed',
+    );
+    lines.push('# TYPE swiftremit_api_payout_address_audit_failures_total counter');
+    lines.push(
+      `swiftremit_api_payout_address_audit_failures_total ${this.payoutAddressAuditFailures}`,
+    );
 
     lines.push(
       '# HELP swiftremit_api_http_requests_total Total HTTP requests served by the API service',

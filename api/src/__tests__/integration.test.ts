@@ -189,6 +189,28 @@ describe('Currency API Integration Tests', () => {
     });
   });
 
+  describe('Identity Rates (#1876)', () => {
+    it('should return rate 1 with provider "identity" when from and to are the same', async () => {
+      const response = await request(app).get('/api/currencies/USD/rates/USD');
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.from).toBe('USD');
+      expect(response.body.data.to).toBe('USD');
+      expect(response.body.data.rate).toBe(1);
+      expect(response.body.data.provider).toBe('identity');
+      expect(typeof response.body.data.fetched_at).toBe('string');
+    });
+
+    it('should return rate 1 when aliases resolve to the same currency', async () => {
+      const response = await request(app).get('/api/currencies/usd/rates/USD');
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.rate).toBe(1);
+      expect(response.body.data.provider).toBe('identity');
+    });
+  });
+
   describe('Decimal Precision Validation', () => {
     it('should return correct decimal precision for each currency', async () => {
       const response = await request(app).get('/api/currencies');
