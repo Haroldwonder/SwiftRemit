@@ -24,6 +24,8 @@ export interface ConversionRate {
   rate: number;
   /** ISO-8601 timestamp of when this rate was fetched / computed. */
   fetched_at: string;
+  /** Source of the rate. "identity" when from === to (#1876). */
+  provider?: string;
 }
 
 export interface ConversionRateResponse {

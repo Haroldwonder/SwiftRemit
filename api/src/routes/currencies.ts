@@ -225,8 +225,17 @@ router.get('/:from/rates/:to', async (req: Request, res: Response) => {
       return res.status(404).json(errorResponse);
     }
 
-    const rateService = getConversionRateService();
-    const conversionRate = await rateService.getRate(fromCurrency.code, toCurrency.code);
+    // #1876 — identical codes after alias resolution: no provider call needed
+    const conversionRate =
+      fromCurrency.code === toCurrency.code
+        ? {
+            from: fromCurrency.code,
+            to: toCurrency.code,
+            rate: 1,
+            fetched_at: new Date().toISOString(),
+            provider: 'identity',
+          }
+        : await getConversionRateService().getRate(fromCurrency.code, toCurrency.code);
 
     res.json({
       success: true,
