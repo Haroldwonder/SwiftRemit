@@ -1365,15 +1365,16 @@ impl SwiftRemitContract {
             token_client.transfer(&env.current_contract_address(), &treasury, &protocol_fee);
         }
 
-        // Update accumulated fees with overflow protection and automatic flush
-        safe_add_accumulated_fee(&env, &remittance_token, remittance.fee)?;
-
         // #1263: Accrue a portion of the platform fee to the integrator balance if one
         // was recorded at creation time. We credit 10% of the platform fee (rounded down)
         // to the integrator; the remaining 90% stays in the platform accumulated_fees pot.
         // #1621: balances are tracked per token so payouts use the matching token.
+        // #1622: only the platform's remainder is added to accumulated_fees, so the
+        // platform and integrator shares sum to exactly `remittance.fee` and the
+        // contract never owes more than it holds.
+        let mut integrator_share = 0i128;
         if let Some(intg) = storage::get_remittance_integrator(&env, remittance_id) {
-            let integrator_share = remittance.fee / 10; // 10% of platform fee
+            integrator_share = remittance.fee / 10; // 10% of platform fee
             if integrator_share > 0 {
                 storage::add_integrator_balance_for_token(
                     &env,
@@ -1383,6 +1384,13 @@ impl SwiftRemitContract {
                 )?;
             }
         }
+
+        // Update accumulated fees with overflow protection and automatic flush
+        let platform_share = remittance
+            .fee
+            .checked_sub(integrator_share)
+            .ok_or(ContractError::Overflow)?;
+        safe_add_accumulated_fee(&env, &remittance_token, platform_share)?;
 
         // Update analytics: move volume from in-flight to completed
         storage::sub_processing_volume(&env, remittance.amount)?;
@@ -3753,6 +3761,23 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                 .checked_add(transfer.total_fees)
                 .ok_or(ContractError::Overflow)?;
         }
+
+        // #1622: The integrator share of each remittance's fee is credited to the
+        // integrator balance below, so it must not also stay in the platform
+        // accumulated_fees pot. Deduct it here so the two shares sum to exactly the
+        // total fees collected and the contract never owes more than it holds.
+        let mut integrator_fees_total = 0i128;
+        for i in 0..remittances.len() {
+            let remittance = remittances.get_unchecked(i);
+            if storage::get_remittance_integrator(&env, remittance.id).is_some() {
+                integrator_fees_total = integrator_fees_total
+                    .checked_add(remittance.fee / 10)
+                    .ok_or(ContractError::Overflow)?;
+            }
+        }
+        current_fees = current_fees
+            .checked_sub(integrator_fees_total)
+            .ok_or(ContractError::Overflow)?;
 
         // #1664: Emit one net_settlement event that lists every participating
         // remittance ID.  Doing it here (after the net-transfer loop, before the
