@@ -707,8 +707,17 @@ impl SwiftRemitContract {
         // state (rate limit, daily limit, corridor volume) is enforced or mutated.
         if let Some(ref key) = idempotency_key {
             if let Some(record) = storage::get_idempotency_record(&env, key) {
-                let request_hash =
-                    hashing::compute_request_hash(&env, &sender, &agent, amount, expiry);
+                let request_hash = hashing::compute_request_hash(
+                    &env,
+                    &sender,
+                    &agent,
+                    amount,
+                    expiry,
+                    &token,
+                    &settlement_config,
+                    &recipient_hash,
+                    &integrator,
+                );
                 if request_hash != record.request_hash {
                     return Err(ContractError::IdempotencyConflict);
                 }
@@ -810,7 +819,17 @@ impl SwiftRemitContract {
 
         // Store idempotency record if key provided
         if let Some(key) = idempotency_key {
-            let request_hash = hashing::compute_request_hash(&env, &sender, &agent, amount, expiry);
+            let request_hash = hashing::compute_request_hash(
+                &env,
+                &sender,
+                &agent,
+                amount,
+                expiry,
+                &token,
+                &settlement_config,
+                &recipient_hash,
+                &integrator,
+            );
             let ttl = storage::get_idempotency_ttl(&env);
             let expires_at = env
                 .ledger()
