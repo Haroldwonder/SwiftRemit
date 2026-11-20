@@ -550,7 +550,8 @@ fn test_resolve_dispute_agent_wins_updates_agent_stats() {
         stats_before.failed_settlements
     );
     assert_eq!(stats_after.disputes, stats_before.disputes + 1);
-    assert_eq!(stats_after.success_rate_bps, 10_000);
+    // 1 success out of 2 attempts (#1647).
+    assert_eq!(stats_after.success_rate_bps, 5000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1285,11 +1285,7 @@ impl SwiftRemitContract {
             .timestamp()
             .saturating_sub(remittance.created_at);
         stats.last_active_timestamp = env.ledger().timestamp();
-        let successful = stats.total_settlements.saturating_sub(stats.failed_settlements);
-        stats.success_rate_bps = successful
-            .saturating_mul(10000)
-            .checked_div(stats.total_settlements)
-            .unwrap_or(10000);
+        stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         // Check rate limit for sender
@@ -1518,15 +1514,7 @@ impl SwiftRemitContract {
         let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
         stats.failed_settlements += 1;
         stats.last_active_timestamp = env.ledger().timestamp();
-        let successful = stats.total_settlements.saturating_sub(stats.failed_settlements);
-        stats.success_rate_bps = if stats.total_settlements == 0 {
-            10000
-        } else {
-            successful
-                .saturating_mul(10000)
-                .checked_div(stats.total_settlements)
-                .unwrap_or(0)
-        };
+        stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         emit_remittance_failed(&env, remittance_id, remittance.agent);
@@ -1608,17 +1596,7 @@ impl SwiftRemitContract {
             let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
             stats.failed_settlements = stats.failed_settlements.saturating_add(1);
             stats.last_active_timestamp = env.ledger().timestamp();
-            let successful = stats
-                .total_settlements
-                .saturating_sub(stats.failed_settlements);
-            stats.success_rate_bps = if stats.total_settlements == 0 {
-                10000
-            } else {
-                successful
-                    .saturating_mul(10000)
-                    .checked_div(stats.total_settlements)
-                    .unwrap_or(0)
-            };
+            stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
             crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
         } else {
             // Honour the fee quoted at creation rather than re-pricing, and pay
@@ -1652,13 +1630,7 @@ impl SwiftRemitContract {
             let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
             stats.total_settlements = stats.total_settlements.saturating_add(1);
             stats.last_active_timestamp = env.ledger().timestamp();
-            let successful = stats
-                .total_settlements
-                .saturating_sub(stats.failed_settlements);
-            stats.success_rate_bps = successful
-                .saturating_mul(10000)
-                .checked_div(stats.total_settlements)
-                .unwrap_or(10000);
+            stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
             crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
         }
 
