@@ -2083,14 +2083,6 @@ export class SwiftRemitClient {
     ]);
   }
 
-  /** Force-finalizes a remittance. Requires admin. */
-  async finalizeRemittance(caller: string, remittanceId: bigint): Promise<Transaction> {
-    return this.prepareTransaction(caller, "finalize_remittance", [
-      addressToScVal(caller),
-      u64ToScVal(remittanceId),
-    ]);
-  }
-
   // ─── Transaction controller ──────────────────────────────────────────────────
 
   /** Executes a full remittance + anchor transaction lifecycle. Requires user authorization. */

@@ -1026,14 +1026,6 @@ export class SwiftRemitMockClient {
     return { txHash: fakeTxHash() };
   }
 
-  async finalizeRemittance(_caller: string, remittanceId: bigint): Promise<MockTxResult> {
-    await this._applyFaults();
-    const r = this._requireRemittance(remittanceId);
-    if (r.status !== "Completed")
-      throw new SwiftRemitError(ErrorCode.InvalidStatus, `Expected Completed, got ${r.status}`);
-    return { txHash: fakeTxHash() };
-  }
-
   async withdrawFees(_admin: string, _to: string): Promise<MockTxResult> {
     await this._applyFaults();
     if (this._platformFees === 0n)
