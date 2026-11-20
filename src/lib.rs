@@ -54,6 +54,7 @@ mod test_integrator_fees;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_limits_and_proof;
 mod test_issues_1656_1658_1659_1660;
+mod test_issue_1618;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_migration;
 #[cfg(all(test, feature = "legacy-tests"))]
@@ -1954,8 +1955,9 @@ impl SwiftRemitContract {
         abuse_protection::check_rate_limit(&env, &remittance.sender, ActionType::Cancellation)?;
         check_cooldown(&env, &remittance.sender, ActionType::Cancellation)?;
 
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
+        // #1618: refund in the remittance's own token, not always USDC.
+        let refund_token = remittance.token.clone();
+        let token_client = token::Client::new(&env, &refund_token);
         let refund_amount = if remittance.status == RemittanceStatus::Failed
             || remittance.status == RemittanceStatus::Processing
         {
@@ -1998,7 +2000,7 @@ impl SwiftRemitContract {
             remittance_id,
             remittance.sender,
             remittance.agent,
-            usdc_token,
+            refund_token,
             refund_amount,
         );
 
