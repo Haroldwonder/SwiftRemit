@@ -1855,6 +1855,14 @@ impl SwiftRemitContract {
 
         // If fully disbursed, collect fee and complete
         if new_total >= net_payout {
+            // #1629: forward the protocol fee to treasury on completion, mirroring
+            // confirm_payout, so it is not stranded in the contract.
+            let protocol_fee = fee_breakdown.protocol_fee;
+            if protocol_fee > 0 {
+                let treasury = get_treasury(&env)?;
+                token_client.transfer(&env.current_contract_address(), &treasury, &protocol_fee);
+            }
+
             // Update accumulated fees with overflow protection and automatic flush
             safe_add_accumulated_fee(&env, remittance.fee)?;
 
