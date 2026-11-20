@@ -216,6 +216,19 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_agent_kyc_status ON agent_kyc(status);
     `);
 
+    // On-chain agent registry mirror (kept in sync by the reconciler from
+    // agent_registered / agent_removed contract events).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS agents (
+        address       VARCHAR(56) PRIMARY KEY,
+        registered_at TIMESTAMP   NOT NULL DEFAULT NOW(),
+        is_active     BOOLEAN     NOT NULL DEFAULT TRUE,
+        updated_at    TIMESTAMP   NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_agents_is_active ON agents(is_active);
+    `);
+
     console.log('Database initialized successfully');
   } finally {
     client?.release();
