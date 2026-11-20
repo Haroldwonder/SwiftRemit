@@ -54,6 +54,8 @@ mod test_integrator_fees;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_limits_and_proof;
 mod test_issues_1656_1658_1659_1660;
+#[cfg(test)]
+mod test_volume_cap;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_migration;
 #[cfg(all(test, feature = "legacy-tests"))]
@@ -4264,6 +4266,69 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     ) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
         storage::remove_fee_corridor(&env, &from_country, &to_country);
+        Ok(())
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Corridor Volume Cap
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Configures the cumulative volume cap for a corridor (admin only).
+    ///
+    /// `max_volume` is the maximum cumulative volume allowed per window and
+    /// `window_seconds` the window length. The window starts at the current
+    /// ledger timestamp.
+    pub fn set_corridor_volume_cap(
+        env: Env,
+        caller: Address,
+        currency: String,
+        country: String,
+        max_volume: i128,
+        window_seconds: u64,
+    ) -> Result<(), ContractError> {
+        require_admin(&env, &caller)?;
+        if max_volume <= 0 || window_seconds == 0 {
+            return Err(ContractError::InvalidAmount);
+        }
+        let cap = storage::CorridorVolumeCap {
+            max_volume,
+            window_seconds,
+            window_start: env.ledger().timestamp(),
+        };
+        storage::set_corridor_volume_cap(&env, &currency, &country, &cap);
+        Ok(())
+    }
+
+    /// Returns the accumulated corridor volume within the current window.
+    pub fn get_corridor_volume(env: Env, currency: String, country: String) -> i128 {
+        storage::get_corridor_volume_accumulated(&env, &currency, &country)
+    }
+
+    /// Records corridor volume, enforcing the configured cap (admin only).
+    ///
+    /// Returns `ContractError::DailySendLimitExceeded` when the cap would be
+    /// exceeded within the current window.
+    pub fn record_corridor_volume(
+        env: Env,
+        caller: Address,
+        currency: String,
+        country: String,
+        amount: i128,
+    ) -> Result<(), ContractError> {
+        require_admin(&env, &caller)?;
+        storage::check_and_increment_corridor_volume(&env, &currency, &country, amount)
+    }
+
+    /// Advances the corridor volume window to the current ledger timestamp and
+    /// resets the accumulator (admin only).
+    pub fn advance_corridor_window(
+        env: Env,
+        caller: Address,
+        currency: String,
+        country: String,
+    ) -> Result<(), ContractError> {
+        require_admin(&env, &caller)?;
+        storage::reset_corridor_volume_window(&env, &currency, &country);
         Ok(())
     }
 

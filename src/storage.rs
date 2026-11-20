@@ -2323,7 +2323,12 @@ pub fn check_and_increment_corridor_volume(
     let window_end = cap.window_start.saturating_add(cap.window_seconds);
 
     let current_volume = if now >= window_end {
-        // Window has elapsed — reset the accumulator.
+        // Window has elapsed — reset the accumulator and persist the new window
+        // start so the cap keeps being enforced in subsequent windows instead of
+        // degrading to a per-transaction cap.
+        let mut updated_cap = cap.clone();
+        updated_cap.window_start = now;
+        set_corridor_volume_cap(env, currency, country, &updated_cap);
         0i128
     } else {
         get_corridor_volume_accumulated(env, currency, country)
@@ -2345,6 +2350,22 @@ pub fn check_and_increment_corridor_volume(
         );
 
     Ok(())
+}
+
+/// Resets the corridor volume accumulator and starts a new window at `now`.
+///
+/// Used by the admin/test entrypoints to advance the window explicitly.
+pub fn reset_corridor_volume_window(env: &Env, currency: &String, country: &String) {
+    if let Some(mut cap) = get_corridor_volume_cap(env, currency, country) {
+        cap.window_start = env.ledger().timestamp();
+        set_corridor_volume_cap(env, currency, country, &cap);
+    }
+    env.storage()
+        .persistent()
+        .set(
+            &DataKey::CorridorVolumeAccumulated(currency.clone(), country.clone()),
+            &0i128,
+        );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
