@@ -208,6 +208,31 @@ fn enforce_daily_send_limit(
         }
     }
 
+    // #1644: The global limit must hold across every entrypoint, so it is
+    // enforced here (the single choke point) in addition to the
+    // destination-specific limit above.
+    let global_currency = String::from_str(env, DEFAULT_DAILY_LIMIT_CURRENCY);
+    let global_country = String::from_str(env, DEFAULT_DAILY_LIMIT_COUNTRY);
+    if *currency != global_currency || *country != global_country {
+        if let Some(global_cfg) = get_daily_limit(env, &global_currency, &global_country) {
+            let mut global_total: i128 = 0;
+            for i in 0..pruned.len() {
+                let record = pruned.get_unchecked(i);
+                if record.currency == global_currency && record.country == global_country {
+                    global_total = global_total
+                        .checked_add(record.amount)
+                        .ok_or(ContractError::Overflow)?;
+                }
+            }
+            let next_global_total = global_total
+                .checked_add(amount)
+                .ok_or(ContractError::Overflow)?;
+            if next_global_total > global_cfg.limit {
+                return Err(ContractError::DailySendLimitExceeded);
+            }
+        }
+    }
+
     pruned.push_back(TransferRecord {
         timestamp: now,
         amount,
@@ -265,6 +290,40 @@ fn release_daily_send_limit(
     if released {
         set_user_transfers(env, sender, &updated);
     }
+}
+
+/// Records a transfer against the sender's rolling daily-limit window for the
+/// given currency/country pair, without enforcing any limit (#1644).
+///
+/// Used to mirror usage into the global (`USDC`/`GLOBAL`) bucket when a
+/// remittance is created through a corridor-specific path, so the global limit
+/// cannot be bypassed by routing through `create_remittance_with_corridor`.
+fn record_daily_send_usage(
+    env: &Env,
+    sender: &Address,
+    currency: &String,
+    country: &String,
+    amount: i128,
+) {
+    let now = env.ledger().timestamp();
+    let window_start = now.saturating_sub(DAILY_LIMIT_WINDOW_SECONDS);
+
+    let transfers = get_user_transfers(env, sender);
+    let mut pruned = Vec::new(env);
+    for i in 0..transfers.len() {
+        let record = transfers.get_unchecked(i);
+        if record.timestamp > window_start {
+            pruned.push_back(record);
+        }
+    }
+
+    pruned.push_back(TransferRecord {
+        timestamp: now,
+        amount,
+        currency: currency.clone(),
+        country: country.clone(),
+    });
+    set_user_transfers(env, sender, &pruned);
 }
 
 /// The main SwiftRemit contract for managing cross-border remittances.
@@ -942,11 +1001,24 @@ impl SwiftRemitContract {
 
         sender.require_auth();
 
+        // SR-123: Apply abuse-protection sliding-window rate limit and cooldown for Transfer
+        // (parity with create_remittance).
+        abuse_protection::check_rate_limit(&env, &sender, ActionType::Transfer)?;
+        check_cooldown(&env, &sender, ActionType::Transfer)?;
+
         let limit_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
         let limit_country = to_country
             .clone()
             .unwrap_or_else(|| String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY));
         enforce_daily_send_limit(&env, &sender, &limit_currency, &limit_country, amount)?;
+
+        // #1644: Mirror the usage into the global bucket so the global daily
+        // send limit holds across every entrypoint.
+        let global_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
+        let global_country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
+        if limit_currency != global_currency || limit_country != global_country {
+            record_daily_send_usage(&env, &sender, &global_currency, &global_country, amount);
+        }
 
         // SR-128: Enforce corridor/global volume cap (parity with create_remittance).
         storage::check_and_increment_corridor_volume(
@@ -979,6 +1051,9 @@ impl SwiftRemitContract {
         let usdc_token = get_usdc_token(&env)?;
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&sender, &env.current_contract_address(), &amount);
+
+        // SR-123: Record the Transfer action for cooldown tracking (only after funds locked).
+        record_action(&env, &sender, ActionType::Transfer);
 
         let counter = get_remittance_counter(&env)?;
         let remittance_id = counter.checked_add(1).ok_or(ContractError::Overflow)?;
@@ -1046,6 +1121,8 @@ impl SwiftRemitContract {
     /// * `ContractError::AgentNotRegistered` - Any agent is not registered
     /// * `ContractError::UserBlacklisted` - Sender is blacklisted
     /// * `ContractError::DailySendLimitExceeded` - Total amount exceeds daily limit
+    /// * `ContractError::TokenNotWhitelisted` - Settlement token is not whitelisted
+    /// * `ContractError::SuspiciousAsset` - Settlement token is flagged as suspicious
     /// * `ContractError::Overflow` - Arithmetic overflow in amount calculation
     ///
     /// # Authorization
@@ -1086,8 +1163,25 @@ impl SwiftRemitContract {
         let default_country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
         enforce_daily_send_limit(&env, &sender, &default_currency, &default_country, total_amount)?;
 
-        // Transfer total amount in a single token transfer
+        // #1644: Record the batch against the global bucket so the global daily
+        // send limit holds across every entrypoint.
+        record_daily_send_usage(&env, &sender, &default_currency, &default_country, total_amount);
+
+        // #1642: Parity with create_remittance — the settlement token must still be
+        // whitelisted and must not be flagged as suspicious before any funds move.
         let usdc_token = get_usdc_token(&env)?;
+        if !is_token_whitelisted(&env, &usdc_token) {
+            return Err(ContractError::TokenNotWhitelisted);
+        }
+        if let Some((asset_code, issuer)) = storage::get_token_asset_info(&env, &usdc_token) {
+            if let Ok(verification) = get_asset_verification(&env, &asset_code, &issuer) {
+                if verification.status == VerificationStatus::Suspicious {
+                    return Err(ContractError::SuspiciousAsset);
+                }
+            }
+        }
+
+        // Transfer total amount in a single token transfer
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&sender, &env.current_contract_address(), &total_amount);
 
@@ -1158,6 +1252,12 @@ impl SwiftRemitContract {
 
         // Update counter once at the end
         set_remittance_counter(&env, counter);
+
+        // #1641: Keep the analytics counter in sync with the batch size so
+        // get_remittance_count() and health() report every created remittance.
+        for _ in 0..batch_size {
+            storage::increment_remittance_count(&env)?;
+        }
 
         Ok(remittance_ids)
     }
