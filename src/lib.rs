@@ -1771,8 +1771,9 @@ impl SwiftRemitContract {
     /// `amount` from escrow to the agent. When the total disbursed equals the net payout
     /// (amount - fee), the remittance is automatically marked Completed.
     ///
-    /// Remittances configured to require proof are rejected because this endpoint
-    /// does not accept proof data.
+    /// Remittances configured with `require_proof = true` must supply a valid
+    /// `ProofData` on every partial payout; otherwise the call fails with
+    /// `MissingProof` / `InvalidProof` (#1625).
     ///
     /// # Authorization
     /// Requires authentication from the agent assigned to the remittance.
@@ -1780,6 +1781,7 @@ impl SwiftRemitContract {
         env: Env,
         remittance_id: u64,
         amount: i128,
+        proof: Option<crate::types::ProofData>,
     ) -> Result<(), ContractError> {
         if amount <= 0 {
             return Err(ContractError::InvalidAmount);
@@ -1796,9 +1798,25 @@ impl SwiftRemitContract {
             return Err(ContractError::InvalidStatus);
         }
 
+        // #1625: Proof-gated remittances must present a valid proof on every
+        // partial payout, mirroring confirm_payout. Without this, a partial
+        // payout path could disburse escrow without any proof.
         if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
             if config.require_proof {
-                return Err(ContractError::MissingProof);
+                match proof {
+                    None => return Err(ContractError::MissingProof),
+                    Some(ref submitted_proof) => {
+                        let expected_signer = config
+                            .oracle_address
+                            .as_ref()
+                            .ok_or(ContractError::InvalidOracleAddress)?;
+                        match verification::verify_proof(&env, submitted_proof, expected_signer) {
+                            Ok(true) => {}
+                            Ok(false) => return Err(ContractError::InvalidProof),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                }
             }
         }
 

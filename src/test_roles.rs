@@ -112,7 +112,7 @@ fn test_unregistered_agent_cannot_confirm_partial_payout() {
     // Remove agent authorization so the agent should no longer be able to confirm a partial payout.
     client.remove_agent(&agent);
 
-    client.confirm_partial_payout(&remittance_id, &100);
+    client.confirm_partial_payout(&remittance_id, &100, &None);
 }
 
 #[test]
