@@ -1100,6 +1100,15 @@ impl SwiftRemitContract {
         let default_country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
         enforce_daily_send_limit(&env, &sender, &default_currency, &default_country, total_amount)?;
 
+        // #1639: Enforce the corridor volume cap once for the whole batch so it
+        // cannot be bypassed by splitting volume across batched entries.
+        storage::check_and_increment_corridor_volume(
+            &env,
+            &default_currency,
+            &default_country,
+            total_amount,
+        )?;
+
         // Transfer total amount in a single token transfer
         let usdc_token = get_usdc_token(&env)?;
         let token_client = token::Client::new(&env, &usdc_token);
