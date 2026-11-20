@@ -39,6 +39,11 @@
       "5": "Confirmar transação"
     },
     "amount": "Valor",
+    "balance": {
+      "available": "Saldo: {{balance}} {{asset}}",
+      "max": "Máx",
+      "loading": "Carregando saldo..."
+    },
     "asset": "Ativo",
     "chooseAsset": "Escolha um ativo",
     "recipient": "Destinatário",
@@ -63,6 +68,7 @@
       "amountInvalid": "O valor deve ser maior que zero.",
       "amountFormat": "Digite um número simples com até 7 casas decimais (ex.: 25.50).",
       "amountTooLarge": "O valor é muito alto.",
+      "insufficientBalance": "O valor excede seu saldo de {{balance}} {{asset}}.",
       "assetRequired": "Por favor selecione um ativo.",
       "recipientInvalid": "O destinatário deve ser uma chave pública Stellar válida.",
       "incomplete": "Os detalhes da transação estão incompletos.",
