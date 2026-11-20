@@ -54,6 +54,8 @@ mod test_integrator_fees;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_limits_and_proof;
 mod test_issues_1656_1658_1659_1660;
+#[cfg(test)]
+mod test_volume_cap;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_migration;
 #[cfg(all(test, feature = "legacy-tests"))]
@@ -665,6 +667,42 @@ impl SwiftRemitContract {
         recipient_hash: Option<BytesN<32>>,
         integrator: Option<Address>,
     ) -> Result<u64, ContractError> {
+        Self::create_remittance_internal(
+            env,
+            sender,
+            agent,
+            amount,
+            expiry,
+            token,
+            idempotency_key,
+            settlement_config,
+            recipient_hash,
+            integrator,
+            None,
+            None,
+        )
+    }
+
+    /// Shared internal implementation behind [`Self::create_remittance`],
+    /// [`Self::create_settlement`] and [`Self::create_remittance_with_corridor`].
+    ///
+    /// When `from_country`/`to_country` identify a configured fee corridor, that
+    /// corridor's fee strategy is applied; otherwise the global strategy is used.
+    #[allow(clippy::too_many_arguments)]
+    fn create_remittance_internal(
+        env: Env,
+        sender: Address,
+        agent: Address,
+        amount: i128,
+        expiry: Option<u64>,
+        token: Option<Address>,
+        idempotency_key: Option<String>,
+        settlement_config: Option<SettlementConfig>,
+        recipient_hash: Option<BytesN<32>>,
+        integrator: Option<Address>,
+        from_country: Option<String>,
+        to_country: Option<String>,
+    ) -> Result<u64, ContractError> {
         if crate::storage::is_migration_in_progress(&env) {
             return Err(ContractError::MigrationInProgress);
         }
@@ -717,17 +755,19 @@ impl SwiftRemitContract {
         abuse_protection::check_rate_limit(&env, &sender, ActionType::Transfer)?;
         check_cooldown(&env, &sender, ActionType::Transfer)?;
 
-        let default_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
-        let default_country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
-        enforce_daily_send_limit(&env, &sender, &default_currency, &default_country, amount)?;
+        let limit_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
+        let limit_country = to_country
+            .clone()
+            .unwrap_or_else(|| String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY));
+        enforce_daily_send_limit(&env, &sender, &limit_currency, &limit_country, amount)?;
 
         // #839: Check and increment corridor volume against the admin-configured cap.
         // Both from/to default to "GLOBAL" so the cap covers all traffic when no
         // corridor-specific routing is provided.
         storage::check_and_increment_corridor_volume(
             &env,
-            &default_currency,
-            &default_country,
+            &limit_currency,
+            &limit_country,
             amount,
         )?;
 
@@ -739,13 +779,20 @@ impl SwiftRemitContract {
             }
         }
 
-        // Use centralized fee service with sender-specific rolling volume discounts.
-        let fee = fee_service::calculate_platform_fee_for_sender(
+        // Use centralized fee service with sender-specific rolling volume discounts,
+        // applying a configured corridor fee strategy when one matches.
+        let corridor = match (&from_country, &to_country) {
+            (Some(from), Some(to)) => storage::get_fee_corridor(&env, from, to),
+            _ => None,
+        };
+        let fee = fee_service::calculate_fees_with_breakdown_for_sender(
             &env,
             &sender,
             amount,
             Some(&token_address),
-        )?;
+            corridor.as_ref(),
+        )?
+        .platform_fee;
 
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&sender, &env.current_contract_address(), &amount);
@@ -912,6 +959,17 @@ impl SwiftRemitContract {
     ///
     /// If a corridor is configured for the given country pair, its fee strategy
     /// is used instead of the global strategy. Falls back to global if not found.
+    ///
+    /// Shares the same internal create implementation as [`Self::create_remittance`],
+    /// so `token`, `idempotency_key`, `recipient_hash` and `integrator` behave identically.
+    ///
+    /// # Arguments
+    ///
+    /// * `from_country` / `to_country` - Optional country pair used to look up a fee corridor
+    /// * `token` - Optional asset token address (defaults to USDC if `None`)
+    /// * `idempotency_key` - Optional idempotency key preventing duplicate remittance creation
+    /// * `recipient_hash` - Optional SHA-256 hash of recipient details
+    /// * `integrator` - Optional partner/integrator address for fee accrual
     pub fn create_remittance_with_corridor(
         env: Env,
         sender: Address,
@@ -921,105 +979,25 @@ impl SwiftRemitContract {
         from_country: Option<String>,
         to_country: Option<String>,
         settlement_config: Option<SettlementConfig>,
+        token: Option<Address>,
+        idempotency_key: Option<String>,
+        recipient_hash: Option<BytesN<32>>,
+        integrator: Option<Address>,
     ) -> Result<u64, ContractError> {
-        // SR-128: Block while a migration is in progress (parity with create_remittance).
-        if crate::storage::is_migration_in_progress(&env) {
-            return Err(ContractError::MigrationInProgress);
-        }
-        // #1264: Block new corridor-remittance creation while the circuit-breaker is active.
-        validate_not_paused(&env)?;
-        validate_create_remittance_request(&env, &sender, &agent, amount)?;
-
-        // SR-128: Enforce minimum-agent-reputation gate (parity with create_remittance).
-        let min_rep = storage::get_min_agent_reputation(&env);
-        if min_rep > 0 {
-            let rep = storage::compute_agent_reputation(&storage::get_agent_stats(&env, &agent));
-            if rep < min_rep {
-                events::emit_agent_suspended(&env, agent.clone(), rep, min_rep);
-                return Err(ContractError::BelowMinReputation);
-            }
-        }
-
-        sender.require_auth();
-
-        let limit_currency = String::from_str(&env, DEFAULT_DAILY_LIMIT_CURRENCY);
-        let limit_country = to_country
-            .clone()
-            .unwrap_or_else(|| String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY));
-        enforce_daily_send_limit(&env, &sender, &limit_currency, &limit_country, amount)?;
-
-        // SR-128: Enforce corridor/global volume cap (parity with create_remittance).
-        storage::check_and_increment_corridor_volume(
-            &env,
-            &limit_currency,
-            &limit_country,
+        Self::create_remittance_internal(
+            env,
+            sender,
+            agent,
             amount,
-        )?;
-
-        // Validate settlement config
-        if let Some(ref config) = settlement_config {
-            if config.require_proof && config.oracle_address.is_none() {
-                return Err(ContractError::InvalidOracleAddress);
-            }
-        }
-
-        let corridor = match (&from_country, &to_country) {
-            (Some(from), Some(to)) => storage::get_fee_corridor(&env, from, to),
-            _ => None,
-        };
-        let fee = fee_service::calculate_fees_with_breakdown_for_sender(
-            &env,
-            &sender,
-            amount,
-            Some(&get_usdc_token(&env)?),
-            corridor.as_ref(),
-        )?
-        .platform_fee;
-
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
-        token_client.transfer(&sender, &env.current_contract_address(), &amount);
-
-        let counter = get_remittance_counter(&env)?;
-        let remittance_id = counter.checked_add(1).ok_or(ContractError::Overflow)?;
-
-        let corridor_created_at = env.ledger().timestamp();
-        let corridor_expiry_window = storage::get_remittance_expiry_window(&env);
-        let corridor_expires_at = if corridor_expiry_window > 0 {
-            Some(corridor_created_at.saturating_add(corridor_expiry_window))
-        } else {
-            None
-        };
-        let remittance = Remittance {
-            id: remittance_id,
-            sender: sender.clone(),
-            agent: agent.clone(),
-            amount,
-            fee,
-            status: RemittanceStatus::Pending,
             expiry,
-            settlement_config: settlement_config.into(),
-            token: usdc_token.clone(),
-            created_at: corridor_created_at,
-            failed_at: None,
-            dispute_evidence: None.into(),
-            expires_at: corridor_expires_at,
-        };
-
-        let payout_commitment = compute_payout_commitment(&env, &remittance);
-
-        set_remittance(&env, remittance_id, &remittance);
-        set_payout_commitment(&env, remittance_id, &payout_commitment);
-        set_remittance_counter(&env, remittance_id);
-        storage::increment_remittance_count(&env)?;
-        set_transfer_state(&env, remittance_id, RemittanceStatus::Pending)?;
-        storage::record_sender_volume(&env, &sender, amount, env.ledger().timestamp())?;
-
-        // SR-128: Index under both sender and agent (parity with create_remittance).
-        storage::append_sender_remittance(&env, &sender, remittance_id);
-        storage::append_agent_remittance(&env, &agent, remittance_id);
-
-        Ok(remittance_id)
+            token,
+            idempotency_key,
+            settlement_config,
+            recipient_hash,
+            integrator,
+            from_country,
+            to_country,
+        )
     }
 
     /// Creates multiple remittances in a single atomic batch operation.
@@ -1307,11 +1285,7 @@ impl SwiftRemitContract {
             .timestamp()
             .saturating_sub(remittance.created_at);
         stats.last_active_timestamp = env.ledger().timestamp();
-        let successful = stats.total_settlements.saturating_sub(stats.failed_settlements);
-        stats.success_rate_bps = successful
-            .saturating_mul(10000)
-            .checked_div(stats.total_settlements)
-            .unwrap_or(10000);
+        stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         // Check rate limit for sender
@@ -1540,15 +1514,7 @@ impl SwiftRemitContract {
         let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
         stats.failed_settlements += 1;
         stats.last_active_timestamp = env.ledger().timestamp();
-        let successful = stats.total_settlements.saturating_sub(stats.failed_settlements);
-        stats.success_rate_bps = if stats.total_settlements == 0 {
-            10000
-        } else {
-            successful
-                .saturating_mul(10000)
-                .checked_div(stats.total_settlements)
-                .unwrap_or(0)
-        };
+        stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         emit_remittance_failed(&env, remittance_id, remittance.agent);
@@ -1630,17 +1596,7 @@ impl SwiftRemitContract {
             let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
             stats.failed_settlements = stats.failed_settlements.saturating_add(1);
             stats.last_active_timestamp = env.ledger().timestamp();
-            let successful = stats
-                .total_settlements
-                .saturating_sub(stats.failed_settlements);
-            stats.success_rate_bps = if stats.total_settlements == 0 {
-                10000
-            } else {
-                successful
-                    .saturating_mul(10000)
-                    .checked_div(stats.total_settlements)
-                    .unwrap_or(0)
-            };
+            stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
             crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
         } else {
             // Honour the fee quoted at creation rather than re-pricing, and pay
@@ -1674,13 +1630,7 @@ impl SwiftRemitContract {
             let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
             stats.total_settlements = stats.total_settlements.saturating_add(1);
             stats.last_active_timestamp = env.ledger().timestamp();
-            let successful = stats
-                .total_settlements
-                .saturating_sub(stats.failed_settlements);
-            stats.success_rate_bps = successful
-                .saturating_mul(10000)
-                .checked_div(stats.total_settlements)
-                .unwrap_or(10000);
+            stats.success_rate_bps = crate::storage::compute_success_rate_bps(&stats);
             crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
         }
 
@@ -4288,6 +4238,69 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     ) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
         storage::remove_fee_corridor(&env, &from_country, &to_country);
+        Ok(())
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Corridor Volume Cap
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Configures the cumulative volume cap for a corridor (admin only).
+    ///
+    /// `max_volume` is the maximum cumulative volume allowed per window and
+    /// `window_seconds` the window length. The window starts at the current
+    /// ledger timestamp.
+    pub fn set_corridor_volume_cap(
+        env: Env,
+        caller: Address,
+        currency: String,
+        country: String,
+        max_volume: i128,
+        window_seconds: u64,
+    ) -> Result<(), ContractError> {
+        require_admin(&env, &caller)?;
+        if max_volume <= 0 || window_seconds == 0 {
+            return Err(ContractError::InvalidAmount);
+        }
+        let cap = storage::CorridorVolumeCap {
+            max_volume,
+            window_seconds,
+            window_start: env.ledger().timestamp(),
+        };
+        storage::set_corridor_volume_cap(&env, &currency, &country, &cap);
+        Ok(())
+    }
+
+    /// Returns the accumulated corridor volume within the current window.
+    pub fn get_corridor_volume(env: Env, currency: String, country: String) -> i128 {
+        storage::get_corridor_volume_accumulated(&env, &currency, &country)
+    }
+
+    /// Records corridor volume, enforcing the configured cap (admin only).
+    ///
+    /// Returns `ContractError::DailySendLimitExceeded` when the cap would be
+    /// exceeded within the current window.
+    pub fn record_corridor_volume(
+        env: Env,
+        caller: Address,
+        currency: String,
+        country: String,
+        amount: i128,
+    ) -> Result<(), ContractError> {
+        require_admin(&env, &caller)?;
+        storage::check_and_increment_corridor_volume(&env, &currency, &country, amount)
+    }
+
+    /// Advances the corridor volume window to the current ledger timestamp and
+    /// resets the accumulator (admin only).
+    pub fn advance_corridor_window(
+        env: Env,
+        caller: Address,
+        currency: String,
+        country: String,
+    ) -> Result<(), ContractError> {
+        require_admin(&env, &caller)?;
+        storage::reset_corridor_volume_window(&env, &currency, &country);
         Ok(())
     }
 

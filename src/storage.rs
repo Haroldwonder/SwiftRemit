@@ -1580,22 +1580,47 @@ pub fn set_agent_stats(env: &Env, agent: &Address, stats: &AgentStats) {
         .set(&DataKey::AgentStats(agent.clone()), stats);
 }
 
+/// Number of settlement attempts: successes plus failures.
+///
+/// `total_settlements` only counts successful settlements, so failures must be
+/// added to obtain the denominator for success ratios (#1647).
+pub fn settlement_attempts(stats: &AgentStats) -> u32 {
+    stats
+        .total_settlements
+        .saturating_add(stats.failed_settlements)
+}
+
+/// Success rate in basis points (0–10000) over all settlement attempts.
+///
+/// An agent with no attempts yet is treated as 100% (10000 bps).
+pub fn compute_success_rate_bps(stats: &AgentStats) -> u32 {
+    let attempts = settlement_attempts(stats);
+    if attempts == 0 {
+        return 10000;
+    }
+    stats
+        .total_settlements
+        .saturating_mul(10000)
+        .checked_div(attempts)
+        .unwrap_or(0)
+}
+
 pub fn compute_agent_reputation(stats: &AgentStats) -> u32 {
-    let total = stats.total_settlements;
-    let successful = total.saturating_sub(stats.failed_settlements);
-    let success_score = if total == 0 {
+    let attempts = settlement_attempts(stats);
+    let success_score = if attempts == 0 {
         100
     } else {
-        successful
+        stats
+            .total_settlements
             .saturating_mul(100)
-            .checked_div(total)
+            .checked_div(attempts)
             .unwrap_or(0)
     };
 
-    let avg_time = if total == 0 {
+    let avg_time = if stats.total_settlements == 0 {
         0
     } else {
-        stats.total_settlement_time / (total as u64)
+        stats.total_settlement_time / (stats.total_settlements as u64)
     };
     let time_score: u32 = if avg_time <= 3600 {
         100
@@ -2323,7 +2348,12 @@ pub fn check_and_increment_corridor_volume(
     let window_end = cap.window_start.saturating_add(cap.window_seconds);
 
     let current_volume = if now >= window_end {
-        // Window has elapsed — reset the accumulator.
+        // Window has elapsed — reset the accumulator and persist the new window
+        // start so the cap keeps being enforced in subsequent windows instead of
+        // degrading to a per-transaction cap.
+        let mut updated_cap = cap.clone();
+        updated_cap.window_start = now;
+        set_corridor_volume_cap(env, currency, country, &updated_cap);
         0i128
     } else {
         get_corridor_volume_accumulated(env, currency, country)
@@ -2345,6 +2375,22 @@ pub fn check_and_increment_corridor_volume(
         );
 
     Ok(())
+}
+
+/// Resets the corridor volume accumulator and starts a new window at `now`.
+///
+/// Used by the admin/test entrypoints to advance the window explicitly.
+pub fn reset_corridor_volume_window(env: &Env, currency: &String, country: &String) {
+    if let Some(mut cap) = get_corridor_volume_cap(env, currency, country) {
+        cap.window_start = env.ledger().timestamp();
+        set_corridor_volume_cap(env, currency, country, &cap);
+    }
+    env.storage()
+        .persistent()
+        .set(
+            &DataKey::CorridorVolumeAccumulated(currency.clone(), country.clone()),
+            &0i128,
+        );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
