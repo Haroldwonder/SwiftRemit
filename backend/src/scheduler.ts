@@ -43,6 +43,61 @@ const dlqProcessor = new WebhookDlqProcessor(pool);
 const deviceTokenService = new DeviceTokenService(pool);
 const webhookRetryDispatcher = new WebhookDispatcher(new PostgresWebhookStore(pool));
 
+type CronTask = ReturnType<typeof cron.schedule>;
+
+// References to every scheduled task so graceful shutdown can stop them.
+const scheduledTasks: CronTask[] = [];
+// In-flight job promises, so shutdown can wait for running jobs to finish.
+const runningJobs = new Set<Promise<unknown>>();
+
+function schedule(expression: string, job: () => Promise<void>): CronTask {
+  const task = cron.schedule(expression, cronOptions, () => {
+    const running = job().catch((err) => {
+      logger.error('Background job failed', { expression, err });
+    });
+    runningJobs.add(running);
+    void running.finally(() => runningJobs.delete(running));
+  });
+  scheduledTasks.push(task);
+  return task;
+}
+
+/**
+ * Stop every cron task started by startBackgroundJobs() and wait (bounded by
+ * `timeoutMs`) for jobs that are already running to finish.
+ */
+export async function stopBackgroundJobs(timeoutMs = 30000): Promise<void> {
+  for (const task of scheduledTasks) {
+    try {
+      task.stop();
+    } catch (err) {
+      logger.error('Failed to stop background job task', { err });
+    }
+  }
+  scheduledTasks.length = 0;
+
+  if (runningJobs.size === 0) return;
+
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+
+  const result = await Promise.race([
+    Promise.allSettled([...runningJobs]).then(() => 'done' as const),
+    timeout,
+  ]);
+  if (timer) clearTimeout(timer);
+
+  if (result === 'timeout') {
+    logger.warn('Timed out waiting for running background jobs to finish', {
+      timeoutMs,
+      pending: runningJobs.size,
+    });
+  }
+}
+
 export async function startBackgroundJobs() {
   // Initialize KYC service
   await kycService.initialize();
@@ -51,7 +106,7 @@ export async function startBackgroundJobs() {
   await sep24Service.initialize();
 
   // Run every 6 hours
-  cron.schedule('0 */6 * * *', cronOptions, async () => {
+  schedule('0 */6 * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'revalidate-stale-assets', async () => {
       await tracedJob('revalidate-stale-assets', () =>
         runTracked(pool, 'revalidate-stale-assets', revalidateStaleAssets)
@@ -61,7 +116,7 @@ export async function startBackgroundJobs() {
   });
 
   // Run KYC polling every 30 minutes
-  cron.schedule('*/30 * * * *', cronOptions, async () => {
+  schedule('*/30 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'poll-kyc-statuses', async () => {
       await tracedJob('poll-kyc-statuses', () =>
         runTracked(pool, 'poll-kyc-statuses', pollKycStatuses)
@@ -71,7 +126,7 @@ export async function startBackgroundJobs() {
   });
 
   // Run SEP-24 transaction polling every 2 minutes
-  cron.schedule('*/2 * * * *', cronOptions, async () => {
+  schedule('*/2 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'poll-sep24-transactions', async () => {
       await tracedJob('poll-sep24-transactions', () =>
         runTracked(pool, 'poll-sep24-transactions', pollSep24Transactions)
@@ -81,7 +136,7 @@ export async function startBackgroundJobs() {
   });
 
   // Extend contract storage TTLs daily to prevent data loss
-  cron.schedule('0 0 * * *', cronOptions, async () => {
+  schedule('0 0 * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'extend-contract-storage-ttl', async () => {
       await tracedJob('extend-contract-storage-ttl', () =>
         runTracked(pool, 'extend-contract-storage-ttl', extendContractStorageTtl)
@@ -91,7 +146,7 @@ export async function startBackgroundJobs() {
   });
 
   // Send KYC expiry warnings daily at 08:00 UTC
-  cron.schedule('0 8 * * *', cronOptions, async () => {
+  schedule('0 8 * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'notify-kyc-expiries', async () => {
       await tracedJob('notify-kyc-expiries', () =>
         runTracked(pool, 'notify-kyc-expiries', notifyKycExpiries)
@@ -101,7 +156,7 @@ export async function startBackgroundJobs() {
   });
 
   // Run anchor health checks every 5 minutes
-  cron.schedule('*/5 * * * *', cronOptions, async () => {
+  schedule('*/5 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'check-anchor-health', async () => {
       await tracedJob('check-anchor-health', () =>
         runTracked(pool, 'check-anchor-health', checkAnchorHealth)
@@ -114,7 +169,7 @@ export async function startBackgroundJobs() {
   // wall-clock retry budget (WEBHOOK_INLINE_MAX_WALL_CLOCK_MS) was exhausted,
   // so a slow/down subscriber no longer needs its retries to happen inline
   // inside the request that triggered dispatch().
-  cron.schedule('*/2 * * * *', cronOptions, async () => {
+  schedule('*/2 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'retry-pending-webhook-deliveries', async () => {
       await tracedJob('retry-pending-webhook-deliveries', () =>
         runTracked(pool, 'retry-pending-webhook-deliveries', retryPendingWebhookDeliveries)
@@ -124,7 +179,7 @@ export async function startBackgroundJobs() {
   });
 
   // Poll Expo delivery receipts and prune permanently-dead push tokens every 15 minutes
-  cron.schedule('*/15 * * * *', cronOptions, async () => {
+  schedule('*/15 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'prune-dead-push-tokens', async () => {
       await tracedJob('prune-dead-push-tokens', () =>
         runTracked(pool, 'prune-dead-push-tokens', pruneDeadPushTokens)
@@ -134,7 +189,7 @@ export async function startBackgroundJobs() {
   });
 
   // Retire expired webhook secrets hourly
-  cron.schedule('0 * * * *', cronOptions, async () => {
+  schedule('0 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'retire-webhook-secrets', async () => {
       await tracedJob('retire-webhook-secrets', () =>
         runTracked(pool, 'retire-webhook-secrets', retireWebhookSecrets)
@@ -147,7 +202,7 @@ export async function startBackgroundJobs() {
 
   // Rescreen subjects whose periodic sanctions/PEP screening is due — hourly,
   // so a newly published list designation is picked up the same day.
-  cron.schedule('15 * * * *', cronOptions, async () => {
+  schedule('15 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'aml-periodic-rescreening', async () => {
       await tracedJob('aml-periodic-rescreening', () =>
         runTracked(pool, 'aml-periodic-rescreening', runPeriodicRescreening)
@@ -157,7 +212,7 @@ export async function startBackgroundJobs() {
   });
 
   // Retry pending / failed travel-rule transmissions every 10 minutes.
-  cron.schedule('*/10 * * * *', cronOptions, async () => {
+  schedule('*/10 * * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'aml-travel-rule-transmit', async () => {
       await tracedJob('aml-travel-rule-transmit', () =>
         runTracked(pool, 'aml-travel-rule-transmit', transmitTravelRulePending)
@@ -167,7 +222,7 @@ export async function startBackgroundJobs() {
   });
 
   // Enforce the data-retention schedule nightly at 03:30 UTC.
-  cron.schedule('30 3 * * *', cronOptions, async () => {
+  schedule('30 3 * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'aml-data-retention', async () => {
       await tracedJob('aml-data-retention', () =>
         runTracked(pool, 'aml-data-retention', enforceDataRetention)
@@ -181,7 +236,7 @@ export async function startBackgroundJobs() {
   // call that itself never received a live pool, so audit-log IP
   // anonymization, transient KYC upload purge, and revoked-consent purge
   // never executed in any environment.
-  cron.schedule('45 3 * * *', cronOptions, async () => {
+  schedule('45 3 * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'privacy-data-purge', async () => {
       await runTracked(pool, 'privacy-data-purge', purgeExpiredData);
     });
