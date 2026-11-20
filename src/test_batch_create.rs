@@ -75,6 +75,8 @@
 //   test_batch_create_invalid_amount   — zero amount in one entry → InvalidAmount
 //   test_batch_create_max_size         — exactly 100 entries succeeds
 //   test_batch_create_different_amounts — fee calculation verified per entry
+//   test_batch_create_enforces_min_agent_reputation
+//                                      — below-threshold agent reverts batch (#1640)
 //   test_create_batch_remittance_alias_equivalence
 //                                      — deprecated alias produces the same
 //                                        remittances and events as the
@@ -303,6 +305,59 @@ mod tests {
         assert!(r1.fee > 0);
         assert!(r2.fee > 0);
         assert_ne!(r1.fee, r2.fee);
+    }
+
+    /// Issue #1640: `batch_create_remittances` must enforce the minimum agent
+    /// reputation gate per entry, matching `create_remittance` and
+    /// `create_remittance_with_corridor`.
+    #[test]
+    fn test_batch_create_enforces_min_agent_reputation() {
+        let env = Env::default();
+        let (contract, _admin, _) = setup(&env);
+        let sender = Address::generate(&env);
+
+        let good_agent = Address::generate(&env);
+        let low_rep_agent = Address::generate(&env);
+        contract.register_agent(&good_agent, &None);
+        contract.register_agent(&low_rep_agent, &None);
+
+        // Drive the low-reputation agent's score down with disputes.
+        let mut stats = crate::storage::get_agent_stats(&env, &low_rep_agent);
+        stats.dispute_count = 4;
+        crate::storage::set_agent_stats(&env, &low_rep_agent, &stats);
+        let low_rep = crate::storage::compute_agent_reputation(&stats);
+        assert!(low_rep < 100);
+
+        contract.set_min_agent_reputation(&100);
+
+        // A batch containing a below-threshold agent reverts atomically.
+        let mut entries = Vec::new(&env);
+        entries.push_back(BatchCreateEntry {
+            agent: good_agent.clone(),
+            amount: 100_000_000,
+            expiry: None,
+        });
+        entries.push_back(BatchCreateEntry {
+            agent: low_rep_agent.clone(),
+            amount: 100_000_000,
+            expiry: None,
+        });
+
+        let result = contract.try_batch_create_remittances(&sender, &entries);
+        assert_eq!(result, Err(Ok(ContractError::BelowMinReputation)));
+
+        // No remittance was created for the valid entry either.
+        assert_eq!(crate::storage::get_remittance_counter(&env).unwrap(), 0);
+
+        // A batch of only compliant agents still succeeds.
+        let mut ok_entries = Vec::new(&env);
+        ok_entries.push_back(BatchCreateEntry {
+            agent: good_agent.clone(),
+            amount: 100_000_000,
+            expiry: None,
+        });
+        let ids = contract.batch_create_remittances(&sender, &ok_entries);
+        assert_eq!(ids.len(), 1);
     }
 
     /// Issue #1681: `create_batch_remittance` is a deprecated alias of

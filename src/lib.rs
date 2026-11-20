@@ -1047,6 +1047,7 @@ impl SwiftRemitContract {
     /// * `ContractError::InvalidBatchSize` - Batch is empty or exceeds MAX_BATCH_SIZE (100)
     /// * `ContractError::InvalidAmount` - Any entry has zero or negative amount
     /// * `ContractError::AgentNotRegistered` - Any agent is not registered
+    /// * `ContractError::BelowMinReputation` - Any agent's reputation is below the minimum threshold
     /// * `ContractError::UserBlacklisted` - Sender is blacklisted
     /// * `ContractError::DailySendLimitExceeded` - Total amount exceeds daily limit
     /// * `ContractError::Overflow` - Arithmetic overflow in amount calculation
@@ -1086,9 +1087,20 @@ impl SwiftRemitContract {
 
         // Validate all entries and accumulate total before any state changes
         let mut total_amount: i128 = 0;
+        // #1640: Enforce minimum-agent-reputation gate per entry (parity with
+        // create_remittance and create_remittance_with_corridor).
+        let min_rep = storage::get_min_agent_reputation(&env);
         for i in 0..batch_size {
             let entry = entries.get_unchecked(i);
             validate_create_remittance_request(&env, &sender, &entry.agent, entry.amount)?;
+            if min_rep > 0 {
+                let rep =
+                    storage::compute_agent_reputation(&storage::get_agent_stats(&env, &entry.agent));
+                if rep < min_rep {
+                    events::emit_agent_suspended(&env, entry.agent.clone(), rep, min_rep);
+                    return Err(ContractError::BelowMinReputation);
+                }
+            }
             total_amount = total_amount
                 .checked_add(entry.amount)
                 .ok_or(ContractError::Overflow)?;
