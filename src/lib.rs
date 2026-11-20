@@ -2486,11 +2486,8 @@ impl SwiftRemitContract {
         if breakdown.corridor.is_none() && from_country.is_some() && to_country.is_some() {
             let from = from_country.unwrap();
             let to = to_country.unwrap();
-            // Create corridor identifier string
-            let mut corridor_id = from.clone();
-            // For now, we'll use the from_country as the corridor ID
-            // In a production system with better string handling, this would be "from-to"
-            breakdown.corridor = Some(corridor_id);
+            // Build the corridor identifier as FROM-TO
+            breakdown.corridor = Some(fee_service::format_corridor_id(&env, &from, &to));
         }
 
         Ok(breakdown)
