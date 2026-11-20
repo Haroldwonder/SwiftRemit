@@ -22,6 +22,7 @@ import { TravelRuleService } from './aml/travel-rule';
 import { RetentionService } from './aml/retention';
 import { purgeExpiredPersonalData } from './privacy/retention-service';
 import { createLogger } from './correlation-id';
+import { readPositiveInt } from './env-guard';
 import { DeviceTokenService } from './device-token-service';
 import crypto from 'crypto';
 
@@ -195,7 +196,7 @@ export async function startBackgroundJobs() {
 async function runPeriodicRescreening() {
   const service = new SanctionsScreeningService(pool);
   const summary = await service.runPeriodicRescreening(
-    parseInt(process.env.AML_RESCREEN_BATCH_SIZE || '200', 10),
+    readPositiveInt('AML_RESCREEN_BATCH_SIZE', 200),
   );
   console.log(
     `aml-periodic-rescreening: screened=${summary.screened} hits=${summary.hits} errors=${summary.errors}`,
@@ -205,7 +206,7 @@ async function runPeriodicRescreening() {
 async function transmitTravelRulePending() {
   const service = new TravelRuleService(pool);
   const summary = await service.transmitPending(
-    parseInt(process.env.TRAVEL_RULE_BATCH_SIZE || '100', 10),
+    readPositiveInt('TRAVEL_RULE_BATCH_SIZE', 100),
   );
   console.log(
     `aml-travel-rule-transmit: transmitted=${summary.transmitted} failed=${summary.failed}`,
@@ -241,7 +242,7 @@ async function purgeExpiredData() {
 
 async function revalidateStaleAssets() {
   try {
-    const hoursOld = parseInt(process.env.VERIFICATION_INTERVAL_HOURS || '24');
+    const hoursOld = readPositiveInt('VERIFICATION_INTERVAL_HOURS', 24);
     const staleAssets = await getStaleAssets(hoursOld);
 
     logger.info(`Found ${staleAssets.length} assets to revalidate`);
