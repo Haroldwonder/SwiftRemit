@@ -12,6 +12,7 @@ import { ErrorResponse } from '../types';
 import { sanitizeInput } from '../utils/sanitize.js';
 import { extractBearerToken, verifyAccessToken, requireAuth, ensureOwnership } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
+import { getApiMetrics } from '../metrics.js';
 
 function timestamp(): string {
   return new Date().toISOString();
@@ -447,6 +448,8 @@ export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
           timestamp: now,
         });
       } catch (auditErr) {
+        // Issue #1879: make the failure observable, not just logged.
+        getApiMetrics().recordPayoutAddressAuditFailure();
         logger.error('agent.payout_address.audit_failed', {
           agentId: agent.id,
           error: auditErr instanceof Error ? auditErr.message : String(auditErr),
