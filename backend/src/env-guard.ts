@@ -69,6 +69,29 @@ export function readPositiveInt(name: string, defaultValue: number): number {
   return Number(raw.trim());
 }
 
+/**
+ * Read a cron-schedule environment variable, falling back to `defaultValue`
+ * when unset. `off` (case-insensitive) disables the job and returns `null`.
+ * Any other value must be a valid cron expression, otherwise startup fails so a
+ * typo cannot silently disable or mis-schedule a background job.
+ */
+export function readCronSchedule(
+  name: string,
+  defaultValue: string,
+  validate: (expression: string) => boolean,
+): string | null {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return defaultValue;
+  const value = raw.trim();
+  if (value.toLowerCase() === 'off') return null;
+  if (!validate(value)) {
+    throw new Error(
+      `${name} must be a valid cron expression or "off", got ${JSON.stringify(raw)} — expected e.g. ${defaultValue}`,
+    );
+  }
+  return value;
+}
+
 const BACKEND_REQUIREMENTS: EnvRequirement[] = [
   {
     name: 'DATABASE_URL',
