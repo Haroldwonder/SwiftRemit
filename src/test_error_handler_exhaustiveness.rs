@@ -123,6 +123,7 @@ fn test_all_contract_errors_have_distinct_mappings() {
         ContractError::MalformedEvidenceHash,
         ContractError::DisputeWindowTooLong,
         ContractError::EscrowNotYetExpired,
+        ContractError::MissingFailureReason,
 
         // Restored Variants (70-79)
         ContractError::NotFound,

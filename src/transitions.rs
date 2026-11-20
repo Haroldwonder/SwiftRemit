@@ -75,6 +75,51 @@ pub fn validate_processing_refund(
     Ok(())
 }
 
+/// Validates a `Failed → Cancelled` refund transition with a dispute-window guard.
+///
+/// A remittance marked `Failed` by its agent stays escrowed while the sender has
+/// a dispute window in which to contest the failure. Once that window has
+/// elapsed with no dispute raised, the sender must be able to reclaim the
+/// remaining escrow; otherwise the funds are locked forever (#1623).
+///
+/// # Arguments
+///
+/// * `now` - Current ledger timestamp
+/// * `failed_at` - Timestamp at which the remittance was marked `Failed`
+/// * `window` - Configured dispute window in seconds
+///
+/// # Errors
+///
+/// * `ContractError::InvalidStateTransition` - The dispute window has not yet
+///   elapsed, so the sender must still be able to raise a dispute
+pub fn validate_failed_refund(
+    now: u64,
+    failed_at: u64,
+    window: u64,
+) -> Result<(), ContractError> {
+    let deadline = failed_at.saturating_add(window);
+    if now < deadline {
+        return Err(ContractError::InvalidStateTransition);
+    }
+    Ok(())
+}
+
+/// Checks whether a `Failed` remittance is eligible for a sender refund.
+///
+/// Returns `true` once the dispute window has elapsed since the remittance was
+/// marked `Failed`. Any other status is never eligible.
+pub fn is_failed_refund_eligible(
+    status: &RemittanceStatus,
+    now: u64,
+    failed_at: u64,
+    window: u64,
+) -> bool {
+    if *status != RemittanceStatus::Failed {
+        return false;
+    }
+    validate_failed_refund(now, failed_at, window).is_ok()
+}
+
 /// Checks whether a `Processing` remittance is eligible for a sender refund.
 ///
 /// Returns `true` once the recovery timeout has elapsed since the last partial
