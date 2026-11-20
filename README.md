@@ -181,7 +181,7 @@ The contract exposes 134 public functions from a single `#[contractimpl] impl Sw
 | `confirm_payout(agent, remittance_id, proof?, recipient_details_hash?)` | Agent confirms payout: transitions Pending → Processing → Completed, pays the agent (minus fees), pays the treasury protocol fee, and locks the settlement hash against double payout | agent auth required (must be the remittance's assigned, registered agent) |
 | `mark_failed(remittance_id)` | Marks the remittance `Failed` while retaining escrow during the sender's dispute window | agent auth required (assigned agent) |
 | `raise_dispute(remittance_id, evidence_hash)` | Sender disputes a remittance in the `Failed` status, within the dispute window | sender auth required |
-| `resolve_dispute(remittance_id, in_favour_of_sender)` | Admin resolves a disputed remittance — refunds the sender or pays the agent | admin only |
+| `resolve_dispute(remittance_id, in_favour_of_sender)` | Admin resolves a disputed remittance — refunds the sender or pays the agent (protocol fee to treasury, platform fee to accumulated fees) | admin only |
 | `set_dispute_window(seconds)` | Sets how long after failure a sender may raise a dispute (bounded at 30 days) | admin only |
 | `get_dispute_window()` | Returns the current dispute window in seconds | none (public query) |
 | `confirm_partial_payout(remittance_id, amount)` | Disburses a partial amount toward a remittance; auto-completes once fully disbursed | agent auth required (assigned agent) |

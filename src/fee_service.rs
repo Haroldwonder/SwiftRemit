@@ -289,6 +289,20 @@ pub fn breakdown_from_platform_fee(
     breakdown_from_quoted_fees(amount, platform_fee, protocol_fee)
 }
 
+/// Builds a fee breakdown around the platform fee and protocol fee quoted at
+/// creation time.
+///
+/// Settlement paths must honour the quote rather than re-price, so they pass the
+/// stored `remittance.protocol_fee` here instead of recomputing it from the
+/// current `protocol_fee_bps` configuration.
+pub fn breakdown_from_quoted_platform_fee(
+    amount: i128,
+    platform_fee: i128,
+    protocol_fee: i128,
+) -> Result<FeeBreakdown, ContractError> {
+    breakdown_from_quoted_fees(amount, platform_fee, protocol_fee)
+}
+
 /// Calculates complete fee breakdown for a sender using rolling volume discounts.
 pub fn calculate_fees_with_breakdown_for_sender(
     env: &Env,
