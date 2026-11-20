@@ -2915,6 +2915,9 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         set_escrow(&env, transfer_id, &escrow);
         set_escrow_counter(&env, transfer_id);
 
+        // #1855: Track pending escrow volume/count for `health()`.
+        crate::storage::add_pending_escrow(&env, amount)?;
+
         // #1845: Maintain the per-user escrow indexes.
         crate::storage::append_escrow_by_sender(&env, &sender, transfer_id);
         crate::storage::append_escrow_by_recipient(&env, &recipient, transfer_id);
@@ -2953,6 +2956,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
         escrow.status = EscrowStatus::Released;
         set_escrow(&env, transfer_id, &escrow);
+        crate::storage::remove_pending_escrow(&env, escrow.amount);
 
         emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount, false);
 
@@ -2995,6 +2999,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
         escrow.status = EscrowStatus::Released;
         set_escrow(&env, transfer_id, &escrow);
+        crate::storage::remove_pending_escrow(&env, escrow.amount);
 
         emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount, true);
 
@@ -3081,6 +3086,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
         escrow.status = EscrowStatus::Refunded;
         set_escrow(&env, transfer_id, &escrow);
+        crate::storage::remove_pending_escrow(&env, escrow.amount);
 
         emit_escrow_refunded(&env, transfer_id, escrow.sender, escrow.amount);
 
