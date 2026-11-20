@@ -40,6 +40,8 @@ mod test_blacklist;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_escrow;
 #[cfg(all(test, feature = "legacy-tests"))]
+mod test_escrow_lifecycle_property;
+#[cfg(all(test, feature = "legacy-tests"))]
 mod test_agent_stats;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_fee_corridor;
