@@ -340,20 +340,24 @@ pub struct SwiftRemitContract;
 
 #[contractimpl]
 impl SwiftRemitContract {
-    fn set_blacklist_status(
-        env: &Env,
+    /// Set user blacklist status (admin only).
+    ///
+    /// Requires authentication from the configured admin. Emits a
+    /// `blacklist/added` or `blacklist/removed` event.
+    pub fn set_blacklist_status(
+        env: Env,
         user: Address,
         blacklisted: bool,
     ) -> Result<(), ContractError> {
-        let caller = get_admin(env)?;
-        require_admin(env, &caller)?;
+        let caller = get_admin(&env)?;
+        require_admin(&env, &caller)?;
 
-        set_user_blacklisted(env, &user, blacklisted);
+        set_user_blacklisted(&env, &user, blacklisted);
 
         if blacklisted {
-            emit_user_blacklisted(env, user, caller);
+            emit_user_blacklisted(&env, user, caller);
         } else {
-            emit_user_removed_from_blacklist(env, user, caller);
+            emit_user_removed_from_blacklist(&env, user, caller);
         }
 
         Ok(())
@@ -4470,44 +4474,6 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     }
 
     // === User Management Functions ===
-
-    /// Adds a user to the blacklist.
-    ///
-    /// Requires authentication from the configured admin.
-    ///
-    /// # Deprecated
-    /// Thin wrapper over `set_blacklist_status`. Scheduled for removal in the
-    /// next ABI version — use `set_blacklist_status(user, true)` instead.
-    #[deprecated(note = "use set_blacklist_status(user, true); removed in the next ABI version")]
-    pub fn blacklist_user(env: Env, user: Address) -> Result<(), ContractError> {
-        Self::set_blacklist_status(&env, user, true)
-    }
-
-    /// Removes a user from the blacklist.
-    ///
-    /// Requires authentication from the configured admin.
-    ///
-    /// # Deprecated
-    /// Thin wrapper over `set_blacklist_status`. Scheduled for removal in the
-    /// next ABI version — use `set_blacklist_status(user, false)` instead.
-    #[deprecated(note = "use set_blacklist_status(user, false); removed in the next ABI version")]
-    pub fn remove_from_blacklist(env: Env, user: Address) -> Result<(), ContractError> {
-        Self::set_blacklist_status(&env, user, false)
-    }
-
-    /// Set user blacklist status (admin only)
-    ///
-    /// # Deprecated
-    /// Thin wrapper over `set_blacklist_status`. Scheduled for removal in the
-    /// next ABI version — use `set_blacklist_status(user, blacklisted)` instead.
-    #[deprecated(note = "use set_blacklist_status(user, blacklisted); removed in the next ABI version")]
-    pub fn set_user_blacklisted(
-        env: Env,
-        user: Address,
-        blacklisted: bool,
-    ) -> Result<(), ContractError> {
-        Self::set_blacklist_status(&env, user, blacklisted)
-    }
 
     /// Check if user is blacklisted
     pub fn is_user_blacklisted(env: Env, user: Address) -> bool {
