@@ -134,6 +134,8 @@ fn test_all_contract_errors_have_distinct_mappings() {
         ContractError::RecipientHashMismatch,
         ContractError::InvalidTimelockDuration,
         ContractError::BelowMinReputation,
+        ContractError::MultisigQuorumRequired,
+        ContractError::TokenNotSep41,
     ];
 
     let mut unmapped_errors = Vec::new();
