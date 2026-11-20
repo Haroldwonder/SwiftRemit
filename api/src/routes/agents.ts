@@ -2,6 +2,7 @@
  * Agent registration and management endpoints (Issue #880, SR-158, SR-159).
  *
  * POST /api/agents                     - Register agent (admin approval; admin API key or admin JWT required)
+ * GET  /api/agents                     - List agents (admin only; cursor pagination + status filter)
  * GET  /api/agents/:id                 - Get agent profile (auth required; payout_address restricted to owner/admin)
  * PUT  /api/agents/:id/payout-address  - Update payout address (admin API key or admin JWT required)
  */
@@ -12,6 +13,7 @@ import { ErrorResponse } from '../types';
 import { sanitizeInput } from '../utils/sanitize.js';
 import { extractBearerToken, verifyAccessToken, requireAuth, ensureOwnership } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
+import { parsePaginationParams, buildCursorEnvelope } from '../middleware/paginate.js';
 
 function timestamp(): string {
   return new Date().toISOString();
@@ -140,6 +142,10 @@ export interface Agent {
   updated_at: string;
 }
 
+export type AgentStatus = Agent['status'];
+
+export const AGENT_STATUSES: readonly AgentStatus[] = ['pending', 'active', 'suspended'];
+
 // ── AgentStore interface ──────────────────────────────────────────────────────
 
 /**
@@ -152,6 +158,12 @@ export interface AgentStore {
   create(agent: Agent): Promise<Agent>;
   updatePayoutAddress(id: string, payoutAddress: string, updatedAt: string): Promise<Agent | null>;
   exists(id: string): Promise<boolean>;
+  /**
+   * List agents ordered by id (keyset pagination), optionally filtered by
+   * status.  Returns at most `limit` records whose id is greater than
+   * `afterId` (when provided).
+   */
+  list(options: { status?: AgentStatus; afterId?: string; limit: number }): Promise<Agent[]>;
 }
 
 // ── In-memory implementation (used by tests) ─────────────────────────────────
@@ -178,6 +190,14 @@ export class InMemoryAgentStore implements AgentStore {
 
   async exists(id: string): Promise<boolean> {
     return this.data.has(id);
+  }
+
+  async list(options: { status?: AgentStatus; afterId?: string; limit: number }): Promise<Agent[]> {
+    return [...this.data.values()]
+      .filter((agent) => (options.status ? agent.status === options.status : true))
+      .filter((agent) => (options.afterId ? agent.id > options.afterId : true))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .slice(0, options.limit);
   }
 
   /** Test helper: wipe all records between test cases */
@@ -279,6 +299,31 @@ export class PostgresAgentStore implements AgentStore {
     );
     return result.rows[0]?.exists ?? false;
   }
+
+  async list(options: { status?: AgentStatus; afterId?: string; limit: number }): Promise<Agent[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (options.status) {
+      params.push(options.status);
+      conditions.push(`status = $${params.length}`);
+    }
+    if (options.afterId) {
+      params.push(options.afterId);
+      conditions.push(`id > $${params.length}`);
+    }
+    params.push(options.limit);
+
+    const result = await this.pool.query<AgentRow>(
+      `SELECT id, stellar_address, payout_address, name, status, created_at, updated_at
+         FROM api_agents
+        ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}
+        ORDER BY id ASC
+        LIMIT $${params.length}`,
+      params,
+    );
+    return result.rows.map(mapRow);
+  }
 }
 
 // ── Router options ────────────────────────────────────────────────────────────
@@ -362,6 +407,54 @@ export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
       return res.status(201).json({ success: true, data: created, timestamp: timestamp() });
     } catch (err) {
       return sendInternalError(res, err, 'Failed to register agent', 'STORE_ERROR');
+    }
+  });
+
+  /**
+   * GET /api/agents
+   *
+   * Admin-only listing of agents with cursor pagination and an optional
+   * status filter (`pending` | `active` | `suspended`).  Invalid status
+   * values are rejected with 400.  `payout_address` is never included in
+   * list output.
+   */
+  router.get('/', requireAuth, async (req: Request, res: Response) => {
+    const auth = req.auth!;
+    const isAdmin = auth.role === 'admin';
+    if (!isAdmin) {
+      return sendError(res, 403, 'Insufficient privileges', 'FORBIDDEN');
+    }
+
+    const rawStatus = req.query.status;
+    if (rawStatus !== undefined) {
+      if (typeof rawStatus !== 'string' || !AGENT_STATUSES.includes(rawStatus as AgentStatus)) {
+        return sendError(
+          res,
+          400,
+          `status must be one of: ${AGENT_STATUSES.join(', ')}`,
+          'INVALID_STATUS',
+        );
+      }
+    }
+    const status = rawStatus as AgentStatus | undefined;
+
+    const { cursor, limit } = parsePaginationParams(req);
+
+    try {
+      const rows = await store.list({ status, afterId: cursor, limit: limit + 1 });
+      const envelope = buildCursorEnvelope(rows, limit, 'id');
+      const data = envelope.data.map(({ payout_address: _stripped, ...publicFields }) => publicFields);
+
+      return res.json({
+        success: true,
+        data,
+        next_cursor: envelope.next_cursor,
+        has_more: envelope.has_more,
+        page_size: envelope.page_size,
+        timestamp: timestamp(),
+      });
+    } catch (err) {
+      return sendInternalError(res, err, 'Failed to list agents', 'STORE_ERROR');
     }
   });
 
