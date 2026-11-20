@@ -119,6 +119,8 @@ mod test_fee_differential;
 #[cfg(test)]
 mod test_error_handler_exhaustiveness;
 #[cfg(test)]
+mod test_error_abi_discriminants;
+#[cfg(test)]
 mod test_retry_transaction;
 #[cfg(test)]
 mod test_governance_paused;
