@@ -211,6 +211,13 @@ body {
   color: var(--color-text-hint);
 }
 
+.field-error {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-error-text, #dc2626);
+}
+
 .btn-primary {
   width: 100%;
   padding: 14px;

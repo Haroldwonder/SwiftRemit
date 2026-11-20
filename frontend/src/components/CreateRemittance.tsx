@@ -72,6 +72,39 @@ async function resolveTokenMetadata(token: string): Promise<TokenMetadata> {
   return metadata
 }
 
+/**
+ * Maximum size of a Stellar `MEMO_TEXT` memo, in UTF-8 bytes.
+ * The memo is stored in the contract's `Option<String>` field and forwarded to
+ * the Stellar transaction as a text memo, so it must fit in 28 bytes.
+ */
+export const MEMO_MAX_BYTES = 28
+
+/** Number of UTF-8 bytes a string occupies (not the number of characters). */
+export function memoByteLength(value: string): number {
+  return new TextEncoder().encode(value).length
+}
+
+/** Truncate a string so its UTF-8 encoding fits within `maxBytes`, never splitting a code point. */
+export function truncateToBytes(value: string, maxBytes: number = MEMO_MAX_BYTES): string {
+  if (memoByteLength(value) <= maxBytes) return value
+  let result = ''
+  let used = 0
+  for (const char of value) {
+    const size = memoByteLength(char)
+    if (used + size > maxBytes) break
+    result += char
+    used += size
+  }
+  return result
+}
+
+/** Validation message for a memo that exceeds the Stellar text memo limit. */
+export function memoValidationError(value: string): string | null {
+  const bytes = memoByteLength(value)
+  if (bytes <= MEMO_MAX_BYTES) return null
+  return `Memo must be at most ${MEMO_MAX_BYTES} bytes (UTF-8); currently ${bytes} bytes.`
+}
+
 /** Convert a decimal amount string to stroops without floating point rounding. */
 export function amountToStroops(amount: string): bigint {
   if (typeof amount !== 'string') throw new Error('Amount must be a string')
@@ -140,6 +173,11 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTo
       }
 
       const amountInStroops = amountToStroops(amount)
+
+      const memoError = memoValidationError(memo)
+      if (memoError) {
+        throw new Error(memoError)
+      }
       // This is a placeholder - you'll need to implement actual contract interaction
       // using Stellar SDK and the contract's WASM interface
       
@@ -215,11 +253,19 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTo
           <input
             type="text"
             value={memo}
-            onChange={(e) => setMemo(e.target.value.slice(0, 100))}
+            onChange={(e) => setMemo(truncateToBytes(e.target.value))}
             placeholder="e.g. Invoice #1234"
-            maxLength={100}
+            aria-describedby="memo-hint"
+            aria-invalid={memoValidationError(memo) ? true : undefined}
           />
-          <small className="field-hint">{memo.length}/100</small>
+          <small id="memo-hint" className="field-hint">
+            {memoByteLength(memo)}/{MEMO_MAX_BYTES} bytes
+          </small>
+          {memoValidationError(memo) && (
+            <small className="field-error" role="alert">
+              {memoValidationError(memo)}
+            </small>
+          )}
         </div>
 
         <button type="submit" disabled={loading} className="btn-primary">
