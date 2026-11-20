@@ -22,7 +22,11 @@ export function amountToStroops(amount: string): bigint {
   if (fracPart.length > DECIMALS) {
     throw new Error(`Amount cannot have more than ${DECIMALS} decimal places`)
   }
-  return BigInt(intPart) * STROOPS_PER_UNIT + BigInt(fracPart.padEnd(DECIMALS, '0'))
+  const stroops = BigInt(intPart) * STROOPS_PER_UNIT + BigInt(fracPart.padEnd(DECIMALS, '0'))
+  if (stroops === 0n) {
+    throw new Error('Amount must be greater than 0')
+  }
+  return stroops
 }
 
 interface CreateRemittanceProps {
@@ -181,8 +185,8 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ walletAddress, contractId
           <label>Amount ({selectedToken || 'Token'}):</label>
           <input
             type="number"
-            step="0.01"
-            min="0.01"
+            step="0.0000001"
+            min="0.0000001"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="100.00"

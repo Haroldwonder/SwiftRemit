@@ -13,4 +13,10 @@ describe('CreateRemittance TSX amount conversion (#1728)', () => {
     expect(() => amountToStroops('oops')).toThrow()
     expect(() => amountToStroops('0.12345678')).toThrow()
   })
+
+  it('rejects amounts that convert to zero stroops (#1887)', () => {
+    expect(() => amountToStroops('0')).toThrow('Amount must be greater than 0')
+    expect(() => amountToStroops('0.0000000')).toThrow('Amount must be greater than 0')
+    expect(() => amountToStroops('0.0')).toThrow('Amount must be greater than 0')
+  })
 })
