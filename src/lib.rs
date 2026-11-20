@@ -2034,8 +2034,6 @@ impl SwiftRemitContract {
         }
 
         let now = env.ledger().timestamp();
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
 
         let mut processed_ids = Vec::new(&env);
 
@@ -2059,6 +2057,9 @@ impl SwiftRemitContract {
                 continue;
             }
 
+            // #1619: refund in the remittance's own token, not a shared USDC client.
+            let remittance_token = remittance.token.clone();
+            let token_client = token::Client::new(&env, &remittance_token);
             token_client.transfer(
                 &env.current_contract_address(),
                 &remittance.sender,
@@ -2084,7 +2085,7 @@ impl SwiftRemitContract {
                 remittance_id,
                 remittance.sender.clone(),
                 remittance.agent.clone(),
-                usdc_token.clone(),
+                remittance_token.clone(),
                 remittance.amount,
             );
             emit_remittance_cancelled_with_reason(
@@ -2092,7 +2093,7 @@ impl SwiftRemitContract {
                 remittance_id,
                 remittance.sender,
                 remittance.agent,
-                usdc_token.clone(),
+                remittance_token,
                 remittance.amount,
                 String::from_str(&env, "expired"),
             );
