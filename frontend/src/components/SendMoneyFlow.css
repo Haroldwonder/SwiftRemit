@@ -134,6 +134,21 @@
   color: var(--color-text-secondary);
 }
 
+.flow-balance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.flow-max-button {
+  padding: 0.2rem 0.6rem;
+  font-size: 0.8rem;
+}
+
 .flow-error {
   margin-top: 0.8rem;
   margin-bottom: 0;
