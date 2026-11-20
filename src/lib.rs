@@ -1197,6 +1197,45 @@ impl SwiftRemitContract {
         Self::confirm_payout_inner(env, agent, remittance_id, proof, recipient_details_hash, true)
     }
 
+    /// Shared completion bookkeeping for every path that moves a remittance to
+    /// `Completed` (confirm_payout, confirm_partial_payout, resolve_dispute).
+    ///
+    /// Credits the integrator share of the platform fee (if one was recorded at
+    /// creation), moves the remittance volume from in-flight to completed,
+    /// transitions the status, persists the remittance, marks the settlement as
+    /// executed and removes the idempotency record so the key can be reused.
+    fn complete_remittance(
+        env: &Env,
+        remittance_id: u64,
+        remittance: &mut crate::types::Remittance,
+    ) -> Result<(), ContractError> {
+        // #1263: Accrue a portion of the platform fee to the integrator balance if one
+        // was recorded at creation time. We credit 10% of the platform fee (rounded down)
+        // to the integrator; the remaining 90% stays in the platform accumulated_fees pot.
+        if let Some(intg) = storage::get_remittance_integrator(env, remittance_id) {
+            let integrator_share = remittance.fee / 10; // 10% of platform fee
+            if integrator_share > 0 {
+                storage::add_integrator_balance(env, &intg, integrator_share);
+            }
+        }
+
+        // Update analytics: move volume from in-flight to completed
+        storage::sub_processing_volume(env, remittance.amount)?;
+        storage::add_completed_volume(env, remittance.amount)?;
+
+        // Update remittance status via validated transition
+        crate::transitions::transition_status(env, remittance, RemittanceStatus::Completed)?;
+        set_remittance(env, remittance_id, remittance);
+        set_settlement_hash(env, remittance_id);
+
+        // Cleanup: remove idempotency record on terminal state (Completed)
+        if let Some(idem_key) = storage::take_remittance_idempotency_key(env, remittance_id) {
+            storage::remove_idempotency_record(env, &idem_key);
+        }
+
+        Ok(())
+    }
+
     /// Internal implementation of confirm_payout.
     ///
     /// `check_abuse` controls whether the per-agent abuse-protection cooldown and
@@ -1369,23 +1408,9 @@ impl SwiftRemitContract {
         // Update accumulated fees with overflow protection and automatic flush
         safe_add_accumulated_fee(&env, remittance.fee)?;
 
-        // #1263: Accrue a portion of the platform fee to the integrator balance if one
-        // was recorded at creation time. We credit 10% of the platform fee (rounded down)
-        // to the integrator; the remaining 90% stays in the platform accumulated_fees pot.
-        if let Some(intg) = storage::get_remittance_integrator(&env, remittance_id) {
-            let integrator_share = remittance.fee / 10; // 10% of platform fee
-            if integrator_share > 0 {
-                storage::add_integrator_balance(&env, &intg, integrator_share);
-            }
-        }
-
-        // Update analytics: move volume from in-flight to completed
-        storage::sub_processing_volume(&env, remittance.amount)?;
-        storage::add_completed_volume(&env, remittance.amount)?;
-
-        // Update remittance status via validated transition
-        crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
-        set_remittance(&env, remittance_id, &remittance);
+        // #1263 / #1630: integrator accrual, volume accounting, status transition,
+        // settlement hash and idempotency cleanup all live in complete_remittance.
+        Self::complete_remittance(&env, remittance_id, &mut remittance)?;
 
         // SR-123: Record the Settlement action for cooldown tracking.
         record_action(&env, &remittance.agent, ActionType::Settlement);
@@ -1414,11 +1439,6 @@ impl SwiftRemitContract {
         );
 
         log_confirm_payout(&env, remittance_id, payout_amount);
-
-        // Cleanup: remove idempotency record on terminal state (Completed)
-        if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
-            storage::remove_idempotency_record(&env, &idem_key);
-        }
 
         Ok(())
     }
@@ -1664,12 +1684,10 @@ impl SwiftRemitContract {
             if retained > 0 {
                 crate::fee_management::safe_add_accumulated_fee(&env, retained)?;
             }
-            // SR-125: Route status mutation through the canonical state machine.
-            crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
-
-            // #1674: An agent-favoured resolution counts as a completed settlement
-            // and moves the remittance volume into completed volume.
-            storage::add_completed_volume(&env, remittance.amount)?;
+            // SR-125 / #1630: completion bookkeeping (integrator accrual, volume
+            // accounting, status transition, settlement hash, idempotency cleanup)
+            // is shared with every other completion path.
+            Self::complete_remittance(&env, remittance_id, &mut remittance)?;
 
             let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
             stats.total_settlements = stats.total_settlements.saturating_add(1);
@@ -1695,7 +1713,6 @@ impl SwiftRemitContract {
         }
         crate::storage::set_agent_stats(&env, &remittance.agent, &resolved_stats);
 
-        set_remittance(&env, remittance_id, &remittance);
         emit_dispute_resolved(&env, remittance_id, caller, in_favour_of_sender);
         Ok(())
     }
@@ -1866,13 +1883,9 @@ impl SwiftRemitContract {
             // Update accumulated fees with overflow protection and automatic flush
             safe_add_accumulated_fee(&env, remittance.fee)?;
 
-            // Move volume from in-flight to completed
-            storage::sub_processing_volume(&env, remittance.amount)?;
-            storage::add_completed_volume(&env, remittance.amount)?;
-
-            crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
-            set_remittance(&env, remittance_id, &remittance);
-            set_settlement_hash(&env, remittance_id);
+            // #1630: shared completion bookkeeping (integrator accrual, volume
+            // accounting, status transition, settlement hash, idempotency cleanup).
+            Self::complete_remittance(&env, remittance_id, &mut remittance)?;
 
             emit_remittance_completed(&env, remittance_id, remittance.sender, remittance.agent);
         } else {
