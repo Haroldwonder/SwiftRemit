@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import { safeStorage } from '../utils/safeStorage';
 
 export function ThemeToggle() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const stored = localStorage.getItem('theme');
+    const stored = safeStorage.getItem('theme');
     if (stored === 'light' || stored === 'dark') {
       return stored;
     }
@@ -11,7 +12,7 @@ export function ThemeToggle() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('theme', theme);
+    safeStorage.setItem('theme', theme);
   }, [theme]);
 
   const toggleTheme = () => {

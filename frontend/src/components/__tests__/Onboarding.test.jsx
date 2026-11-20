@@ -72,8 +72,27 @@ describe('Onboarding Component', () => {
     })
   })
 
-  describe('Content and links', () => {
-    it('should display step counter', () => {
+  describe('Unavailable storage', () => {
+    it('should not crash when localStorage throws', () => {
+      const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new Error('storage unavailable')
+      })
+      const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('storage unavailable')
+      })
+
+      const onClose = vi.fn()
+      expect(() => render(<Onboarding isVisible={true} onClose={onClose} />)).not.toThrow()
+      expect(screen.getByText('Welcome to SwiftRemit')).toBeInTheDocument()
+      expect(() => fireEvent.click(screen.getByText('Skip'))).not.toThrow()
+      expect(onClose).toHaveBeenCalled()
+
+      getItem.mockRestore()
+      setItem.mockRestore()
+    })
+  })
+
+  describe('Content and links', () => {    it('should display step counter', () => {
       render(<Onboarding isVisible={true} onClose={vi.fn()} />)
       expect(screen.getByText('Step 1 of 5')).toBeInTheDocument()
     })
