@@ -1,7 +1,76 @@
-import { FC, useState, FormEvent } from 'react'
+import { FC, useState, useEffect, FormEvent } from 'react'
+import { Address, Contract, Horizon, rpc as SorobanRpc, TransactionBuilder, Networks, scValToNative } from '@stellar/stellar-sdk'
 
 const STROOPS_PER_UNIT = 10_000_000n
 const DECIMALS = 7
+
+const RPC_URL = import.meta.env.VITE_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
+const HORIZON_URL = import.meta.env.VITE_HORIZON_URL || 'https://horizon-testnet.stellar.org'
+const NETWORK_PASSPHRASE = import.meta.env.VITE_NETWORK === 'mainnet'
+  ? Networks.PUBLIC
+  : Networks.TESTNET
+
+export interface TokenMetadata {
+  /** Asset code / symbol, e.g. `USDC`. */
+  symbol?: string
+  /** Issuer home domain, e.g. `centre.io`. */
+  issuerDomain?: string
+}
+
+const metadataCache = new Map<string, TokenMetadata>()
+
+/** Shorten a Stellar address/contract ID for display, e.g. `CABC…WXYZ`. */
+export function shortenAddress(address: string, chars = 4): string {
+  if (address.length <= chars * 2 + 1) return address
+  return `${address.slice(0, chars)}…${address.slice(-chars)}`
+}
+
+/** Human-readable label for a token: `USDC (centre.io)`, `USDC`, or a shortened address. */
+export function formatTokenLabel(token: string, metadata?: TokenMetadata): string {
+  if (!metadata?.symbol) return shortenAddress(token)
+  return metadata.issuerDomain ? `${metadata.symbol} (${metadata.issuerDomain})` : metadata.symbol
+}
+
+async function fetchIssuerDomain(issuer: string): Promise<string | undefined> {
+  try {
+    const server = new Horizon.Server(HORIZON_URL)
+    const account = await server.loadAccount(issuer)
+    return account.home_domain || undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function resolveTokenMetadata(token: string): Promise<TokenMetadata> {
+  const cached = metadataCache.get(token)
+  if (cached) return cached
+
+  const metadata: TokenMetadata = {}
+  try {
+    const server = new SorobanRpc.Server(RPC_URL)
+    const contract = new Contract(token)
+    const source = await server.getAccount(Address.fromScAddress(contract.address()).toString())
+    const tx = new TransactionBuilder(source, { fee: '100', networkPassphrase: NETWORK_PASSPHRASE })
+      .addOperation(contract.call('symbol'))
+      .setTimeout(30)
+      .build()
+    const simulated = await server.simulateTransaction(tx)
+    if (!SorobanRpc.Api.isSimulationError(simulated) && simulated.result) {
+      const symbol = scValToNative(simulated.result.retval)
+      if (typeof symbol === 'string' && symbol) metadata.symbol = symbol
+    }
+  } catch {
+    // Fall back to a shortened address when metadata cannot be resolved.
+  }
+
+  if (metadata.symbol) {
+    const issuer = await fetchIssuerDomain(token)
+    if (issuer) metadata.issuerDomain = issuer
+  }
+
+  metadataCache.set(token, metadata)
+  return metadata
+}
 
 /** Convert a decimal amount string to stroops without floating point rounding. */
 export function amountToStroops(amount: string): bigint {
@@ -41,6 +110,19 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTo
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<RemittanceResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [tokenMetadata, setTokenMetadata] = useState<Record<string, TokenMetadata>>({})
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all(
+      whitelistedTokens.map(async (token) => [token, await resolveTokenMetadata(token)] as const)
+    ).then((entries) => {
+      if (!cancelled) setTokenMetadata(Object.fromEntries(entries))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [whitelistedTokens.join(',')])
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault()
@@ -95,8 +177,8 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTo
           >
             <option value="">Select a token...</option>
             {whitelistedTokens.map((token) => (
-              <option key={token} value={token}>
-                {token}
+              <option key={token} value={token} title={token}>
+                {formatTokenLabel(token, tokenMetadata[token])}
               </option>
             ))}
           </select>
