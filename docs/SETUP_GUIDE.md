@@ -47,7 +47,7 @@ Follow the steps below if you prefer to run services directly on your machine.
 
 ## Prerequisites
 
-- Node.js 18+ and npm
+- Node.js 20+ and npm (run `nvm use` to activate the pinned version in `.nvmrc`)
 - PostgreSQL 14+
 - Rust and Cargo (for smart contract)
 - Stellar CLI (`stellar`) — install via `cargo install --locked stellar-cli`
