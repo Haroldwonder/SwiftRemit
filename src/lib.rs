@@ -1376,8 +1376,7 @@ impl SwiftRemitContract {
         // volume, because that discount is not reproducible from the amount alone.
         // #1671: the protocol fee is frozen at creation too, so a later change to
         // `protocol_fee_bps` cannot alter what this remittance pays out.
-        let fee_breakdown = fee_service::breakdown_from_platform_fee(
-            &env,
+        let fee_breakdown = fee_service::breakdown_from_quoted_platform_fee(
             remittance.amount,
             remittance.fee,
             remittance.protocol_fee,
@@ -1665,8 +1664,7 @@ impl SwiftRemitContract {
         } else {
             // Honour the fee quoted at creation rather than re-pricing, and pay
             // the agent only the part of their net entitlement not already sent.
-            let fee_breakdown = fee_service::breakdown_from_platform_fee(
-                &env,
+            let fee_breakdown = fee_service::breakdown_from_quoted_platform_fee(
                 remittance.amount,
                 remittance.fee,
                 remittance.protocol_fee,
@@ -1677,12 +1675,25 @@ impl SwiftRemitContract {
                 .min(escrow_remaining);
             token_client.transfer(&env.current_contract_address(), &remittance.agent, &owed);
 
-            // What is left of the escrow after paying the agent is the platform fee.
+            // What is left of the escrow after paying the agent is the retained fee.
             let retained = escrow_remaining
                 .checked_sub(owed)
                 .ok_or(ContractError::Underflow)?;
-            if retained > 0 {
-                crate::fee_management::safe_add_accumulated_fee(&env, retained)?;
+
+            // #1631: Split the retained amount into the protocol fee (owed to the
+            // treasury) and the platform fee (accumulated for later withdrawal).
+            // The protocol fee is capped at what is actually retained so a partial
+            // payout can never over-draw the escrow.
+            let protocol_fee = fee_breakdown.protocol_fee.min(retained);
+            if protocol_fee > 0 {
+                let treasury = get_treasury(&env)?;
+                token_client.transfer(&env.current_contract_address(), &treasury, &protocol_fee);
+            }
+            let platform_fee = retained
+                .checked_sub(protocol_fee)
+                .ok_or(ContractError::Underflow)?;
+            if platform_fee > 0 {
+                crate::fee_management::safe_add_accumulated_fee(&env, platform_fee)?;
             }
             // SR-125 / #1630: completion bookkeeping (integrator accrual, volume
             // accounting, status transition, settlement hash, idempotency cleanup)
@@ -1827,8 +1838,7 @@ impl SwiftRemitContract {
         // would produce a different net_payout than what was escrowed if the
         // platform fee or strategy changed after creation, or if the original
         // remittance qualified for a sender-volume discount.
-        let fee_breakdown = fee_service::breakdown_from_platform_fee(
-            &env,
+        let fee_breakdown = fee_service::breakdown_from_quoted_platform_fee(
             remittance.amount,
             remittance.fee,
             remittance.protocol_fee,
