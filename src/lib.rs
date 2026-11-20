@@ -1159,6 +1159,12 @@ impl SwiftRemitContract {
         // Update counter once at the end
         set_remittance_counter(&env, counter);
 
+        // #1641: Keep the analytics counter in sync with the batch size so
+        // get_remittance_count() and health() report every created remittance.
+        for _ in 0..batch_size {
+            storage::increment_remittance_count(&env)?;
+        }
+
         Ok(remittance_ids)
     }
 
