@@ -1,8 +1,42 @@
 import { Router, Request, Response } from 'express';
+import { createHash } from 'crypto';
+import { getCurrencyCacheMaxAge } from '../config';
 import { currencyCodeSchema, countryCodeSchema } from '../schemas/requestValidation';
 import { sendInternalError } from '../middleware/errorHandler';
 
 const router = Router();
+
+/**
+ * #1878 — Build a strong, content-derived ETag for a response payload.
+ */
+function buildStrongETag(payload: unknown): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('base64url');
+  return `"${digest}"`;
+}
+
+/**
+ * #1878 — Send a cacheable JSON response with `Cache-Control` and a strong
+ * `ETag`, answering `304 Not Modified` when `If-None-Match` matches.
+ */
+function sendCacheableJson(req: Request, res: Response, payload: unknown): Response {
+  const etag = buildStrongETag(payload);
+  res.setHeader('Cache-Control', `public, max-age=${getCurrencyCacheMaxAge()}`);
+  res.setHeader('ETag', etag);
+
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch) {
+    const candidates = String(ifNoneMatch)
+      .split(',')
+      .map(tag => tag.trim().replace(/^W\//, ''));
+    if (candidates.includes(etag) || candidates.includes('*')) {
+      return res.status(304).end();
+    }
+  }
+
+  return res.json(payload);
+}
 
 /**
  * Default corridor limits. In production these would come from the smart
@@ -59,7 +93,7 @@ router.get('/', (req: Request, res: Response) => {
 
   const limits = { ...DEFAULT_LIMITS, ...(overrides[corridorKey] ?? {}) };
 
-  res.json({
+  return sendCacheableJson(req, res, {
     success: true,
     data: {
       asset,
@@ -111,7 +145,7 @@ router.get('/:currency/:country', (req: Request<{ currency: string; country: str
 
   const limits = { ...DEFAULT_LIMITS, ...(overrides[corridorKey] ?? {}) };
 
-  return res.json({
+  return sendCacheableJson(req, res, {
     success: true,
     data: {
       currency,

@@ -1,10 +1,44 @@
 import { Router, Request, Response } from 'express';
-import { getCurrencyConfigLoader } from '../config';
+import { createHash } from 'crypto';
+import { getCurrencyConfigLoader, getCurrencyCacheMaxAge } from '../config';
 import { getConversionRateService } from '../services/conversionRates';
 import { CurrencyResponse, ErrorResponse } from '../types';
 import { sendInternalError } from '../middleware/errorHandler';
 
 const router = Router();
+
+/**
+ * #1878 — Build a strong, content-derived ETag for a response payload.
+ * The payload is serialised with sorted keys so the digest is stable.
+ */
+function buildStrongETag(payload: unknown): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('base64url');
+  return `"${digest}"`;
+}
+
+/**
+ * #1878 — Send a cacheable JSON response with `Cache-Control` and a strong
+ * `ETag`, answering `304 Not Modified` when `If-None-Match` matches.
+ */
+function sendCacheableJson(req: Request, res: Response, payload: unknown): Response {
+  const etag = buildStrongETag(payload);
+  res.setHeader('Cache-Control', `public, max-age=${getCurrencyCacheMaxAge()}`);
+  res.setHeader('ETag', etag);
+
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch) {
+    const candidates = String(ifNoneMatch)
+      .split(',')
+      .map(tag => tag.trim().replace(/^W\//, ''));
+    if (candidates.includes(etag) || candidates.includes('*')) {
+      return res.status(304).end();
+    }
+  }
+
+  return res.json(payload);
+}
 
 // Reject requests where the path is just a trailing slash with no code
 // e.g. GET /api/currencies/ should not match the list route
@@ -82,10 +116,11 @@ router.get('/', (req: Request, res: Response) => {
       total: allCurrencies.length,
       limit,
       offset,
+      config_loaded_at: configLoader.getLoadedAt(),
       timestamp: new Date().toISOString(),
     };
 
-    res.json(response);
+    return sendCacheableJson(req, res, response);
   } catch (error) {
     return sendInternalError(req, res, error, 'CURRENCY_RETRIEVAL_ERROR');
   }
@@ -148,10 +183,11 @@ router.get('/:code', (req: Request, res: Response) => {
       success: true,
       data: [currency],
       count: 1,
+      config_loaded_at: configLoader.getLoadedAt(),
       timestamp: new Date().toISOString(),
     };
 
-    res.json(response);
+    return sendCacheableJson(req, res, response);
   } catch (error) {
     return sendInternalError(req, res, error, 'CURRENCY_RETRIEVAL_ERROR');
   }
