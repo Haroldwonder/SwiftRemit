@@ -173,6 +173,22 @@ pub const MAX_KYC_BATCH_SIZE: u32 = 50;
 /// Maximum page size accepted by the full-record remittance views (#1853).
 pub const MAX_REMITTANCE_PAGE_SIZE: u32 = 100;
 
+/// Emits `agent_suspended` when `agent`'s reputation is below the configured
+/// minimum threshold (#1636).
+///
+/// Must only be called from a state-changing path that returns `Ok`, so the
+/// event is not rolled back with the transaction.
+fn emit_agent_suspended_if_below_min(env: &Env, agent: &Address) {
+    let min_rep = storage::get_min_agent_reputation(env);
+    if min_rep == 0 {
+        return;
+    }
+    let rep = storage::compute_agent_reputation(&storage::get_agent_stats(env, agent));
+    if rep < min_rep {
+        events::emit_agent_suspended(env, agent.clone(), rep, min_rep);
+    }
+}
+
 fn enforce_daily_send_limit(
     env: &Env,
     sender: &Address,
@@ -679,8 +695,10 @@ impl SwiftRemitContract {
         if min_rep > 0 {
             let rep = storage::compute_agent_reputation(&storage::get_agent_stats(&env, &agent));
             if rep < min_rep {
-                // #833: emit agent_suspended event so off-chain monitors can react
-                events::emit_agent_suspended(&env, agent.clone(), rep, min_rep);
+                // #1636: do not emit here — this path returns Err and the event
+                // would be rolled back. Suspension is emitted from the successful
+                // state-changing paths (mark_failed / raise_dispute) and is
+                // observable via `is_agent_suspended`.
                 return Err(ContractError::BelowMinReputation);
             }
         }
@@ -959,7 +977,7 @@ impl SwiftRemitContract {
         if min_rep > 0 {
             let rep = storage::compute_agent_reputation(&storage::get_agent_stats(&env, &agent));
             if rep < min_rep {
-                events::emit_agent_suspended(&env, agent.clone(), rep, min_rep);
+                // #1636: no event on an error path (it would be rolled back).
                 return Err(ContractError::BelowMinReputation);
             }
         }
@@ -1578,6 +1596,9 @@ impl SwiftRemitContract {
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         emit_remittance_failed(&env, remittance_id, remittance.agent);
+        // #1636: emit suspension in this successful transaction when the agent's
+        // reputation has dropped below the configured minimum.
+        emit_agent_suspended_if_below_min(&env, &remittance.agent);
         Ok(())
     }
 
@@ -1614,6 +1635,9 @@ impl SwiftRemitContract {
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         emit_dispute_raised(&env, remittance_id, remittance.sender, evidence_hash);
+        // #1636: emit suspension in this successful transaction when the agent's
+        // reputation has dropped below the configured minimum.
+        emit_agent_suspended_if_below_min(&env, &remittance.agent);
         Ok(())
     }
 
@@ -1927,6 +1951,18 @@ impl SwiftRemitContract {
     pub fn get_agent_reputation(env: Env, agent: Address) -> u32 {
         let stats = crate::storage::get_agent_stats(&env, &agent);
         crate::storage::compute_agent_reputation(&stats)
+    }
+
+    /// Returns `true` when the agent's reputation is below the configured
+    /// minimum threshold, i.e. the agent is suspended from new remittances
+    /// (#1636). Monitors can poll this view instead of relying on an event.
+    pub fn is_agent_suspended(env: Env, agent: Address) -> bool {
+        let min_rep = storage::get_min_agent_reputation(&env);
+        if min_rep == 0 {
+            return false;
+        }
+        let stats = crate::storage::get_agent_stats(&env, &agent);
+        crate::storage::compute_agent_reputation(&stats) < min_rep
     }
 
     pub fn finalize_remittance(
