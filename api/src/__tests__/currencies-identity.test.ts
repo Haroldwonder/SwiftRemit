@@ -36,6 +36,24 @@ describe('same-currency conversion rates', () => {
     expect(getRate).not.toHaveBeenCalled();
   });
 
+  it('serves a URL-encoded multiword alias even when the rate provider is offline', async () => {
+    // Express decodes the path parameter; the two aliases resolve to USD.
+    const getRate = vi.spyOn(getConversionRateService(), 'getRate').mockRejectedValue(
+      new Error('rate provider offline'),
+    );
+    const response = await request(createApp()).get('/api/currencies/US%20DOLLARS/rates/DOLLAR');
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data).toMatchObject({
+      from: 'USD',
+      to: 'USD',
+      rate: 1,
+      provider: 'identity',
+    });
+    expect(getRate).not.toHaveBeenCalled();
+  });
+
   it('still uses the conversion service for different currencies', async () => {
     const rate = { from: 'USD', to: 'EUR', rate: 0.92, fetched_at: new Date().toISOString() };
     const getRate = vi.spyOn(getConversionRateService(), 'getRate').mockResolvedValue(rate);
