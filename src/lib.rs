@@ -1046,6 +1046,8 @@ impl SwiftRemitContract {
     /// * `ContractError::AgentNotRegistered` - Any agent is not registered
     /// * `ContractError::UserBlacklisted` - Sender is blacklisted
     /// * `ContractError::DailySendLimitExceeded` - Total amount exceeds daily limit
+    /// * `ContractError::TokenNotWhitelisted` - Settlement token is not whitelisted
+    /// * `ContractError::SuspiciousAsset` - Settlement token is flagged as suspicious
     /// * `ContractError::Overflow` - Arithmetic overflow in amount calculation
     ///
     /// # Authorization
@@ -1086,8 +1088,21 @@ impl SwiftRemitContract {
         let default_country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
         enforce_daily_send_limit(&env, &sender, &default_currency, &default_country, total_amount)?;
 
-        // Transfer total amount in a single token transfer
+        // #1642: Parity with create_remittance — the settlement token must still be
+        // whitelisted and must not be flagged as suspicious before any funds move.
         let usdc_token = get_usdc_token(&env)?;
+        if !is_token_whitelisted(&env, &usdc_token) {
+            return Err(ContractError::TokenNotWhitelisted);
+        }
+        if let Some((asset_code, issuer)) = storage::get_token_asset_info(&env, &usdc_token) {
+            if let Ok(verification) = get_asset_verification(&env, &asset_code, &issuer) {
+                if verification.status == VerificationStatus::Suspicious {
+                    return Err(ContractError::SuspiciousAsset);
+                }
+            }
+        }
+
+        // Transfer total amount in a single token transfer
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&sender, &env.current_contract_address(), &total_amount);
 
