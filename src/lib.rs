@@ -1774,6 +1774,9 @@ impl SwiftRemitContract {
     /// Remittances configured to require proof are rejected because this endpoint
     /// does not accept proof data.
     ///
+    /// # Errors
+    /// * `Err(ContractError::SettlementExpired)` - Current time exceeds expiry timestamp
+    ///
     /// # Authorization
     /// Requires authentication from the agent assigned to the remittance.
     pub fn confirm_partial_payout(
@@ -1789,6 +1792,9 @@ impl SwiftRemitContract {
 
         let mut remittance = get_remittance(&env, remittance_id)?;
         crate::storage::require_agent_authorized(&env, &remittance.agent)?;
+
+        // #1627: Reject partial payouts on expired remittances, matching confirm_payout.
+        crate::validation::validate_settlement_not_expired(&env, remittance.expiry)?;
 
         if remittance.status != RemittanceStatus::Pending
             && remittance.status != RemittanceStatus::Processing
