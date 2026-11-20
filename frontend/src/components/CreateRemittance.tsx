@@ -210,7 +210,7 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTo
 
         <div className="form-group">
           <label>
-            Memo <span style={{ fontWeight: 'normal', color: '#888' }}>(optional)</span>:
+            Memo <span className="label-hint">(optional)</span>:
           </label>
           <input
             type="text"
@@ -219,7 +219,7 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTo
             placeholder="e.g. Invoice #1234"
             maxLength={100}
           />
-          <small style={{ color: '#888' }}>{memo.length}/100</small>
+          <small className="field-hint">{memo.length}/100</small>
         </div>
 
         <button type="submit" disabled={loading} className="btn-primary">
