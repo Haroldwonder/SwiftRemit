@@ -27,6 +27,11 @@ import crypto from 'crypto';
 
 const logger = createLogger('scheduler');
 
+// All cron expressions are evaluated in this timezone so daily jobs do not
+// depend on the host/container local time or DST transitions.
+const CRON_TIMEZONE = process.env.CRON_TIMEZONE || 'UTC';
+const cronOptions = { timezone: CRON_TIMEZONE };
+
 const verifier = new AssetVerifier();
 const kycService = new KycService();
 const pool = getPool();
@@ -45,7 +50,7 @@ export async function startBackgroundJobs() {
   await sep24Service.initialize();
 
   // Run every 6 hours
-  cron.schedule('0 */6 * * *', async () => {
+  cron.schedule('0 */6 * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'revalidate-stale-assets', async () => {
       await tracedJob('revalidate-stale-assets', () =>
         runTracked(pool, 'revalidate-stale-assets', revalidateStaleAssets)
@@ -55,7 +60,7 @@ export async function startBackgroundJobs() {
   });
 
   // Run KYC polling every 30 minutes
-  cron.schedule('*/30 * * * *', async () => {
+  cron.schedule('*/30 * * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'poll-kyc-statuses', async () => {
       await tracedJob('poll-kyc-statuses', () =>
         runTracked(pool, 'poll-kyc-statuses', pollKycStatuses)
@@ -65,7 +70,7 @@ export async function startBackgroundJobs() {
   });
 
   // Run SEP-24 transaction polling every 2 minutes
-  cron.schedule('*/2 * * * *', async () => {
+  cron.schedule('*/2 * * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'poll-sep24-transactions', async () => {
       await tracedJob('poll-sep24-transactions', () =>
         runTracked(pool, 'poll-sep24-transactions', pollSep24Transactions)
@@ -75,7 +80,7 @@ export async function startBackgroundJobs() {
   });
 
   // Extend contract storage TTLs daily to prevent data loss
-  cron.schedule('0 0 * * *', async () => {
+  cron.schedule('0 0 * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'extend-contract-storage-ttl', async () => {
       await tracedJob('extend-contract-storage-ttl', () =>
         runTracked(pool, 'extend-contract-storage-ttl', extendContractStorageTtl)
@@ -85,7 +90,7 @@ export async function startBackgroundJobs() {
   });
 
   // Send KYC expiry warnings daily at 08:00 UTC
-  cron.schedule('0 8 * * *', async () => {
+  cron.schedule('0 8 * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'notify-kyc-expiries', async () => {
       await tracedJob('notify-kyc-expiries', () =>
         runTracked(pool, 'notify-kyc-expiries', notifyKycExpiries)
@@ -95,7 +100,7 @@ export async function startBackgroundJobs() {
   });
 
   // Run anchor health checks every 5 minutes
-  cron.schedule('*/5 * * * *', async () => {
+  cron.schedule('*/5 * * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'check-anchor-health', async () => {
       await tracedJob('check-anchor-health', () =>
         runTracked(pool, 'check-anchor-health', checkAnchorHealth)
@@ -108,7 +113,7 @@ export async function startBackgroundJobs() {
   // wall-clock retry budget (WEBHOOK_INLINE_MAX_WALL_CLOCK_MS) was exhausted,
   // so a slow/down subscriber no longer needs its retries to happen inline
   // inside the request that triggered dispatch().
-  cron.schedule('*/2 * * * *', async () => {
+  cron.schedule('*/2 * * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'retry-pending-webhook-deliveries', async () => {
       await tracedJob('retry-pending-webhook-deliveries', () =>
         runTracked(pool, 'retry-pending-webhook-deliveries', retryPendingWebhookDeliveries)
@@ -118,7 +123,7 @@ export async function startBackgroundJobs() {
   });
 
   // Poll Expo delivery receipts and prune permanently-dead push tokens every 15 minutes
-  cron.schedule('*/15 * * * *', async () => {
+  cron.schedule('*/15 * * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'prune-dead-push-tokens', async () => {
       await tracedJob('prune-dead-push-tokens', () =>
         runTracked(pool, 'prune-dead-push-tokens', pruneDeadPushTokens)
@@ -128,7 +133,7 @@ export async function startBackgroundJobs() {
   });
 
   // Retire expired webhook secrets hourly
-  cron.schedule('0 * * * *', async () => {
+  cron.schedule('0 * * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'retire-webhook-secrets', async () => {
       await tracedJob('retire-webhook-secrets', () =>
         runTracked(pool, 'retire-webhook-secrets', retireWebhookSecrets)
@@ -141,7 +146,7 @@ export async function startBackgroundJobs() {
 
   // Rescreen subjects whose periodic sanctions/PEP screening is due — hourly,
   // so a newly published list designation is picked up the same day.
-  cron.schedule('15 * * * *', async () => {
+  cron.schedule('15 * * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'aml-periodic-rescreening', async () => {
       await tracedJob('aml-periodic-rescreening', () =>
         runTracked(pool, 'aml-periodic-rescreening', runPeriodicRescreening)
@@ -151,7 +156,7 @@ export async function startBackgroundJobs() {
   });
 
   // Retry pending / failed travel-rule transmissions every 10 minutes.
-  cron.schedule('*/10 * * * *', async () => {
+  cron.schedule('*/10 * * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'aml-travel-rule-transmit', async () => {
       await tracedJob('aml-travel-rule-transmit', () =>
         runTracked(pool, 'aml-travel-rule-transmit', transmitTravelRulePending)
@@ -161,7 +166,7 @@ export async function startBackgroundJobs() {
   });
 
   // Enforce the data-retention schedule nightly at 03:30 UTC.
-  cron.schedule('30 3 * * *', async () => {
+  cron.schedule('30 3 * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'aml-data-retention', async () => {
       await tracedJob('aml-data-retention', () =>
         runTracked(pool, 'aml-data-retention', enforceDataRetention)
@@ -175,14 +180,14 @@ export async function startBackgroundJobs() {
   // call that itself never received a live pool, so audit-log IP
   // anonymization, transient KYC upload purge, and revoked-consent purge
   // never executed in any environment.
-  cron.schedule('45 3 * * *', async () => {
+  cron.schedule('45 3 * * *', cronOptions, async () => {
     const ran = await withAdvisoryLock(pool, 'privacy-data-purge', async () => {
       await runTracked(pool, 'privacy-data-purge', purgeExpiredData);
     });
     if (!ran) console.log('privacy-data-purge: skipped (another instance holds the lock)');
   });
 
-  console.log('Background jobs scheduled');
+  console.log(`Background jobs scheduled (cron timezone: ${CRON_TIMEZONE})`);
 }
 
 // ─── AML/CTF job bodies (SR-112) ────────────────────────────────────────────
