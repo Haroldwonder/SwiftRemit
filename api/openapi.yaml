@@ -447,7 +447,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/AgentResponse'
         '400':
-          description: Invalid payload
+          description: >
+            Invalid payload. Returns code `FIELD_TOO_LONG` when `name` exceeds
+            100 characters or `payout_address` exceeds 256 characters.
           content:
             application/json:
               schema:
@@ -1221,8 +1223,12 @@ components:
           description: Agent Stellar public key
         payout_address:
           type: string
+          maxLength: 256
+          description: Payout address for the agent's rail (max 256 characters)
         name:
           type: string
+          maxLength: 100
+          description: Agent display name (max 100 characters)
 
     AgentResponse:
       type: object
