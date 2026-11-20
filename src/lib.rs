@@ -703,7 +703,8 @@ impl SwiftRemitContract {
 
         sender.require_auth();
 
-        // Replay existing requests before enforcing or recording any usage limits.
+        // #1634: Replay existing requests immediately after auth, before any limit
+        // state (rate limit, daily limit, corridor volume) is enforced or mutated.
         if let Some(ref key) = idempotency_key {
             if let Some(record) = storage::get_idempotency_record(&env, key) {
                 let request_hash =
