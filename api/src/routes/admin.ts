@@ -19,6 +19,23 @@ const CSV_EXPORT_CURSOR = 'swiftremit_remittance_export_cursor';
 /** Number of rows pulled from the export cursor per round-trip. */
 const CSV_EXPORT_BATCH_SIZE = 500;
 
+/** Default maximum span (in days) allowed for a CSV export date range. */
+const DEFAULT_CSV_EXPORT_MAX_RANGE_DAYS = 366;
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Resolve the maximum allowed export range in days from
+ * CSV_EXPORT_MAX_RANGE_DAYS, falling back to the default when unset/invalid.
+ */
+function getCsvExportMaxRangeDays(): number {
+  const raw = process.env.CSV_EXPORT_MAX_RANGE_DAYS;
+  if (!raw || raw.trim() === '') return DEFAULT_CSV_EXPORT_MAX_RANGE_DAYS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_CSV_EXPORT_MAX_RANGE_DAYS;
+  return Math.floor(parsed);
+}
+
 /**
  * Optional WASM hash allowlist.  When WASM_HASH_ALLOWLIST is set in the
  * environment it must be a comma-separated list of 64-char hex strings.
@@ -595,6 +612,11 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
    *           text/csv:
    *             schema:
    *               type: string
+   *       400:
+   *         description: >
+   *           Invalid query parameters. `INVALID_DATE_RANGE` is returned when
+   *           `from` is not before `to`, or when the range exceeds the
+   *           configured maximum (CSV_EXPORT_MAX_RANGE_DAYS, default 366 days).
    *       401:
    *         description: Unauthorized
    */
@@ -619,6 +641,22 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
       toDate = new Date(to);
       if (isNaN(toDate.getTime())) {
         return sendError(res, 400, 'Invalid to date format', 'INVALID_TO_DATE');
+      }
+    }
+
+    if (fromDate && toDate) {
+      if (fromDate.getTime() >= toDate.getTime()) {
+        return sendError(res, 400, "'from' must be before 'to'", 'INVALID_DATE_RANGE');
+      }
+      const maxRangeDays = getCsvExportMaxRangeDays();
+      const rangeDays = (toDate.getTime() - fromDate.getTime()) / MS_PER_DAY;
+      if (rangeDays > maxRangeDays) {
+        return sendError(
+          res,
+          400,
+          `Date range must not exceed ${maxRangeDays} days`,
+          'INVALID_DATE_RANGE'
+        );
       }
     }
 
