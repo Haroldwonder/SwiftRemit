@@ -340,4 +340,10 @@ pub enum ContractError {
     /// the SEP-41 interface (e.g. `decimals()` / `symbol()`) fails, meaning
     /// the address is not a valid token contract.
     TokenNotSep41 = 86,
+
+    /// Remittance expiry timestamp is not in the future.
+    ///
+    /// Returned when a create path is given an `expiry` that is less than or
+    /// equal to the current ledger timestamp (#1633).
+    InvalidExpiry = 87,
 }

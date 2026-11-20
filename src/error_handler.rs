@@ -612,6 +612,13 @@ impl ErrorHandler {
                 ErrorSeverity::Medium,
             ),
 
+            ContractError::InvalidExpiry => (
+                87,
+                SorobanString::from_str(env, "Remittance expiry must be in the future"),
+                ErrorCategory::Validation,
+                ErrorSeverity::Low,
+            ),
+
             _ => (
                 999,
                 SorobanString::from_str(env, "Unknown error"),

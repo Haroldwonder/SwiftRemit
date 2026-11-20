@@ -671,6 +671,8 @@ impl SwiftRemitContract {
         // #1264: Block new escrow creation while the circuit-breaker is active.
         validate_not_paused(&env)?;
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
+        // #1633: Reject an expiry that is already in the past (or now).
+        validate_expiry(&env, expiry)?;
 
         // Enforce minimum agent reputation threshold (#591)
         let min_rep = storage::get_min_agent_reputation(&env);
@@ -929,6 +931,8 @@ impl SwiftRemitContract {
         // #1264: Block new corridor-remittance creation while the circuit-breaker is active.
         validate_not_paused(&env)?;
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
+        // #1633: Reject an expiry that is already in the past (or now).
+        validate_expiry(&env, expiry)?;
 
         // SR-128: Enforce minimum-agent-reputation gate (parity with create_remittance).
         let min_rep = storage::get_min_agent_reputation(&env);
@@ -1075,6 +1079,8 @@ impl SwiftRemitContract {
         for i in 0..batch_size {
             let entry = entries.get_unchecked(i);
             validate_create_remittance_request(&env, &sender, &entry.agent, entry.amount)?;
+            // #1633: Reject any entry whose expiry is already in the past (or now).
+            validate_expiry(&env, entry.expiry)?;
             total_amount = total_amount
                 .checked_add(entry.amount)
                 .ok_or(ContractError::Overflow)?;
