@@ -5,6 +5,8 @@
  * GET  /api/agents                     - List agents (admin only; cursor pagination + status filter)
  * GET  /api/agents/:id                 - Get agent profile (auth required; payout_address restricted to owner/admin)
  * PUT  /api/agents/:id/payout-address  - Update payout address (admin API key or admin JWT required)
+ * POST /api/agents/:id/suspend         - Suspend an agent (admin only; Issue #1871)
+ * POST /api/agents/:id/reactivate      - Reactivate an agent (admin only; Issue #1871)
  */
 
 import { Router, Request, Response } from 'express';
@@ -96,6 +98,36 @@ export interface PayoutAddressAuditLogger {
   record(entry: PayoutAddressAuditEntry): Promise<void> | void;
 }
 
+/** A single agent status change record (Issue #1871). */
+export interface AgentStatusAuditEntry {
+  actor: string;
+  agentId: string;
+  oldStatus: AgentStatus;
+  newStatus: AgentStatus;
+  timestamp: string;
+}
+
+/** Sink for agent status change audit entries. */
+export interface AgentStatusAuditLogger {
+  record(entry: AgentStatusAuditEntry): Promise<void> | void;
+}
+
+/**
+ * Default status audit logger.  Emits a structured log line so the change is
+ * recorded even when no persistent audit store is injected.
+ */
+export const defaultAgentStatusAuditLogger: AgentStatusAuditLogger = {
+  record(entry: AgentStatusAuditEntry): void {
+    logger.info('agent.status.updated', {
+      actor: entry.actor,
+      agentId: entry.agentId,
+      oldStatus: entry.oldStatus,
+      newStatus: entry.newStatus,
+      timestamp: entry.timestamp,
+    });
+  },
+};
+
 /**
  * Default audit logger.  Emits a structured log line so the change is
  * recorded even when no persistent audit store is injected.
@@ -132,6 +164,23 @@ function isAdminAuthorized(req: Request): boolean {
   return result.ok && (result.auth.role === 'agent' || result.auth.role === 'admin');
 }
 
+/**
+ * Strict admin authorisation for status changes (Issue #1871).
+ *
+ * Unlike `isAdminAuthorized`, tokens carrying only the `agent` role are
+ * rejected — suspending or reactivating an agent is an admin-only action.
+ */
+function isStrictAdminAuthorized(req: Request): boolean {
+  const adminKey = process.env.ADMIN_API_KEY;
+  if (adminKey && req.headers['x-api-key'] === adminKey) return true;
+
+  const token = extractBearerToken(req);
+  if (!token) return false;
+
+  const result = verifyAccessToken(token);
+  return result.ok && result.auth.role === 'admin';
+}
+
 export interface Agent {
   id: string;
   stellar_address: string;
@@ -157,6 +206,8 @@ export interface AgentStore {
   getById(id: string): Promise<Agent | null>;
   create(agent: Agent): Promise<Agent>;
   updatePayoutAddress(id: string, payoutAddress: string, updatedAt: string): Promise<Agent | null>;
+  /** Update the agent status (Issue #1871). */
+  updateStatus(id: string, status: AgentStatus, updatedAt: string): Promise<Agent | null>;
   exists(id: string): Promise<boolean>;
   /**
    * List agents ordered by id (keyset pagination), optionally filtered by
@@ -190,6 +241,14 @@ export class InMemoryAgentStore implements AgentStore {
 
   async exists(id: string): Promise<boolean> {
     return this.data.has(id);
+  }
+
+  async updateStatus(id: string, status: AgentStatus, updatedAt: string): Promise<Agent | null> {
+    const agent = this.data.get(id);
+    if (!agent) return null;
+    const updated = { ...agent, status, updated_at: updatedAt };
+    this.data.set(id, updated);
+    return updated;
   }
 
   async list(options: { status?: AgentStatus; afterId?: string; limit: number }): Promise<Agent[]> {
@@ -300,6 +359,17 @@ export class PostgresAgentStore implements AgentStore {
     return result.rows[0]?.exists ?? false;
   }
 
+  async updateStatus(id: string, status: AgentStatus, updatedAt: string): Promise<Agent | null> {
+    const result = await this.pool.query<AgentRow>(
+      `UPDATE api_agents
+            SET status = $1, updated_at = $2
+          WHERE id = $3
+          RETURNING id, stellar_address, payout_address, name, status, created_at, updated_at`,
+      [status, updatedAt, id],
+    );
+    return result.rows[0] ? mapRow(result.rows[0]) : null;
+  }
+
   async list(options: { status?: AgentStatus; afterId?: string; limit: number }): Promise<Agent[]> {
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -343,6 +413,17 @@ export interface AgentsRouterOptions {
    * logger; production can inject a persistent `AdminAuditLogService`.
    */
   auditLogger?: PayoutAddressAuditLogger;
+  /**
+   * Audit sink for agent status changes (suspend / reactivate).  Defaults to
+   * the structured logger; production injects a persistent sink that writes
+   * to `admin_audit_log`.
+   */
+  statusAuditLogger?: AgentStatusAuditLogger;
+  /**
+   * Optional hook that queues the on-chain `remove_agent` call through the
+   * admin confirmation flow.  When omitted, no on-chain action is queued.
+   */
+  queueRemoveAgent?: (agent: Agent, actor: string) => Promise<{ actionId: string } | void>;
 }
 
 // ── Singleton default store (tests that import `agentStore` directly) ─────────
@@ -364,6 +445,8 @@ export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
   const store: AgentStore = options.store ?? agentStore;
   const auditLogger: PayoutAddressAuditLogger =
     options.auditLogger ?? defaultPayoutAddressAuditLogger;
+  const statusAuditLogger: AgentStatusAuditLogger =
+    options.statusAuditLogger ?? defaultAgentStatusAuditLogger;
   const router = Router();
 
   /**
@@ -551,6 +634,101 @@ export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
       return sendInternalError(res, err, 'Failed to update payout address', 'STORE_ERROR');
     }
   });
+
+  /**
+   * Shared handler for POST /api/agents/:id/suspend and /reactivate
+   * (Issue #1871).  Admin-only; writes an audit entry and optionally queues
+   * the on-chain `remove_agent` call via the admin confirmation flow.
+   */
+  async function changeStatus(
+    req: Request<{ id: string }>,
+    res: Response,
+    newStatus: AgentStatus,
+  ): Promise<Response> {
+    if (!isStrictAdminAuthorized(req)) {
+      return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
+    }
+
+    try {
+      const agent = await store.getById(req.params.id);
+      if (!agent) {
+        return sendError(res, 404, 'Agent not found', 'AGENT_NOT_FOUND');
+      }
+
+      if (agent.status === newStatus) {
+        return sendError(
+          res,
+          409,
+          `Agent is already ${newStatus}`,
+          'AGENT_STATUS_UNCHANGED',
+        );
+      }
+
+      const now = timestamp();
+      const updated = await store.updateStatus(agent.id, newStatus, now);
+      if (!updated) {
+        return sendError(res, 404, 'Agent not found', 'AGENT_NOT_FOUND');
+      }
+
+      const actor = resolveActor(req);
+
+      // Audit failures must not silently swallow the status change.
+      try {
+        await statusAuditLogger.record({
+          actor,
+          agentId: agent.id,
+          oldStatus: agent.status,
+          newStatus,
+          timestamp: now,
+        });
+      } catch (auditErr) {
+        logger.error('agent.status.audit_failed', {
+          agentId: agent.id,
+          error: auditErr instanceof Error ? auditErr.message : String(auditErr),
+        });
+      }
+
+      // Suspension revokes on-chain authorisation; queue the remove_agent
+      // call through the admin confirmation flow when a hook is configured.
+      let pendingActionId: string | undefined;
+      if (newStatus === 'suspended' && options.queueRemoveAgent) {
+        try {
+          const queued = await options.queueRemoveAgent(updated, actor);
+          pendingActionId = queued?.actionId;
+        } catch (queueErr) {
+          logger.error('agent.status.remove_agent_queue_failed', {
+            agentId: agent.id,
+            error: queueErr instanceof Error ? queueErr.message : String(queueErr),
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        data: updated,
+        ...(pendingActionId ? { pending_action_id: pendingActionId } : {}),
+        timestamp: timestamp(),
+      });
+    } catch (err) {
+      return sendInternalError(res, err, 'Failed to update agent status', 'STORE_ERROR');
+    }
+  }
+
+  /**
+   * POST /api/agents/:id/suspend
+   * Suspend an agent. Requires admin API key or admin JWT.
+   */
+  router.post('/:id/suspend', (req: Request<{ id: string }>, res: Response) =>
+    changeStatus(req, res, 'suspended'),
+  );
+
+  /**
+   * POST /api/agents/:id/reactivate
+   * Reactivate a suspended agent. Requires admin API key or admin JWT.
+   */
+  router.post('/:id/reactivate', (req: Request<{ id: string }>, res: Response) =>
+    changeStatus(req, res, 'active'),
+  );
 
   return router;
 }
