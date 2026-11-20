@@ -2079,7 +2079,10 @@ impl SwiftRemitContract {
                 continue;
             }
 
-            let is_expired = match remittance.expiry {
+            // #1632: honour the stored `expires_at` (from remittance_expiry_window)
+            // as well as the optional settlement expiry.
+            let effective_expiry = effective_expiry(remittance.expiry, remittance.expires_at);
+            let is_expired = match effective_expiry {
                 Some(expiry) => now > expiry,
                 None => false,
             };
@@ -2129,6 +2132,16 @@ impl SwiftRemitContract {
             if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
                 storage::remove_idempotency_record(&env, &idem_key);
             }
+
+            // #1632: report the expiry that was actually enforced.
+            emit_remittance_expired(
+                &env,
+                remittance_id,
+                remittance.sender.clone(),
+                usdc_token.clone(),
+                remittance.amount,
+                effective_expiry.unwrap_or(now),
+            );
 
             processed_ids.push_back(remittance_id);
         }
