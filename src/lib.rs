@@ -683,7 +683,10 @@ impl SwiftRemitContract {
             }
         }
 
-        let token_address = token.unwrap_or_else(|| get_usdc_token(&env).unwrap());
+        let token_address = match token {
+            Some(addr) => addr,
+            None => get_usdc_token(&env)?,
+        };
         if !is_token_whitelisted(&env, &token_address) {
             return Err(ContractError::TokenNotWhitelisted);
         }
@@ -1044,6 +1047,7 @@ impl SwiftRemitContract {
     /// * `ContractError::InvalidBatchSize` - Batch is empty or exceeds MAX_BATCH_SIZE (100)
     /// * `ContractError::InvalidAmount` - Any entry has zero or negative amount
     /// * `ContractError::AgentNotRegistered` - Any agent is not registered
+    /// * `ContractError::BelowMinReputation` - Any agent's reputation is below the minimum threshold
     /// * `ContractError::UserBlacklisted` - Sender is blacklisted
     /// * `ContractError::DailySendLimitExceeded` - Total amount exceeds daily limit
     /// * `ContractError::Overflow` - Arithmetic overflow in amount calculation
@@ -1070,11 +1074,33 @@ impl SwiftRemitContract {
 
         sender.require_auth();
 
+        // #1638: Apply abuse-protection sliding-window rate limit and cooldown for
+        // Transfer, weighted by the number of entries in the batch, so a batch
+        // cannot bypass the per-action budget enforced by `create_remittance`.
+        abuse_protection::check_rate_limit_weighted(
+            &env,
+            &sender,
+            ActionType::Transfer,
+            batch_size,
+        )?;
+        check_cooldown(&env, &sender, ActionType::Transfer)?;
+
         // Validate all entries and accumulate total before any state changes
         let mut total_amount: i128 = 0;
+        // #1640: Enforce minimum-agent-reputation gate per entry (parity with
+        // create_remittance and create_remittance_with_corridor).
+        let min_rep = storage::get_min_agent_reputation(&env);
         for i in 0..batch_size {
             let entry = entries.get_unchecked(i);
             validate_create_remittance_request(&env, &sender, &entry.agent, entry.amount)?;
+            if min_rep > 0 {
+                let rep =
+                    storage::compute_agent_reputation(&storage::get_agent_stats(&env, &entry.agent));
+                if rep < min_rep {
+                    events::emit_agent_suspended(&env, entry.agent.clone(), rep, min_rep);
+                    return Err(ContractError::BelowMinReputation);
+                }
+            }
             total_amount = total_amount
                 .checked_add(entry.amount)
                 .ok_or(ContractError::Overflow)?;
@@ -1086,10 +1112,22 @@ impl SwiftRemitContract {
         let default_country = String::from_str(&env, DEFAULT_DAILY_LIMIT_COUNTRY);
         enforce_daily_send_limit(&env, &sender, &default_currency, &default_country, total_amount)?;
 
+        // #1639: Enforce the corridor volume cap once for the whole batch so it
+        // cannot be bypassed by splitting volume across batched entries.
+        storage::check_and_increment_corridor_volume(
+            &env,
+            &default_currency,
+            &default_country,
+            total_amount,
+        )?;
+
         // Transfer total amount in a single token transfer
         let usdc_token = get_usdc_token(&env)?;
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&sender, &env.current_contract_address(), &total_amount);
+
+        // #1638: Record the Transfer action for cooldown tracking (only after funds locked).
+        record_action(&env, &sender, ActionType::Transfer);
 
         // Create all remittances
         let mut remittance_ids = Vec::new(&env);
