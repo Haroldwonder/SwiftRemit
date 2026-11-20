@@ -16,6 +16,7 @@ import { ApiError } from './errorHandler';
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 100;
+export const MAX_CURSOR_LENGTH = 256;
 
 export interface PaginationParams {
   cursor?: string;
@@ -32,10 +33,32 @@ export interface PaginatedResponse<T> {
 /**
  * Extract and validate pagination params from query string.
  * Throws a 400 INVALID_LIMIT ApiError for non-integer or non-positive limits.
+ * Throws a 400 INVALID_CURSOR ApiError for non-string cursors (e.g. repeated
+ * query params yielding an array) or cursors longer than MAX_CURSOR_LENGTH.
  * Clamps page_size to MAX_PAGE_SIZE.
  */
 export function parsePaginationParams(req: Request): PaginationParams {
-  const cursor = req.query.cursor as string | undefined;
+  const rawCursor = req.query.cursor;
+  let cursor: string | undefined;
+
+  if (rawCursor !== undefined && rawCursor !== null && rawCursor !== '') {
+    if (typeof rawCursor !== 'string') {
+      throw new ApiError(
+        400,
+        'INVALID_CURSOR',
+        '`cursor` must be a single string value',
+      );
+    }
+    if (rawCursor.length > MAX_CURSOR_LENGTH) {
+      throw new ApiError(
+        400,
+        'INVALID_CURSOR',
+        `\`cursor\` must not exceed ${MAX_CURSOR_LENGTH} characters`,
+      );
+    }
+    cursor = rawCursor;
+  }
+
   const rawLimit = req.query.limit;
 
   let limit = DEFAULT_PAGE_SIZE;

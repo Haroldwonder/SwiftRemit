@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePaginationParams, buildCursorEnvelope, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from './paginate';
+import { parsePaginationParams, buildCursorEnvelope, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, MAX_CURSOR_LENGTH } from './paginate';
 
 describe('parsePaginationParams', () => {
   const mockReq = (query: Record<string, any>) => ({ query } as any);
@@ -43,6 +43,27 @@ describe('parsePaginationParams', () => {
     expect(() => parsePaginationParams(mockReq({ limit: 'abc' }))).toThrowError(
       expect.objectContaining({ statusCode: 400, code: 'INVALID_LIMIT' }),
     );
+  });
+
+  it('rejects non-string cursor (repeated query params)', () => {
+    expect(() => parsePaginationParams(mockReq({ cursor: ['a', 'b'] }))).toThrowError(
+      expect.objectContaining({ statusCode: 400, code: 'INVALID_CURSOR' }),
+    );
+  });
+
+  it('rejects cursor exceeding MAX_CURSOR_LENGTH', () => {
+    expect(() =>
+      parsePaginationParams(mockReq({ cursor: 'x'.repeat(MAX_CURSOR_LENGTH + 1) })),
+    ).toThrowError(expect.objectContaining({ statusCode: 400, code: 'INVALID_CURSOR' }));
+  });
+
+  it('accepts cursor at MAX_CURSOR_LENGTH', () => {
+    const cursor = 'x'.repeat(MAX_CURSOR_LENGTH);
+    expect(parsePaginationParams(mockReq({ cursor })).cursor).toBe(cursor);
+  });
+
+  it('treats empty cursor as absent', () => {
+    expect(parsePaginationParams(mockReq({ cursor: '' })).cursor).toBeUndefined();
   });
 });
 
