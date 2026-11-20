@@ -1073,6 +1073,17 @@ impl SwiftRemitContract {
 
         sender.require_auth();
 
+        // #1638: Apply abuse-protection sliding-window rate limit and cooldown for
+        // Transfer, weighted by the number of entries in the batch, so a batch
+        // cannot bypass the per-action budget enforced by `create_remittance`.
+        abuse_protection::check_rate_limit_weighted(
+            &env,
+            &sender,
+            ActionType::Transfer,
+            batch_size,
+        )?;
+        check_cooldown(&env, &sender, ActionType::Transfer)?;
+
         // Validate all entries and accumulate total before any state changes
         let mut total_amount: i128 = 0;
         for i in 0..batch_size {
@@ -1093,6 +1104,9 @@ impl SwiftRemitContract {
         let usdc_token = get_usdc_token(&env)?;
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&sender, &env.current_contract_address(), &total_amount);
+
+        // #1638: Record the Transfer action for cooldown tracking (only after funds locked).
+        record_action(&env, &sender, ActionType::Transfer);
 
         // Create all remittances
         let mut remittance_ids = Vec::new(&env);

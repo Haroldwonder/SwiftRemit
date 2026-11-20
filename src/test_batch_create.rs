@@ -110,8 +110,8 @@ mod tests {
     };
 
     use crate::{
-        BatchCreateEntry, ContractError, RemittanceStatus, SwiftRemitContract,
-        SwiftRemitContractClient,
+        config::MAX_TRANSFERS_PER_WINDOW, BatchCreateEntry, ContractError, RemittanceStatus,
+        SwiftRemitContract, SwiftRemitContractClient,
     };
 
     fn setup(env: &Env) -> (SwiftRemitContractClient, Address, Address) {
@@ -377,5 +377,71 @@ mod tests {
 
         // Sanity: the event data round-trips through the SDK's value type.
         let _: soroban_sdk::Val = 0u32.into_val(&env);
+    }
+
+    /// Issue #1638: `batch_create_remittances` must charge the abuse-protection
+    /// sliding-window rate limit by the number of entries in the batch, so a
+    /// batch cannot bypass the per-action budget enforced by `create_remittance`.
+    #[test]
+    fn test_batch_create_enforces_weighted_rate_limit() {
+        let env = Env::default();
+        let (contract, _admin, agent) = setup(&env);
+        let sender = Address::generate(&env);
+
+        let mut entries = Vec::new(&env);
+        for _ in 0..MAX_TRANSFERS_PER_WINDOW {
+            entries.push_back(BatchCreateEntry {
+                agent: agent.clone(),
+                amount: 1_000_000,
+                expiry: None,
+            });
+        }
+
+        // A full-window batch consumes the entire Transfer budget.
+        let ids = contract.batch_create_remittances(&sender, &entries);
+        assert_eq!(ids.len(), MAX_TRANSFERS_PER_WINDOW);
+
+        // Any further Transfer action in the same window is rejected.
+        let mut single = Vec::new(&env);
+        single.push_back(BatchCreateEntry {
+            agent: agent.clone(),
+            amount: 1_000_000,
+            expiry: None,
+        });
+        let result = contract.try_batch_create_remittances(&sender, &single);
+        assert_eq!(result, Err(Ok(ContractError::RateLimitExceeded)));
+    }
+
+    /// Issue #1638: a batch larger than the remaining budget is rejected as a
+    /// whole and records nothing, so the budget is not partially consumed.
+    #[test]
+    fn test_batch_create_rejects_batch_exceeding_remaining_budget() {
+        let env = Env::default();
+        let (contract, _admin, agent) = setup(&env);
+        let sender = Address::generate(&env);
+
+        let mut entries = Vec::new(&env);
+        for _ in 0..(MAX_TRANSFERS_PER_WINDOW + 1) {
+            entries.push_back(BatchCreateEntry {
+                agent: agent.clone(),
+                amount: 1_000_000,
+                expiry: None,
+            });
+        }
+
+        let result = contract.try_batch_create_remittances(&sender, &entries);
+        assert_eq!(result, Err(Ok(ContractError::RateLimitExceeded)));
+
+        // The rejected batch consumed no budget: a full-window batch still fits.
+        let mut full = Vec::new(&env);
+        for _ in 0..MAX_TRANSFERS_PER_WINDOW {
+            full.push_back(BatchCreateEntry {
+                agent: agent.clone(),
+                amount: 1_000_000,
+                expiry: None,
+            });
+        }
+        let ids = contract.batch_create_remittances(&sender, &full);
+        assert_eq!(ids.len(), MAX_TRANSFERS_PER_WINDOW);
     }
 }
