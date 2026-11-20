@@ -1,4 +1,12 @@
 import { FC, useState, FormEvent } from 'react'
+import { signTransaction } from '@stellar/freighter-api'
+import { Networks, TransactionBuilder } from '@stellar/stellar-sdk'
+import { SwiftRemitClient, SwiftRemitError } from '../../../sdk/src/index.js'
+
+const RPC_URL = import.meta.env.VITE_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org'
+const NETWORK_PASSPHRASE = import.meta.env.VITE_NETWORK === 'mainnet'
+  ? Networks.PUBLIC
+  : Networks.TESTNET
 
 const STROOPS_PER_UNIT = 10_000_000n
 const DECIMALS = 7
@@ -14,7 +22,11 @@ export function amountToStroops(amount: string): bigint {
   if (fracPart.length > DECIMALS) {
     throw new Error(`Amount cannot have more than ${DECIMALS} decimal places`)
   }
-  return BigInt(intPart) * STROOPS_PER_UNIT + BigInt(fracPart.padEnd(DECIMALS, '0'))
+  const stroops = BigInt(intPart) * STROOPS_PER_UNIT + BigInt(fracPart.padEnd(DECIMALS, '0'))
+  if (stroops === 0n) {
+    throw new Error('Amount must be greater than 0')
+  }
+  return stroops
 }
 
 interface CreateRemittanceProps {
@@ -25,7 +37,8 @@ interface CreateRemittanceProps {
 
 interface RemittanceResult {
   message: string
-  id: number
+  id: string
+  txHash: string
   amount: string
   amountInStroops: string
   agent: string
@@ -33,7 +46,16 @@ interface RemittanceResult {
   memo: string | null
 }
 
-const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTokens = [] }) => {
+/** Map an SDK/contract error to a user-facing message via the SDK error map. */
+export function describeCreateError(err: unknown): string {
+  if (err instanceof SwiftRemitError) {
+    return err.remediation ? `${err.message} — ${err.remediation}` : err.message
+  }
+  if (err instanceof Error && err.message) return err.message
+  return 'Failed to create remittance'
+}
+
+const CreateRemittance: FC<CreateRemittanceProps> = ({ walletAddress, contractId, whitelistedTokens = [] }) => {
   const [agentAddress, setAgentAddress] = useState('')
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
@@ -53,17 +75,63 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTo
         throw new Error('Please enter a contract ID')
       }
 
+      if (!walletAddress) {
+        throw new Error('Please connect your wallet')
+      }
+
       if (!selectedToken) {
         throw new Error('Please select a token')
       }
 
       const amountInStroops = amountToStroops(amount)
-      // This is a placeholder - you'll need to implement actual contract interaction
-      // using Stellar SDK and the contract's WASM interface
-      
+
+      const client = new SwiftRemitClient({
+        contractId,
+        networkPassphrase: NETWORK_PASSPHRASE,
+        rpcUrl: RPC_URL,
+      })
+
+      // Build create_remittance through the SDK, sign with the connected wallet,
+      // then submit and wait for confirmation.
+      const tx = await client.createRemittance({
+        sender: walletAddress,
+        agent: agentAddress,
+        amount: amountInStroops,
+        token: selectedToken,
+      })
+
+      const { signedTxXdr, error: signError } = await signTransaction(tx.toXDR(), {
+        networkPassphrase: NETWORK_PASSPHRASE,
+        address: walletAddress,
+      })
+      if (signError) {
+        throw new Error(signError.message || 'Wallet signing failed')
+      }
+
+      const signedTx = TransactionBuilder.fromXDR(signedTxXdr, NETWORK_PASSPHRASE)
+      const submitted = await client.submitSignedTransaction(signedTx)
+
+      // The contract returns the new remittance ID; fall back to the latest
+      // remittance for this sender when the result carries no return value.
+      let remittanceId: bigint | null = null
+      const returnValue = submitted.returnValue
+      if (returnValue) {
+        try {
+          const native = returnValue.value()
+          remittanceId = typeof native === 'bigint' ? native : BigInt(native as number)
+        } catch {
+          remittanceId = null
+        }
+      }
+      if (remittanceId === null) {
+        const ids = await client.getRemittancesBySender(walletAddress, walletAddress, 0n, 1n)
+        remittanceId = ids.length > 0 ? ids[ids.length - 1] : null
+      }
+
       setResult({
         message: 'Remittance created successfully!',
-        id: Math.floor(Math.random() * 1000), // Mock ID
+        id: remittanceId !== null ? remittanceId.toString() : 'pending',
+        txHash: submitted.hash,
         amount: amount,
         amountInStroops: amountInStroops.toString(),
         agent: agentAddress,
@@ -76,7 +144,7 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTo
       setAmount('')
       setMemo('')
     } catch (err) {
-      setError((err instanceof Error ? err.message : 'Failed to create remittance') || 'Failed to create remittance')
+      setError(describeCreateError(err))
     } finally {
       setLoading(false)
     }
@@ -117,8 +185,8 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTo
           <label>Amount ({selectedToken || 'Token'}):</label>
           <input
             type="number"
-            step="0.01"
-            min="0.01"
+            step="0.0000001"
+            min="0.0000001"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="100.00"
@@ -149,6 +217,7 @@ const CreateRemittance: FC<CreateRemittanceProps> = ({ contractId, whitelistedTo
         <div className="success">
           <p>{result.message}</p>
           <p>Remittance ID: {result.id}</p>
+          <p>Transaction: {result.txHash}</p>
           <p>Token: {result.token}</p>
           {result.memo && <p>Memo: {result.memo}</p>}
         </div>
