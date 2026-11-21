@@ -6,7 +6,7 @@ use crate::{config::{DEFAULT_RATE_LIMIT_MAX_REQUESTS, DEFAULT_RATE_LIMIT_WINDOW_
 
 /// Rate limit configuration stored in instance storage
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RateLimitConfig {
     /// Maximum number of requests allowed per window
     pub max_requests: u32,

@@ -521,7 +521,7 @@ pub fn emit_escrow_expiry_extended(
     caller: Address,
 ) {
     emit_event!(
-        env, "escrow", "expiry_ext",
+        env, "escrow", "exp_ext",
         transfer_id, old_expiry, new_expiry, caller
     );
 }

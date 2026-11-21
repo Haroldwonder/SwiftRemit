@@ -334,10 +334,22 @@ pub enum ContractError {
     /// Escrow refund rejected: lock/expiry period has not elapsed yet.
     EscrowNotYetExpired = 85,
 
+    /// KYC expiry is invalid (must be in the future when approving).
+    InvalidExpiry = 86,
+
+    /// Admin proposal has expired.
+    AdminProposalExpired = 87,
+
+    /// Processing timeout not yet reached.
+    ProcessingTimeoutNotReached = 88,
+
     /// Address does not implement the SEP-41 token interface.
     ///
     /// Returned when an address is being whitelisted as a token but probing
     /// the SEP-41 interface (e.g. `decimals()` / `symbol()`) fails, meaning
     /// the address is not a valid token contract.
-    TokenNotSep41 = 86,
+    TokenNotSep41 = 89,
+
+    /// Migration abort operation.
+    AbortMigration = 90,
 }

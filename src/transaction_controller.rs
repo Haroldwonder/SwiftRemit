@@ -231,6 +231,7 @@ impl TransactionController {
             agent: agent.clone(),
             amount,
             fee,
+            protocol_fee: 0,
             status: RemittanceStatus::Pending,
             expiry,
             settlement_config: crate::MaybeSettlementConfig::None,
