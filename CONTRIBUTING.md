@@ -321,6 +321,9 @@ export async function verifyAsset(
 
 ### Running Tests
 
+To run the Rust test suite and every npm workspace test script from the repository root, use `make test-all`. This target runs `cargo test` followed by `npm test --workspaces --if-present` (including API, backend, frontend, SDK, and mobile workspaces that define tests). Existing dependency and service requirements for those test scripts still apply.
+
+
 #### Smart Contract Tests
 ```bash
 # Run all Rust tests
