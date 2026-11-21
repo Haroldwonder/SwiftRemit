@@ -16,123 +16,8 @@
  *   }
  */
 
-/** Named error codes mirroring ContractError in src/errors.rs. */
-export enum ErrorCode {
-  // Initialization (1-2)
-  AlreadyInitialized = 1,
-  NotInitialized = 2,
-
-  // Validation (3-10)
-  InvalidAmount = 3,
-  InvalidFeeBps = 4,
-  AgentNotRegistered = 5,
-  RemittanceNotFound = 6,
-  InvalidStatus = 7,
-  InvalidStateTransition = 8,
-  NoFeesToWithdraw = 9,
-  InvalidAddress = 10,
-
-  // Settlement (11-12)
-  SettlementExpired = 11,
-  DuplicateSettlement = 12,
-
-  // Contract state & user (13-22)
-  ContractPaused = 13,
-  AssetNotFound = 14,
-  UserBlacklisted = 15,
-  InvalidReputationScore = 16,
-  KycNotApproved = 17,
-  SuspiciousAsset = 18,
-  AnchorTransactionFailed = 19,
-  Unauthorized = 20,
-  DailySendLimitExceeded = 21,
-  TokenAlreadyWhitelisted = 22,
-
-  // KYC / transaction (23-25)
-  KycExpired = 23,
-  TransactionNotFound = 24,
-  RateLimitExceeded = 25,
-
-  // Authorization (26-28)
-  AdminAlreadyExists = 26,
-  AdminNotFound = 27,
-  CannotRemoveLastAdmin = 28,
-
-  // Token whitelist (29)
-  TokenNotWhitelisted = 29,
-
-  // Migration (30-32)
-  InvalidMigrationHash = 30,
-  MigrationInProgress = 31,
-  InvalidMigrationBatch = 32,
-
-  // Rate limiting / abuse (33-35)
-  CooldownActive = 33,
-  SuspiciousActivity = 34,
-  ActionBlocked = 35,
-
-  // Arithmetic / data (36-55)
-  Overflow = 36,
-  NetSettlementValidationFailed = 37,
-  EscrowNotFound = 38,
-  InvalidEscrowStatus = 39,
-  SettlementCounterOverflow = 40,
-  InvalidBatchSize = 41,
-  DataCorruption = 42,
-  IndexOutOfBounds = 43,
-  EmptyCollection = 44,
-  KeyNotFound = 45,
-  StringConversionFailed = 46,
-  InvalidSymbol = 47,
-  Underflow = 48,
-  NoPendingAdminTransfer = 49,
-  IdempotencyConflict = 50,
-  InvalidProof = 51,
-  MissingProof = 52,
-  InvalidOracleAddress = 53,
-  AlreadyPaused = 54,
-  NotPaused = 55,
-
-  // Multi-sig (56-59)
-  OperationNotFound = 56,
-  AlreadyApproved = 57,
-  OperationExpired = 58,
-  InvalidMultiSigThreshold = 59,
-
-  // Governance / DAO (60-69)
-  AlreadyAdmin = 60,
-  InsufficientAdmins = 61,
-  InvalidQuorum = 62,
-  AlreadyVoted = 63,
-  InvalidProposalState = 64,
-  ProposalAlreadyPending = 65,
-  TimelockActive = 66,
-  GovernanceAlreadyInitialized = 67,
-  ProposalNotFound = 68,
-  AgentAlreadyRegistered = 69,
-
-  // Restored variants (70, 72-80) — re-added after bad-merge gap (SR-192)
-  NotFound = 70,
-
-  // Dispute (71)
-  NotDisputed = 71,
-
-  MigrationValidationFailed = 72,
-  PauseRecordNotFound = 73,
-  DisputeWindowExpired = 74,
-  MissingRecipientHash = 75,
-  RecipientHashSchemaMismatch = 76,
-  RecipientHashMismatch = 77,
-  InvalidTimelockDuration = 78,
-  BelowMinReputation = 79,
-  MultisigQuorumRequired = 80,
-
-  // Dispute evidence (83)
-  MalformedEvidenceHash = 83,
-
-  // Dispute window bound (84)
-  DisputeWindowTooLong = 84,
-}
+import { ErrorCode } from "./errors.generated.js";
+export { ErrorCode } from "./errors.generated.js";
 
 /** Human-readable messages for each error code. */
 const ERROR_MESSAGES: Record<ErrorCode, string> = {
@@ -208,6 +93,8 @@ const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.NotDisputed]: "This operation requires the remittance to be in a Disputed state",
   [ErrorCode.MalformedEvidenceHash]: "Evidence hash for a dispute is not a valid 32-byte SHA-256 commitment",
   [ErrorCode.DisputeWindowTooLong]: "Dispute window exceeds the maximum permitted duration",
+  [ErrorCode.EscrowNotYetExpired]: "Escrow has not expired yet",
+  [ErrorCode.TokenNotSep41]: "Address is not a SEP-41 token contract",
   // SR-192: restored variants (70, 72-80)
   [ErrorCode.NotFound]: "The requested record does not exist",
   [ErrorCode.MigrationValidationFailed]: "Post-migration validation detected inconsistent storage state",
@@ -298,6 +185,8 @@ const ERROR_REMEDIATIONS: Record<ErrorCode, string> = {
   [ErrorCode.NotDisputed]: "This operation is only valid while the remittance is in a Disputed state.",
   [ErrorCode.MalformedEvidenceHash]: "Supply a 32-byte SHA-256 hash as the evidence commitment.",
   [ErrorCode.DisputeWindowTooLong]: "Use a dispute window of 30 days (2,592,000 seconds) or less.",
+  [ErrorCode.EscrowNotYetExpired]: "Wait until the escrow expiry deadline before requesting a refund.",
+  [ErrorCode.TokenNotSep41]: "Use an address implementing the SEP-41 token interface.",
   // SR-192: restored variants (70, 72-80)
   [ErrorCode.NotFound]: "Verify the requested record exists before operating on it.",
   [ErrorCode.MigrationValidationFailed]: "Re-export the migration snapshot and re-import; contact support if this persists.",

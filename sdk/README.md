@@ -252,6 +252,53 @@ interface FeeEstimate {
 }
 ```
 
+## Escrow SDK methods (#1900)
+
+The TypeScript SDK exposes `Escrow` and `EscrowStatus` (`"Pending" | "Released" | "Refunded"`). Amounts and transfer IDs are `bigint` integers in token atomic units (7 decimals for USDC), not floating-point display values.
+
+```typescript
+import type { Escrow, EscrowStatus } from "@swiftremit/sdk";
+
+// Prepare an escrow transaction; sign and submit it with the sender's keypair.
+const createTx = await client.createEscrow(senderAddress, recipientAddress, 10_000_000n);
+await client.submitTransaction(createTx, senderKeypair);
+
+// Use the returned transfer ID from the transaction result, not a guessed counter.
+const escrow: Escrow = await client.getEscrow(senderAddress, transferId);
+const status: EscrowStatus = escrow.status;
+const ttl = await client.getEscrowTtl(senderAddress);
+
+// Admin releases; the original sender can refund according to expiry rules.
+const releaseTx = await client.releaseEscrow(adminAddress, transferId);
+const refundTx = await client.refundEscrow(senderAddress, transferId);
+const expireTx = await client.processExpiredEscrows(adminAddress, [transferId]);
+```
+
+Read-only calls require a `sourceAddress` because the RPC simulation must be constructed using a Stellar account. Write methods prepare a transaction; they do not submit it automatically. Refunding before expiry raises `ErrorCode.EscrowNotYetExpired` (85).
+
+## Oracle SDK methods (#1901)
+
+```typescript
+// An admin sets the oracle contract address; the optional limit is in ledgers.
+const configureTx = await client.setOracle(adminAddress, oracleAddress, 120);
+await client.submitTransaction(configureTx, adminKeypair);
+
+// Read-only simulations require a source account address.
+const configuredOracle: string | null = await client.getOracle(senderAddress);
+const rate: number | null = await client.getOracleRate(senderAddress);
+```
+
+## Contract error enum generation (#1898, #1899)
+
+`ErrorCode` is generated from the numeric `ContractError` discriminants in `src/errors.rs` to `sdk/src/errors.generated.ts`. Never edit the generated file by hand. From the SDK directory:
+
+```bash
+npm run gen:errors    # regenerate after changing Rust contract errors
+npm run check:errors  # verify committed generated file matches Rust; also runs in SDK CI
+```
+
+`EscrowNotYetExpired = 85` returns the message **"Escrow has not expired yet"** and instructs callers to wait until the escrow expiry deadline before refunding.
+
 ## Testing with SwiftRemitMockClient
 
 SDK consumers can write integration tests without a live Stellar network by using `SwiftRemitMockClient` from the separate `@swiftremit/sdk/testing` entry point:
