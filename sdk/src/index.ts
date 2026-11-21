@@ -16,7 +16,7 @@ export {
   buildWhitelistAssetProposal,
   buildAdjustReputationThresholdProposal,
 } from "./client.js";
-export type { SubmitOptions } from "./client.js";
+export type { SubmitOptions, RemittanceIteratorOptions } from "./client.js";
 export {
   SwiftRemitError,
   ErrorCode,

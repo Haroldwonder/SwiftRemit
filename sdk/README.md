@@ -128,6 +128,36 @@ All write methods return a `Transaction` that must be signed and submitted:
 **Integrator Functions:**
 - `withdrawIntegratorFees(integrator, to)` — Withdraw integrator fees
 
+### KYC, blacklist and remittance iteration
+
+The SDK returns a transaction for KYC and blacklist updates. Sign and submit it
+using the normal transaction flow:
+
+```ts
+const tx = await client.setKycApproved(admin, user, true, 2_000_000_000n);
+const approved = await client.isKycApproved(user);
+// The older form is also supported: isKycApproved(sourceAddress, user).
+
+const blacklistTx = await client.setBlacklistStatus(admin, user, true);
+```
+
+The KYC `expiry` argument is a `bigint` Unix timestamp in seconds. Older
+`blacklistUser`, `removeFromBlacklist` and `setUserBlacklisted` methods are
+still available but deprecated; use `setBlacklistStatus` for new code.
+
+```ts
+for await (const id of client.iterateRemittancesBySender(sender, { pageSize: 50 })) {
+  console.log(id);
+}
+for await (const id of client.iterateRemittancesByAgent(agent, { pageSize: 50 })) {
+  console.log(id);
+}
+```
+
+Both iterators default to 50 IDs per page (range 1–100), advance by the number
+actually returned, and stop on an empty page. Set `sourceAddress` in the options
+when the Soroban simulation account should differ from the sender or agent.
+
 ### Utilities
 
 ```typescript
