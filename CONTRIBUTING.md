@@ -744,3 +744,23 @@ always-running gate, or documentation-only PRs can remain pending.
 
 Inventory: **42 workflow files**. This is a workflow map and
 duplication audit, not a claim that every workflow has been merged.
+
+## Optional pre-commit formatting and lint checks
+
+The repository ships a Git hook at `.githooks/pre-commit`. It checks **Rust formatting** (`cargo fmt --check`) if Rust files are staged, and runs **ESLint** and **Prettier** only on staged `.ts`/`.tsx` files. It does not require Husky or a repository-wide dependency installation.
+
+Enable the hook once per local clone from the repository root:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The Rust check requires Cargo/rustfmt; TypeScript checks require Node/npm and the repository's existing ESLint dependencies. The hook invokes Prettier through npm's cache on demand rather than adding it to any `package.json` or lockfile. That first use may require network access.
+
+**Opt out:** run `git config --unset core.hooksPath` to stop using the hook in this clone, or set the environment variable `SKIP_SWIFTREMIT_HOOKS=1` for a single commit. For example, in a POSIX shell:
+
+```sh
+SKIP_SWIFTREMIT_HOOKS=1 git commit -m "docs: update documentation"
+```
+
+The hook is optional and does not replace CI. Do not use the opt-out to bypass checks when submitting production code that depends on those checks.
