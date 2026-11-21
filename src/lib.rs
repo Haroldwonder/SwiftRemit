@@ -2329,10 +2329,6 @@ impl SwiftRemitContract {
         crate::storage::set_admin_role(&env, &new_admin, true);
         assign_role(&env, &new_admin, &Role::Admin);
 
-        let count = storage::get_admin_count(&env);
-        let next = count.checked_add(1).ok_or(ContractError::Overflow)?;
-        storage::set_admin_count(&env, next);
-
         emit_admin_added(&env, caller.clone(), new_admin.clone());
         log_add_admin(&env, &caller, &new_admin);
 
@@ -2358,7 +2354,6 @@ impl SwiftRemitContract {
 
         crate::storage::set_admin_role(&env, &admin_to_remove, false);
         remove_role(&env, &admin_to_remove, &Role::Admin);
-        storage::set_admin_count(&env, count - 1);
 
         // Keep legacy single-admin storage aligned so legacy admin-gated paths remain operable.
         if get_admin(&env)? == admin_to_remove {
@@ -2586,6 +2581,9 @@ impl SwiftRemitContract {
     ///
     /// Requires authentication from the current admin.
     pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
+        if crate::storage::is_admin(&env, &new_admin) {
+            return Err(ContractError::AdminAlreadyExists);
+        }
     let admin = require_admin(&env)?;
     // NEW: add expiry
     let expires_at = env.ledger().timestamp() + ADMIN_NOMINATION_EXPIRY_SECONDS;
@@ -2640,6 +2638,9 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         // Update role assignments
         remove_role(&env, &old_admin, &Role::Admin);
         assign_role(&env, &new_admin, &Role::Admin);
+
+        // `set_admin_role` re-derives admin_count from the admin list, so this
+        // transfer cannot leave a stale count even if new_admin was already an admin.
 
         // Clear the pending proposal
         clear_pending_admin(&env);
