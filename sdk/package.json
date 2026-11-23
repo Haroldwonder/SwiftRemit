@@ -25,7 +25,7 @@
     "CDN_USAGE.md"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "node init && tsup",
     "test": "vitest run",
     "test:pact": "vitest run src/pact",
     "lint": "tsc --noEmit",

@@ -5,8 +5,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "dev": "node init && tsx watch src/index.ts",
+    "build": "node init && tsc",
     "test:chaos": "vitest run --config vitest.chaos.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
