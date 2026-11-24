@@ -1405,7 +1405,6 @@ contract.register_agent(&agent, &None);
 
 #[test]
 fn test_set_and_get_asset_verification() {
-=======
 #[test]
 fn test_get_settlement_valid() {
     let env = Env::default();

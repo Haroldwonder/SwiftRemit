@@ -557,15 +557,13 @@ fn migrate_v3_to_v4(env: &Env) -> Result<(), ContractError> {
 
         for id in start_id..=end_id {
             if let Ok(mut escrow) = crate::storage::get_escrow(env, id) {
-                // Only backfill records that predate the field.
-                if escrow.token.is_none() {
-                    escrow.token = Some(default_token.clone());
-                    crate::storage::set_escrow(env, escrow.id, &escrow);
-                }
+                // Backfill the token for records created before per-token escrows.
+                escrow.token = default_token.clone();
+                crate::storage::set_escrow(env, escrow.transfer_id, &escrow);
 
                 // Rebuild the paginated indexes. Both helpers are idempotent.
-                crate::storage::add_escrow_to_sender_index(env, &escrow.sender, escrow.id);
-                crate::storage::add_escrow_to_recipient_index(env, &escrow.recipient, escrow.id);
+                crate::storage::append_escrow_by_sender(env, &escrow.sender, escrow.transfer_id);
+                crate::storage::append_escrow_by_recipient(env, &escrow.recipient, escrow.transfer_id);
             }
         }
 
@@ -653,6 +651,11 @@ pub fn abort_migration(env: &Env, caller: &Address) -> Result<(), ContractError>
     );
 
     Ok(())
+}
+
+pub fn abort_migration_internal(env: &Env) -> Result<(), ContractError> {
+    let caller = env.current_contract_address();
+    abort_migration(env, &caller)
 }
 
 // ─── Cross-contract migration (export / import) ───────────────────────────────

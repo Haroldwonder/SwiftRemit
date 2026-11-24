@@ -3,9 +3,12 @@
 //! These tests use fuzzing to verify mathematical properties and catch
 //! edge cases like overflows, incorrect calculations, and boundary conditions.
 
+extern crate std;
+
 #[cfg(test)]
 mod property_tests {
     use super::super::fee_service::*;
+    use std::format;
     use crate::config::{FEE_DIVISOR, MAX_FEE_BPS, MIN_FEE};
     use crate::{ContractError, FeeStrategy};
     use proptest::prelude::*;

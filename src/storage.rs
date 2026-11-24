@@ -398,6 +398,8 @@ enum DataKey {
     /// the first imported batch (instance storage). Every subsequent batch must
     /// agree with this value so a batch cannot end the migration early.
     MigrationTotalBatches,
+    MigrationNextBatch,
+    MigrationImportedBatches,
 
     // === Recipient Verification ===
     /// Recipient hash record for a remittance (persistent storage).
@@ -955,6 +957,14 @@ pub fn set_user_blacklisted(env: &Env, user: &Address, blacklisted: bool) {
         .set(&DataKey::UserBlacklisted(user.clone()), &blacklisted);
 }
 
+pub fn add_to_blacklist(env: &Env, user: &Address) {
+    set_user_blacklisted(env, user, true);
+}
+
+pub fn remove_from_blacklist(env: &Env, user: &Address) {
+    set_user_blacklisted(env, user, false);
+}
+
 pub fn is_kyc_approved(env: &Env, user: &Address) -> bool {
     env.storage()
         .persistent()
@@ -979,6 +989,12 @@ pub fn is_kyc_expired(env: &Env, user: &Address) -> bool {
     } else {
         false
     }
+}
+
+pub fn clear_kyc_expiry(env: &Env, user: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::KycExpiry(user.clone()));
 }
 
 pub fn set_kyc_expiry(env: &Env, user: &Address, expiry: u64) {
@@ -1233,6 +1249,31 @@ pub fn clear_migration_total_batches(env: &Env) {
     env.storage()
         .instance()
         .remove(&DataKey::MigrationTotalBatches);
+}
+
+pub fn get_migration_next_batch(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::MigrationNextBatch)
+        .unwrap_or(0)
+}
+
+pub fn set_migration_next_batch(env: &Env, next: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MigrationNextBatch, &next);
+}
+
+pub fn set_migration_batch_imported(env: &Env, batch_number: u32) {
+    let mut imported: Vec<u32> = env
+        .storage()
+        .instance()
+        .get(&DataKey::MigrationImportedBatches)
+        .unwrap_or_else(|| Vec::new(env));
+    imported.push_back(batch_number);
+    env.storage()
+        .instance()
+        .set(&DataKey::MigrationImportedBatches, &imported);
 }
 
 // === Admin Role Management ===
@@ -1571,6 +1612,9 @@ pub fn get_agent_stats(env: &Env, agent: &Address) -> AgentStats {
             dispute_count: 0,
             success_rate_bps: 10000,
             last_active_timestamp: 0,
+            disputes_resolved: 0,
+            disputes_won: 0,
+            disputes_lost: 0,
         })
 }
 
@@ -1652,12 +1696,36 @@ pub fn set_escrow(env: &Env, transfer_id: u64, escrow: &crate::Escrow) {
 
 // === Escrow Per-User Indexes (#1845) ===
 
+fn page_u64(env: &Env, values: Vec<u64>, offset: u32, limit: u32) -> Vec<u64> {
+    let mut page = Vec::new(env);
+    let len = values.len();
+    if offset >= len {
+        return page;
+    }
+    let end = offset.saturating_add(limit).min(len);
+    for index in offset..end {
+        if let Some(value) = values.get(index) {
+            page.push_back(value);
+        }
+    }
+    page
+}
+
 /// Returns the escrow transfer IDs created by `sender`, in creation order.
 pub fn get_escrows_by_sender(env: &Env, sender: &Address) -> Vec<u64> {
     env.storage()
         .persistent()
         .get(&DataKey::EscrowBySender(sender.clone()))
         .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn get_escrows_by_sender_paged(
+    env: &Env,
+    sender: &Address,
+    offset: u32,
+    limit: u32,
+) -> Vec<u64> {
+    page_u64(env, get_escrows_by_sender(env, sender), offset, limit)
 }
 
 /// Appends `transfer_id` to the sender's escrow index.
@@ -1678,6 +1746,15 @@ pub fn get_escrows_by_recipient(env: &Env, recipient: &Address) -> Vec<u64> {
         .persistent()
         .get(&DataKey::EscrowByRecipient(recipient.clone()))
         .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn get_escrows_by_recipient_paged(
+    env: &Env,
+    recipient: &Address,
+    offset: u32,
+    limit: u32,
+) -> Vec<u64> {
+    page_u64(env, get_escrows_by_recipient(env, recipient), offset, limit)
 }
 
 /// Appends `transfer_id` to the recipient's escrow index.
@@ -2520,6 +2597,17 @@ pub fn clear_admin_nomination(env: &Env) {
 /// Clears the pending admin proposal.
 pub fn clear_pending_admin(env: &Env) {
     env.storage().instance().remove(&DataKey::PendingAdmin);
+    env.storage().instance().remove(&DataKey::NominatedAdmin);
+}
+
+pub fn clear_pending_admin_nomination(env: &Env) {
+    env.storage().instance().remove(&DataKey::PendingAdmin);
+    env.storage().instance().remove(&DataKey::NominatedAdmin);
+}
+
+/// Alias for clear_pending_admin_nomination for backward compatibility.
+pub fn clear_pending_admin_nomination_alias(env: &Env) {
+    clear_pending_admin_nomination(env)
 }
 
 /// Extend TTLs for critical instance and persistent storage keys.
@@ -2671,6 +2759,15 @@ pub fn get_agent_remittances(env: &Env, agent: &Address) -> soroban_sdk::Vec<u64
     all_ids
 }
 
+pub fn get_agent_remittances_paged(
+    env: &Env,
+    agent: &Address,
+    offset: u32,
+    limit: u32,
+) -> soroban_sdk::Vec<u64> {
+    page_u64(env, get_agent_remittances(env, agent), offset, limit)
+}
+
 /// Returns the current corridor daily cap (0 = no cap configured).
 pub fn get_corridor_cap(env: &Env, from_country: &String, to_country: &String) -> i128 {
     env.storage()
@@ -2701,6 +2798,18 @@ pub fn get_dispute_window(env: &Env) -> u64 {
 /// may recover the undisbursed remainder of a Processing remittance.
 pub const DEFAULT_PROCESSING_RECOVERY_TIMEOUT_SECONDS: u64 = 7 * 24 * 3600; // 7 days
 
+/// Sets the processing-recovery timeout in seconds (admin only, enforced at call site).
+pub fn set_processing_recovery_timeout(env: &Env, seconds: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ProcessingRecoveryTimeout, &seconds);
+}
+
+/// Alias for set_processing_recovery_timeout for backward compatibility.
+pub fn set_processing_timeout(env: &Env, seconds: u64) {
+    set_processing_recovery_timeout(env, seconds)
+}
+
 /// Returns the configured processing-recovery timeout in seconds.
 ///
 /// Falls back to `DEFAULT_PROCESSING_RECOVERY_TIMEOUT_SECONDS` when unset.
@@ -2711,11 +2820,9 @@ pub fn get_processing_recovery_timeout(env: &Env) -> u64 {
         .unwrap_or(DEFAULT_PROCESSING_RECOVERY_TIMEOUT_SECONDS)
 }
 
-/// Sets the processing-recovery timeout in seconds (admin only, enforced at call site).
-pub fn set_processing_recovery_timeout(env: &Env, seconds: u64) {
-    env.storage()
-        .instance()
-        .set(&DataKey::ProcessingRecoveryTimeout, &seconds);
+/// Alias for get_processing_recovery_timeout for backward compatibility.
+pub fn get_processing_timeout(env: &Env) -> u64 {
+    get_processing_recovery_timeout(env)
 }
 
 /// Records the timestamp of the most recent partial payout for a remittance.
@@ -2730,6 +2837,16 @@ pub fn get_last_partial_payout_at(env: &Env, remittance_id: u64) -> Option<u64> 
     env.storage()
         .persistent()
         .get(&DataKey::LastPartialPayoutAt(remittance_id))
+}
+
+/// Alias for get_last_partial_payout_at for backward compatibility.
+pub fn get_processing_started_at(env: &Env, remittance_id: u64) -> Option<u64> {
+    get_last_partial_payout_at(env, remittance_id)
+}
+
+/// Alias for set_last_partial_payout_at for backward compatibility.
+pub fn set_processing_started_at(env: &Env, remittance_id: u64, timestamp: u64) {
+    set_last_partial_payout_at(env, remittance_id, timestamp)
 }
 
 // === Min Agent Reputation Threshold ===
@@ -2806,6 +2923,15 @@ pub fn get_sender_remittances(env: &Env, sender: &Address) -> soroban_sdk::Vec<u
         }
     }
     all_ids
+}
+
+pub fn get_sender_remittances_paged(
+    env: &Env,
+    sender: &Address,
+    offset: u32,
+    limit: u32,
+) -> soroban_sdk::Vec<u64> {
+    page_u64(env, get_sender_remittances(env, sender), offset, limit)
 }
 
 /// Returns the total amount currently held in Processing (in-flight) remittances.
@@ -2961,14 +3087,10 @@ pub fn sub_processing_volume(env: &Env, amount: i128) -> Result<(), ContractErro
     Ok(())
 }
 pub fn set_pending_admin_with_expiry(env: &Env, new_admin: &Address, expires_at: u64) {
-    let admin = get_admin(env).unwrap_or_else(|| new_admin.clone());
+    let admin = get_admin(env).unwrap_or_else(|_| new_admin.clone());
     let nomination = AdminNomination { nominee: new_admin.clone(), expires_at, nominator: admin };
     set_admin_nomination(env, &nomination);
     env.storage().instance().set(&DataKey::PendingAdmin, new_admin);
-}
-pub fn clear_pending_admin(env: &Env) {
-    env.storage().instance().remove(&DataKey::PendingAdmin);
-    env.storage().instance().remove(&DataKey::NominatedAdmin);
 }
 
 // === Aggregated Configuration View (#1854) ===
@@ -3016,6 +3138,10 @@ pub struct ContractConfig {
     pub governance_timelock: u64,
     /// Whether the contract is currently paused.
     pub paused: bool,
+    /// Maximum batch size for process_expired_remittances.
+    pub max_expired_batch_size: u32,
+    /// Number of registered admins.
+    pub admin_count: u32,
 }
 
 /// Reads every admin-tunable parameter into a single `ContractConfig` (#1854).
@@ -3036,7 +3162,7 @@ pub fn get_contract_config(env: &Env) -> Result<ContractConfig, ContractError> {
         dispute_window: get_dispute_window(env),
         processing_timeout: get_processing_recovery_timeout(env),
         escrow_ttl: get_escrow_ttl(env).unwrap_or(0),
-        rate_limit_config: crate::rate_limit::get_rate_limit_config(env),
+        rate_limit_config: crate::rate_limit::get_rate_limit_config(env)?,
         min_agent_reputation: get_min_agent_reputation(env),
         cooldown_period: get_rate_limit_cooldown(env).unwrap_or(0),
         oracle: get_oracle_address(env),
@@ -3046,5 +3172,7 @@ pub fn get_contract_config(env: &Env) -> Result<ContractConfig, ContractError> {
         governance_quorum: get_governance_quorum(env),
         governance_timelock: get_governance_timelock(env),
         paused: is_paused(env),
+        max_expired_batch_size: get_max_expired_batch_size(env),
+        admin_count: get_admin_count(env),
     })
 }

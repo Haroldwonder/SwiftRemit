@@ -76,8 +76,6 @@ mod test_transitions;
 mod test_treasury;
 #[cfg(test)]
 mod test_multisig;
-#[cfg(test)]
-mod test_issues_1852_1853_1854_1857;
 
 
 mod transaction_controller;
@@ -128,8 +126,6 @@ mod fee_calculation_standalone_tests;
 mod fee_service_property_tests;
 #[cfg(test)]
 mod test_fee_breakdown;
-#[cfg(test)]
-mod test_invariants;
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Map, String, Vec};
 
@@ -342,18 +338,18 @@ pub struct SwiftRemitContract;
 impl SwiftRemitContract {
     fn set_blacklist_status(
         env: &Env,
+        caller: Address,
         user: Address,
         blacklisted: bool,
     ) -> Result<(), ContractError> {
-        let caller = get_admin(env)?;
         require_admin(env, &caller)?;
 
         set_user_blacklisted(env, &user, blacklisted);
 
         if blacklisted {
-            emit_user_blacklisted(env, user, caller);
+            emit_user_blacklisted(env, user, caller.clone());
         } else {
-            emit_user_removed_from_blacklist(env, user, caller);
+            emit_user_removed_from_blacklist(env, user, caller.clone());
         }
 
         Ok(())
@@ -444,9 +440,8 @@ impl SwiftRemitContract {
     ///
     /// # Authorization
     ///
-    /// Requires authentication from the contract admin.
-    pub fn register_agent(env: Env, agent: Address, kyc_hash: Option<soroban_sdk::BytesN<32>>) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
+    /// Requires authentication from a registered admin.
+    pub fn register_agent(env: Env, caller: Address, agent: Address, kyc_hash: Option<soroban_sdk::BytesN<32>>) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
 
         set_agent_registered(&env, &agent, true);
@@ -458,7 +453,7 @@ impl SwiftRemitContract {
 
         // Event: Agent registered - Fires when admin adds a new agent to the approved list
         // Used by off-chain systems to track which addresses can confirm payouts
-        emit_agent_registered(&env, agent, caller, kyc_hash);
+        emit_agent_registered(&env, agent, caller.clone(), kyc_hash);
 
         Ok(())
     }
@@ -480,9 +475,8 @@ impl SwiftRemitContract {
     ///
     /// # Authorization
     ///
-    /// Requires authentication from the contract admin.
-    pub fn remove_agent(env: Env, agent: Address) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
+    /// Requires authentication from a registered admin.
+    pub fn remove_agent(env: Env, caller: Address, agent: Address) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
 
         set_agent_registered(&env, &agent, false);
@@ -490,7 +484,7 @@ impl SwiftRemitContract {
 
         // Event: Agent removed - Fires when admin removes an agent from the approved list
         // Used by off-chain systems to revoke payout confirmation privileges
-        emit_agent_removed(&env, agent, caller);
+        emit_agent_removed(&env, agent, caller.clone());
 
         Ok(())
     }
@@ -513,12 +507,11 @@ impl SwiftRemitContract {
     ///
     /// # Authorization
     ///
-    /// Requires authentication from the contract admin.
-    pub fn update_fee(env: Env, fee_bps: u32) -> Result<(), ContractError> {
+    /// Requires authentication from a registered admin.
+    pub fn update_fee(env: Env, caller: Address, fee_bps: u32) -> Result<(), ContractError> {
         // Centralized validation
         validate_update_fee_request(fee_bps)?;
 
-        let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
 
         set_platform_fee_bps(&env, fee_bps);
@@ -769,6 +762,7 @@ impl SwiftRemitContract {
             agent: agent.clone(),
             amount,
             fee,
+            protocol_fee: 0,
             status: RemittanceStatus::Pending,
             expiry,
             settlement_config: settlement_config.clone().into(),
@@ -996,6 +990,7 @@ impl SwiftRemitContract {
             agent: agent.clone(),
             amount,
             fee,
+            protocol_fee: 0,
             status: RemittanceStatus::Pending,
             expiry,
             settlement_config: settlement_config.into(),
@@ -1130,6 +1125,7 @@ impl SwiftRemitContract {
                 agent: entry.agent.clone(),
                 amount: entry.amount,
                 fee,
+                protocol_fee: 0,
                 status: RemittanceStatus::Pending,
                 expiry: entry.expiry,
                 settlement_config: crate::MaybeSettlementConfig::None,
@@ -1502,8 +1498,7 @@ impl SwiftRemitContract {
 
     /// Sets the timeout (seconds) after which a sender may recover a remittance
     /// stuck in `Processing` (admin only).
-    pub fn set_processing_timeout(env: Env, seconds: u64) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
+    pub fn set_processing_timeout(env: Env, caller: Address, seconds: u64) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
         storage::set_processing_timeout(&env, seconds);
         Ok(())
@@ -1603,12 +1598,12 @@ impl SwiftRemitContract {
 
     pub fn resolve_dispute(
         env: Env,
+        caller: Address,
         remittance_id: u64,
         in_favour_of_sender: bool,
     ) -> Result<(), ContractError> {
         // #1264 PAUSE POLICY: resolve_dispute is intentionally allowed while paused —
         // admin must be able to unblock user funds regardless of circuit-breaker state.
-        let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
 
         let mut remittance = get_remittance(&env, remittance_id)?;
@@ -1749,8 +1744,7 @@ impl SwiftRemitContract {
     /// Sets the dispute window duration (admin only).
     ///
     /// Senders have this many seconds after a payout is marked Failed to raise a dispute.
-    pub fn set_dispute_window(env: Env, seconds: u64) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
+    pub fn set_dispute_window(env: Env, caller: Address, seconds: u64) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
         // #1650: Reject windows above the hard cap so an admin cannot set a
         // deadline so large that failed_at + window overflows, and so the
@@ -1765,7 +1759,7 @@ impl SwiftRemitContract {
             soroban_sdk::symbol_short!("disp_win"),
             old,
             seconds,
-            caller,
+            caller.clone(),
         );
         Ok(())
     }
@@ -1900,14 +1894,13 @@ impl SwiftRemitContract {
     ///
     /// The agent may not withdraw more than `cap` USDC in any rolling 24-hour window.
     /// Set `cap` to 0 to remove the cap.
-    pub fn set_agent_daily_cap(env: Env, agent: Address, cap: i128) -> Result<(), ContractError> {
+    pub fn set_agent_daily_cap(env: Env, caller: Address, agent: Address, cap: i128) -> Result<(), ContractError> {
         if cap < 0 {
             return Err(ContractError::InvalidAmount);
         }
-        let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
         storage::set_agent_daily_cap(&env, &agent, cap);
-        emit_agent_cap_set(&env, agent, cap, caller);
+        emit_agent_cap_set(&env, agent, cap, caller.clone());
         Ok(())
     }
 
@@ -2126,50 +2119,6 @@ impl SwiftRemitContract {
 
         Ok(processed_ids)
     }
-
-    /// Withdraws accumulated platform fees to a specified address.
-    ///
-    /// Transfers all accumulated fees to the recipient address and resets the
-    /// fee counter to zero. Only the contract admin can withdraw fees.
-    ///
-    /// # Arguments
-    ///
-    /// * `env` - The contract execution environment
-    /// * `to` - Address to receive the withdrawn fees
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` - Fees successfully withdrawn
-    /// * `Err(ContractError::NotInitialized)` - Contract not initialized
-    /// * `Err(ContractError::NoFeesToWithdraw)` - No fees available (balance is zero or negative)
-    /// * `Err(ContractError::InvalidAddress)` - Recipient address validation failed
-    ///
-    /// # Authorization
-    ///
-    /// Requires authentication from the contract admin.
-    pub fn withdraw_fees(env: Env, to: Address) -> Result<(), ContractError> {
-        // #1264: Block fee withdrawal while paused — prevents draining funds during an incident.
-        validate_not_paused(&env)?;
-        // Centralized validation before business logic (returns fees to avoid re-read)
-        let fees = validate_withdraw_fees_request(&env, &to)?;
-
-        let caller = get_admin(&env)?;
-        require_admin(&env, &caller)?;
-
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
-        token_client.transfer(&env.current_contract_address(), &to, &fees);
-
-        set_accumulated_fees(&env, 0);
-
-        emit_fees_withdrawn(&env, caller, to.clone(), usdc_token, fees);
-
-        log_withdraw_fees(&env, &to, fees);
-
-        Ok(())
-    }
-
-    /// Withdraws accumulated integrator fees to a specified address.
     ///
     /// Transfers all accumulated integrator fees to the recipient and resets the
     /// counter to zero. Only the designated integrator can withdraw their own fees.
@@ -2607,14 +2556,14 @@ impl SwiftRemitContract {
     /// # Authorization
     ///
     /// Requires authentication from the current admin.
-    pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
-    let admin = require_admin(&env)?;
+    pub fn propose_admin(env: Env, caller: Address, new_admin: Address) -> Result<(), ContractError> {
+    require_admin(&env, &caller)?;
     // NEW: add expiry
     let expires_at = env.ledger().timestamp() + ADMIN_NOMINATION_EXPIRY_SECONDS;
     let nomination = crate::storage::AdminNomination {
         nominee: new_admin.clone(),
         expires_at,
-        nominator: admin.clone(),
+        nominator: caller.clone(),
     };
     crate::storage::set_admin_nomination(&env, &nomination);
     // Also keep old key for backward compat but with expiry struct
@@ -2623,8 +2572,8 @@ impl SwiftRemitContract {
     }
 /// Cancels a pending admin proposal. Only current admin can call.
 /// Fixes #1654 - revokes proposal to compromised key.
-pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
-    require_admin(&env)?;
+pub fn cancel_admin_proposal(env: Env, caller: Address) -> Result<(), ContractError> {
+    require_admin(&env, &caller)?;
     crate::storage::clear_pending_admin(&env);
     Ok(())
 }
@@ -2664,23 +2613,21 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         assign_role(&env, &new_admin, &Role::Admin);
 
         // Clear the pending proposal
-        clear_pending_admin(&env);
+        crate::storage::clear_pending_admin_nomination(&env);
 
         emit_admin_transfer_accepted(&env, old_admin, new_admin);
 
         Ok(())
     }
 
-    pub fn pause(env: Env) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
+    pub fn pause(env: Env, caller: Address) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
 
         // Delegate to circuit breaker with bypass_checks = true (legacy wrapper)
         circuit_breaker::do_emergency_pause(&env, &caller, PauseReason::MaintenanceWindow, true)
     }
 
-    pub fn unpause(env: Env) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
+    pub fn unpause(env: Env, caller: Address) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
 
         // Delegate to circuit breaker with bypass_timelock_quorum = true (legacy wrapper)
@@ -2898,7 +2845,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         }
 
         // #1846: Abuse protection / per-sender rate limit.
-        check_rate_limit(&env, &sender)?;
+        abuse_protection::check_rate_limit(&env, &sender, ActionType::Transfer)?;
 
         // #1846: Daily send limit, keyed on the token address as the corridor
         // currency so escrow volume counts against the same rolling window.
@@ -2946,12 +2893,11 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         Ok(transfer_id)
     }
 
-    pub fn release_escrow(env: Env, transfer_id: u64) -> Result<(), ContractError> {
+    pub fn release_escrow(env: Env, caller: Address, transfer_id: u64) -> Result<(), ContractError> {
         // #1264: Block escrow release while paused.
         validate_not_paused(&env)?;
         let mut escrow = get_escrow(&env, transfer_id)?;
 
-        let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
 
         if escrow.status != EscrowStatus::Pending {
@@ -2976,7 +2922,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         escrow.status = EscrowStatus::Released;
         set_escrow(&env, transfer_id, &escrow);
 
-        emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount, false);
+        emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount, caller);
 
         Ok(())
     }
@@ -3018,7 +2964,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         escrow.status = EscrowStatus::Released;
         set_escrow(&env, transfer_id, &escrow);
 
-        emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount, true);
+        emit_escrow_released(&env, transfer_id, escrow.recipient, escrow.amount, escrow.sender);
 
         Ok(())
     }
@@ -3064,7 +3010,13 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         escrow.expiry = Some(new_expiry);
         set_escrow(&env, transfer_id, &escrow);
 
-        emit_escrow_expiry_extended(&env, transfer_id, current_expiry, new_expiry);
+        emit_escrow_expiry_extended(
+            &env,
+            transfer_id,
+            current_expiry,
+            new_expiry,
+            escrow.recipient,
+        );
 
         Ok(())
     }
@@ -3161,11 +3113,10 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
     /// Returns the decimals recorded for a whitelisted token (#1852).
     pub fn get_whitelisted_token_decimals(env: Env, token: Address) -> Option<u32> {
-        get_whitelisted_token_decimals(&env, &token)
+        get_token_decimals(&env, &token)
     }
 
-    pub fn update_escrow_ttl(env: Env, ttl: u64) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
+    pub fn update_escrow_ttl(env: Env, caller: Address, ttl: u64) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
         validate_escrow_ttl(ttl)?;
         let old = get_escrow_ttl(&env).unwrap_or(0);
@@ -3175,7 +3126,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             soroban_sdk::symbol_short!("esc_ttl"),
             old,
             ttl,
-            caller,
+            caller.clone(),
         );
         Ok(())
     }
@@ -3194,16 +3145,16 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// Admin only.
     pub fn withdraw_fees(
         env: Env,
+        caller: Address,
         to: Address,
         amount: Option<i128>,
     ) -> Result<(), ContractError> {
         // #1264: Block fee withdrawal while paused.
         validate_not_paused(&env)?;
 
-        let admin = get_admin(&env)?;
-        require_admin(&env, &admin)?;
+        require_admin(&env, &caller)?;
 
-        let accumulated = get_accumulated_fees(&env);
+        let accumulated = get_accumulated_fees(&env)?;
 
         let withdrawn = match amount {
             None => accumulated,
@@ -3228,7 +3179,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             .ok_or(ContractError::Overflow)?;
         set_accumulated_fees(&env, remaining);
 
-        emit_fees_withdrawn(&env, to, withdrawn, remaining);
+        let token = get_usdc_token(&env)?;
+        emit_fees_withdrawn(&env, caller, to, token, withdrawn, remaining);
 
         Ok(())
     }
@@ -3288,9 +3240,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         crate::storage::is_paused(&env)
     }
 
-    pub fn update_rate_limit(env: Env, cooldown_seconds: u64) -> Result<(), ContractError> {
-        let admin = get_admin(&env)?;
-        admin.require_auth();
+    pub fn update_rate_limit(env: Env, caller: Address, cooldown_seconds: u64) -> Result<(), ContractError> {
+        require_admin(&env, &caller)?;
 
         let old = get_rate_limit_cooldown(&env).unwrap_or(0);
         set_rate_limit_cooldown(&env, cooldown_seconds);
@@ -3299,7 +3250,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             soroban_sdk::symbol_short!("rate_lim"),
             old,
             cooldown_seconds,
-            admin,
+            caller.clone(),
         );
 
         Ok(())
@@ -3358,7 +3309,9 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         if limit == 0 || limit > MAX_REMITTANCE_PAGE_SIZE {
             return Err(ContractError::InvalidBatchSize);
         }
-        storage::get_remittance_records_by_sender(&env, &sender, offset, limit)
+        Ok(storage::get_remittance_records_by_sender(
+            &env, &sender, offset, limit,
+        ))
     }
 
     /// Returns a page of full remittance records assigned to `agent` (#1853).
@@ -3374,17 +3327,25 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         if limit == 0 || limit > MAX_REMITTANCE_PAGE_SIZE {
             return Err(ContractError::InvalidBatchSize);
         }
-        storage::get_remittance_records_by_agent(&env, &agent, offset, limit)
+        Ok(storage::get_remittance_records_by_agent(
+            &env, &agent, offset, limit,
+        ))
     }
 
     /// Returns every admin-tunable parameter in a single call (#1854).
     ///
     /// Aggregates the individual `get_*` views so admin dashboards and
     /// `ContractHealth` need only one RPC simulation. Read-only.
-    pub fn get_config(env: Env) -> ContractConfig {
-        let rate_limit = get_rate_limit_config(&env);
-        ContractConfig {
-            platform_fee_bps: get_platform_fee_bps(&env),
+    pub fn get_config(env: Env) -> types::ContractConfig {
+        let rate_limit = crate::rate_limit::get_rate_limit_config(&env).unwrap_or(
+            crate::rate_limit::RateLimitConfig {
+                max_requests: 100,
+                window_seconds: 60,
+                enabled: true,
+            },
+        );
+        types::ContractConfig {
+            platform_fee_bps: get_platform_fee_bps(&env).unwrap_or(0),
             protocol_fee_bps: get_protocol_fee_bps(&env),
             dispute_window: get_dispute_window(&env),
             processing_timeout: get_processing_timeout(&env),
@@ -3392,10 +3353,12 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             rate_limit_config: rate_limit,
             min_agent_reputation: get_min_agent_reputation(&env),
             cooldown_period: circuit_breaker_storage::get_cooldown_period(&env),
-            treasury: get_treasury(&env),
+            treasury: get_treasury(&env).unwrap_or_else(|_| env.current_contract_address()),
             oracle: get_oracle_address(&env),
+            min_amount: 0,
+            max_amount: i128::MAX,
             max_expired_batch_size: crate::storage::get_max_expired_batch_size(&env),
-            paused: crate::storage::is_paused(&env),
+            is_paused: crate::storage::is_paused(&env),
             admin_count: storage::get_admin_count(&env),
         }
     }
@@ -3406,6 +3369,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// silently blocking all corridor transfers via an ambiguous no-op limit.
     pub fn set_daily_limit(
         env: Env,
+        caller: Address,
         currency: String,
         country: String,
         limit: i128,
@@ -3414,13 +3378,12 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             return Err(ContractError::InvalidAmount);
         }
 
-        let admin = get_admin(&env)?;
-        admin.require_auth();
+        require_admin(&env, &caller)?;
 
         let old_limit = crate::storage::get_daily_limit(&env, &currency, &country)
             .map(|cfg| cfg.limit);
         crate::storage::set_daily_limit(&env, &currency, &country, limit);
-        crate::events::emit_daily_limit_updated(&env, currency, country, old_limit, limit, admin);
+        crate::events::emit_daily_limit_updated(&env, currency, country, old_limit, limit, caller.clone());
         Ok(())
     }
 
@@ -3433,23 +3396,24 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// so callers can distinguish a successful removal from a no-op.
     pub fn remove_daily_limit(
         env: Env,
+        caller: Address,
         currency: String,
         country: String,
     ) -> Result<(), ContractError> {
-        let admin = get_admin(&env)?;
-        admin.require_auth();
+        require_admin(&env, &caller)?;
 
         let old_limit = crate::storage::get_daily_limit(&env, &currency, &country)
             .ok_or(ContractError::NotFound)?
             .limit;
         crate::storage::remove_daily_limit(&env, &currency, &country);
-        crate::events::emit_daily_limit_removed(&env, currency, country, old_limit, admin);
+        crate::events::emit_daily_limit_removed(&env, currency, country, old_limit, caller.clone());
         Ok(())
     }
 
     /// Set the maximum batch size for process_expired_remittances (admin only).
     ///
     /// # Arguments
+    /// * `caller` - Admin address (must be authenticated)
     /// * `size` - New batch size limit. Must be between 1 and 200.
     ///
     /// # Tradeoffs
@@ -3458,13 +3422,13 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// Soroban resource limits. The default (50) is a safe starting point.
     pub fn set_max_expired_batch_size(
         env: Env,
+        caller: Address,
         size: u32,
     ) -> Result<(), ContractError> {
         if size < 1 || size > 200 {
             return Err(ContractError::InvalidBatchSize);
         }
-        let admin = get_admin(&env)?;
-        admin.require_auth();
+        require_admin(&env, &caller)?;
         let old = crate::storage::get_max_expired_batch_size(&env) as u64;
         crate::storage::set_max_expired_batch_size(&env, size);
         crate::events::emit_config_updated(
@@ -3472,7 +3436,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             soroban_sdk::symbol_short!("exp_batch"),
             old,
             size as u64,
-            admin,
+            caller.clone(),
         );
         Ok(())
     }
@@ -3563,27 +3527,6 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
         crate::storage::extend_critical_ttls(&env, extend_by_ledgers);
         Ok(())
-    }
-
-    /// Creates a single remittance.
-    ///
-    /// # Deprecated
-    ///
-    /// This is a legacy alias of [`Self::create_remittance`] and is scheduled
-    /// for removal in a future release. It is kept only for ABI compatibility
-    /// with existing integrators; new integrations should call
-    /// `create_remittance` directly.
-    #[deprecated(
-        note = "use `create_remittance` instead; this alias will be removed in a future release"
-    )]
-    pub fn create_settlement(
-        env: Env,
-        sender: Address,
-        agent: Address,
-        amount: i128,
-        expiry: Option<u64>,
-    ) -> Result<u64, ContractError> {
-        Self::create_remittance(env, sender, agent, amount, expiry)
     }
 
     pub fn get_version(env: Env) -> soroban_sdk::String {
@@ -3831,8 +3774,12 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             // #1665b: Accrue treasury protocol fee from the per-remittance platform fee.
             // The net token transfer above already paid the net amount to the recipient;
             // we still owe the treasury its slice of each individual remittance's fee.
-            let fee_breakdown =
-                fee_service::breakdown_from_platform_fee(&env, remittance.amount, remittance.fee)?;
+            let fee_breakdown = fee_service::breakdown_from_platform_fee(
+                &env,
+                remittance.amount,
+                remittance.fee,
+                remittance.protocol_fee,
+            )?;
             let protocol_fee = fee_breakdown.protocol_fee;
             if protocol_fee > 0 {
                 let token_client_inner = token::Client::new(&env, &usdc_token);
@@ -3942,9 +3889,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     }
 
     /// Sets the minimum agent reputation threshold (#591). Admin only.
-    pub fn set_min_agent_reputation(env: Env, threshold: u32) -> Result<(), ContractError> {
+    pub fn set_min_agent_reputation(env: Env, caller: Address, threshold: u32) -> Result<(), ContractError> {
         if threshold > 100 { return Err(ContractError::InvalidReputationScore); }
-        let caller = get_admin(&env)?;
         require_admin(&env, &caller)?;
         let old = storage::get_min_agent_reputation(&env) as u64;
         storage::set_min_agent_reputation(&env, threshold);
@@ -3953,7 +3899,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             soroban_sdk::symbol_short!("min_rep"),
             old,
             threshold as u64,
-            caller,
+            caller.clone(),
         );
         Ok(())
     }
@@ -3961,40 +3907,6 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// Returns the current minimum agent reputation threshold.
     pub fn get_min_agent_reputation(env: Env) -> u32 {
         storage::get_min_agent_reputation(&env)
-    }
-
-    /// Add a token to the whitelist. Only admins can call this.
-    pub fn add_whitelisted_token(env: Env, token: Address) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
-        require_admin(&env, &caller)?;
-
-        if is_token_whitelisted(&env, &token) {
-            return Err(ContractError::TokenAlreadyWhitelisted);
-        }
-
-        set_token_whitelisted(&env, &token, true);
-
-        emit_token_whitelisted(&env, token.clone(), caller);
-        log_whitelist_token(&env, &token);
-
-        Ok(())
-    }
-
-    /// Remove a token from the whitelist. Only admins can call this.
-    pub fn remove_whitelisted_token(env: Env, token: Address) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
-        require_admin(&env, &caller)?;
-
-        if !is_token_whitelisted(&env, &token) {
-            return Err(ContractError::TokenNotWhitelisted);
-        }
-
-        set_token_whitelisted(&env, &token, false);
-
-        emit_token_removed_from_whitelist(&env, token.clone(), caller);
-        log_remove_whitelisted_token(&env, &token);
-
-        Ok(())
     }
 
     /// Check if a token is whitelisted.
@@ -4229,6 +4141,20 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         fee_service::calculate_fees_with_breakdown(&env, amount, None, None)
     }
 
+    /// Returns the frozen fee breakdown for an existing remittance.
+    pub fn breakdown_from_platform_fee(
+        env: Env,
+        remittance_id: u64,
+    ) -> Result<FeeBreakdown, ContractError> {
+        let remittance = get_remittance(&env, remittance_id)?;
+        fee_service::breakdown_from_platform_fee(
+            &env,
+            remittance.amount,
+            remittance.fee,
+            remittance.protocol_fee,
+        )
+    }
+
     /// Calculates fee breakdown with corridor-specific configuration
     ///
     /// Applies country-to-country fee rules for cross-border transactions.
@@ -4351,9 +4277,10 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     ///
     /// # Authorization
     ///
-    /// Requires authentication from the contract admin.
+    /// Requires authentication from a registered admin.
     pub fn set_asset_verification(
         env: Env,
+        caller: Address,
         asset_code: String,
         issuer: Address,
         status: VerificationStatus,
@@ -4362,8 +4289,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         has_toml: bool,
         token_contract: Option<Address>,
     ) -> Result<(), ContractError> {
-        let admin = get_admin(&env)?;
-        admin.require_auth();
+        require_admin(&env, &caller)?;
 
         if reputation_score > 100 {
             return Err(ContractError::InvalidReputationScore);
@@ -4493,10 +4419,10 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     ///
     /// # Deprecated
     /// Thin wrapper over `set_blacklist_status`. Scheduled for removal in the
-    /// next ABI version — use `set_blacklist_status(user, true)` instead.
-    #[deprecated(note = "use set_blacklist_status(user, true); removed in the next ABI version")]
-    pub fn blacklist_user(env: Env, user: Address) -> Result<(), ContractError> {
-        Self::set_blacklist_status(&env, user, true)
+    /// next ABI version — use `set_blacklist_status(caller, user, true)` instead.
+    #[deprecated(note = "use set_blacklist_status(caller, user, true); removed in the next ABI version")]
+    pub fn blacklist_user(env: Env, caller: Address, user: Address) -> Result<(), ContractError> {
+        Self::set_blacklist_status(&env, caller, user, true)
     }
 
     /// Removes a user from the blacklist.
@@ -4505,24 +4431,25 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     ///
     /// # Deprecated
     /// Thin wrapper over `set_blacklist_status`. Scheduled for removal in the
-    /// next ABI version — use `set_blacklist_status(user, false)` instead.
-    #[deprecated(note = "use set_blacklist_status(user, false); removed in the next ABI version")]
-    pub fn remove_from_blacklist(env: Env, user: Address) -> Result<(), ContractError> {
-        Self::set_blacklist_status(&env, user, false)
+    /// next ABI version — use `set_blacklist_status(caller, user, false)` instead.
+    #[deprecated(note = "use set_blacklist_status(caller, user, false); removed in the next ABI version")]
+    pub fn remove_from_blacklist(env: Env, caller: Address, user: Address) -> Result<(), ContractError> {
+        Self::set_blacklist_status(&env, caller, user, false)
     }
 
     /// Set user blacklist status (admin only)
     ///
     /// # Deprecated
     /// Thin wrapper over `set_blacklist_status`. Scheduled for removal in the
-    /// next ABI version — use `set_blacklist_status(user, blacklisted)` instead.
-    #[deprecated(note = "use set_blacklist_status(user, blacklisted); removed in the next ABI version")]
+    /// next ABI version — use `set_blacklist_status(caller, user, blacklisted)` instead.
+    #[deprecated(note = "use set_blacklist_status(caller, user, blacklisted); removed in the next ABI version")]
     pub fn set_user_blacklisted(
         env: Env,
+        caller: Address,
         user: Address,
         blacklisted: bool,
     ) -> Result<(), ContractError> {
-        Self::set_blacklist_status(&env, user, blacklisted)
+        Self::set_blacklist_status(&env, caller, user, blacklisted)
     }
 
     /// Check if user is blacklisted
@@ -4533,12 +4460,12 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// Set user KYC approval status (admin only)
     pub fn set_kyc_approved(
         env: Env,
+        caller: Address,
         user: Address,
         approved: bool,
         expiry: u64,
     ) -> Result<(), ContractError> {
-        let admin = get_admin(&env)?;
-        admin.require_auth();
+        require_admin(&env, &caller)?;
 
         // #1677: An approval must not already be expired when it is granted.
         if approved && expiry <= env.ledger().timestamp() {
@@ -4554,7 +4481,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         }
 
         // #1677: Emit an audit event for every KYC change.
-        emit_kyc_updated(&env, user, approved, expiry, admin);
+        emit_kyc_updated(&env, user, approved, Some(expiry), caller.clone());
         Ok(())
     }
 
@@ -4603,7 +4530,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             } else {
                 clear_kyc_expiry(&env, &user);
             }
-            emit_kyc_updated(&env, user, approved, expiry, caller.clone());
+            emit_kyc_updated(&env, user, approved, Some(expiry), caller.clone());
         }
 
         Ok(())
@@ -4619,13 +4546,12 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// Before whitelisting, the address is probed with SEP-41 `decimals()` so
     /// that an account address or a non-token contract is rejected up front
     /// rather than failing later during a remittance. The probed decimals are
-    /// persisted for amount validation.
+/// persisted for amount validation.
     ///
     /// # Errors
     /// - `Unauthorized` — caller is not an admin
     /// - `TokenNotSep41` — the address does not implement SEP-41
-    pub fn add_whitelisted_token(env: Env, token: Address) -> Result<(), ContractError> {
-        let caller = get_admin(&env)?;
+    pub fn add_whitelisted_token(env: Env, caller: Address, token: Address) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
 
         if is_token_whitelisted(&env, &token) {
@@ -4641,14 +4567,30 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
             _ => return Err(ContractError::TokenNotSep41),
         };
 
-        set_whitelisted_token_decimals(&env, &token, decimals);
-        add_whitelisted_token(&env, &token);
+        set_token_decimals(&env, &token, decimals);
+        set_token_whitelisted(&env, &token, true);
 
-        emit_token_whitelisted(&env, token, caller);
+        emit_token_whitelisted(&env, token, caller.clone());
         Ok(())
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
+    /// Remove a token from the whitelist. Only admins can call this.
+    pub fn remove_whitelisted_token(env: Env, caller: Address, token: Address) -> Result<(), ContractError> {
+        require_admin(&env, &caller)?;
+
+        if !is_token_whitelisted(&env, &token) {
+            return Err(ContractError::TokenNotWhitelisted);
+        }
+
+        set_token_whitelisted(&env, &token, false);
+
+        emit_token_removed_from_whitelist(&env, token.clone(), caller.clone());
+        log_remove_whitelisted_token(&env, &token);
+
+        Ok(())
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
     // Migration Functions
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -4673,8 +4615,10 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         env: Env,
         caller: Address,
     ) -> Result<MigrationSnapshot, ContractError> {
-        // Require initialized contract
-        get_admin(&env)?;
+        // Require initialized contract (check admin count instead of legacy admin)
+        if storage::get_admin_count(&env) == 0 {
+            return Err(ContractError::NotInitialized);
+        }
 
         // Admin auth
         require_admin(&env, &caller)?;
@@ -4716,8 +4660,10 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         caller: Address,
         batch: MigrationBatch,
     ) -> Result<(), ContractError> {
-        // Require initialized contract
-        get_admin(&env)?;
+        // Require initialized contract (check admin count instead of legacy admin)
+        if storage::get_admin_count(&env) == 0 {
+            return Err(ContractError::NotInitialized);
+        }
 
         // Admin auth
         require_admin(&env, &caller)?;

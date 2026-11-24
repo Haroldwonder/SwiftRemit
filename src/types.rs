@@ -244,6 +244,12 @@ pub struct AgentStats {
     pub success_rate_bps: u32,
     /// Ledger timestamp of the most recent confirm_payout or mark_failed call.
     pub last_active_timestamp: u64,
+    /// Number of disputes resolved in total.
+    pub disputes_resolved: u32,
+    /// Number of disputes won (resolved in favor of agent).
+    pub disputes_won: u32,
+    /// Number of disputes lost (resolved in favor of sender).
+    pub disputes_lost: u32,
 }
 
 /// Entry for batch settlement processing.
@@ -353,6 +359,8 @@ pub enum AdminOperationType {
     /// fields carry the new values). Required once the current threshold is > 1 so that
     /// a single admin cannot unilaterally weaken the quorum protection.
     UpdateMultisigConfig,
+    /// Abort a migration in progress.
+    AbortMigration,
 }
 
 /// A pending multi-sig admin operation awaiting sufficient approvals.
@@ -600,7 +608,7 @@ pub struct ContractConfig {
     /// Default escrow time-to-live in seconds.
     pub escrow_ttl: u64,
     /// Rate-limit configuration (window length and per-window caps).
-    pub rate_limit_config: RateLimitConfig,
+    pub rate_limit_config: crate::rate_limit::RateLimitConfig,
     /// Minimum agent reputation required to accept remittances.
     pub min_agent_reputation: u32,
     /// Post-unpause cooldown period in seconds (0 = disabled).
@@ -615,6 +623,10 @@ pub struct ContractConfig {
     pub max_amount: i128,
     /// Whether the contract is currently paused.
     pub is_paused: bool,
+    /// Maximum batch size for process_expired_remittances.
+    pub max_expired_batch_size: u32,
+    /// Number of registered admins.
+    pub admin_count: u32,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
