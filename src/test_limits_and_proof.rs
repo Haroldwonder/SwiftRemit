@@ -628,6 +628,48 @@ fn test_valid_proof_still_gated_by_rate_limit() {
     );
 }
 
+/// #1831 — `update_rate_limit_config` rejects degenerate configs when enabled.
+#[test]
+fn test_update_rate_limit_config_rejects_invalid_values() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, admin, _sender, _agent, _token_admin) = setup(&env);
+
+    // max_requests == 0 while enabled
+    assert_eq!(
+        contract
+            .try_update_rate_limit_config(&admin, &0, &60, &true)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::InvalidRateLimitConfig
+    );
+
+    // window_seconds == 0 while enabled
+    assert_eq!(
+        contract
+            .try_update_rate_limit_config(&admin, &10, &0, &true)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::InvalidRateLimitConfig
+    );
+
+    // window_seconds above the 1-day maximum
+    assert_eq!(
+        contract
+            .try_update_rate_limit_config(&admin, &10, &86_401, &true)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::InvalidRateLimitConfig
+    );
+
+    // Boundary values are accepted.
+    contract.update_rate_limit_config(&admin, &1, &86_400, &true);
+
+    // Disabled configs may use zero values.
+    contract.update_rate_limit_config(&admin, &0, &0, &false);
+}
+
 /// #1529 — no proof path (proof not required) does not interfere with rate limits.
 ///
 /// Creates a remittance without `require_proof`, confirms it without supplying

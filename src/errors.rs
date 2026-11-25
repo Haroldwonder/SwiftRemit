@@ -340,4 +340,11 @@ pub enum ContractError {
     /// the SEP-41 interface (e.g. `decimals()` / `symbol()`) fails, meaning
     /// the address is not a valid token contract.
     TokenNotSep41 = 86,
+
+    /// Rate limit configuration is invalid.
+    ///
+    /// Returned by `update_rate_limit_config` when rate limiting is enabled
+    /// but `max_requests` or `window_seconds` is zero, or when
+    /// `window_seconds` exceeds the maximum permitted window.
+    InvalidRateLimitConfig = 87,
 }

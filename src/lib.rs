@@ -4018,6 +4018,11 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// - `window_seconds`: Time window in seconds
     /// - `enabled`: Whether rate limiting is enabled
     ///
+    /// # Errors
+    /// - `InvalidRateLimitConfig` — when `enabled` is true and `max_requests`
+    ///   or `window_seconds` is zero, or `window_seconds` exceeds
+    ///   `MAX_RATE_LIMIT_WINDOW_SECONDS` (1 day).
+    ///
     /// # Example
     /// ```ignore
     /// // Set rate limit to 50 requests per 30 seconds
@@ -4031,6 +4036,14 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         enabled: bool,
     ) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
+
+        if enabled
+            && (max_requests == 0
+                || window_seconds == 0
+                || window_seconds > crate::config::MAX_RATE_LIMIT_WINDOW_SECONDS)
+        {
+            return Err(ContractError::InvalidRateLimitConfig);
+        }
 
         let config = RateLimitConfig {
             max_requests,

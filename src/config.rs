@@ -111,6 +111,12 @@ pub const DEFAULT_RATE_LIMIT_MAX_REQUESTS: u32 = 100;
 /// - Value: 60 seconds (1 minute)
 pub const DEFAULT_RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
 
+/// Maximum permitted rate limit window duration in seconds (1 day).
+///
+/// `update_rate_limit_config` rejects any `window_seconds` above this value
+/// with `ContractError::InvalidRateLimitConfig`.
+pub const MAX_RATE_LIMIT_WINDOW_SECONDS: u64 = 86_400;
+
 // ── Abuse-protection sliding-window constants ────────────────────────────────
 
 /// Sliding-window duration used by abuse_protection rate limiting (seconds).
