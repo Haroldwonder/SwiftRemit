@@ -77,6 +77,8 @@ mod test_treasury;
 #[cfg(test)]
 mod test_multisig;
 #[cfg(test)]
+mod test_issue_1832;
+#[cfg(test)]
 mod test_issues_1852_1853_1854_1857;
 
 
@@ -4032,6 +4034,13 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     ) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
 
+        // #1832: read the outgoing values before they are overwritten, so the
+        // event can carry both sides of the change. A contract that has never
+        // had a rate limit configured has no previous values to report.
+        let previous = crate::rate_limit::get_rate_limit_config(&env)
+            .map(|c| (c.max_requests, c.window_seconds, c.enabled))
+            .unwrap_or((0, 0, false));
+
         let config = RateLimitConfig {
             max_requests,
             window_seconds,
@@ -4039,6 +4048,16 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         };
 
         set_rate_limit_config(&env, config);
+
+        // #1832: every other admin setter announces itself. This one changed
+        // the limits silently, so neither an indexer nor the admin audit log
+        // could see a limit move.
+        crate::events::emit_rate_limit_config_updated(
+            &env,
+            caller,
+            previous,
+            (max_requests, window_seconds, enabled),
+        );
 
         Ok(())
     }

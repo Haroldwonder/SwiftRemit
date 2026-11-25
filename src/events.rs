@@ -259,6 +259,37 @@ pub fn emit_config_updated(
     emit_event!(env, "config", "updated", key, old_value, new_value, admin);
 }
 
+/// Emits an event when the sliding-window rate-limit configuration is replaced (#1832).
+///
+/// Topics: `("ratelimit", "updated")`
+/// Payload: `(schema_version, ledger_seq, ledger_ts, caller, old_max_requests,
+/// new_max_requests, old_window_seconds, new_window_seconds, old_enabled,
+/// new_enabled)`
+///
+/// `emit_config_updated` carries a single `u64` pair, which cannot say what
+/// changed when three fields move at once, so this one carries both sides of
+/// all three. Indexers and the admin audit log can then see a limit change
+/// without diffing contract state.
+pub fn emit_rate_limit_config_updated(
+    env: &Env,
+    caller: Address,
+    old: (u32, u64, bool),
+    new: (u32, u64, bool),
+) {
+    emit_event!(
+        env,
+        "ratelimit",
+        "updated",
+        caller,
+        old.0,
+        new.0,
+        old.1,
+        new.1,
+        old.2,
+        new.2
+    );
+}
+
 /// Emits an event when the platform fee is updated.
 pub fn emit_fee_updated(env: &Env, fee_bps: u32) {
     emit_event!(env, "fee", "updated", fee_bps);
