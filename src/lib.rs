@@ -4086,7 +4086,10 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// limits. Mitigates the storage-growth griefing vector where an attacker
     /// spins up many addresses to inflate contract storage cheaply.
     pub fn cleanup_rate_limit_entries(env: Env, address: Address) {
-        crate::rate_limit::cleanup_stale_entries(&env, &address, crate::config::RATE_LIMIT_WINDOW_SECONDS);
+        let window_seconds = crate::rate_limit::get_rate_limit_config(&env)
+            .map(|config| config.window_seconds)
+            .unwrap_or(crate::config::DEFAULT_RATE_LIMIT_WINDOW_SECONDS);
+        crate::rate_limit::cleanup_stale_entries(&env, &address, window_seconds);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
