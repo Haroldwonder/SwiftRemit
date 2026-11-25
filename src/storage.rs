@@ -1637,6 +1637,19 @@ pub fn set_escrow_ttl(env: &Env, ttl: u64) {
     env.storage().instance().set(&DataKey::EscrowTtl, &ttl);
 }
 
+/// Whether `escrow` has reached its expiry at `now` (#1829).
+///
+/// One definition for both the manual refund path and the batch processor: the
+/// boundary is inclusive, so an escrow is expired from the moment
+/// `now == expiry`. An escrow with no expiry never expires by time — only an
+/// admin can release it.
+pub fn is_escrow_expired(escrow: &crate::Escrow, now: u64) -> bool {
+    match escrow.expiry {
+        Some(expiry) => now >= expiry,
+        None => false,
+    }
+}
+
 pub fn get_escrow(env: &Env, transfer_id: u64) -> Result<crate::Escrow, ContractError> {
     env.storage()
         .persistent()
@@ -2553,13 +2566,24 @@ pub fn extend_critical_ttls(env: &Env, extend_by_ledgers: u32) {
         .get::<DataKey, u64>(&DataKey::RemittanceCounter)
         .unwrap_or(0);
 
-    for id in 0..counter {
+    // #1826: IDs are assigned as `counter + 1` in `create_remittance`, so the live
+    // range is `1..=counter`. `0..counter` checked a record that never exists and
+    // left the newest remittance — the one most likely to still be pending — out.
+    for id in 1..=counter {
         let key = DataKey::Remittance(id);
         if env.storage().persistent().has(&key) {
             env.storage()
                 .persistent()
                 .extend_ttl(&key, ledgers, ledgers);
         }
+    }
+
+    // #1828: escrows hold funds in the contract. An archived `Escrow(id)` makes
+    // `release_escrow` and `refund_escrow` fail with the funds already locked, so
+    // they are extended alongside the remittances. Escrow IDs are `counter + 1` too.
+    let escrow_counter = get_escrow_counter(env).unwrap_or(0);
+    for id in 1..=escrow_counter {
+        extend_escrow_ttl_if_pending(env, id, ledgers);
     }
 
     // Bump per-agent persistent keys so agents never lose their registration status.
@@ -2586,6 +2610,157 @@ pub fn extend_critical_ttls(env: &Env, extend_by_ledgers: u32) {
         if env.storage().persistent().has(&key) {
             env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
         }
+    }
+}
+
+/// Largest number of IDs one paginated TTL extension may touch (#1827).
+///
+/// Every Soroban invocation has a fixed instruction and ledger-entry budget. A
+/// sweep over the whole protocol cannot stay inside it once there are a few
+/// thousand records, so admins page through the range instead of asking for all
+/// of it at once.
+pub const TTL_EXTEND_MAX_PAGE: u32 = 100;
+
+/// Extends an escrow's TTL when it is still holding funds.
+///
+/// A `Released` or `Refunded` escrow is history: it no longer needs to outlive
+/// its natural TTL, and skipping it keeps the page's budget for the records that
+/// do.
+fn extend_escrow_ttl_if_pending(env: &Env, id: u64, ledgers: u32) {
+    let key = DataKey::Escrow(id);
+    let escrow: Option<crate::Escrow> = env.storage().persistent().get(&key);
+    if let Some(escrow) = escrow {
+        if escrow.status == crate::EscrowStatus::Pending {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+    }
+}
+
+/// Extends TTLs for one page of persistent records (#1827, #1828).
+///
+/// Walks `start_id ..= start_id + limit - 1`, extending the remittance and the
+/// escrow stored under each ID, and returns the ID to pass as the next
+/// `start_id` — or `0` once the end of the range has been reached. `limit` is
+/// clamped to `TTL_EXTEND_MAX_PAGE`; a `limit` of 0 is read as one record, so a
+/// caller can never ask for a page that makes no progress.
+///
+/// Remittances in a terminal state (`Completed`, `Cancelled`) are skipped: the
+/// money has moved and the record may age out. `Failed` and `Disputed` are kept
+/// alive, because both can still be acted on.
+///
+/// The contract instance is bumped only on the first page, so paging through a
+/// large protocol does not pay for it again on every call.
+pub fn extend_critical_ttls_page(env: &Env, extend_by_ledgers: u32, start_id: u64, limit: u32) -> u64 {
+    // Cap at ~1 year of ledgers (5-second ledger time), as the full sweep does.
+    let ledgers = extend_by_ledgers.min(3_110_400);
+
+    if start_id <= 1 {
+        env.storage().instance().extend_ttl(ledgers, ledgers);
+    }
+
+    let remittance_counter = env
+        .storage()
+        .instance()
+        .get::<DataKey, u64>(&DataKey::RemittanceCounter)
+        .unwrap_or(0);
+    let escrow_counter = get_escrow_counter(env).unwrap_or(0);
+    let last_id = if remittance_counter > escrow_counter { remittance_counter } else { escrow_counter };
+
+    let first = if start_id < 1 { 1 } else { start_id };
+    if first > last_id {
+        return 0;
+    }
+
+    let page = if limit == 0 { 1 } else { limit.min(TTL_EXTEND_MAX_PAGE) };
+    // `page` is at most 100, so this cannot overflow a u64 that holds a live ID.
+    let end = first + (page as u64) - 1;
+    let end = if end > last_id { last_id } else { end };
+
+    for id in first..=end {
+        let key = DataKey::Remittance(id);
+        let remittance: Option<Remittance> = env.storage().persistent().get(&key);
+        if let Some(remittance) = remittance {
+            let terminal = remittance.status == RemittanceStatus::Completed
+                || remittance.status == RemittanceStatus::Cancelled;
+            if !terminal {
+                env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+            }
+        }
+        extend_escrow_ttl_if_pending(env, id, ledgers);
+    }
+
+    if end >= last_id {
+        0
+    } else {
+        end + 1
+    }
+}
+
+/// Extends TTLs for one page of the agent registry (#1827).
+///
+/// The agent list grows without bound as agents register, so the per-agent keys
+/// are paged on their own index. Returns the next `offset`, or `0` when the end
+/// of the list has been reached.
+pub fn extend_agent_ttls_page(env: &Env, extend_by_ledgers: u32, offset: u32, limit: u32) -> u32 {
+    let ledgers = extend_by_ledgers.min(3_110_400);
+    let agents = get_agent_list(env);
+    if offset >= agents.len() {
+        return 0;
+    }
+
+    let page = if limit == 0 { 1 } else { limit.min(TTL_EXTEND_MAX_PAGE) };
+    let end = (offset + page).min(agents.len());
+
+    for i in offset..end {
+        let agent = agents.get_unchecked(i);
+
+        let key = DataKey::AgentRegistered(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+
+        let key = DataKey::AgentKycHash(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+
+        let key = DataKey::AgentStats(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+
+        let key = DataKey::AgentDailyCap(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+    }
+
+    if end >= agents.len() {
+        0
+    } else {
+        end
+    }
+}
+
+/// The live TTL of a remittance record, for tests (`DataKey` stays private).
+#[cfg(test)]
+pub fn remittance_ttl(env: &Env, id: u64) -> Option<u32> {
+    let key = DataKey::Remittance(id);
+    if env.storage().persistent().has(&key) {
+        Some(env.storage().persistent().get_ttl(&key))
+    } else {
+        None
+    }
+}
+
+/// The live TTL of an escrow record, for tests (`DataKey` stays private).
+#[cfg(test)]
+pub fn escrow_ttl(env: &Env, id: u64) -> Option<u32> {
+    let key = DataKey::Escrow(id);
+    if env.storage().persistent().has(&key) {
+        Some(env.storage().persistent().get_ttl(&key))
+    } else {
+        None
     }
 }
 

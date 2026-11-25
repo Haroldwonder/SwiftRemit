@@ -77,6 +77,8 @@ mod test_treasury;
 #[cfg(test)]
 mod test_multisig;
 #[cfg(test)]
+mod test_issues_1826_1827_1828_1829;
+#[cfg(test)]
 mod test_issues_1852_1853_1854_1857;
 
 
@@ -3083,14 +3085,12 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         // #1661: Sender may only reclaim after the escrow has expired.
         // Without this guard the sender can front-run release_escrow and the
         // escrow provides no guarantee to the recipient.
-        match escrow.expiry {
-            Some(expiry) => {
-                if env.ledger().timestamp() < expiry {
-                    return Err(ContractError::EscrowNotYetExpired);
-                }
-            }
-            // No TTL configured: treat as permanent lock — admin must release.
-            None => return Err(ContractError::EscrowNotYetExpired),
+        //
+        // #1829: the boundary comes from `is_escrow_expired`, the same answer the
+        // batch processor reads. An escrow with no expiry is a permanent lock and
+        // is never expired by time — the admin must release it.
+        if !crate::storage::is_escrow_expired(&escrow, env.ledger().timestamp()) {
+            return Err(ContractError::EscrowNotYetExpired);
         }
 
         // #1844: Refund in the token stored on the escrow.
@@ -3257,12 +3257,10 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                 continue;
             }
 
-            let is_expired = match escrow.expiry {
-                Some(expiry) => now > expiry,
-                None => false,
-            };
-
-            if !is_expired {
+            // #1829: this used to be `now > expiry` while `refund_escrow` accepted
+            // `now >= expiry`, so at exactly `now == expiry` a sender could reclaim
+            // by hand but the batch processor walked past the escrow.
+            if !crate::storage::is_escrow_expired(&escrow, now) {
                 continue;
             }
 
@@ -3545,8 +3543,13 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
 
     /// Extend TTLs for critical persistent and instance storage keys (admin only).
     ///
-    /// Bumps the TTL of the contract instance and all persistent remittance/agent
-    /// records so they do not expire between backend scheduler runs.
+    /// Bumps the TTL of the contract instance and all persistent
+    /// remittance/escrow/agent records so they do not expire between backend
+    /// scheduler runs.
+    ///
+    /// This walks the whole protocol in one invocation, so it only suits small
+    /// deployments; see [`Self::extend_storage_ttl_page`] (#1827) for the
+    /// bounded version.
     ///
     /// # Parameters
     /// - `caller`: Admin address (must be authorised)
@@ -3563,6 +3566,73 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
         crate::storage::extend_critical_ttls(&env, extend_by_ledgers);
         Ok(())
+    }
+
+    /// Extends TTLs for one page of remittance and escrow records (admin only).
+    ///
+    /// # Deprecated alternative
+    ///
+    /// Prefer this over [`Self::extend_storage_ttl`] on any deployment with more
+    /// than a few hundred records: that call walks the whole protocol in one
+    /// invocation and will eventually exceed Soroban's instruction and
+    /// ledger-entry budget (#1827), at which point it fails and nothing is
+    /// extended at all. This one does a bounded amount of work and tells the
+    /// caller where to resume.
+    ///
+    /// # Parameters
+    /// - `caller`: Admin address (must be authorised)
+    /// - `extend_by_ledgers`: Number of ledgers to extend TTL by (max 3_110_400 ≈ 1 year)
+    /// - `start_id`: First record ID in this page; pass `1` to start
+    /// - `limit`: Page size, capped at `TTL_EXTEND_MAX_PAGE` (100)
+    ///
+    /// # Returns
+    /// The `start_id` for the next page, or `0` when the end of the range has
+    /// been reached, so an ops script can loop until it sees `0`.
+    pub fn extend_storage_ttl_page(
+        env: Env,
+        caller: Address,
+        extend_by_ledgers: u32,
+        start_id: u64,
+        limit: u32,
+    ) -> Result<u64, ContractError> {
+        // `require_admin` already performs `caller.require_auth()`; do not call it again.
+        require_admin(&env, &caller)?;
+        Ok(crate::storage::extend_critical_ttls_page(
+            &env,
+            extend_by_ledgers,
+            start_id,
+            limit,
+        ))
+    }
+
+    /// Extends TTLs for one page of the agent registry (admin only, #1827).
+    ///
+    /// The agent list grows as agents register, so it is paged on its own index
+    /// rather than on record IDs.
+    ///
+    /// # Parameters
+    /// - `caller`: Admin address (must be authorised)
+    /// - `extend_by_ledgers`: Number of ledgers to extend TTL by (max 3_110_400 ≈ 1 year)
+    /// - `offset`: Index into the agent list; pass `0` to start
+    /// - `limit`: Page size, capped at `TTL_EXTEND_MAX_PAGE` (100)
+    ///
+    /// # Returns
+    /// The next `offset`, or `0` when the end of the list has been reached.
+    pub fn extend_agent_storage_ttl_page(
+        env: Env,
+        caller: Address,
+        extend_by_ledgers: u32,
+        offset: u32,
+        limit: u32,
+    ) -> Result<u32, ContractError> {
+        // `require_admin` already performs `caller.require_auth()`; do not call it again.
+        require_admin(&env, &caller)?;
+        Ok(crate::storage::extend_agent_ttls_page(
+            &env,
+            extend_by_ledgers,
+            offset,
+            limit,
+        ))
     }
 
     /// Creates a single remittance.
