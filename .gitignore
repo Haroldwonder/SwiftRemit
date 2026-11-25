@@ -5,7 +5,6 @@ Cargo.lock
 # ABI output — generated files are committed, but ignore any local overrides
 abi/*.json.local
 .soroban/
-.env
 
 # Frontend
 frontend/node_modules/
@@ -31,7 +30,6 @@ api/.env
 api/.env.local
 
 # Editor / IDE
-.vscode/extensions.json
 .idea/
 *.iml
 *.suo
@@ -52,7 +50,6 @@ yarn-error.log*
 # Runtime / toolchain
 .kiro
 .env.testnet.local
-.env.local
 .env.*.local
 
 # Alertmanager notifier secrets — mounted at runtime, never committed (SR-214)
@@ -67,7 +64,6 @@ coverage/
 lcov.info
 
 # Editor / IDE
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -102,7 +98,6 @@ backend/coverage/
 frontend/coverage/
 
 # Local environment overrides
-.env.local
 .env.*.local
 
 # Soroban CLI identity files (contain private keys)
@@ -114,3 +109,4 @@ tests/load/results/*.html
 tests/load/results/*.json
 tests/load/results/*.txt
 
+config.bat

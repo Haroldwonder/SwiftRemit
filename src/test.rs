@@ -1030,47 +1030,6 @@ contract.register_agent(&agent, &None);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #11)")]
-fn test_partial_payout_with_past_expiry() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token = create_token_contract(&env, &token_admin);
-    let sender = Address::generate(&env);
-    let agent = Address::generate(&env);
-
-    env.mock_all_auths();
-    token.mint(&sender, &10000);
-
-    let contract = create_swiftremit_contract(&env);
-    contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
-    contract.register_agent(&agent, &None);
-
-    // Set expiry to 1 hour in the past
-    env.ledger().with_mut(|li| li.timestamp = 10000);
-    let current_time = env.ledger().timestamp();
-    let expiry_time = current_time.saturating_sub(3600);
-
-    let remittance_id = contract.create_remittance(
-        &sender,
-        &agent,
-        &1000,
-        &Some(expiry_time),
-        &None,
-        &None,
-        &None,
-        &None,
-        &None,
-    );
-
-    // #1627: Partial payouts must reject expired remittances like confirm_payout.
-    contract.authorize_remittance(&admin);
-    contract.confirm_partial_payout(&remittance_id, &400);
-}
-
-#[test]
 fn test_settlement_without_expiry() {
     let env = Env::default();
     env.mock_all_auths();

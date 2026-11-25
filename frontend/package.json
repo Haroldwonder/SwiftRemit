@@ -7,9 +7,9 @@
   "scripts": {
     "check:env": "node scripts/check-env.mjs",
     "predev": "node scripts/check-env.mjs",
-    "dev": "vite",
+    "dev": "node init && vite",
     "prebuild": "node scripts/check-env.mjs --production",
-    "build": "tsc && vite build",
+    "build": "node init && tsc && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

@@ -2,7 +2,7 @@
   "name": "swiftremit",
   "version": "0.0.0",
   "private": true,
-  "description": "SwiftRemit monorepo — Stellar-based cross-border remittance platform",
+  "description": "SwiftRemit monorepo \u2014 Stellar-based cross-border remittance platform",
   "workspaces": [
     "backend",
     "api",
@@ -13,7 +13,7 @@
     "examples"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "node init && npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",

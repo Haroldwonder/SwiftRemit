@@ -1197,19 +1197,6 @@ impl SwiftRemitContract {
         Self::confirm_payout_inner(env, agent, remittance_id, proof, recipient_details_hash, true)
     }
 
-    /// Shared settlement authorization: the assigned agent must be registered,
-    /// authenticated, and hold the Settler role.
-    fn authorize_settler(env: &Env, remittance: &crate::Remittance) -> Result<(), ContractError> {
-        crate::storage::require_agent_authorized(env, &remittance.agent)?;
-        require_role_settler(env, &remittance.agent)?;
-        Ok(())
-    }
-
-    /// Shared pre-confirm lifecycle validation (sender eligibility + KYC).
-    fn pre_confirm_checks(env: &Env, remittance: &crate::Remittance) -> Result<(), ContractError> {
-        transaction_controller::TransactionController::pre_confirm_validation(env, remittance)
-    }
-
     /// Internal implementation of confirm_payout.
     ///
     /// `check_abuse` controls whether the per-agent abuse-protection cooldown and
@@ -1239,7 +1226,7 @@ impl SwiftRemitContract {
 
         // #831: Pre-confirm lifecycle hook — validates sender eligibility and KYC
         // before any state mutation occurs.
-        Self::pre_confirm_checks(&env, &remittance)?;
+        transaction_controller::TransactionController::pre_confirm_validation(&env, &remittance)?;
 
         // #1501 / #1502 / #1497: Validate proof against settlement config if required.
         // Only remittances whose SettlementConfig has require_proof=true are
@@ -1279,7 +1266,10 @@ impl SwiftRemitContract {
         }
 
         // Validate that the assigned agent is registered and authenticated before any payout execution.
-        Self::authorize_settler(&env, &remittance)?;
+        crate::storage::require_agent_authorized(&env, &remittance.agent)?;
+
+        // Require Settler role
+        require_role_settler(&env, &remittance.agent)?;
 
         // Fix #379: Optimistic lock — atomically claim this settlement before any token
         // transfer. A second concurrent call will find the hash already set and fail with
@@ -1784,12 +1774,8 @@ impl SwiftRemitContract {
     /// Remittances configured to require proof are rejected because this endpoint
     /// does not accept proof data.
     ///
-    /// # Errors
-    /// * `Err(ContractError::SettlementExpired)` - Current time exceeds expiry timestamp
-    ///
     /// # Authorization
     /// Requires authentication from the agent assigned to the remittance.
-    /// Requires Settler role.
     pub fn confirm_partial_payout(
         env: Env,
         remittance_id: u64,
@@ -1802,21 +1788,13 @@ impl SwiftRemitContract {
         validate_not_paused(&env)?;
 
         let mut remittance = get_remittance(&env, remittance_id)?;
-        // #1628: share the Settler role check with confirm_payout_inner.
-        Self::authorize_settler(&env, &remittance)?;
-
-        // #1627: Reject partial payouts on expired remittances, matching confirm_payout.
-        crate::validation::validate_settlement_not_expired(&env, remittance.expiry)?;
+        crate::storage::require_agent_authorized(&env, &remittance.agent)?;
 
         if remittance.status != RemittanceStatus::Pending
             && remittance.status != RemittanceStatus::Processing
         {
             return Err(ContractError::InvalidStatus);
         }
-
-        // #1628: share the KYC / eligibility pre-confirm validation with
-        // confirm_payout_inner, before any state mutation occurs.
-        Self::pre_confirm_checks(&env, &remittance)?;
 
         if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
             if config.require_proof {

@@ -146,6 +146,25 @@ pub fn is_terminal_status(status: &RemittanceStatus) -> bool {
     status.is_terminal()
 }
 
+/// Shared refund-and-cancel transition used by both the manual cancel path
+/// (`cancel_remittance`) and the expiry path (`process_expired_remittances`).
+///
+/// Ensures both paths perform identical state changes: the remittance is moved
+/// to `Cancelled` via the validated state machine, and the amount is zeroed so
+/// that stale balances are not left behind on the record.
+///
+/// # Errors
+///
+/// * `ContractError::InvalidStateTransition` - The transition to `Cancelled` is not allowed
+pub fn refund_and_cancel(
+    env: &Env,
+    remittance: &mut crate::Remittance,
+) -> Result<(), ContractError> {
+    transition_status(env, remittance, RemittanceStatus::Cancelled)?;
+    remittance.amount = 0;
+    Ok(())
+}
+
 /// Gets the list of valid next states for a given status.
 ///
 /// # Arguments
