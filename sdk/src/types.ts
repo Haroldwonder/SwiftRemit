@@ -583,6 +583,18 @@ export interface KycApprovalEntry {
   timestamp: bigint;
 }
 
+// ─── Settlement proofs ──────────────────────────────────────────────────────
+
+/** Off-chain settlement proof accepted by proof-gated remittances. */
+export interface ProofData {
+  /** Ed25519 signature (64 bytes). */
+  signature: Buffer;
+  /** Signed payload containing settlement details. */
+  payload: Buffer;
+  /** Address of the signer (the configured settlement oracle). */
+  signer: string;
+}
+
 // ─── Token whitelist ────────────────────────────────────────────────────────
 
 /** A whitelisted token and its display metadata. */

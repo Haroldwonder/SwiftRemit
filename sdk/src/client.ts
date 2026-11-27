@@ -55,6 +55,7 @@ import type {
   PendingOperation,
   ContractConfig,
   KycApprovalEntry,
+  ProofData,
 } from "./types.js";
 import { parseContractError, SwiftRemitError, ErrorCode, TransactionTimeoutError } from "./errors.js";
 import { withRetry, withRetryPolicy } from "./retry.js";
@@ -69,6 +70,7 @@ import {
   i128ToScVal,
   optionToScVal,
   bytesNToScVal,
+  proofDataToScVal,
   stringToScVal,
   parseProposal,
   validateAmount,
@@ -1248,15 +1250,22 @@ export class SwiftRemitClient {
     return BigInt(scValToNative(val) as number);
   }
 
-  /** Confirm partial payout (agent only). */
+  /**
+   * Confirm partial payout (agent only).
+   *
+   * `proof` is required when the remittance's settlement config has
+   * `require_proof = true`; the contract rejects the call otherwise.
+   */
   async confirmPartialPayout(
     agent: string,
     remittanceId: bigint,
-    amount: bigint
+    amount: bigint,
+    proof?: ProofData
   ): Promise<Transaction> {
     return this.prepareTransaction(agent, "confirm_partial_payout", [
       u64ToScVal(remittanceId),
       i128ToScVal(amount),
+      optionToScVal(proof ? proofDataToScVal(proof) : undefined),
     ]);
   }
 
