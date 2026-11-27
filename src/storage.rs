@@ -1334,6 +1334,9 @@ pub fn set_admin_role(env: &Env, address: &Address, is_admin: bool) {
     } else {
         remove_admin_from_list(env, address);
     }
+    // Every role change flows through here, so deriving the cached count from
+    // the admin list keeps it correct for transfers as well as add/remove.
+    sync_admin_count(env);
 }
 
 pub fn get_admin_count(env: &Env) -> u32 {
@@ -1345,6 +1348,11 @@ pub fn get_admin_count(env: &Env) -> u32 {
 
 pub fn set_admin_count(env: &Env, count: u32) {
     env.storage().instance().set(&DataKey::AdminCount, &count);
+}
+
+/// Recomputes the cached admin count from the authoritative admin list.
+pub fn sync_admin_count(env: &Env) {
+    set_admin_count(env, get_admin_list(env).len());
 }
 
 pub fn require_admin(env: &Env, address: &Address) -> Result<(), ContractError> {
