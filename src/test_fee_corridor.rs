@@ -192,3 +192,120 @@ fn test_create_remittance_falls_back_when_corridor_not_configured() {
     // Falls back to global 2.5%
     assert_eq!(contract.get_remittance(&id).fee, 250);
 }
+
+// ── SR-123 abuse-protection parity tests ───────────────────────────
+
+#[test]
+fn test_create_remittance_with_corridor_enforces_cooldown() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract, _, token) = setup(&env);
+
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    token.mint(&sender, &100_000);
+    contract.register_agent(&agent, &None);
+
+    contract.create_remittance_with_corridor(
+        &sender, &agent, &1_000, &None, &None, &None, &None,
+    );
+
+    // Second corridor send within the cooldown window must be rejected.
+    let result = contract.try_create_remittance_with_corridor(
+        &sender, &agent, &1_000, &None, &None, &None, &None,
+    );
+    assert_eq!(result, Err(Ok(ContractError::CooldownActive)));
+}
+
+#[test]
+fn test_create_remittance_with_corridor_enforces_rate_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract, _, token) = setup(&env);
+
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    token.mint(&sender, &1_000_000);
+    contract.register_agent(&agent, &None);
+
+    // Exhaust the sliding-window transfer budget, advancing past the cooldown.
+    for _ in 0..crate::config::MAX_TRANSFERS_PER_WINDOW {
+        contract.create_remittance_with_corridor(
+            &sender, &agent, &1_000, &None, &None, &None, &None,
+        );
+        env.ledger().with_mut(|l| {
+            l.timestamp += crate::config::TRANSFER_COOLDOWN_SECONDS;
+        });
+    }
+
+    let result = contract.try_create_remittance_with_corridor(
+        &sender, &agent, &1_000, &None, &None, &None, &None,
+    );
+    assert_eq!(result, Err(Ok(ContractError::RateLimitExceeded)));
+}
+
+// ── #1644 global daily send limit parity ───────────────────────────
+
+#[test]
+fn test_corridor_path_cannot_bypass_global_daily_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract, admin, token) = setup(&env);
+
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    token.mint(&sender, &1_000_000);
+    contract.register_agent(&agent, &None);
+
+    // Global limit of 10_000; no destination-specific limit configured.
+    contract.set_daily_limit(&admin, &s(&env, "USDC"), &s(&env, "GLOBAL"), &10_000);
+
+    contract.create_remittance_with_corridor(
+        &sender, &agent, &6_000, &None,
+        &Some(s(&env, "US")), &Some(s(&env, "MX")),
+        &None,
+    );
+
+    env.ledger().with_mut(|l| {
+        l.timestamp += crate::config::TRANSFER_COOLDOWN_SECONDS;
+    });
+
+    // 6_000 + 6_000 > 10_000 — the global limit must reject this.
+    let result = contract.try_create_remittance_with_corridor(
+        &sender, &agent, &6_000, &None,
+        &Some(s(&env, "US")), &Some(s(&env, "MX")),
+        &None,
+    );
+    assert_eq!(result, Err(Ok(ContractError::DailySendLimitExceeded)));
+}
+
+#[test]
+fn test_global_limit_holds_across_entrypoints() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract, admin, token) = setup(&env);
+
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    token.mint(&sender, &1_000_000);
+    contract.register_agent(&agent, &None);
+
+    contract.set_daily_limit(&admin, &s(&env, "USDC"), &s(&env, "GLOBAL"), &10_000);
+
+    // Corridor path consumes 6_000 of the global budget.
+    contract.create_remittance_with_corridor(
+        &sender, &agent, &6_000, &None,
+        &Some(s(&env, "US")), &Some(s(&env, "MX")),
+        &None,
+    );
+
+    env.ledger().with_mut(|l| {
+        l.timestamp += crate::config::TRANSFER_COOLDOWN_SECONDS;
+    });
+
+    // The plain path must see the corridor usage and reject the remainder.
+    let result = contract.try_create_remittance(
+        &sender, &agent, &6_000, &None, &None, &None, &None, &None, &None,
+    );
+    assert_eq!(result, Err(Ok(ContractError::DailySendLimitExceeded)));
+}
