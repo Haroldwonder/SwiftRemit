@@ -1,4 +1,4 @@
-FROM node:20-alpine AS base
+FROM node:26-alpine AS base
 WORKDIR /app
 
 # Copy workspace manifests and root lockfile for workspace-aware install
@@ -28,7 +28,7 @@ WORKDIR /app/api
 RUN npm run build
 
 # ── Production runtime stage ──────────────────────────────────────────────
-FROM node:20-alpine AS runtime
+FROM node:26-alpine AS runtime
 WORKDIR /app
 
 # Copy workspace manifests and install production dependencies only
