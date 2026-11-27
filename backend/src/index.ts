@@ -6,7 +6,7 @@ import app from './api';
 import { FxRateWebSocketServer } from './fx-rate-websocket';
 import { initDatabase, getPool, closePool } from './database';
 import { migrate } from './migrate';
-import { startBackgroundJobs } from './scheduler';
+import { startBackgroundJobs, stopBackgroundJobs } from './scheduler';
 import { WebhookHandler } from './webhook-handler';
 import { KycService } from './kyc-service';
 import { createWebhookVerificationMiddleware } from './webhook-middleware';
@@ -166,6 +166,14 @@ async function start() {
       }
 
       fxRateWss.close();
+
+      // Stop background cron jobs and wait (bounded) for running jobs to finish
+      try {
+        await stopBackgroundJobs(SHUTDOWN_TIMEOUT_MS);
+        console.log('Background jobs stopped');
+      } catch (err) {
+        console.error('Error stopping background jobs:', err);
+      }
 
       // Stop reconciler schedule cleanly
       try {
