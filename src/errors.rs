@@ -341,9 +341,9 @@ pub enum ContractError {
     /// the address is not a valid token contract.
     TokenNotSep41 = 86,
 
-    /// `mark_failed` was called without a reason code or evidence hash.
+    /// Batch settlement entries use more than one token denomination.
     ///
-    /// Agents must justify a failure so the sender can evaluate whether to
-    /// dispute it (#1624).
-    MissingFailureReason = 87,
+    /// Netting is only meaningful when every remittance in the batch is
+    /// denominated in the same token (#1620).
+    MixedTokenBatch = 87,
 }

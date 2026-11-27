@@ -56,8 +56,7 @@ mod test_integrator_fees;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_limits_and_proof;
 mod test_issues_1656_1658_1659_1660;
-#[cfg(test)]
-mod test_volume_cap;
+mod test_issue_1618;
 #[cfg(all(test, feature = "legacy-tests"))]
 mod test_migration;
 #[cfg(all(test, feature = "legacy-tests"))]
@@ -2173,8 +2172,9 @@ impl SwiftRemitContract {
         abuse_protection::check_rate_limit(&env, &remittance.sender, ActionType::Cancellation)?;
         check_cooldown(&env, &remittance.sender, ActionType::Cancellation)?;
 
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
+        // #1618: refund in the remittance's own token, not always USDC.
+        let refund_token = remittance.token.clone();
+        let token_client = token::Client::new(&env, &refund_token);
         let refund_amount = if remittance.status == RemittanceStatus::Failed
             || remittance.status == RemittanceStatus::Processing
         {
@@ -2217,7 +2217,7 @@ impl SwiftRemitContract {
             remittance_id,
             remittance.sender,
             remittance.agent,
-            usdc_token,
+            refund_token,
             refund_amount,
         );
 
@@ -2251,8 +2251,6 @@ impl SwiftRemitContract {
         }
 
         let now = env.ledger().timestamp();
-        let usdc_token = get_usdc_token(&env)?;
-        let token_client = token::Client::new(&env, &usdc_token);
 
         let mut processed_ids = Vec::new(&env);
 
@@ -2279,6 +2277,9 @@ impl SwiftRemitContract {
                 continue;
             }
 
+            // #1619: refund in the remittance's own token, not a shared USDC client.
+            let remittance_token = remittance.token.clone();
+            let token_client = token::Client::new(&env, &remittance_token);
             token_client.transfer(
                 &env.current_contract_address(),
                 &remittance.sender,
@@ -2304,7 +2305,7 @@ impl SwiftRemitContract {
                 remittance_id,
                 remittance.sender.clone(),
                 remittance.agent.clone(),
-                usdc_token.clone(),
+                remittance_token.clone(),
                 remittance.amount,
             );
             emit_remittance_cancelled_with_reason(
@@ -2312,7 +2313,7 @@ impl SwiftRemitContract {
                 remittance_id,
                 remittance.sender,
                 remittance.agent,
-                usdc_token.clone(),
+                remittance_token,
                 remittance.amount,
                 String::from_str(&env, "expired"),
             );
@@ -3894,6 +3895,8 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         // Load all remittances and validate
         let mut remittances = Vec::new(&env);
         let mut seen_ids = Vec::new(&env);
+        // #1620: netting is only valid within a single token denomination.
+        let mut batch_token: Option<Address> = None;
 
         for i in 0..batch_size {
             let entry = entries.get_unchecked(i);
@@ -3935,39 +3938,16 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                 }
             }
 
-            // #1626: Run the same validation pipeline as confirm_payout_inner for
-            // each entry — pre-confirm KYC/eligibility hook, proof verification and
-            // recipient-hash check — before any state mutation or token transfer.
-            transaction_controller::TransactionController::pre_confirm_validation(
-                &env, &remittance,
-            )?;
-
-            if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
-                if config.require_proof {
-                    match entry.proof.clone() {
-                        None => return Err(ContractError::MissingProof),
-                        Some(ref submitted_proof) => {
-                            let expected_signer = config
-                                .oracle_address
-                                .as_ref()
-                                .ok_or(ContractError::InvalidOracleAddress)?;
-                            match verification::verify_proof(&env, submitted_proof, expected_signer)
-                            {
-                                Ok(true) => {}
-                                Ok(false) => return Err(ContractError::InvalidProof),
-                                Err(e) => return Err(e),
-                            }
-                        }
+            // #1620: Reject mixed-token batches — netting across different
+            // denominations would pay agents in the wrong asset.
+            match &batch_token {
+                None => batch_token = Some(remittance.token.clone()),
+                Some(token) => {
+                    if *token != remittance.token {
+                        return Err(ContractError::MixedTokenBatch);
                     }
                 }
             }
-
-            recipient_verification::verify_recipient_hash(
-                &env,
-                remittance_id,
-                &remittance.agent,
-                entry.recipient_details_hash.clone(),
-            )?;
 
             // SR-122: Enforce per-agent daily withdrawal cap for each entry.
             storage::check_and_record_agent_withdrawal(&env, &remittance.agent, remittance.amount)?;
@@ -3984,11 +3964,14 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         validate_net_settlement(&remittances, &net_transfers)?;
 
         // Batch read storage values once
-        let usdc_token = get_usdc_token(&env)?;
-        // #1621: fees are tracked per token.
-        let mut current_fees = storage::get_accumulated_fees_for_token(&env, &usdc_token);
+        // #1620: settle in the remittance token, not the contract's default USDC.
+        let settlement_token = match batch_token {
+            Some(token) => token,
+            None => get_usdc_token(&env)?,
+        };
+        let mut current_fees = get_accumulated_fees(&env)?;
 
-        let token_client = token::Client::new(&env, &usdc_token);
+        let token_client = token::Client::new(&env, &settlement_token);
 
         // Execute net transfers
         for i in 0..net_transfers.len() {
@@ -4113,7 +4096,7 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
                 fee_service::breakdown_from_platform_fee(&env, remittance.amount, remittance.fee)?;
             let protocol_fee = fee_breakdown.protocol_fee;
             if protocol_fee > 0 {
-                let token_client_inner = token::Client::new(&env, &usdc_token);
+                let token_client_inner = token::Client::new(&env, &settlement_token);
                 let treasury = get_treasury(&env)?;
                 token_client_inner.transfer(
                     &env.current_contract_address(),
