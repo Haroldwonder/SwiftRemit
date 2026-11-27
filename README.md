@@ -954,3 +954,8 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1698 -->
 - #1698: Add regression test: cancel refund for non-USDC whitelisted token
+
+## Contract operator and escrow reference
+
+- [Smart-contract configuration: admin parameters, defaults, limits, and events](docs/contract-configuration.md)
+- [Escrow lifecycle: authorization, expiry, pause behavior, events, and errors](docs/escrow.md)
