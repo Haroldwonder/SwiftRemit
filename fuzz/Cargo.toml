@@ -33,3 +33,9 @@ name = "fuzz_validate_recipient_hash"
 path = "fuzz_targets/fuzz_validate_recipient_hash.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_compute_net_settlements"
+path = "fuzz_targets/fuzz_compute_net_settlements.rs"
+test = false
+doc = false
