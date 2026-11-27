@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { safeStorage } from '../utils/safeStorage'
 import './Onboarding.css'
 
 export interface OnboardingProps {
@@ -19,7 +20,7 @@ export default function Onboarding({ isVisible, onClose }: OnboardingProps) {
   const [hasSkipped, setHasSkipped] = useState(false)
 
   useEffect(() => {
-    const hasSeenOnboarding = localStorage.getItem('swiftremit_onboarding_seen')
+    const hasSeenOnboarding = safeStorage.getItem('swiftremit_onboarding_seen')
     if (hasSeenOnboarding) {
       onClose()
     }
@@ -74,7 +75,7 @@ export default function Onboarding({ isVisible, onClose }: OnboardingProps) {
   }
 
   const markOnboardingComplete = () => {
-    localStorage.setItem('swiftremit_onboarding_seen', 'true')
+    safeStorage.setItem('swiftremit_onboarding_seen', 'true')
     setHasSkipped(true)
     onClose()
   }

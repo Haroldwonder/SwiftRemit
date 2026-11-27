@@ -2109,35 +2109,6 @@ impl SwiftRemitContract {
         crate::storage::compute_agent_reputation(&stats)
     }
 
-    /// Returns `true` when the agent's reputation is below the configured
-    /// minimum threshold, i.e. the agent is suspended from new remittances
-    /// (#1636). Monitors can poll this view instead of relying on an event.
-    pub fn is_agent_suspended(env: Env, agent: Address) -> bool {
-        let min_rep = storage::get_min_agent_reputation(&env);
-        if min_rep == 0 {
-            return false;
-        }
-        let stats = crate::storage::get_agent_stats(&env, &agent);
-        crate::storage::compute_agent_reputation(&stats) < min_rep
-    }
-
-    pub fn finalize_remittance(
-        env: Env,
-        caller: Address,
-        remittance_id: u64,
-    ) -> Result<(), ContractError> {
-        require_admin(&env, &caller)?;
-        let remittance = get_remittance(&env, remittance_id)?;
-
-        // Verify remittance is in a valid state (Completed)
-        if remittance.status != RemittanceStatus::Completed {
-            return Err(ContractError::InvalidStateTransition);
-        }
-
-        // Remittance is already completed, no further action needed
-        Ok(())
-    }
-
     /// Cancels a pending remittance or recovers a failed remittance after its dispute
     /// window expires, refunding any escrow still held to the sender.
     ///
