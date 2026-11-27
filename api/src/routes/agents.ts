@@ -27,6 +27,11 @@ function sendError(res: Response, status: number, message: string, code: string)
 
 const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{54}$/;
 
+/** Maximum accepted length for an agent `name` (Issue #1872). */
+export const MAX_AGENT_NAME_LENGTH = 100;
+/** Maximum accepted length for an agent `payout_address` (Issue #1872). */
+export const MAX_PAYOUT_ADDRESS_LENGTH = 256;
+
 /** IBAN: 2-letter country code, 2 check digits, 11-30 alphanumeric BBAN. */
 const IBAN_RE = /^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/;
 /** Domestic bank account number: 6-34 digits, optionally separated by spaces or dashes. */
@@ -469,6 +474,22 @@ export function createAgentsRouter(options: AgentsRouterOptions = {}): Router {
     }
     if (typeof name !== 'string' || name.trim().length === 0) {
       return sendError(res, 400, 'name is required', 'MISSING_FIELD');
+    }
+    if (name.trim().length > MAX_AGENT_NAME_LENGTH) {
+      return sendError(
+        res,
+        400,
+        `name must be at most ${MAX_AGENT_NAME_LENGTH} characters`,
+        'FIELD_TOO_LONG',
+      );
+    }
+    if (payout_address.trim().length > MAX_PAYOUT_ADDRESS_LENGTH) {
+      return sendError(
+        res,
+        400,
+        `payout_address must be at most ${MAX_PAYOUT_ADDRESS_LENGTH} characters`,
+        'FIELD_TOO_LONG',
+      );
     }
 
     try {

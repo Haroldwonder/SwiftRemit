@@ -6,20 +6,20 @@ import { sendInternalError } from '../middleware/errorHandler';
 
 const router = Router();
 
+function sendError(res: Response, status: number, message: string, code: string): Response<ErrorResponse> {
+  return res.status(status).json({
+    success: false,
+    error: { message, code },
+    timestamp: new Date().toISOString(),
+  });
+}
+
 // Reject requests where the path is just a trailing slash with no code
 // e.g. GET /api/currencies/ should not match the list route
 router.use((req: Request, res: Response, next: Function) => {
   // If the original URL ends with /currencies/ (trailing slash), treat as not found
   if (req.method === 'GET' && req.originalUrl.endsWith('/currencies/')) {
-    const errorResponse: ErrorResponse = {
-      success: false,
-      error: {
-        message: `Route not found: ${req.method} ${req.path}`,
-        code: 'ROUTE_NOT_FOUND',
-      },
-      timestamp: new Date().toISOString(),
-    };
-    return res.status(404).json(errorResponse);
+    return sendError(res, 404, `Route not found: ${req.method} ${req.path}`, 'ROUTE_NOT_FOUND');
   }
   next();
 });
@@ -43,15 +43,7 @@ router.get('/', (req: Request, res: Response) => {
     if (req.query.limit) {
       const parsedLimit = parseInt(req.query.limit as string, 10);
       if (isNaN(parsedLimit) || parsedLimit < 1) {
-        const errorResponse: ErrorResponse = {
-          success: false,
-          error: {
-            message: 'Invalid limit parameter: must be a positive integer',
-            code: 'INVALID_PAGINATION_PARAM',
-          },
-          timestamp: new Date().toISOString(),
-        };
-        return res.status(400).json(errorResponse);
+        return sendError(res, 400, 'Invalid limit parameter: must be a positive integer', 'INVALID_PAGINATION_PARAM');
       }
       limit = Math.min(parsedLimit, 500); // Cap at 500
     }
@@ -59,15 +51,7 @@ router.get('/', (req: Request, res: Response) => {
     if (req.query.offset) {
       const parsedOffset = parseInt(req.query.offset as string, 10);
       if (isNaN(parsedOffset) || parsedOffset < 0) {
-        const errorResponse: ErrorResponse = {
-          success: false,
-          error: {
-            message: 'Invalid offset parameter: must be a non-negative integer',
-            code: 'INVALID_PAGINATION_PARAM',
-          },
-          timestamp: new Date().toISOString(),
-        };
-        return res.status(400).json(errorResponse);
+        return sendError(res, 400, 'Invalid offset parameter: must be a non-negative integer', 'INVALID_PAGINATION_PARAM');
       }
       offset = parsedOffset;
     }

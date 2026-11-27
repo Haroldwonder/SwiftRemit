@@ -64,6 +64,38 @@ describe('POST /api/agents', () => {
     expect(res.body.error.code).toBe('MISSING_FIELD');
   });
 
+  it('returns 400 FIELD_TOO_LONG when name exceeds 100 characters', async () => {
+    process.env.ADMIN_API_KEY = ADMIN_KEY;
+    const app = createApp();
+    const res = await request(app)
+      .post('/api/agents')
+      .set('x-api-key', ADMIN_KEY)
+      .send({ stellar_address: VALID_ADDRESS, payout_address: 'addr1', name: 'a'.repeat(101) });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('FIELD_TOO_LONG');
+  });
+
+  it('returns 400 FIELD_TOO_LONG when payout_address exceeds 256 characters', async () => {
+    process.env.ADMIN_API_KEY = ADMIN_KEY;
+    const app = createApp();
+    const res = await request(app)
+      .post('/api/agents')
+      .set('x-api-key', ADMIN_KEY)
+      .send({ stellar_address: VALID_ADDRESS, payout_address: 'a'.repeat(257), name: 'Agent' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('FIELD_TOO_LONG');
+  });
+
+  it('accepts name of exactly 100 characters and payout_address of exactly 256 characters', async () => {
+    process.env.ADMIN_API_KEY = ADMIN_KEY;
+    const app = createApp();
+    const res = await request(app)
+      .post('/api/agents')
+      .set('x-api-key', ADMIN_KEY)
+      .send({ stellar_address: VALID_ADDRESS, payout_address: 'a'.repeat(256), name: 'a'.repeat(100) });
+    expect(res.status).toBe(201);
+  });
+
   it('creates agent with status pending', async () => {
     process.env.ADMIN_API_KEY = ADMIN_KEY;
     const app = createApp();
