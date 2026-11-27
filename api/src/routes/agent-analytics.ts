@@ -7,7 +7,10 @@
  * Query params:
  *   from     {string}  - ISO-8601 start date (default: 30 days ago)
  *   to       {string}  - ISO-8601 end date   (default: now)
- *   interval {string}  - Bucket size for time-series: day | week | month (default: day)
+ *   interval {string}  - Bucket size for time-series: hour | day | week | month (default: day)
+ *
+ * Maximum range per interval: hour ≤ 7 days, day ≤ 1 year, week/month ≤ 5 years.
+ * Exceeding it returns 400 RANGE_TOO_LARGE.
  */
 
 import { Router, Request, Response } from 'express';
@@ -16,13 +19,17 @@ import { ErrorResponse } from '../types';
 import { extractBearerToken, verifyAccessToken } from '../middleware/auth.js';
 import { sendInternalError } from '../middleware/errorHandler.js';
 
-const VALID_INTERVALS = ['day', 'week', 'month'] as const;
+const VALID_INTERVALS = ['hour', 'day', 'week', 'month'] as const;
 type Interval = (typeof VALID_INTERVALS)[number];
 
-const PG_TRUNCMAP: Record<Interval, string> = {
-  day: '1 day',
-  week: '1 week',
-  month: '1 month',
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Maximum allowed range (in days) per requested interval. */
+export const MAX_RANGE_DAYS_BY_INTERVAL: Record<Interval, number> = {
+  hour: 7,
+  day: 365,
+  week: 5 * 365,
+  month: 5 * 365,
 };
 
 function timestamp(): string {
@@ -106,7 +113,7 @@ export function createAgentAnalyticsRouter(pool: Pool): Router {
       : new Date();
     const fromDate = req.query.from
       ? new Date(req.query.from as string)
-      : new Date(toDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+      : new Date(toDate.getTime() - 30 * DAY_MS);
 
     if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
       return sendError(res, 400, 'Invalid date format — use ISO-8601', 'INVALID_DATE');
@@ -125,7 +132,18 @@ export function createAgentAnalyticsRouter(pool: Pool): Router {
       );
     }
     const interval = intervalParam as Interval;
-    const bucketInterval = PG_TRUNCMAP[interval];
+
+    // ── Enforce maximum range per interval ────────────────────────────────────
+    const maxRangeDays = MAX_RANGE_DAYS_BY_INTERVAL[interval];
+    const rangeDays = (toDate.getTime() - fromDate.getTime()) / DAY_MS;
+    if (rangeDays > maxRangeDays) {
+      return sendError(
+        res,
+        400,
+        `Date range too large for interval '${interval}': maximum is ${maxRangeDays} days`,
+        'RANGE_TOO_LARGE',
+      );
+    }
 
     try {
       // ── Summary query ────────────────────────────────────────────────────────
@@ -192,7 +210,7 @@ export function createAgentAnalyticsRouter(pool: Pool): Router {
         avg_confirmation: string;
       }>(
         `SELECT
-           DATE_TRUNC('${bucketInterval}'::text, timestamp AT TIME ZONE 'UTC') AS bucket,
+           DATE_TRUNC('${interval}', timestamp AT TIME ZONE 'UTC') AS bucket,
            COUNT(*) FILTER (WHERE event_type = 'remittance_completed')       AS payouts,
            SUM(COALESCE(fee, 0)) FILTER (WHERE event_type = 'remittance_completed') AS earnings,
            AVG(

@@ -380,7 +380,7 @@ fn test_processing_recovery_timeout_boundary() {
     let remittance_id = contract.create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
 
     // Move into Processing via a partial payout.
-    contract.confirm_partial_payout(&remittance_id, &400);
+    contract.confirm_partial_payout(&remittance_id, &400, &None);
     let remittance = contract.get_remittance(&remittance_id);
     assert_eq!(remittance.status, RemittanceStatus::Processing);
 
@@ -412,7 +412,7 @@ fn test_processing_recovery_rejects_non_sender() {
 
     env.mock_all_auths();
     let remittance_id = contract.create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
-    contract.confirm_partial_payout(&remittance_id, &400);
+    contract.confirm_partial_payout(&remittance_id, &400, &None);
 
     let remittance = contract.get_remittance(&remittance_id);
     env.ledger().set_timestamp(remittance.recovery_timeout);
@@ -425,7 +425,7 @@ fn test_processing_recovery_rejects_non_sender() {
 
     // A fresh remittance in Processing must not be recoverable by a stranger.
     let other_id = contract.create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
-    contract.confirm_partial_payout(&other_id, &400);
+    contract.confirm_partial_payout(&other_id, &400, &None);
     let other = contract.get_remittance(&other_id);
     env.ledger().set_timestamp(other.recovery_timeout);
 
@@ -438,7 +438,7 @@ fn test_processing_recovery_rejects_non_sender() {
     // non-sender call must fail auth. We assert the state is untouched when
     // the sender has not acted.
     let pending_id = contract.create_remittance(&sender, &agent, &1000, &None, &None, &None, &None, &None);
-    contract.confirm_partial_payout(&pending_id, &400);
+    contract.confirm_partial_payout(&pending_id, &400, &None);
     let pending = contract.get_remittance(&pending_id);
     env.ledger().set_timestamp(pending.recovery_timeout);
     assert_eq!(

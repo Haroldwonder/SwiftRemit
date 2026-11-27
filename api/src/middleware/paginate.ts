@@ -12,9 +12,11 @@
  * routes/remittances.ts and is mounted at /api/remittances.
  */
 import { Request, Response, NextFunction } from 'express';
+import { ApiError } from './errorHandler';
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const MAX_PAGE_SIZE = 100;
+export const MAX_CURSOR_LENGTH = 256;
 
 export interface PaginationParams {
   cursor?: string;
@@ -30,13 +32,51 @@ export interface PaginatedResponse<T> {
 
 /**
  * Extract and validate pagination params from query string.
+ * Throws a 400 INVALID_LIMIT ApiError for non-integer or non-positive limits.
+ * Throws a 400 INVALID_CURSOR ApiError for non-string cursors (e.g. repeated
+ * query params yielding an array) or cursors longer than MAX_CURSOR_LENGTH.
  * Clamps page_size to MAX_PAGE_SIZE.
  */
 export function parsePaginationParams(req: Request): PaginationParams {
-  const cursor = req.query.cursor as string | undefined;
-  let limit = parseInt(req.query.limit as string, 10) || DEFAULT_PAGE_SIZE;
+  const rawCursor = req.query.cursor;
+  let cursor: string | undefined;
 
-  if (limit < 1) limit = DEFAULT_PAGE_SIZE;
+  if (rawCursor !== undefined && rawCursor !== null && rawCursor !== '') {
+    if (typeof rawCursor !== 'string') {
+      throw new ApiError(
+        400,
+        'INVALID_CURSOR',
+        '`cursor` must be a single string value',
+      );
+    }
+    if (rawCursor.length > MAX_CURSOR_LENGTH) {
+      throw new ApiError(
+        400,
+        'INVALID_CURSOR',
+        `\`cursor\` must not exceed ${MAX_CURSOR_LENGTH} characters`,
+      );
+    }
+    cursor = rawCursor;
+  }
+
+  const rawLimit = req.query.limit;
+
+  let limit = DEFAULT_PAGE_SIZE;
+  if (rawLimit !== undefined && rawLimit !== null && rawLimit !== '') {
+    const parsed = typeof rawLimit === 'string' && /^\d+$/.test(rawLimit.trim())
+      ? parseInt(rawLimit.trim(), 10)
+      : NaN;
+
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new ApiError(
+        400,
+        'INVALID_LIMIT',
+        `\`limit\` must be a positive integer between 1 and ${MAX_PAGE_SIZE}`,
+      );
+    }
+    limit = parsed;
+  }
+
   if (limit > MAX_PAGE_SIZE) limit = MAX_PAGE_SIZE;
 
   return { cursor, limit };
@@ -69,7 +109,11 @@ export function buildCursorEnvelope<T extends Record<string, any>>(
  * Express middleware that attaches pagination helpers to req.
  */
 export function paginationMiddleware(req: Request, _res: Response, next: NextFunction): void {
-  const params = parsePaginationParams(req);
-  (req as any).pagination = params;
-  next();
+  try {
+    const params = parsePaginationParams(req);
+    (req as any).pagination = params;
+    next();
+  } catch (err) {
+    next(err);
+  }
 }

@@ -12,8 +12,8 @@ import FreighterBanner from './components/FreighterBanner.tsx'
 
 function App() {
   const { t } = useTranslation()
-  const [walletAddress, setWalletAddress] = useState(null)
-  const [contractId, setContractId] = useState(import.meta.env.VITE_CONTRACT_ID || '')
+  const [walletAddress, setWalletAddress] = useState<string | null>(null)
+  const [contractId, setContractId] = useState<string>(import.meta.env.VITE_CONTRACT_ID || '')
 
   return (
     <div className="App" dir="auto">

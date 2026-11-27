@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   evaluateEnv,
   isPlaceholder,
+  isPositiveInt,
+  readPositiveInt,
   BACKEND_REQUIREMENTS,
   type EnvRequirement,
 } from '../env-guard';
@@ -18,6 +20,9 @@ const GOOD_ENV: NodeJS.ProcessEnv = {
   NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015',
   CONTRACT_ID: 'CBQHNAXSI55GX2GN6D67GK7BHVPSLJUGZQEU7WJ5LKR5PNUCGLIMAO4K',
   ADMIN_SECRET_KEY: 'SCZANGBA5YHTNYVVV4C3U252E2B6P6F5T3U6MM63WBSBZATAQI3EBTQ4',
+  AML_RESCREEN_BATCH_SIZE: '200',
+  TRAVEL_RULE_BATCH_SIZE: '100',
+  VERIFICATION_INTERVAL_HOURS: '24',
 };
 
 describe('isPlaceholder', () => {
@@ -94,5 +99,54 @@ describe('evaluateEnv', () => {
     const { errors, warnings } = evaluateEnv(requirements, {}, 'production');
     expect(errors).toEqual([]);
     expect(warnings).toEqual([]);
+  });
+
+  it('errors when a numeric scheduler variable is not a positive integer', () => {
+    const env = { ...GOOD_ENV, AML_RESCREEN_BATCH_SIZE: '0', TRAVEL_RULE_BATCH_SIZE: 'abc' };
+    const { errors } = evaluateEnv(BACKEND_REQUIREMENTS, env, 'development');
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toContain('AML_RESCREEN_BATCH_SIZE');
+    expect(errors[1]).toContain('TRAVEL_RULE_BATCH_SIZE');
+  });
+
+  it('errors when a numeric scheduler variable is missing', () => {
+    const env = { ...GOOD_ENV };
+    delete env.VERIFICATION_INTERVAL_HOURS;
+    const { errors } = evaluateEnv(BACKEND_REQUIREMENTS, env, 'development');
+    expect(errors).toEqual([expect.stringContaining('VERIFICATION_INTERVAL_HOURS is not set')]);
+  });
+});
+
+describe('isPositiveInt', () => {
+  it.each(['1', '24', '200', ' 7 '])('accepts %j', (value) => {
+    expect(isPositiveInt(value)).toBe(true);
+  });
+
+  it.each(['', '0', '-1', '1.5', 'abc', '10px', undefined])('rejects %j', (value) => {
+    expect(isPositiveInt(value)).toBe(false);
+  });
+});
+
+describe('readPositiveInt', () => {
+  const NAME = 'SR1883_TEST_POSITIVE_INT';
+
+  afterEach(() => {
+    delete process.env[NAME];
+  });
+
+  it('returns the default when unset or empty', () => {
+    expect(readPositiveInt(NAME, 42)).toBe(42);
+    process.env[NAME] = '';
+    expect(readPositiveInt(NAME, 42)).toBe(42);
+  });
+
+  it('parses a valid value', () => {
+    process.env[NAME] = '17';
+    expect(readPositiveInt(NAME, 42)).toBe(17);
+  });
+
+  it.each(['0', '-5', 'abc', '2.5'])('throws on invalid value %j', (value) => {
+    process.env[NAME] = value;
+    expect(() => readPositiveInt(NAME, 42)).toThrow(/positive integer/);
   });
 });

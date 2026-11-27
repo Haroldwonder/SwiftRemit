@@ -1430,19 +1430,7 @@ export class SwiftRemitMockClient {
 
   // ─── Blacklist / KYC write operations ─────────────────────────────────────
 
-  async blacklistUser(_admin: string, user: string): Promise<MockTxResult> {
-    await this._applyFaults();
-    this.blacklist.add(user);
-    return { txHash: fakeTxHash() };
-  }
-
-  async removeFromBlacklist(_admin: string, user: string): Promise<MockTxResult> {
-    await this._applyFaults();
-    this.blacklist.delete(user);
-    return { txHash: fakeTxHash() };
-  }
-
-  async setUserBlacklisted(_admin: string, user: string, blacklisted: boolean): Promise<MockTxResult> {
+  async setBlacklistStatus(_admin: string, user: string, blacklisted: boolean): Promise<MockTxResult> {
     await this._applyFaults();
     if (blacklisted) this.blacklist.add(user);
     else this.blacklist.delete(user);

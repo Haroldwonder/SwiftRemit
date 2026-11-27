@@ -288,6 +288,7 @@ The following were documented in the production readiness report dated 2026-03-2
 | `fuzz_validate_amount.rs` | Arbitrary amount values |
 | `fuzz_validate_corridor.rs` | Arbitrary corridor fee config inputs |
 | `fuzz_validate_recipient_hash.rs` | Arbitrary recipient hash byte sequences |
+| `fuzz_compute_net_settlements.rs` | Arbitrary remittance sets (parties, amounts, fees, statuses) |
 
 ### 6.4 Benchmark Suite (`benches/`)
 
