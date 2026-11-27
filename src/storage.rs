@@ -395,6 +395,12 @@ enum DataKey {
     /// Total value of remittances currently in the Processing state (instance storage).
     TotalProcessingVolume,
 
+    // === Escrow Aggregates (#1855) ===
+    /// Total value of escrows currently in the `Pending` state (instance storage).
+    PendingEscrowVolume,
+    /// Number of escrows currently in the `Pending` state (instance storage).
+    PendingEscrowCount,
+
     // === Expiry Sweeps ===
     /// Maximum number of remittances that may be expired in one batch (instance storage).
     MaxExpiredBatchSize,
@@ -1748,6 +1754,53 @@ pub fn set_escrow(env: &Env, transfer_id: u64, escrow: &crate::Escrow) {
     env.storage()
         .persistent()
         .set(&DataKey::Escrow(transfer_id), escrow);
+}
+
+// === Pending Escrow Aggregates (#1855) ===
+
+/// Returns the total value of escrows currently in the `Pending` state.
+pub fn get_pending_escrow_volume(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingEscrowVolume)
+        .unwrap_or(0)
+}
+
+/// Returns the number of escrows currently in the `Pending` state.
+pub fn get_pending_escrow_count(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingEscrowCount)
+        .unwrap_or(0)
+}
+
+/// Records a newly created pending escrow in the aggregate counters.
+pub fn add_pending_escrow(env: &Env, amount: i128) -> Result<(), ContractError> {
+    let volume = get_pending_escrow_volume(env)
+        .checked_add(amount)
+        .ok_or(ContractError::Overflow)?;
+    let count = get_pending_escrow_count(env)
+        .checked_add(1)
+        .ok_or(ContractError::Overflow)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowVolume, &volume);
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowCount, &count);
+    Ok(())
+}
+
+/// Removes a settled (released or refunded) escrow from the aggregate counters.
+pub fn remove_pending_escrow(env: &Env, amount: i128) {
+    let volume = get_pending_escrow_volume(env).saturating_sub(amount);
+    let count = get_pending_escrow_count(env).saturating_sub(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowVolume, &volume);
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowCount, &count);
 }
 
 // === Escrow Per-User Indexes (#1845) ===
