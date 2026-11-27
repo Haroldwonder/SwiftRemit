@@ -165,6 +165,55 @@ fn remit(f: &F, amount: i128) -> u64 {
     assert!(r.is_ok());
 }
 
+// ── #1636 agent_suspended emitted in a successful transaction ────────────────
+
+fn has_agent_suspended_event(env: &Env) -> bool {
+    use soroban_sdk::xdr::{ContractEventBody, ScSymbol, ScVal, StringM};
+    let sym0 = ScVal::Symbol(ScSymbol(StringM::try_from("agent").unwrap()));
+    let sym1 = ScVal::Symbol(ScSymbol(StringM::try_from("suspnded").unwrap()));
+    env.events().all().events().iter().any(|e| {
+        if let ContractEventBody::V0(body) = &e.body {
+            body.topics.len() >= 2 && body.topics[0] == sym0 && body.topics[1] == sym1
+        } else {
+            false
+        }
+    })
+}
+
+#[test] fn test_1636_agent_suspended_emitted_on_mark_failed() {
+    let f = setup();
+    let id = remit(&f, 1_000);
+    // Reputation starts at 100; require a threshold the agent will fall below.
+    f.c.set_min_agent_reputation(&100u32);
+    assert!(!f.c.is_agent_suspended(&f.agent));
+    f.c.mark_failed(&id);
+    assert!(f.c.is_agent_suspended(&f.agent));
+    assert!(has_agent_suspended_event(&f.env), "agent_suspended must be emitted in a successful tx");
+}
+
+#[test] fn test_1636_agent_suspended_emitted_on_raise_dispute() {
+    let f = setup();
+    let id = remit(&f, 1_000);
+    f.c.mark_failed(&id);
+    f.c.set_min_agent_reputation(&100u32);
+    f.c.raise_dispute(&id, &evidence(&f.env));
+    assert!(f.c.is_agent_suspended(&f.agent));
+    assert!(has_agent_suspended_event(&f.env), "agent_suspended must be emitted in a successful tx");
+}
+
+#[test] fn test_1636_no_suspension_event_on_rejected_create() {
+    let f = setup();
+    f.c.set_min_agent_reputation(&100u32);
+    let id = remit(&f, 1_000);
+    f.c.mark_failed(&id);
+    let before = f.env.events().all().len();
+    assert_eq!(
+        f.c.try_create_remittance(&f.sender, &f.agent, &1_000, &None, &None, &None, &None, &None, &None),
+        Err(Ok(ContractError::BelowMinReputation)),
+    );
+    assert_eq!(f.env.events().all().len(), before, "no event may be emitted on an error path");
+}
+
 // ── #601 AlreadyPaused circuit-breaker error ─────────────────────────────────
 
 #[test] fn test_601_emergency_pause_already_paused_returns_already_paused() {

@@ -169,6 +169,30 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_create_increments_remittance_count() {
+        let env = Env::default();
+        let (contract, _admin, agent) = setup(&env);
+        let sender = Address::generate(&env);
+
+        assert_eq!(contract.get_remittance_count(), 0);
+
+        let mut entries = Vec::new(&env);
+        entries.push_back(BatchCreateEntry { agent: agent.clone(), amount: 100_000_000, expiry: None });
+        entries.push_back(BatchCreateEntry { agent: agent.clone(), amount: 200_000_000, expiry: None });
+        entries.push_back(BatchCreateEntry { agent: agent.clone(), amount: 150_000_000, expiry: None });
+
+        contract.batch_create_remittances(&sender, &entries);
+        assert_eq!(contract.get_remittance_count(), 3);
+        assert_eq!(contract.health().total_remittances, 3);
+
+        let mut more = Vec::new(&env);
+        more.push_back(BatchCreateEntry { agent: agent.clone(), amount: 50_000_000, expiry: None });
+        contract.batch_create_remittances(&sender, &more);
+        assert_eq!(contract.get_remittance_count(), 4);
+        assert_eq!(contract.health().total_remittances, 4);
+    }
+
+    #[test]
     fn test_batch_create_partial_failure() {
         let env = Env::default();
         let (contract, _admin, _) = setup(&env);

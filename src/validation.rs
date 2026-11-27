@@ -88,6 +88,21 @@ pub fn validate_remittance_pending(remittance: &crate::Remittance) -> Result<(),
     Ok(())
 }
 
+/// Returns the effective expiry of a remittance: the earlier of the optional
+/// settlement `expiry` and the stored `expires_at` (derived from
+/// `remittance_expiry_window` at creation). `None` means no expiry applies.
+///
+/// #1632: `expires_at` was stored but never enforced; both payout and the
+/// expiry sweeper must honour it.
+pub fn effective_expiry(expiry: Option<u64>, expires_at: Option<u64>) -> Option<u64> {
+    match (expiry, expires_at) {
+        (Some(a), Some(b)) => Some(if a < b { a } else { b }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
 /// Validates that a settlement has not expired.
 pub fn validate_settlement_not_expired(env: &Env, expiry: Option<u64>) -> Result<(), ContractError> {
     if let Some(expiry_time) = expiry {
@@ -142,6 +157,20 @@ pub fn validate_escrow_ttl(ttl: u64) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// Validates that an optional remittance expiry is strictly in the future.
+///
+/// `None` means "no expiry" and is always accepted. A timestamp less than or
+/// equal to the current ledger timestamp is rejected with
+/// [`ContractError::InvalidExpiry`] (#1633).
+pub fn validate_expiry(env: &Env, expiry: Option<u64>) -> Result<(), ContractError> {
+    if let Some(expiry) = expiry {
+        if expiry <= env.ledger().timestamp() {
+            return Err(ContractError::InvalidExpiry);
+        }
+    }
+    Ok(())
+}
+
 /// Comprehensive validation for create_remittance request.
 pub fn validate_create_remittance_request(
     env: &Env,
@@ -172,7 +201,10 @@ pub fn validate_confirm_payout_request(
         return Err(ContractError::InvalidStatus);
     }
     validate_no_duplicate_settlement(env, remittance_id)?;
-    validate_settlement_not_expired(env, remittance.expiry)?;
+    validate_settlement_not_expired(
+        env,
+        effective_expiry(remittance.expiry, remittance.expires_at),
+    )?;
     // Enforce the blacklist at payout time: a sender or agent blacklisted after
     // the remittance was created must not be able to settle it.
     validate_not_blacklisted(env, &remittance.sender)?;
