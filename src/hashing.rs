@@ -167,16 +167,67 @@ pub fn compute_settlement_id_from_remittance(
     )
 }
 
+/// Append an optional Address to `buf`, encoding `None` as a single zero byte
+/// and `Some(addr)` as `0x01` followed by the XDR-encoded address.
+fn append_optional_address(buf: &mut Bytes, env: &Env, value: &Option<Address>) {
+    match value {
+        Some(addr) => {
+            buf.push_back(1);
+            buf.append(&address_to_bytes(env, addr));
+        }
+        None => buf.push_back(0),
+    }
+}
+
+/// Append an optional 32-byte hash to `buf`, encoding `None` as a single zero
+/// byte and `Some(hash)` as `0x01` followed by the 32 hash bytes.
+fn append_optional_bytes32(buf: &mut Bytes, value: &Option<BytesN<32>>) {
+    match value {
+        Some(hash) => {
+            buf.push_back(1);
+            buf.append(&Bytes::from_array(buf.env(), &hash.to_array()));
+        }
+        None => buf.push_back(0),
+    }
+}
+
+/// Append an optional [`SettlementConfig`] to `buf`.
+///
+/// Encoding: `0x00` for `None`; otherwise `0x01`, a flag byte for
+/// `require_proof`, and the optional oracle address (see
+/// [`append_optional_address`]).
+fn append_optional_settlement_config(
+    buf: &mut Bytes,
+    env: &Env,
+    value: &Option<crate::SettlementConfig>,
+) {
+    match value {
+        Some(config) => {
+            buf.push_back(1);
+            buf.push_back(if config.require_proof { 1 } else { 0 });
+            append_optional_address(buf, env, &config.oracle_address);
+        }
+        None => buf.push_back(0),
+    }
+}
+
 /// Compute a deterministic hash from remittance creation request parameters.
 ///
-/// Used for idempotency key validation to detect payload changes.
+/// Used for idempotency key validation to detect payload changes. Every
+/// parameter accepted by `create_remittance` that affects the resulting
+/// remittance is included, so reusing an idempotency key with different
+/// parameters yields a different hash (and therefore `IdempotencyConflict`).
 ///
 /// # Arguments
-/// * `env`    - Soroban environment
-/// * `sender` - Sender address
-/// * `agent`  - Agent address
-/// * `amount` - Payment amount in USDC
-/// * `expiry` - Optional expiry timestamp
+/// * `env`               - Soroban environment
+/// * `sender`            - Sender address
+/// * `agent`             - Agent address
+/// * `amount`            - Payment amount in USDC
+/// * `expiry`            - Optional expiry timestamp
+/// * `token`             - Optional asset token address
+/// * `settlement_config` - Optional settlement/proof configuration
+/// * `recipient_hash`    - Optional recipient details hash
+/// * `integrator`        - Optional integrator address
 ///
 /// # Returns
 /// SHA-256 hash as BytesN<32>
@@ -186,6 +237,10 @@ pub fn compute_request_hash(
     agent: &Address,
     amount: i128,
     expiry: Option<u64>,
+    token: &Option<Address>,
+    settlement_config: &Option<crate::SettlementConfig>,
+    recipient_hash: &Option<BytesN<32>>,
+    integrator: &Option<Address>,
 ) -> BytesN<32> {
     let mut buf = Bytes::new(env);
 
@@ -194,6 +249,10 @@ pub fn compute_request_hash(
     buf.append(&address_to_bytes(env, agent));
     append_i128(&mut buf, amount);
     append_optional_u64(&mut buf, expiry);
+    append_optional_address(&mut buf, env, token);
+    append_optional_settlement_config(&mut buf, env, settlement_config);
+    append_optional_bytes32(&mut buf, recipient_hash);
+    append_optional_address(&mut buf, env, integrator);
 
     env.crypto().sha256(&buf).into()
 }
@@ -258,8 +317,28 @@ mod tests {
         let sender = Address::generate(&env);
         let agent = Address::generate(&env);
 
-        let hash1 = compute_request_hash(&env, &sender, &agent, 1000, Some(1234567890));
-        let hash2 = compute_request_hash(&env, &sender, &agent, 1000, Some(1234567890));
+        let hash1 = compute_request_hash(
+            &env,
+            &sender,
+            &agent,
+            1000,
+            Some(1234567890),
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+        let hash2 = compute_request_hash(
+            &env,
+            &sender,
+            &agent,
+            1000,
+            Some(1234567890),
+            &None,
+            &None,
+            &None,
+            &None,
+        );
 
         assert_eq!(hash1, hash2, "Same request inputs must produce identical hashes");
     }
