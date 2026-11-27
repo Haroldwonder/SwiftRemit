@@ -75,6 +75,8 @@
 //   test_batch_create_invalid_amount   — zero amount in one entry → InvalidAmount
 //   test_batch_create_max_size         — exactly 100 entries succeeds
 //   test_batch_create_different_amounts — fee calculation verified per entry
+//   test_batch_create_enforces_min_agent_reputation
+//                                      — below-threshold agent reverts batch (#1640)
 //   test_create_batch_remittance_alias_equivalence
 //                                      — deprecated alias produces the same
 //                                        remittances and events as the
@@ -110,8 +112,8 @@ mod tests {
     };
 
     use crate::{
-        BatchCreateEntry, ContractError, RemittanceStatus, SwiftRemitContract,
-        SwiftRemitContractClient,
+        config::MAX_TRANSFERS_PER_WINDOW, BatchCreateEntry, ContractError, RemittanceStatus,
+        SwiftRemitContract, SwiftRemitContractClient,
     };
 
     fn setup(env: &Env) -> (SwiftRemitContractClient, Address, Address) {
@@ -329,6 +331,59 @@ mod tests {
         assert_ne!(r1.fee, r2.fee);
     }
 
+    /// Issue #1640: `batch_create_remittances` must enforce the minimum agent
+    /// reputation gate per entry, matching `create_remittance` and
+    /// `create_remittance_with_corridor`.
+    #[test]
+    fn test_batch_create_enforces_min_agent_reputation() {
+        let env = Env::default();
+        let (contract, _admin, _) = setup(&env);
+        let sender = Address::generate(&env);
+
+        let good_agent = Address::generate(&env);
+        let low_rep_agent = Address::generate(&env);
+        contract.register_agent(&good_agent, &None);
+        contract.register_agent(&low_rep_agent, &None);
+
+        // Drive the low-reputation agent's score down with disputes.
+        let mut stats = crate::storage::get_agent_stats(&env, &low_rep_agent);
+        stats.dispute_count = 4;
+        crate::storage::set_agent_stats(&env, &low_rep_agent, &stats);
+        let low_rep = crate::storage::compute_agent_reputation(&stats);
+        assert!(low_rep < 100);
+
+        contract.set_min_agent_reputation(&100);
+
+        // A batch containing a below-threshold agent reverts atomically.
+        let mut entries = Vec::new(&env);
+        entries.push_back(BatchCreateEntry {
+            agent: good_agent.clone(),
+            amount: 100_000_000,
+            expiry: None,
+        });
+        entries.push_back(BatchCreateEntry {
+            agent: low_rep_agent.clone(),
+            amount: 100_000_000,
+            expiry: None,
+        });
+
+        let result = contract.try_batch_create_remittances(&sender, &entries);
+        assert_eq!(result, Err(Ok(ContractError::BelowMinReputation)));
+
+        // No remittance was created for the valid entry either.
+        assert_eq!(crate::storage::get_remittance_counter(&env).unwrap(), 0);
+
+        // A batch of only compliant agents still succeeds.
+        let mut ok_entries = Vec::new(&env);
+        ok_entries.push_back(BatchCreateEntry {
+            agent: good_agent.clone(),
+            amount: 100_000_000,
+            expiry: None,
+        });
+        let ids = contract.batch_create_remittances(&sender, &ok_entries);
+        assert_eq!(ids.len(), 1);
+    }
+
     /// Issue #1681: `create_batch_remittance` is a deprecated alias of
     /// `batch_create_remittances`. This test pins the equivalence so the
     /// deprecation (and eventual removal) is safe: both entry points must
@@ -401,5 +456,71 @@ mod tests {
 
         // Sanity: the event data round-trips through the SDK's value type.
         let _: soroban_sdk::Val = 0u32.into_val(&env);
+    }
+
+    /// Issue #1638: `batch_create_remittances` must charge the abuse-protection
+    /// sliding-window rate limit by the number of entries in the batch, so a
+    /// batch cannot bypass the per-action budget enforced by `create_remittance`.
+    #[test]
+    fn test_batch_create_enforces_weighted_rate_limit() {
+        let env = Env::default();
+        let (contract, _admin, agent) = setup(&env);
+        let sender = Address::generate(&env);
+
+        let mut entries = Vec::new(&env);
+        for _ in 0..MAX_TRANSFERS_PER_WINDOW {
+            entries.push_back(BatchCreateEntry {
+                agent: agent.clone(),
+                amount: 1_000_000,
+                expiry: None,
+            });
+        }
+
+        // A full-window batch consumes the entire Transfer budget.
+        let ids = contract.batch_create_remittances(&sender, &entries);
+        assert_eq!(ids.len(), MAX_TRANSFERS_PER_WINDOW);
+
+        // Any further Transfer action in the same window is rejected.
+        let mut single = Vec::new(&env);
+        single.push_back(BatchCreateEntry {
+            agent: agent.clone(),
+            amount: 1_000_000,
+            expiry: None,
+        });
+        let result = contract.try_batch_create_remittances(&sender, &single);
+        assert_eq!(result, Err(Ok(ContractError::RateLimitExceeded)));
+    }
+
+    /// Issue #1638: a batch larger than the remaining budget is rejected as a
+    /// whole and records nothing, so the budget is not partially consumed.
+    #[test]
+    fn test_batch_create_rejects_batch_exceeding_remaining_budget() {
+        let env = Env::default();
+        let (contract, _admin, agent) = setup(&env);
+        let sender = Address::generate(&env);
+
+        let mut entries = Vec::new(&env);
+        for _ in 0..(MAX_TRANSFERS_PER_WINDOW + 1) {
+            entries.push_back(BatchCreateEntry {
+                agent: agent.clone(),
+                amount: 1_000_000,
+                expiry: None,
+            });
+        }
+
+        let result = contract.try_batch_create_remittances(&sender, &entries);
+        assert_eq!(result, Err(Ok(ContractError::RateLimitExceeded)));
+
+        // The rejected batch consumed no budget: a full-window batch still fits.
+        let mut full = Vec::new(&env);
+        for _ in 0..MAX_TRANSFERS_PER_WINDOW {
+            full.push_back(BatchCreateEntry {
+                agent: agent.clone(),
+                amount: 1_000_000,
+                expiry: None,
+            });
+        }
+        let ids = contract.batch_create_remittances(&sender, &full);
+        assert_eq!(ids.len(), MAX_TRANSFERS_PER_WINDOW);
     }
 }
