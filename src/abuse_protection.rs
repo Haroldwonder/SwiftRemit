@@ -67,7 +67,25 @@ pub fn check_rate_limit(
     address: &Address,
     action_type: ActionType,
 ) -> Result<(), ContractError> {
+    check_rate_limit_weighted(env, address, action_type, 1)
+}
+
+/// Weighted variant of [`check_rate_limit`].
+///
+/// `weight` is the number of actions the caller is about to perform (e.g. the
+/// number of entries in a batch). The whole weight is charged against the
+/// sliding window atomically: if the remaining budget cannot cover it, nothing
+/// is recorded and `RateLimitExceeded` is returned.
+pub fn check_rate_limit_weighted(
+    env: &Env,
+    address: &Address,
+    action_type: ActionType,
+    weight: u32,
+) -> Result<(), ContractError> {
     if action_type == ActionType::Admin {
+        return Ok(());
+    }
+    if weight == 0 {
         return Ok(());
     }
     let current_time = env.ledger().timestamp();
@@ -84,7 +102,8 @@ pub fn check_rate_limit(
     entry.request_count = entry.timestamps.len();
     entry.window_start = window_start;
 
-    if entry.request_count >= max_requests {
+    let projected = entry.request_count.checked_add(weight).ok_or(ContractError::Overflow)?;
+    if projected > max_requests {
         // Save the pruned entry even on early return so stale timestamps are evicted.
         save_sliding_window_entry(env, &entry, window_seconds);
         log_suspicious_activity(env, address, SuspiciousActivityType::RateLimitExceeded, entry.request_count);

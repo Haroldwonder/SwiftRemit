@@ -1,18 +1,32 @@
 import { useState, useEffect } from 'react'
+import { safeStorage } from '../utils/safeStorage'
 import './Onboarding.css'
 
-export default function Onboarding({ isVisible, onClose }) {
+export interface OnboardingProps {
+  isVisible: boolean
+  onClose: () => void
+}
+
+interface OnboardingStep {
+  title: string
+  description: string
+  action: string
+  icon: string
+  link?: string
+}
+
+export default function Onboarding({ isVisible, onClose }: OnboardingProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const [hasSkipped, setHasSkipped] = useState(false)
 
   useEffect(() => {
-    const hasSeenOnboarding = localStorage.getItem('swiftremit_onboarding_seen')
+    const hasSeenOnboarding = safeStorage.getItem('swiftremit_onboarding_seen')
     if (hasSeenOnboarding) {
       onClose()
     }
   }, [onClose])
 
-  const steps = [
+  const steps: OnboardingStep[] = [
     {
       title: 'Welcome to SwiftRemit',
       description: 'Send USDC remittances securely across borders with SwiftRemit built on Stellar Soroban.',
@@ -61,7 +75,7 @@ export default function Onboarding({ isVisible, onClose }) {
   }
 
   const markOnboardingComplete = () => {
-    localStorage.setItem('swiftremit_onboarding_seen', 'true')
+    safeStorage.setItem('swiftremit_onboarding_seen', 'true')
     setHasSkipped(true)
     onClose()
   }

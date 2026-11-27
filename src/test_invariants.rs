@@ -658,7 +658,7 @@ proptest! {
                         if remaining > 0 {
                             let amount = (1i128 + (amount_seed as i128 % remaining)).min(remaining);
                             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                contract.confirm_partial_payout(&id, &amount)
+                                contract.confirm_partial_payout(&id, &amount, &None)
                             }));
                             if result.is_ok() {
                                 rems[idx].disbursed += amount;
@@ -939,7 +939,7 @@ proptest! {
                         if remaining > 0 {
                             let amount = (1i128 + (amount_seed as i128 % remaining)).min(remaining);
                             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                contract.confirm_partial_payout(&id, &amount)
+                                contract.confirm_partial_payout(&id, &amount, &None)
                             }));
                             if result.is_ok() {
                                 rems[idx].disbursed += amount;

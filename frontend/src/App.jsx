@@ -8,14 +8,16 @@ import AgentPanel from './components/AgentPanel.tsx'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
 import CorridorAnalytics from './components/CorridorAnalytics.tsx'
 import { LanguageSelector } from './components/LanguageSelector'
+import FreighterBanner from './components/FreighterBanner.tsx'
 
 function App() {
   const { t } = useTranslation()
-  const [walletAddress, setWalletAddress] = useState(null)
-  const [contractId, setContractId] = useState(import.meta.env.VITE_CONTRACT_ID || '')
+  const [walletAddress, setWalletAddress] = useState<string | null>(null)
+  const [contractId, setContractId] = useState<string>(import.meta.env.VITE_CONTRACT_ID || '')
 
   return (
     <div className="App" dir="auto">
+      <FreighterBanner />
       <header className="app-header">
         <div className="app-header-top">
           <h1>💸 {t('app.title')}</h1>

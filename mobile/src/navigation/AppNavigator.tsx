@@ -1,3 +1,4 @@
+import { useAppTheme } from '../theme';
 /**
  * AppNavigator — SR-095 / SR-185
  *
@@ -15,7 +16,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
+import { NavigationContainer, NavigationContainerRef, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text, View, ActivityIndicator } from 'react-native';
@@ -66,14 +67,16 @@ function TabIcon({ name }: { name: string }) {
 }
 
 function MainTabs() {
+  const { colors } = useAppTheme();
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         tabBarIcon: () => <TabIcon name={route.name} />,
-        tabBarActiveTintColor: '#1A56DB',
-        tabBarInactiveTintColor: '#6B7280',
-        headerStyle: { backgroundColor: '#1A56DB' },
-        headerTintColor: '#fff',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.secondaryText,
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        headerStyle: { backgroundColor: colors.primary },
+        headerTintColor: colors.onPrimary,
         headerTitleStyle: { fontWeight: '700' },
       })}
     >
@@ -119,23 +122,26 @@ interface AppNavigatorProps {
 }
 
 export default function AppNavigator({ navigationRef, onReady }: AppNavigatorProps) {
+  const { colors, isDark } = useAppTheme();
+  const nativeTheme = isDark ? DarkTheme : DefaultTheme;
+  const navigationTheme = { ...nativeTheme, colors: { ...nativeTheme.colors, primary: colors.primary, background: colors.background, card: colors.surface, text: colors.text, border: colors.border } };
   const { authState } = useAuthState();
 
   if (authState === 'loading') {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator testID="auth-loading-indicator" size="large" color="#1A56DB" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
+        <ActivityIndicator testID="auth-loading-indicator" size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <NavigationContainer ref={navigationRef} onReady={onReady}>
+    <NavigationContainer ref={navigationRef} onReady={onReady} theme={navigationTheme}>
       <Stack.Navigator
         initialRouteName={authState === 'authenticated' ? 'Main' : 'Login'}
         screenOptions={{
-          headerStyle: { backgroundColor: '#1A56DB' },
-          headerTintColor: '#fff',
+          headerStyle: { backgroundColor: colors.primary },
+          headerTintColor: colors.onPrimary,
           headerTitleStyle: { fontWeight: '700' },
         }}
       >

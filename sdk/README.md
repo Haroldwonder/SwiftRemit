@@ -128,6 +128,36 @@ All write methods return a `Transaction` that must be signed and submitted:
 **Integrator Functions:**
 - `withdrawIntegratorFees(integrator, to)` — Withdraw integrator fees
 
+### KYC, blacklist and remittance iteration
+
+The SDK returns a transaction for KYC and blacklist updates. Sign and submit it
+using the normal transaction flow:
+
+```ts
+const tx = await client.setKycApproved(admin, user, true, 2_000_000_000n);
+const approved = await client.isKycApproved(user);
+// The older form is also supported: isKycApproved(sourceAddress, user).
+
+const blacklistTx = await client.setBlacklistStatus(admin, user, true);
+```
+
+The KYC `expiry` argument is a `bigint` Unix timestamp in seconds. Older
+`blacklistUser`, `removeFromBlacklist` and `setUserBlacklisted` methods are
+still available but deprecated; use `setBlacklistStatus` for new code.
+
+```ts
+for await (const id of client.iterateRemittancesBySender(sender, { pageSize: 50 })) {
+  console.log(id);
+}
+for await (const id of client.iterateRemittancesByAgent(agent, { pageSize: 50 })) {
+  console.log(id);
+}
+```
+
+Both iterators default to 50 IDs per page (range 1–100), advance by the number
+actually returned, and stop on an empty page. Set `sourceAddress` in the options
+when the Soroban simulation account should differ from the sender or agent.
+
 ### Utilities
 
 ```typescript
@@ -251,6 +281,53 @@ interface FeeEstimate {
   fromCache: boolean;  // true when served from the 30-second cache
 }
 ```
+
+## Escrow SDK methods (#1900)
+
+The TypeScript SDK exposes `Escrow` and `EscrowStatus` (`"Pending" | "Released" | "Refunded"`). Amounts and transfer IDs are `bigint` integers in token atomic units (7 decimals for USDC), not floating-point display values.
+
+```typescript
+import type { Escrow, EscrowStatus } from "@swiftremit/sdk";
+
+// Prepare an escrow transaction; sign and submit it with the sender's keypair.
+const createTx = await client.createEscrow(senderAddress, recipientAddress, 10_000_000n);
+await client.submitTransaction(createTx, senderKeypair);
+
+// Use the returned transfer ID from the transaction result, not a guessed counter.
+const escrow: Escrow = await client.getEscrow(senderAddress, transferId);
+const status: EscrowStatus = escrow.status;
+const ttl = await client.getEscrowTtl(senderAddress);
+
+// Admin releases; the original sender can refund according to expiry rules.
+const releaseTx = await client.releaseEscrow(adminAddress, transferId);
+const refundTx = await client.refundEscrow(senderAddress, transferId);
+const expireTx = await client.processExpiredEscrows(adminAddress, [transferId]);
+```
+
+Read-only calls require a `sourceAddress` because the RPC simulation must be constructed using a Stellar account. Write methods prepare a transaction; they do not submit it automatically. Refunding before expiry raises `ErrorCode.EscrowNotYetExpired` (85).
+
+## Oracle SDK methods (#1901)
+
+```typescript
+// An admin sets the oracle contract address; the optional limit is in ledgers.
+const configureTx = await client.setOracle(adminAddress, oracleAddress, 120);
+await client.submitTransaction(configureTx, adminKeypair);
+
+// Read-only simulations require a source account address.
+const configuredOracle: string | null = await client.getOracle(senderAddress);
+const rate: number | null = await client.getOracleRate(senderAddress);
+```
+
+## Contract error enum generation (#1898, #1899)
+
+`ErrorCode` is generated from the numeric `ContractError` discriminants in `src/errors.rs` to `sdk/src/errors.generated.ts`. Never edit the generated file by hand. From the SDK directory:
+
+```bash
+npm run gen:errors    # regenerate after changing Rust contract errors
+npm run check:errors  # verify committed generated file matches Rust; also runs in SDK CI
+```
+
+`EscrowNotYetExpired = 85` returns the message **"Escrow has not expired yet"** and instructs callers to wait until the escrow expiry deadline before refunding.
 
 ## Testing with SwiftRemitMockClient
 
@@ -551,7 +628,7 @@ A React Native wrapper is available in `sdk/react-native/`. It wraps the core Ty
 
 - A `SwiftRemitSigner` interface so any wallet (expo-secure-store, react-native-keychain, WalletConnect) can be plugged in without changing call sites.
 - `SwiftRemitRNClient` — extends `SwiftRemitClient` with a `submitSigned(tx)` method that signs via the injected signer.
-- React hooks: `useCreateRemittance`, `useNetworkToggle`.
+- React hooks: `useMutation`, `useCreateRemittance`, `useRemittanceQuery`, `useNetworkToggle`.
 
 ### Installation
 
@@ -628,5 +705,48 @@ function SendScreen({ client }) {
       {error && <Text>{error.message}</Text>}
     </>
   );
+}
+```
+
+### Querying a remittance
+
+`useRemittanceQuery` fetches once on mount and, with `pollMs`, keeps polling
+until the remittance reaches a terminal status (`Completed`, `Cancelled`,
+`Failed`, `Disputed`).
+
+```tsx
+import { useRemittanceQuery } from '@swiftremit/react-native-sdk';
+
+function StatusScreen({ client, address, remittanceId }) {
+  const { remittance, loading, error, refetch } = useRemittanceQuery(
+    client,
+    address,
+    remittanceId,
+    { pollMs: 3000 }
+  );
+
+  if (loading && !remittance) return <Text>Loading…</Text>;
+  if (error) return <Text>{error.message}</Text>;
+  return <Text>{remittance?.status}</Text>;
+}
+```
+
+### Wrapping other write methods
+
+`useMutation(fn)` owns the loading/error state and the mounted-ref guard, so a
+new write hook only describes the operation:
+
+```tsx
+import { useCallback } from 'react';
+import { useMutation } from '@swiftremit/react-native-sdk';
+
+function useConfirmPayout(client) {
+  const { mutate, loading, error } = useMutation(
+    useCallback(
+      async (params) => client.submitSigned(await client.confirmPayout(params)),
+      [client]
+    )
+  );
+  return { confirmPayout: mutate, loading, error };
 }
 ```

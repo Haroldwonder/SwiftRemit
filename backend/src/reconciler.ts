@@ -54,6 +54,8 @@ interface ReconcilerMetrics {
   last_run_timestamp_seconds: number;
   last_run_duration_ms:       number;
   consecutive_divergent_cycles: number;
+  agent_status_updates:       number;
+  agent_status_unmatched:     number;
 }
 
 let metrics: ReconcilerMetrics = {
@@ -64,6 +66,8 @@ let metrics: ReconcilerMetrics = {
   last_run_timestamp_seconds:   0,
   last_run_duration_ms:         0,
   consecutive_divergent_cycles: 0,
+  agent_status_updates:         0,
+  agent_status_unmatched:       0,
 };
 
 /** Expose current metrics snapshot (used by MetricsService for Prometheus text). */
@@ -81,6 +85,8 @@ export function resetReconcilerMetrics(): void {
     last_run_timestamp_seconds:   0,
     last_run_duration_ms:         0,
     consecutive_divergent_cycles: 0,
+    agent_status_updates:         0,
+    agent_status_unmatched:       0,
   };
 }
 
@@ -196,8 +202,9 @@ export function mapOnChainStatus(onChain: OnChainStatus): string {
  *  1. Load recent transactions from the DB.
  *  2. For each, call get_remittance on-chain.
  *  3. If DB status ≠ derived chain status, repair and log.
- *  4. Detect ledger-sequence gaps and backfill.
- *  5. Update metrics and fire alert if threshold exceeded.
+ *  4. Reconcile agent status from agent_registered / agent_removed events.
+ *  5. Detect ledger-sequence gaps and backfill.
+ *  6. Update metrics and fire alert if threshold exceeded.
  */
 export async function runReconciliationCycle(pool: Pool): Promise<void> {
   const startMs = Date.now();
@@ -295,10 +302,13 @@ export async function runReconciliationCycle(pool: Pool): Promise<void> {
       }
     }
 
-    // ── Step 4: Ledger-gap detection and backfill ───────────────────────
+    // ── Step 4: Reconcile agent status from on-chain events ─────────────
+    await reconcileAgentStatus(pool);
+
+    // ── Step 5: Ledger-gap detection and backfill ───────────────────────
     await reconcileLedgerGaps(pool);
 
-    // ── Step 5: Update metrics and alerting ────────────────────────────
+    // ── Step 6: Update metrics and alerting ────────────────────────────
     if (cycleDiv > DIVERGENCE_ALERT_THRESHOLD) {
       metrics.consecutive_divergent_cycles++;
       if (metrics.consecutive_divergent_cycles >= 2) {
@@ -317,6 +327,85 @@ export async function runReconciliationCycle(pool: Pool): Promise<void> {
     logger.info('Reconciliation cycle complete', {
       duration_ms: metrics.last_run_duration_ms,
       divergences: cycleDiv,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agent status reconciliation
+// ---------------------------------------------------------------------------
+
+/** Contract event types that change an agent's registration status. */
+export const AGENT_EVENT_TYPES = ['agent_registered', 'agent_removed'] as const;
+
+/** Map a contract agent event type to the `agents.is_active` value it implies. */
+export function mapAgentEventToActive(eventType: string): boolean | null {
+  if (eventType === 'agent_registered') return true;
+  if (eventType === 'agent_removed') return false;
+  return null;
+}
+
+/**
+ * Reconcile the `agents` table with on-chain agent_registered / agent_removed
+ * events recorded in contract_events.
+ *
+ * For each event (oldest first) the matching `agents` row is updated so that
+ * `is_active` reflects the latest on-chain state. When no matching row exists
+ * a warning is logged and the event is skipped.
+ */
+export async function reconcileAgentStatus(pool: Pool): Promise<void> {
+  const cutoff = new Date(Date.now() - RECONCILER_LOOKBACK_HRS * 3600 * 1000);
+
+  const result = await pool.query<{
+    event_type: string;
+    actor: string | null;
+    ledger_sequence: number | null;
+    timestamp: Date;
+  }>(
+    `SELECT event_type, actor, ledger_sequence, timestamp
+       FROM contract_events
+      WHERE event_type = ANY($1)
+        AND timestamp >= $2
+      ORDER BY ledger_sequence ASC NULLS FIRST, timestamp ASC`,
+    [AGENT_EVENT_TYPES, cutoff]
+  );
+
+  for (const row of result.rows) {
+    const isActive = mapAgentEventToActive(row.event_type);
+    if (isActive === null) continue;
+
+    const address = row.actor;
+    if (!address) {
+      logger.warn('Agent event missing actor address — skipping', {
+        event_type: row.event_type,
+        ledger_sequence: row.ledger_sequence,
+      });
+      continue;
+    }
+
+    const update = await pool.query(
+      `UPDATE agents
+          SET is_active = $1, updated_at = NOW()
+        WHERE address = $2`,
+      [isActive, address]
+    );
+
+    if (update.rowCount === 0) {
+      metrics.agent_status_unmatched++;
+      logger.warn('No matching agents row for on-chain agent event', {
+        event_type: row.event_type,
+        address,
+        ledger_sequence: row.ledger_sequence,
+      });
+      continue;
+    }
+
+    metrics.agent_status_updates++;
+    logger.info('Agent status reconciled from on-chain event', {
+      event_type: row.event_type,
+      address,
+      is_active: isActive,
+      ledger_sequence: row.ledger_sequence,
     });
   }
 }
@@ -475,6 +564,14 @@ export function reconcilerMetricsText(): string {
     '# HELP reconciler_consecutive_divergent_cycles Consecutive cycles with divergence count > 0',
     '# TYPE reconciler_consecutive_divergent_cycles gauge',
     `reconciler_consecutive_divergent_cycles ${m.consecutive_divergent_cycles}`,
+
+    '# HELP reconciler_agent_status_updates_total Total agent status rows updated from on-chain events',
+    '# TYPE reconciler_agent_status_updates_total counter',
+    `reconciler_agent_status_updates_total ${m.agent_status_updates}`,
+
+    '# HELP reconciler_agent_status_unmatched_total Total agent events with no matching agents row',
+    '# TYPE reconciler_agent_status_unmatched_total counter',
+    `reconciler_agent_status_unmatched_total ${m.agent_status_unmatched}`,
   ].join('\n') + '\n';
 }
 

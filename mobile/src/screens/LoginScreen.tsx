@@ -1,3 +1,4 @@
+import { useThemedStyles } from '../theme';
 /**
  * LoginScreen — SR-185
  *
@@ -33,6 +34,7 @@ import { authService } from '../services/api';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 
 export default function LoginScreen() {
+  const styles = useThemedStyles(baseStyles);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [walletAddress, setWalletAddress] = useState('');
   const [signature, setSignature] = useState('');
@@ -137,7 +139,7 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: '#F9FAFB' },
   container: {
     flexGrow: 1,

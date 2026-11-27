@@ -42,14 +42,14 @@ fn setup<'a>(
 }
 
 #[test]
-fn test_blacklist_user_requires_admin_auth() {
+fn test_set_blacklist_status_requires_admin_auth() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (contract, admin, _) = setup(&env);
     let user = Address::generate(&env);
 
-    contract.blacklist_user(&user);
+    contract.set_blacklist_status(&user, &true);
 
     assert!(contract.is_user_blacklisted(&user));
     assert_eq!(env.auths().len(), 1);
@@ -67,7 +67,7 @@ fn test_blacklisted_sender_cannot_create_remittance() {
 
     token.mint(&sender, &10_000);
     contract.register_agent(&agent, &None);
-    contract.blacklist_user(&sender);
+    contract.set_blacklist_status(&sender, &true);
 
     let result = contract.try_create_remittance(&sender, &agent, &1_000, &None, &None, &None, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::UserBlacklisted)));
@@ -84,8 +84,8 @@ fn test_remove_from_blacklist_allows_remittance_again() {
 
     token.mint(&sender, &10_000);
     contract.register_agent(&agent, &None);
-    contract.blacklist_user(&sender);
-    contract.remove_from_blacklist(&sender);
+    contract.set_blacklist_status(&sender, &true);
+    contract.set_blacklist_status(&sender, &false);
 
     assert_eq!(env.auths().len(), 1);
     assert_eq!(env.auths()[0].0, admin);

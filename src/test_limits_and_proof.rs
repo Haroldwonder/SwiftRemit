@@ -243,11 +243,81 @@ fn test_confirm_partial_payout_missing_required_proof() {
         &None,
     );
 
-    let result = contract.try_confirm_partial_payout(&remittance_id, &100);
+    let result = contract.try_confirm_partial_payout(&remittance_id, &100, &None);
     assert_eq!(result.unwrap_err().unwrap(), ContractError::MissingProof);
     assert_eq!(
         contract.get_remittance(&remittance_id).status,
         crate::RemittanceStatus::Pending
+    );
+}
+
+#[test]
+fn test_confirm_partial_payout_rejects_invalid_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, admin, sender, agent, _token_admin) = setup(&env);
+    let config = SettlementConfig {
+        require_proof: true,
+        oracle_address: Some(admin),
+    };
+    let remittance_id = contract.create_remittance(
+        &sender,
+        &agent,
+        &2_000,
+        &None,
+        &None,
+        &None,
+        &Some(config),
+        &None,
+    );
+
+    let bad_proof = crate::types::ProofData {
+        signature: soroban_sdk::BytesN::from_array(&env, &[7u8; 64]),
+        payload: soroban_sdk::Bytes::from_slice(&env, b"bad"),
+        signer: soroban_sdk::Address::generate(&env),
+    };
+    let result = contract.try_confirm_partial_payout(&remittance_id, &100, &Some(bad_proof));
+    assert_eq!(result.unwrap_err().unwrap(), ContractError::InvalidProof);
+    assert_eq!(
+        contract.get_remittance(&remittance_id).status,
+        crate::RemittanceStatus::Pending
+    );
+}
+
+#[test]
+fn test_confirm_partial_payout_accepts_valid_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, admin, sender, agent, _token_admin) = setup(&env);
+    let config = SettlementConfig {
+        require_proof: true,
+        oracle_address: Some(admin.clone()),
+    };
+    let remittance_id = contract.create_remittance(
+        &sender,
+        &agent,
+        &2_000,
+        &None,
+        &None,
+        &None,
+        &Some(config),
+        &None,
+    );
+
+    let payload = soroban_sdk::Bytes::from_slice(&env, b"valid-partial-proof");
+    let signature = crate::verification::compute_proof_signature(&env, &admin, &payload);
+    let proof = crate::types::ProofData {
+        signature,
+        payload,
+        signer: admin,
+    };
+
+    contract.confirm_partial_payout(&remittance_id, &100, &Some(proof));
+    assert_eq!(
+        contract.get_remittance(&remittance_id).status,
+        crate::RemittanceStatus::Processing
     );
 }
 

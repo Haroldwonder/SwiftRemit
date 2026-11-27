@@ -1,0 +1,22 @@
+#!/bin/sh
+# SwiftRemit staged-source checks. Activate with: git config core.hooksPath .githooks
+set -e
+
+if [ "${SKIP_SWIFTREMIT_HOOKS:-0}" = "1" ]; then
+  exit 0
+fi
+
+# Use the index, not the working tree, to decide whether checks are needed.
+if git diff --cached --name-only --diff-filter=ACMR -- '*.rs' | grep -q .; then
+  echo '[pre-commit] Checking Rust formatting...'
+  cargo fmt --check
+fi
+
+if git diff --cached --name-only --diff-filter=ACMR -- '*.ts' '*.tsx' | grep -q .; then
+  echo '[pre-commit] Linting staged TypeScript files...'
+  git diff --cached --name-only -z --diff-filter=ACMR -- '*.ts' '*.tsx' |
+    xargs -0 npx --no-install eslint
+  echo '[pre-commit] Checking staged TypeScript formatting...'
+  git diff --cached --name-only -z --diff-filter=ACMR -- '*.ts' '*.tsx' |
+    xargs -0 npm exec --yes --package=prettier@3.6.2 -- prettier --check
+fi

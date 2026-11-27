@@ -59,6 +59,7 @@ export class MetricsService {
 
   // Job monitoring metrics (#866)
   private jobLastRunTimestamp: Map<string, number> = new Map();
+  private jobLastSuccessTimestamp: Map<string, number> = new Map();
   private jobFailureTotal: Map<string, number> = new Map();
 
   // FX provider resilience metrics (SR-029)
@@ -277,9 +278,11 @@ export class MetricsService {
     this.metrics.swiftremit_kyc_poll_failures_total += 1;
   }
 
-  /** Record a successful job run (updates last-run timestamp). */
+  /** Record a successful job run (updates last-run and last-success timestamps). */
   recordJobRun(jobName: string): void {
-    this.jobLastRunTimestamp.set(jobName, Math.floor(Date.now() / 1000));
+    const now = Math.floor(Date.now() / 1000);
+    this.jobLastRunTimestamp.set(jobName, now);
+    this.jobLastSuccessTimestamp.set(jobName, now);
   }
 
   /** Record a job failure (increments failure counter). */
@@ -594,10 +597,22 @@ export class MetricsService {
       lines.push(`swiftremit_job_last_run_timestamp{job_name="${this.sanitizeLabelValue(jobName)}"} ${ts}`);
     });
 
+    lines.push('# HELP swiftremit_job_last_success_timestamp_seconds Unix timestamp of the last successful run for each background job');
+    lines.push('# TYPE swiftremit_job_last_success_timestamp_seconds gauge');
+    this.jobLastSuccessTimestamp.forEach((ts, jobName) => {
+      lines.push(`swiftremit_job_last_success_timestamp_seconds{job="${this.sanitizeLabelValue(jobName)}"} ${ts}`);
+    });
+
     lines.push('# HELP swiftremit_job_failure_total Total number of failures per background job');
     lines.push('# TYPE swiftremit_job_failure_total counter');
     this.jobFailureTotal.forEach((count, jobName) => {
       lines.push(`swiftremit_job_failure_total{job_name="${this.sanitizeLabelValue(jobName)}"} ${count}`);
+    });
+
+    lines.push('# HELP swiftremit_job_failures_total Total number of failures per background job');
+    lines.push('# TYPE swiftremit_job_failures_total counter');
+    this.jobFailureTotal.forEach((count, jobName) => {
+      lines.push(`swiftremit_job_failures_total{job="${this.sanitizeLabelValue(jobName)}"} ${count}`);
     });
 
     // ── Money-at-risk signals (SR-104) ─────────────────────────────────────
