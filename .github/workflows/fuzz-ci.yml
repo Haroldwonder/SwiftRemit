@@ -31,6 +31,7 @@ jobs:
           - fuzz_validate_amount
           - fuzz_validate_corridor
           - fuzz_validate_recipient_hash
+          - fuzz_compute_net_settlements
 
     steps:
       - uses: actions/checkout@v4
