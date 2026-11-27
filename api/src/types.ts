@@ -24,6 +24,8 @@ export interface ConversionRate {
   rate: number;
   /** ISO-8601 timestamp of when this rate was fetched / computed. */
   fetched_at: string;
+  /** Source of the rate. "identity" when from === to (#1876). */
+  provider?: string;
 }
 
 export interface ConversionRateResponse {
@@ -66,6 +68,11 @@ export interface CurrencyResponse {
   total?: number;
   limit?: number;
   offset?: number;
+  /**
+   * #1878 — ISO-8601 timestamp of when the underlying currency configuration
+   * was loaded. Stable across requests so it can be used as a cache validator.
+   */
+  config_loaded_at?: string;
   timestamp: string;
 }
 

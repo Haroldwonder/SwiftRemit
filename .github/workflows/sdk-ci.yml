@@ -4,9 +4,13 @@ on:
   push:
     paths:
       - "sdk/**"
+      - "src/errors.rs"
+      - "scripts/gen-sdk-errors.mjs"
   pull_request:
     paths:
       - "sdk/**"
+      - "src/errors.rs"
+      - "scripts/gen-sdk-errors.mjs"
 
 jobs:
   # ── Build + unit tests ─────────────────────────────────────────────────────
@@ -28,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
         working-directory: .
+
+      - name: Verify generated SDK contract errors
+        run: npm run check:errors
 
       - name: Type-check
         run: npm run lint

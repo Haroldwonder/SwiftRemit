@@ -138,7 +138,8 @@ fn test_confirm_payout_records_stats_after_reorder() {
     assert!(stats.last_active_timestamp > 0);
 }
 
-/// After one failure: total=0 (mark_failed doesn't increment total), failed=1, success_rate_bps=10000.
+/// After one failure: total=0 (mark_failed doesn't increment total), failed=1,
+/// success_rate_bps=0 (0 successes out of 1 attempt, #1647).
 #[test]
 fn test_success_rate_after_mark_failed() {
     let env = Env::default();
@@ -159,7 +160,9 @@ fn test_success_rate_after_mark_failed() {
     contract.mark_failed(&id);
 
     let stats = contract.get_agent_stats(&agent);
+    assert_eq!(stats.total_settlements, 0);
     assert_eq!(stats.failed_settlements, 1);
+    assert_eq!(stats.success_rate_bps, 0);
     assert!(stats.last_active_timestamp > 0);
 }
 
@@ -187,15 +190,56 @@ fn test_success_rate_mixed_outcomes() {
 
         // Simulate what confirm_payout does when recomputing success_rate_bps.
         let mut s = crate::storage::get_agent_stats(&env, &agent);
-        let successful = s.total_settlements.saturating_sub(s.failed_settlements);
-        s.success_rate_bps = successful
-            .saturating_mul(10000)
-            .checked_div(s.total_settlements)
-            .unwrap_or(10000);
+        s.success_rate_bps = crate::storage::compute_success_rate_bps(&s);
         crate::storage::set_agent_stats(&env, &agent, &s);
 
         let saved = crate::storage::get_agent_stats(&env, &agent);
         assert_eq!(saved.success_rate_bps, 7500); // 3/4 * 10000
+    });
+}
+
+/// Property test (#1647): success_rate_bps and reputation must be driven by
+/// attempts = successes + failures, never by successes alone.
+#[test]
+fn test_success_rate_and_reputation_property() {
+    let env = Env::default();
+    let agent = Address::generate(&env);
+    let contract_id = env.register_contract(None, SwiftRemitContract {});
+
+    env.as_contract(&contract_id, || {
+        for successes in 0u32..=20 {
+            for failures in 0u32..=20 {
+                let stats = crate::AgentStats {
+                    total_settlements: successes,
+                    failed_settlements: failures,
+                    total_settlement_time: 0,
+                    dispute_count: 0,
+                    success_rate_bps: 0,
+                    last_active_timestamp: 0,
+                };
+                crate::storage::set_agent_stats(&env, &agent, &stats);
+
+                let attempts = successes + failures;
+                let bps = crate::storage::compute_success_rate_bps(&stats);
+                let reputation = crate::storage::compute_agent_reputation(&stats);
+
+                if attempts == 0 {
+                    assert_eq!(bps, 10000);
+                    assert_eq!(reputation, 100);
+                } else {
+                    // Exact ratio, floored to whole basis points.
+                    assert_eq!(bps, successes * 10000 / attempts);
+                    assert!(bps <= 10000);
+                    // No successes can never yield a positive success rate.
+                    if successes == 0 {
+                        assert_eq!(bps, 0);
+                    }
+                    // Reputation is bounded and never exceeds the success score.
+                    assert!(reputation <= 100);
+                    assert!(reputation <= successes * 100 / attempts);
+                }
+            }
+        }
     });
 }
 
@@ -289,6 +333,8 @@ fn test_agent_stats_after_dispute_resolved_for_sender() {
     // Sender-favoured resolution marks the settlement as failed.
     assert_eq!(after.failed_settlements, before.failed_settlements + 1);
     assert_eq!(after.dispute_count, before.dispute_count + 1);
+    // 1 success out of 2 attempts (#1647).
+    assert_eq!(after.success_rate_bps, 5000);
     assert!(after.success_rate_bps < before.success_rate_bps);
     assert!(after.last_active_timestamp >= before.last_active_timestamp);
 }

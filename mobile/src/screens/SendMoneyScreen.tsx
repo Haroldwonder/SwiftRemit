@@ -1,3 +1,4 @@
+import { useThemedStyles } from '../theme';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -30,6 +31,7 @@ import {
 const SUPPORTED_CURRENCIES = ['PHP', 'MXN', 'INR', 'NGN', 'GHS', 'KES', 'UGX'];
 
 export default function SendMoneyScreen() {
+  const styles = useThemedStyles(baseStyles);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [loading, setLoading] = useState(false);
@@ -364,7 +366,7 @@ export default function SendMoneyScreen() {
                   >
                     <View style={styles.anchorHeader}>
                       <Text style={styles.anchorName}>{anchor.name}</Text>
-                      <Text style={[styles.availabilityBadge, AVAILABILITY_STYLES[anchor.availability]]}>
+                      <Text style={[styles.availabilityBadge, styles[AVAILABILITY_STYLE_KEYS[anchor.availability]]]}>
                         {anchor.availability}
                       </Text>
                     </View>
@@ -445,6 +447,7 @@ export default function SendMoneyScreen() {
 }
 
 function Row({ label, value, small, bold, highlight }: { label: string; value: string; small?: boolean; bold?: boolean; highlight?: boolean }) {
+  const styles = useThemedStyles(baseStyles);
   return (
     <View style={styles.summaryRow}>
       <Text style={[styles.summaryLabel, small && styles.summaryLabelSmall, bold && styles.summaryLabelBold]}>
@@ -457,7 +460,7 @@ function Row({ label, value, small, bold, highlight }: { label: string; value: s
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   content: { padding: 24, paddingBottom: 40 },
   heading: { fontSize: 22, fontWeight: '700', color: '#111827', marginBottom: 24 },
@@ -588,8 +591,8 @@ const styles = StyleSheet.create({
   emptyText: { color: '#6B7280', fontSize: 14 },
 });
 
-const AVAILABILITY_STYLES: Record<AnchorAvailability, object> = {
-  available: styles.availability_available,
-  limited: styles.availability_limited,
-  unavailable: styles.availability_unavailable,
+const AVAILABILITY_STYLE_KEYS: Record<AnchorAvailability, 'availability_available' | 'availability_limited' | 'availability_unavailable'> = {
+  available: 'availability_available',
+  limited: 'availability_limited',
+  unavailable: 'availability_unavailable',
 };

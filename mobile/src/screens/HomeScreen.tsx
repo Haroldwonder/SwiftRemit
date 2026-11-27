@@ -1,8 +1,10 @@
+import { useThemedStyles } from '../theme';
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 
 export default function HomeScreen() {
+  const styles = useThemedStyles(baseStyles);
   const navigation = useNavigation();
 
   return (
@@ -49,7 +51,7 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   content: { padding: 24 },
   greeting: { fontSize: 28, fontWeight: '800', color: '#111827', marginTop: 8 },

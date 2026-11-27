@@ -55,6 +55,7 @@ import type {
   PendingOperation,
   ContractConfig,
   KycApprovalEntry,
+  ProofData,
 } from "./types.js";
 import { parseContractError, SwiftRemitError, ErrorCode, TransactionTimeoutError } from "./errors.js";
 import { withRetry, withRetryPolicy } from "./retry.js";
@@ -69,6 +70,7 @@ import {
   i128ToScVal,
   optionToScVal,
   bytesNToScVal,
+  proofDataToScVal,
   stringToScVal,
   parseProposal,
   validateAmount,
@@ -130,6 +132,22 @@ export interface SubmitOptions {
    * {@link TransactionTimeoutError} rather than hanging.
    */
   maxWaitMs?: number;
+}
+
+/** Configuration for automatic remittance ID pagination. */
+export interface RemittanceIteratorOptions {
+  /** IDs requested per page, 1–100; defaults to 50. */
+  pageSize?: number;
+  /** Account used for read-only Soroban simulation; defaults to sender/agent. */
+  sourceAddress?: string;
+}
+
+function validateIteratorPageSize(options: RemittanceIteratorOptions): bigint {
+  const size = options.pageSize ?? 50;
+  if (!Number.isSafeInteger(size) || size < 1 || size > 100) {
+    throw new RangeError("pageSize must be an integer between 1 and 100");
+  }
+  return BigInt(size);
 }
 
 function shouldAllowHttp(rpcUrl: string): boolean {
@@ -543,6 +561,25 @@ export class SwiftRemitClient {
       ]
     );
     return (scValToNative(val) as number[]).map(BigInt);
+  }
+
+  /**
+   * Iterate remittance IDs by sender until the next page is empty.
+   * The sender is used as the simulation source unless options.sourceAddress is specified.
+   */
+  async *iterateRemittancesBySender(
+    sender: string,
+    options: RemittanceIteratorOptions = {}
+  ): AsyncGenerator<bigint, void, unknown> {
+    const pageSize = validateIteratorPageSize(options);
+    const sourceAddress = options.sourceAddress ?? sender;
+    let offset = 0n;
+    while (true) {
+      const page = await this.getRemittancesBySender(sourceAddress, sender, offset, pageSize);
+      if (page.length === 0) return;
+      for (const id of page) yield id;
+      offset += BigInt(page.length);
+    }
   }
 
   /**
@@ -1248,15 +1285,22 @@ export class SwiftRemitClient {
     return BigInt(scValToNative(val) as number);
   }
 
-  /** Confirm partial payout (agent only). */
+  /**
+   * Confirm partial payout (agent only).
+   *
+   * `proof` is required when the remittance's settlement config has
+   * `require_proof = true`; the contract rejects the call otherwise.
+   */
   async confirmPartialPayout(
     agent: string,
     remittanceId: bigint,
-    amount: bigint
+    amount: bigint,
+    proof?: ProofData
   ): Promise<Transaction> {
     return this.prepareTransaction(agent, "confirm_partial_payout", [
       u64ToScVal(remittanceId),
       i128ToScVal(amount),
+      optionToScVal(proof ? proofDataToScVal(proof) : undefined),
     ]);
   }
 
@@ -1492,17 +1536,25 @@ export class SwiftRemitClient {
 
   // ─── Blacklist ───────────────────────────────────────────────────────────────
 
-  /** Blacklists a user, preventing them from transacting. Requires admin. */
+  /** @deprecated Use {@link setBlacklistStatus} instead. */
   async blacklistUser(admin: string, user: string): Promise<Transaction> {
     return this.prepareTransaction(admin, "blacklist_user", [addressToScVal(user)]);
   }
 
-  /** Removes a user from the blacklist. Requires admin. */
+  /** Set blacklist status through the non-deprecated contract method. Admin only. */
+  async setBlacklistStatus(admin: string, user: string, blacklisted: boolean): Promise<Transaction> {
+    return this.prepareTransaction(admin, "set_blacklist_status", [
+      addressToScVal(user),
+      boolToScVal(blacklisted),
+    ]);
+  }
+
+  /** @deprecated Use {@link setBlacklistStatus} instead. */
   async removeFromBlacklist(admin: string, user: string): Promise<Transaction> {
     return this.prepareTransaction(admin, "remove_from_blacklist", [addressToScVal(user)]);
   }
 
-  /** Sets a user's blacklist status directly. Requires admin. */
+  /** @deprecated Use {@link setBlacklistStatus} instead. */
   async setUserBlacklisted(admin: string, user: string, blacklisted: boolean): Promise<Transaction> {
     return this.prepareTransaction(admin, "set_user_blacklisted", [
       addressToScVal(user),
@@ -1528,8 +1580,8 @@ export class SwiftRemitClient {
   }
 
   /** Returns whether `user` has non-expired KYC approval. */
-  async isKycApproved(sourceAddress: string, user: string): Promise<boolean> {
-    const val = await this.simulateCall(sourceAddress, "is_kyc_approved", [addressToScVal(user)]);
+  async isKycApproved(sourceAddress: string, user?: string): Promise<boolean> {
+    const val = await this.simulateCall(sourceAddress, "is_kyc_approved", [addressToScVal(user ?? sourceAddress)]);
     return Boolean(scValToNative(val));
   }
 
@@ -1974,6 +2026,22 @@ export class SwiftRemitClient {
     return (scValToNative(val) as number[]).map((id) => BigInt(id));
   }
 
+  /** Iterate remittance IDs by agent, stopping when the next page is empty. */
+  async *iterateRemittancesByAgent(
+    agent: string,
+    options: RemittanceIteratorOptions = {}
+  ): AsyncGenerator<bigint, void, unknown> {
+    const pageSize = validateIteratorPageSize(options);
+    const sourceAddress = options.sourceAddress ?? agent;
+    let offset = 0n;
+    while (true) {
+      const page = await this.getRemittancesByAgent(sourceAddress, agent, offset, pageSize);
+      if (page.length === 0) return;
+      for (const id of page) yield id;
+      offset += BigInt(page.length);
+    }
+  }
+
   /** Returns the minimum agent reputation score required for new agent registration. */
   async getMinAgentReputation(sourceAddress: string): Promise<number> {
     const val = await this.simulateCall(sourceAddress, "get_min_agent_reputation", []);
@@ -2080,14 +2148,6 @@ export class SwiftRemitClient {
     return this.prepareTransaction(agent, "confirm_batch_payout", [
       addressToScVal(agent),
       xdr.ScVal.scvVec(remittanceIds.map((id) => u64ToScVal(id))),
-    ]);
-  }
-
-  /** Force-finalizes a remittance. Requires admin. */
-  async finalizeRemittance(caller: string, remittanceId: bigint): Promise<Transaction> {
-    return this.prepareTransaction(caller, "finalize_remittance", [
-      addressToScVal(caller),
-      u64ToScVal(remittanceId),
     ]);
   }
 

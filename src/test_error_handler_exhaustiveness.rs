@@ -123,6 +123,7 @@ fn test_all_contract_errors_have_distinct_mappings() {
         ContractError::MalformedEvidenceHash,
         ContractError::DisputeWindowTooLong,
         ContractError::EscrowNotYetExpired,
+        ContractError::InvalidRateLimitConfig,
 
         // Restored Variants (70-79)
         ContractError::NotFound,
@@ -134,6 +135,8 @@ fn test_all_contract_errors_have_distinct_mappings() {
         ContractError::RecipientHashMismatch,
         ContractError::InvalidTimelockDuration,
         ContractError::BelowMinReputation,
+        ContractError::MultisigQuorumRequired,
+        ContractError::TokenNotSep41,
     ];
 
     let mut unmapped_errors = Vec::new();

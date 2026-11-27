@@ -140,7 +140,12 @@ enum DataKey {
     // === Fee Tracking ===
     // Keys for managing platform fees
     /// Total accumulated platform fees awaiting withdrawal (instance storage)
+    /// Legacy single-token counter (#1621). Kept for migration reads only; new
+    /// accrual uses `AccumulatedFees(token)`.
     AccumulatedFees,
+
+    /// Per-token accumulated platform fees awaiting withdrawal (persistent storage) (#1621)
+    AccumulatedFeesByToken(Address),
 
     /// Integrator fee in basis points (instance storage)
     IntegratorFeeBps,
@@ -151,7 +156,11 @@ enum DataKey {
     AccumulatedIntegratorFees,
 
     /// Per-integrator accrued fee balance (persistent storage) (#1263)
+    /// Legacy single-token balance; new accrual uses `IntegratorBalanceByToken`.
     IntegratorBalance(Address),
+
+    /// Per-integrator, per-token accrued fee balance (persistent storage) (#1621)
+    IntegratorBalanceByToken(Address, Address),
 
     /// Optional integrator address recorded at remittance creation (#1263)
     RemittanceIntegrator(u64),
@@ -385,6 +394,12 @@ enum DataKey {
     // === In-Flight Volume ===
     /// Total value of remittances currently in the Processing state (instance storage).
     TotalProcessingVolume,
+
+    // === Escrow Aggregates (#1855) ===
+    /// Total value of escrows currently in the `Pending` state (instance storage).
+    PendingEscrowVolume,
+    /// Number of escrows currently in the `Pending` state (instance storage).
+    PendingEscrowCount,
 
     // === Expiry Sweeps ===
     /// Maximum number of remittances that may be expired in one batch (instance storage).
@@ -751,6 +766,35 @@ pub fn get_accumulated_fees(env: &Env) -> Result<i128, ContractError> {
         .unwrap_or(0))
 }
 
+/// Sets the accumulated platform fees for a specific token (#1621).
+pub fn set_accumulated_fees_for_token(env: &Env, token: &Address, fees: i128) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::AccumulatedFeesByToken(token.clone()), &fees);
+}
+
+/// Retrieves the accumulated platform fees for a specific token (#1621).
+///
+/// Returns `0` if no fees have accrued for `token` yet.
+pub fn get_accumulated_fees_for_token(env: &Env, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AccumulatedFeesByToken(token.clone()))
+        .unwrap_or(0)
+}
+
+/// Adds `amount` to the per-token accumulated platform fees (#1621).
+pub fn add_accumulated_fees_for_token(
+    env: &Env,
+    token: &Address,
+    amount: i128,
+) -> Result<i128, ContractError> {
+    let current = get_accumulated_fees_for_token(env, token);
+    let updated = current.checked_add(amount).ok_or(ContractError::Overflow)?;
+    set_accumulated_fees_for_token(env, token, updated);
+    Ok(updated)
+}
+
 pub fn set_accumulated_integrator_fees(env: &Env, fees: i128) {
     env.storage()
         .instance()
@@ -788,6 +832,43 @@ pub fn clear_integrator_balance(env: &Env, integrator: &Address) {
     env.storage()
         .persistent()
         .set(&DataKey::IntegratorBalance(integrator.clone()), &0i128);
+}
+
+// ── Per-integrator, per-token balance (#1621) ─────────────────────────────────
+
+/// Returns the accrued fee balance for an integrator in a specific token.
+pub fn get_integrator_balance_for_token(env: &Env, integrator: &Address, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::IntegratorBalanceByToken(
+            integrator.clone(),
+            token.clone(),
+        ))
+        .unwrap_or(0)
+}
+
+/// Adds `amount` to the integrator's accrued balance for `token`.
+pub fn add_integrator_balance_for_token(
+    env: &Env,
+    integrator: &Address,
+    token: &Address,
+    amount: i128,
+) -> Result<i128, ContractError> {
+    let current = get_integrator_balance_for_token(env, integrator, token);
+    let updated = current.checked_add(amount).ok_or(ContractError::Overflow)?;
+    env.storage().persistent().set(
+        &DataKey::IntegratorBalanceByToken(integrator.clone(), token.clone()),
+        &updated,
+    );
+    Ok(updated)
+}
+
+/// Resets the integrator's accrued balance for `token` to zero.
+pub fn clear_integrator_balance_for_token(env: &Env, integrator: &Address, token: &Address) {
+    env.storage().persistent().set(
+        &DataKey::IntegratorBalanceByToken(integrator.clone(), token.clone()),
+        &0i128,
+    );
 }
 
 /// Stores the integrator address for a remittance (set at creation time).
@@ -1253,6 +1334,9 @@ pub fn set_admin_role(env: &Env, address: &Address, is_admin: bool) {
     } else {
         remove_admin_from_list(env, address);
     }
+    // Every role change flows through here, so deriving the cached count from
+    // the admin list keeps it correct for transfers as well as add/remove.
+    sync_admin_count(env);
 }
 
 pub fn get_admin_count(env: &Env) -> u32 {
@@ -1264,6 +1348,11 @@ pub fn get_admin_count(env: &Env) -> u32 {
 
 pub fn set_admin_count(env: &Env, count: u32) {
     env.storage().instance().set(&DataKey::AdminCount, &count);
+}
+
+/// Recomputes the cached admin count from the authoritative admin list.
+pub fn sync_admin_count(env: &Env) {
+    set_admin_count(env, get_admin_list(env).len());
 }
 
 pub fn require_admin(env: &Env, address: &Address) -> Result<(), ContractError> {
@@ -1580,22 +1669,47 @@ pub fn set_agent_stats(env: &Env, agent: &Address, stats: &AgentStats) {
         .set(&DataKey::AgentStats(agent.clone()), stats);
 }
 
+/// Number of settlement attempts: successes plus failures.
+///
+/// `total_settlements` only counts successful settlements, so failures must be
+/// added to obtain the denominator for success ratios (#1647).
+pub fn settlement_attempts(stats: &AgentStats) -> u32 {
+    stats
+        .total_settlements
+        .saturating_add(stats.failed_settlements)
+}
+
+/// Success rate in basis points (0–10000) over all settlement attempts.
+///
+/// An agent with no attempts yet is treated as 100% (10000 bps).
+pub fn compute_success_rate_bps(stats: &AgentStats) -> u32 {
+    let attempts = settlement_attempts(stats);
+    if attempts == 0 {
+        return 10000;
+    }
+    stats
+        .total_settlements
+        .saturating_mul(10000)
+        .checked_div(attempts)
+        .unwrap_or(0)
+}
+
 pub fn compute_agent_reputation(stats: &AgentStats) -> u32 {
-    let total = stats.total_settlements;
-    let successful = total.saturating_sub(stats.failed_settlements);
-    let success_score = if total == 0 {
+    let attempts = settlement_attempts(stats);
+    let success_score = if attempts == 0 {
         100
     } else {
-        successful
+        stats
+            .total_settlements
             .saturating_mul(100)
-            .checked_div(total)
+            .checked_div(attempts)
             .unwrap_or(0)
     };
 
-    let avg_time = if total == 0 {
+    let avg_time = if stats.total_settlements == 0 {
         0
     } else {
-        stats.total_settlement_time / (total as u64)
+        stats.total_settlement_time / (stats.total_settlements as u64)
     };
     let time_score: u32 = if avg_time <= 3600 {
         100
@@ -1637,6 +1751,19 @@ pub fn set_escrow_ttl(env: &Env, ttl: u64) {
     env.storage().instance().set(&DataKey::EscrowTtl, &ttl);
 }
 
+/// Whether `escrow` has reached its expiry at `now` (#1829).
+///
+/// One definition for both the manual refund path and the batch processor: the
+/// boundary is inclusive, so an escrow is expired from the moment
+/// `now == expiry`. An escrow with no expiry never expires by time — only an
+/// admin can release it.
+pub fn is_escrow_expired(escrow: &crate::Escrow, now: u64) -> bool {
+    match escrow.expiry {
+        Some(expiry) => now >= expiry,
+        None => false,
+    }
+}
+
 pub fn get_escrow(env: &Env, transfer_id: u64) -> Result<crate::Escrow, ContractError> {
     env.storage()
         .persistent()
@@ -1648,6 +1775,53 @@ pub fn set_escrow(env: &Env, transfer_id: u64, escrow: &crate::Escrow) {
     env.storage()
         .persistent()
         .set(&DataKey::Escrow(transfer_id), escrow);
+}
+
+// === Pending Escrow Aggregates (#1855) ===
+
+/// Returns the total value of escrows currently in the `Pending` state.
+pub fn get_pending_escrow_volume(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingEscrowVolume)
+        .unwrap_or(0)
+}
+
+/// Returns the number of escrows currently in the `Pending` state.
+pub fn get_pending_escrow_count(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingEscrowCount)
+        .unwrap_or(0)
+}
+
+/// Records a newly created pending escrow in the aggregate counters.
+pub fn add_pending_escrow(env: &Env, amount: i128) -> Result<(), ContractError> {
+    let volume = get_pending_escrow_volume(env)
+        .checked_add(amount)
+        .ok_or(ContractError::Overflow)?;
+    let count = get_pending_escrow_count(env)
+        .checked_add(1)
+        .ok_or(ContractError::Overflow)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowVolume, &volume);
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowCount, &count);
+    Ok(())
+}
+
+/// Removes a settled (released or refunded) escrow from the aggregate counters.
+pub fn remove_pending_escrow(env: &Env, amount: i128) {
+    let volume = get_pending_escrow_volume(env).saturating_sub(amount);
+    let count = get_pending_escrow_count(env).saturating_sub(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowVolume, &volume);
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowCount, &count);
 }
 
 // === Escrow Per-User Indexes (#1845) ===
@@ -2323,7 +2497,12 @@ pub fn check_and_increment_corridor_volume(
     let window_end = cap.window_start.saturating_add(cap.window_seconds);
 
     let current_volume = if now >= window_end {
-        // Window has elapsed — reset the accumulator.
+        // Window has elapsed — reset the accumulator and persist the new window
+        // start so the cap keeps being enforced in subsequent windows instead of
+        // degrading to a per-transaction cap.
+        let mut updated_cap = cap.clone();
+        updated_cap.window_start = now;
+        set_corridor_volume_cap(env, currency, country, &updated_cap);
         0i128
     } else {
         get_corridor_volume_accumulated(env, currency, country)
@@ -2345,6 +2524,22 @@ pub fn check_and_increment_corridor_volume(
         );
 
     Ok(())
+}
+
+/// Resets the corridor volume accumulator and starts a new window at `now`.
+///
+/// Used by the admin/test entrypoints to advance the window explicitly.
+pub fn reset_corridor_volume_window(env: &Env, currency: &String, country: &String) {
+    if let Some(mut cap) = get_corridor_volume_cap(env, currency, country) {
+        cap.window_start = env.ledger().timestamp();
+        set_corridor_volume_cap(env, currency, country, &cap);
+    }
+    env.storage()
+        .persistent()
+        .set(
+            &DataKey::CorridorVolumeAccumulated(currency.clone(), country.clone()),
+            &0i128,
+        );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2553,13 +2748,24 @@ pub fn extend_critical_ttls(env: &Env, extend_by_ledgers: u32) {
         .get::<DataKey, u64>(&DataKey::RemittanceCounter)
         .unwrap_or(0);
 
-    for id in 0..counter {
+    // #1826: IDs are assigned as `counter + 1` in `create_remittance`, so the live
+    // range is `1..=counter`. `0..counter` checked a record that never exists and
+    // left the newest remittance — the one most likely to still be pending — out.
+    for id in 1..=counter {
         let key = DataKey::Remittance(id);
         if env.storage().persistent().has(&key) {
             env.storage()
                 .persistent()
                 .extend_ttl(&key, ledgers, ledgers);
         }
+    }
+
+    // #1828: escrows hold funds in the contract. An archived `Escrow(id)` makes
+    // `release_escrow` and `refund_escrow` fail with the funds already locked, so
+    // they are extended alongside the remittances. Escrow IDs are `counter + 1` too.
+    let escrow_counter = get_escrow_counter(env).unwrap_or(0);
+    for id in 1..=escrow_counter {
+        extend_escrow_ttl_if_pending(env, id, ledgers);
     }
 
     // Bump per-agent persistent keys so agents never lose their registration status.
@@ -2586,6 +2792,157 @@ pub fn extend_critical_ttls(env: &Env, extend_by_ledgers: u32) {
         if env.storage().persistent().has(&key) {
             env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
         }
+    }
+}
+
+/// Largest number of IDs one paginated TTL extension may touch (#1827).
+///
+/// Every Soroban invocation has a fixed instruction and ledger-entry budget. A
+/// sweep over the whole protocol cannot stay inside it once there are a few
+/// thousand records, so admins page through the range instead of asking for all
+/// of it at once.
+pub const TTL_EXTEND_MAX_PAGE: u32 = 100;
+
+/// Extends an escrow's TTL when it is still holding funds.
+///
+/// A `Released` or `Refunded` escrow is history: it no longer needs to outlive
+/// its natural TTL, and skipping it keeps the page's budget for the records that
+/// do.
+fn extend_escrow_ttl_if_pending(env: &Env, id: u64, ledgers: u32) {
+    let key = DataKey::Escrow(id);
+    let escrow: Option<crate::Escrow> = env.storage().persistent().get(&key);
+    if let Some(escrow) = escrow {
+        if escrow.status == crate::EscrowStatus::Pending {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+    }
+}
+
+/// Extends TTLs for one page of persistent records (#1827, #1828).
+///
+/// Walks `start_id ..= start_id + limit - 1`, extending the remittance and the
+/// escrow stored under each ID, and returns the ID to pass as the next
+/// `start_id` — or `0` once the end of the range has been reached. `limit` is
+/// clamped to `TTL_EXTEND_MAX_PAGE`; a `limit` of 0 is read as one record, so a
+/// caller can never ask for a page that makes no progress.
+///
+/// Remittances in a terminal state (`Completed`, `Cancelled`) are skipped: the
+/// money has moved and the record may age out. `Failed` and `Disputed` are kept
+/// alive, because both can still be acted on.
+///
+/// The contract instance is bumped only on the first page, so paging through a
+/// large protocol does not pay for it again on every call.
+pub fn extend_critical_ttls_page(env: &Env, extend_by_ledgers: u32, start_id: u64, limit: u32) -> u64 {
+    // Cap at ~1 year of ledgers (5-second ledger time), as the full sweep does.
+    let ledgers = extend_by_ledgers.min(3_110_400);
+
+    if start_id <= 1 {
+        env.storage().instance().extend_ttl(ledgers, ledgers);
+    }
+
+    let remittance_counter = env
+        .storage()
+        .instance()
+        .get::<DataKey, u64>(&DataKey::RemittanceCounter)
+        .unwrap_or(0);
+    let escrow_counter = get_escrow_counter(env).unwrap_or(0);
+    let last_id = if remittance_counter > escrow_counter { remittance_counter } else { escrow_counter };
+
+    let first = if start_id < 1 { 1 } else { start_id };
+    if first > last_id {
+        return 0;
+    }
+
+    let page = if limit == 0 { 1 } else { limit.min(TTL_EXTEND_MAX_PAGE) };
+    // `page` is at most 100, so this cannot overflow a u64 that holds a live ID.
+    let end = first + (page as u64) - 1;
+    let end = if end > last_id { last_id } else { end };
+
+    for id in first..=end {
+        let key = DataKey::Remittance(id);
+        let remittance: Option<Remittance> = env.storage().persistent().get(&key);
+        if let Some(remittance) = remittance {
+            let terminal = remittance.status == RemittanceStatus::Completed
+                || remittance.status == RemittanceStatus::Cancelled;
+            if !terminal {
+                env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+            }
+        }
+        extend_escrow_ttl_if_pending(env, id, ledgers);
+    }
+
+    if end >= last_id {
+        0
+    } else {
+        end + 1
+    }
+}
+
+/// Extends TTLs for one page of the agent registry (#1827).
+///
+/// The agent list grows without bound as agents register, so the per-agent keys
+/// are paged on their own index. Returns the next `offset`, or `0` when the end
+/// of the list has been reached.
+pub fn extend_agent_ttls_page(env: &Env, extend_by_ledgers: u32, offset: u32, limit: u32) -> u32 {
+    let ledgers = extend_by_ledgers.min(3_110_400);
+    let agents = get_agent_list(env);
+    if offset >= agents.len() {
+        return 0;
+    }
+
+    let page = if limit == 0 { 1 } else { limit.min(TTL_EXTEND_MAX_PAGE) };
+    let end = (offset + page).min(agents.len());
+
+    for i in offset..end {
+        let agent = agents.get_unchecked(i);
+
+        let key = DataKey::AgentRegistered(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+
+        let key = DataKey::AgentKycHash(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+
+        let key = DataKey::AgentStats(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+
+        let key = DataKey::AgentDailyCap(agent.clone());
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(&key, ledgers, ledgers);
+        }
+    }
+
+    if end >= agents.len() {
+        0
+    } else {
+        end
+    }
+}
+
+/// The live TTL of a remittance record, for tests (`DataKey` stays private).
+#[cfg(test)]
+pub fn remittance_ttl(env: &Env, id: u64) -> Option<u32> {
+    let key = DataKey::Remittance(id);
+    if env.storage().persistent().has(&key) {
+        Some(env.storage().persistent().get_ttl(&key))
+    } else {
+        None
+    }
+}
+
+/// The live TTL of an escrow record, for tests (`DataKey` stays private).
+#[cfg(test)]
+pub fn escrow_ttl(env: &Env, id: u64) -> Option<u32> {
+    let key = DataKey::Escrow(id);
+    if env.storage().persistent().has(&key) {
+        Some(env.storage().persistent().get_ttl(&key))
+    } else {
+        None
     }
 }
 

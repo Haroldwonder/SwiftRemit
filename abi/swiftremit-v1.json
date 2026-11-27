@@ -139,10 +139,11 @@
     },
     {
       "name": "confirm_partial_payout",
-      "doc": "Disburses a partial amount; auto-completes when total disbursed reaches net payout.",
+      "doc": "Disburses a partial amount; auto-completes when total disbursed reaches net payout. Requires a valid proof when settlement_config.require_proof is set.",
       "inputs": [
         { "name": "remittance_id", "type": "u64" },
-        { "name": "amount",        "type": "i128" }
+        { "name": "amount",        "type": "i128" },
+        { "name": "proof",         "type": "Option<ProofData>" }
       ],
       "outputs": [{ "type": "Result<(), ContractError>" }],
       "access": "agent_auth"
@@ -341,6 +342,25 @@
       "inputs": [],
       "outputs": [{ "type": "Result<(), ContractError>" }],
       "access": "admin"
+    },
+    {
+      "name": "set_blacklist_status",
+      "doc": "Sets a user's blacklist status. Admin only. Emits blacklist/added or blacklist/removed.",
+      "inputs": [
+        { "name": "user",        "type": "Address" },
+        { "name": "blacklisted", "type": "bool" }
+      ],
+      "outputs": [{ "type": "Result<(), ContractError>" }],
+      "access": "admin"
+    },
+    {
+      "name": "is_user_blacklisted",
+      "doc": "Returns whether a user is currently blacklisted.",
+      "inputs": [
+        { "name": "user", "type": "Address" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "access": "readonly"
     }
   ],
   "types": {

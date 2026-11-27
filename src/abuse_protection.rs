@@ -6,7 +6,7 @@ use crate::rate_limit::{
     get_sliding_window_entry, save_sliding_window_entry,
 };
 use crate::config::{
-    RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_RATE_LIMIT_WINDOW_SECONDS,
     MAX_TRANSFERS_PER_WINDOW,
     MAX_CANCELLATIONS_PER_WINDOW,
     MAX_QUERIES_PER_WINDOW,
@@ -67,30 +67,52 @@ pub fn check_rate_limit(
     address: &Address,
     action_type: ActionType,
 ) -> Result<(), ContractError> {
+    check_rate_limit_weighted(env, address, action_type, 1)
+}
+
+/// Weighted variant of [`check_rate_limit`].
+///
+/// `weight` is the number of actions the caller is about to perform (e.g. the
+/// number of entries in a batch). The whole weight is charged against the
+/// sliding window atomically: if the remaining budget cannot cover it, nothing
+/// is recorded and `RateLimitExceeded` is returned.
+pub fn check_rate_limit_weighted(
+    env: &Env,
+    address: &Address,
+    action_type: ActionType,
+    weight: u32,
+) -> Result<(), ContractError> {
     if action_type == ActionType::Admin {
+        return Ok(());
+    }
+    if weight == 0 {
         return Ok(());
     }
     let current_time = env.ledger().timestamp();
     let max_requests = get_max_requests_for_action(&action_type);
     let tag = action_tag(&action_type);
+    let window_seconds = crate::rate_limit::get_rate_limit_config(env)
+        .map(|config| config.window_seconds)
+        .unwrap_or(DEFAULT_RATE_LIMIT_WINDOW_SECONDS);
     let mut entry = get_sliding_window_entry(env, address, tag);
-    let window_start = current_time.saturating_sub(RATE_LIMIT_WINDOW_SECONDS);
+    let window_start = current_time.saturating_sub(window_seconds);
     
     // Filter timestamps in O(n) single pass; already removes stale entries
     entry.timestamps = filter_timestamps_in_window(env, &entry.timestamps, window_start);
     entry.request_count = entry.timestamps.len();
     entry.window_start = window_start;
 
-    if entry.request_count >= max_requests {
+    let projected = entry.request_count.checked_add(weight).ok_or(ContractError::Overflow)?;
+    if projected > max_requests {
         // Save the pruned entry even on early return so stale timestamps are evicted.
-        save_sliding_window_entry(env, &entry, RATE_LIMIT_WINDOW_SECONDS);
+        save_sliding_window_entry(env, &entry, window_seconds);
         log_suspicious_activity(env, address, SuspiciousActivityType::RateLimitExceeded, entry.request_count);
         emit_rate_limit_exceeded(env, address, &action_type, entry.request_count);
         return Err(ContractError::RateLimitExceeded);
     }
     entry.timestamps.push_back(current_time);
     entry.request_count = entry.request_count.checked_add(1).ok_or(ContractError::Overflow)?;
-    save_sliding_window_entry(env, &entry, RATE_LIMIT_WINDOW_SECONDS);
+    save_sliding_window_entry(env, &entry, window_seconds);
     Ok(())
 }
 
@@ -283,6 +305,39 @@ mod tests {
             let result = check_rate_limit(&env, &address, ActionType::Transfer);
             assert!(result.is_err());
             assert_eq!(result.unwrap_err(), ContractError::RateLimitExceeded);
+        });
+    }
+
+    #[test]
+    fn test_rate_limit_uses_configured_window() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SwiftRemitContract {});
+        let address = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            // Configure a 10-second window via the stored RateLimitConfig.
+            crate::rate_limit::set_rate_limit_config(
+                &env,
+                crate::rate_limit::RateLimitConfig {
+                    max_requests: MAX_TRANSFERS_PER_WINDOW,
+                    window_seconds: 10,
+                    enabled: true,
+                },
+            );
+
+            for _ in 0..MAX_TRANSFERS_PER_WINDOW {
+                check_rate_limit(&env, &address, ActionType::Transfer).unwrap();
+            }
+            assert_eq!(
+                check_rate_limit(&env, &address, ActionType::Transfer).unwrap_err(),
+                ContractError::RateLimitExceeded
+            );
+
+            // Advance past the configured window: entries must be evicted.
+            env.ledger().set(LedgerInfo {
+                timestamp: env.ledger().timestamp() + 11,
+                ..env.ledger().get()
+            });
+            assert!(check_rate_limit(&env, &address, ActionType::Transfer).is_ok());
         });
     }
 

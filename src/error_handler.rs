@@ -585,6 +585,12 @@ impl ErrorHandler {
                 ErrorCategory::Validation,
                 ErrorSeverity::Medium,
             ),
+            ContractError::InvalidRateLimitConfig => (
+                87,
+                SorobanString::from_str(env, "Invalid rate limit configuration"),
+                ErrorCategory::Validation,
+                ErrorSeverity::Medium,
+            ),
             ContractError::EscrowNotYetExpired => (
                 85,
                 SorobanString::from_str(env, "Escrow refund rejected: lock period has not elapsed"),
@@ -610,6 +616,13 @@ impl ErrorHandler {
                 SorobanString::from_str(env, "Idempotency key conflict with different payload"),
                 ErrorCategory::Validation,
                 ErrorSeverity::Medium,
+            ),
+
+            ContractError::InvalidExpiry => (
+                87,
+                SorobanString::from_str(env, "Remittance expiry must be in the future"),
+                ErrorCategory::Validation,
+                ErrorSeverity::Low,
             ),
 
             _ => (

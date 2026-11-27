@@ -167,6 +167,7 @@ The contract exposes 134 public functions from a single `#[contractimpl] impl Sw
 | `get_agent_kyc_hash(agent)` | Returns the stored KYC metadata hash for an agent, if any | none (public query) |
 | `get_agent_stats(agent)` | Returns full agent stats (settlements, failures, disputes, success rate) | none (public query) |
 | `get_agent_reputation(agent)` | Computes a reputation score from an agent's stats | none (public query) |
+| `is_agent_suspended(agent)` | Returns `true` when the agent's reputation is below the minimum threshold (suspended from new remittances) | none (public query) |
 | `set_agent_daily_cap(agent, cap)` | Sets a rolling 24h payout cap for an agent (0 = no cap) | admin only |
 | `get_agent_daily_cap(agent)` | Returns an agent's daily payout cap | none (public query) |
 | `set_min_agent_reputation(threshold)` | Sets the minimum reputation (0–100) an agent needs to receive new remittances | admin only |
@@ -178,14 +179,13 @@ The contract exposes 134 public functions from a single `#[contractimpl] impl Sw
 |---|---|---|
 | `create_remittance(sender, agent, amount, integrator, expiry?, token?, idempotency_key?, settlement_config?, recipient_hash?)` | Creates a pending remittance: validates agent/reputation/token whitelist, enforces daily send limit and corridor caps, checks idempotency, records the integrator for fee splitting, and moves funds into escrow | sender auth required |
 | `create_remittance_with_corridor(sender, agent, amount, expiry?, from_country?, to_country?)` | Like `create_remittance`, but applies a country-pair fee corridor if one is configured | sender auth required |
-| `confirm_payout(agent, remittance_id, proof?, recipient_details_hash?)` | Agent confirms payout: transitions Pending → Processing → Completed, pays the agent (minus fees), pays the treasury protocol fee, and locks the settlement hash against double payout | agent auth required (must be the remittance's assigned, registered agent) |
+| `confirm_payout(agent, remittance_id, proof?, recipient_details_hash?)` | Agent confirms payout: transitions Pending → Processing → Completed, pays the agent (minus fees), pays the treasury protocol fee, splits the platform fee between the platform and the recorded integrator (shares sum to exactly the quoted fee), and locks the settlement hash against double payout | agent auth required (must be the remittance's assigned, registered agent) |
 | `mark_failed(remittance_id)` | Marks the remittance `Failed` while retaining escrow during the sender's dispute window | agent auth required (assigned agent) |
 | `raise_dispute(remittance_id, evidence_hash)` | Sender disputes a remittance in the `Failed` status, within the dispute window | sender auth required |
-| `resolve_dispute(remittance_id, in_favour_of_sender)` | Admin resolves a disputed remittance — refunds the sender or pays the agent | admin only |
+| `resolve_dispute(remittance_id, in_favour_of_sender)` | Admin resolves a disputed remittance — refunds the sender or pays the agent (protocol fee to treasury, platform fee to accumulated fees) | admin only |
 | `set_dispute_window(seconds)` | Sets how long after failure a sender may raise a dispute (bounded at 30 days) | admin only |
 | `get_dispute_window()` | Returns the current dispute window in seconds | none (public query) |
-| `confirm_partial_payout(remittance_id, amount)` | Disburses a partial amount toward a remittance; auto-completes once fully disbursed | agent auth required (assigned agent with `Settler` role) |
-| `finalize_remittance(caller, remittance_id)` | Verifies a remittance is in the `Completed` status | admin only |
+| `confirm_partial_payout(remittance_id, amount)` | Disburses a partial amount toward a remittance; auto-completes once fully disbursed | agent auth required (assigned agent) |
 | `cancel_remittance(remittance_id)` | Sender cancels a pending remittance for a full refund, or recovers the remaining escrow from a `Failed` remittance after its dispute window expires | sender auth required |
 | `process_expired_remittances(remittance_ids)` | Batch-refunds expired pending remittances from the given ID list (max batch size configurable, see `set_max_expired_batch_size`) | none (callable by anyone) |
 | `get_remittance(remittance_id)` | Fetches a remittance record | none (public query) |
@@ -954,3 +954,8 @@ and genuinely pending work.
 
 <!-- handsoff-issue-1698 -->
 - #1698: Add regression test: cancel refund for non-USDC whitelisted token
+
+## Contract operator and escrow reference
+
+- [Smart-contract configuration: admin parameters, defaults, limits, and events](docs/contract-configuration.md)
+- [Escrow lifecycle: authorization, expiry, pause behavior, events, and errors](docs/escrow.md)

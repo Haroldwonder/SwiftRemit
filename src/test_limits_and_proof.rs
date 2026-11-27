@@ -243,11 +243,81 @@ fn test_confirm_partial_payout_missing_required_proof() {
         &None,
     );
 
-    let result = contract.try_confirm_partial_payout(&remittance_id, &100);
+    let result = contract.try_confirm_partial_payout(&remittance_id, &100, &None);
     assert_eq!(result.unwrap_err().unwrap(), ContractError::MissingProof);
     assert_eq!(
         contract.get_remittance(&remittance_id).status,
         crate::RemittanceStatus::Pending
+    );
+}
+
+#[test]
+fn test_confirm_partial_payout_rejects_invalid_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, admin, sender, agent, _token_admin) = setup(&env);
+    let config = SettlementConfig {
+        require_proof: true,
+        oracle_address: Some(admin),
+    };
+    let remittance_id = contract.create_remittance(
+        &sender,
+        &agent,
+        &2_000,
+        &None,
+        &None,
+        &None,
+        &Some(config),
+        &None,
+    );
+
+    let bad_proof = crate::types::ProofData {
+        signature: soroban_sdk::BytesN::from_array(&env, &[7u8; 64]),
+        payload: soroban_sdk::Bytes::from_slice(&env, b"bad"),
+        signer: soroban_sdk::Address::generate(&env),
+    };
+    let result = contract.try_confirm_partial_payout(&remittance_id, &100, &Some(bad_proof));
+    assert_eq!(result.unwrap_err().unwrap(), ContractError::InvalidProof);
+    assert_eq!(
+        contract.get_remittance(&remittance_id).status,
+        crate::RemittanceStatus::Pending
+    );
+}
+
+#[test]
+fn test_confirm_partial_payout_accepts_valid_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, admin, sender, agent, _token_admin) = setup(&env);
+    let config = SettlementConfig {
+        require_proof: true,
+        oracle_address: Some(admin.clone()),
+    };
+    let remittance_id = contract.create_remittance(
+        &sender,
+        &agent,
+        &2_000,
+        &None,
+        &None,
+        &None,
+        &Some(config),
+        &None,
+    );
+
+    let payload = soroban_sdk::Bytes::from_slice(&env, b"valid-partial-proof");
+    let signature = crate::verification::compute_proof_signature(&env, &admin, &payload);
+    let proof = crate::types::ProofData {
+        signature,
+        payload,
+        signer: admin,
+    };
+
+    contract.confirm_partial_payout(&remittance_id, &100, &Some(proof));
+    assert_eq!(
+        contract.get_remittance(&remittance_id).status,
+        crate::RemittanceStatus::Processing
     );
 }
 
@@ -626,6 +696,48 @@ fn test_valid_proof_still_gated_by_rate_limit() {
         "expected RateLimitExceeded or ActionBlocked, got {:?}",
         err
     );
+}
+
+/// #1831 — `update_rate_limit_config` rejects degenerate configs when enabled.
+#[test]
+fn test_update_rate_limit_config_rejects_invalid_values() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, _token, admin, _sender, _agent, _token_admin) = setup(&env);
+
+    // max_requests == 0 while enabled
+    assert_eq!(
+        contract
+            .try_update_rate_limit_config(&admin, &0, &60, &true)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::InvalidRateLimitConfig
+    );
+
+    // window_seconds == 0 while enabled
+    assert_eq!(
+        contract
+            .try_update_rate_limit_config(&admin, &10, &0, &true)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::InvalidRateLimitConfig
+    );
+
+    // window_seconds above the 1-day maximum
+    assert_eq!(
+        contract
+            .try_update_rate_limit_config(&admin, &10, &86_401, &true)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::InvalidRateLimitConfig
+    );
+
+    // Boundary values are accepted.
+    contract.update_rate_limit_config(&admin, &1, &86_400, &true);
+
+    // Disabled configs may use zero values.
+    contract.update_rate_limit_config(&admin, &0, &0, &false);
 }
 
 /// #1529 — no proof path (proof not required) does not interfere with rate limits.
