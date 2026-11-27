@@ -1,7 +1,20 @@
 import { useState, useEffect } from 'react'
 import './Onboarding.css'
 
-export default function Onboarding({ isVisible, onClose }) {
+export interface OnboardingProps {
+  isVisible: boolean
+  onClose: () => void
+}
+
+interface OnboardingStep {
+  title: string
+  description: string
+  action: string
+  icon: string
+  link?: string
+}
+
+export default function Onboarding({ isVisible, onClose }: OnboardingProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const [hasSkipped, setHasSkipped] = useState(false)
 
@@ -12,7 +25,7 @@ export default function Onboarding({ isVisible, onClose }) {
     }
   }, [onClose])
 
-  const steps = [
+  const steps: OnboardingStep[] = [
     {
       title: 'Welcome to SwiftRemit',
       description: 'Send USDC remittances securely across borders with SwiftRemit built on Stellar Soroban.',

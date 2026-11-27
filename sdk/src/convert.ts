@@ -371,6 +371,31 @@ export function bytesNToScVal(buf: Buffer): xdr.ScVal {
   return xdr.ScVal.scvBytes(buf);
 }
 
+/**
+ * Encode a contract `ProofData { signature, payload, signer }` struct as an
+ * ScVal map, matching the Soroban SDK wire format for `#[contracttype]` structs.
+ */
+export function proofDataToScVal(proof: {
+  signature: Buffer;
+  payload: Buffer;
+  signer: string;
+}): xdr.ScVal {
+  return xdr.ScVal.scvMap([
+    new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("signature"),
+      val: bytesNToScVal(proof.signature),
+    }),
+    new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("payload"),
+      val: bytesNToScVal(proof.payload),
+    }),
+    new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol("signer"),
+      val: addressToScVal(proof.signer),
+    }),
+  ]);
+}
+
 export function stringToScVal(value: string): xdr.ScVal {
   return nativeToScVal(value, { type: "string" });
 }

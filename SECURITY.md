@@ -259,7 +259,7 @@ immediately on a single admin signature:
 | Re-entrancy: Soroban VM is single-threaded; no callbacks during execution | SDK guarantee |
 | Duplicate settlement prevention | `SettlementData` / `SettlementPacked` storage keys |
 | Blacklist | `UserBlacklisted` storage key checked in `create_remittance` |
-| Daily send limits | `enforce_daily_send_limit` called in every remittance creation path |
+| Daily send limits | `enforce_daily_send_limit` called in every remittance creation path; the global (`USDC`/`GLOBAL`) limit is enforced and recorded on every path, including `create_remittance_with_corridor` and `batch_create_remittances` (#1644) |
 | Rate limiting | `RateLimitConfig` applied per address |
 | Circuit breaker | `pause` / `unpause` block all user-facing state mutations |
 | Migration guard | `MigrationInProgress` flag blocks concurrent writes during data migration |

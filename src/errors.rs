@@ -340,4 +340,10 @@ pub enum ContractError {
     /// the SEP-41 interface (e.g. `decimals()` / `symbol()`) fails, meaning
     /// the address is not a valid token contract.
     TokenNotSep41 = 86,
+
+    /// `mark_failed` was called without a reason code or evidence hash.
+    ///
+    /// Agents must justify a failure so the sender can evaluate whether to
+    /// dispute it (#1624).
+    MissingFailureReason = 87,
 }
