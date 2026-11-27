@@ -33,6 +33,74 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe('Admin remittances CSV export date range validation', () => {
+  const adminKey = 'test-admin-key-12345';
+
+  beforeEach(() => {
+    process.env.ADMIN_API_KEY = adminKey;
+    delete process.env.CSV_EXPORT_MAX_RANGE_DAYS;
+    app.use('/admin', createAdminRouter(mockPool as Pool));
+  });
+
+  afterEach(() => {
+    delete process.env.CSV_EXPORT_MAX_RANGE_DAYS;
+  });
+
+  it('returns 400 INVALID_DATE_RANGE when from equals to', async () => {
+    const res = await request(app)
+      .get('/admin/remittances/export?from=2026-01-01T00:00:00Z&to=2026-01-01T00:00:00Z')
+      .set('x-api-key', adminKey)
+      .expect(400);
+
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe('INVALID_DATE_RANGE');
+  });
+
+  it('returns 400 INVALID_DATE_RANGE when from is after to', async () => {
+    const res = await request(app)
+      .get('/admin/remittances/export?from=2026-02-01T00:00:00Z&to=2026-01-01T00:00:00Z')
+      .set('x-api-key', adminKey)
+      .expect(400);
+
+    expect(res.body.error.code).toBe('INVALID_DATE_RANGE');
+  });
+
+  it('returns 400 INVALID_DATE_RANGE when the range exceeds the default maximum', async () => {
+    const res = await request(app)
+      .get('/admin/remittances/export?from=2024-01-01T00:00:00Z&to=2026-01-01T00:00:00Z')
+      .set('x-api-key', adminKey)
+      .expect(400);
+
+    expect(res.body.error.code).toBe('INVALID_DATE_RANGE');
+  });
+
+  it('honours CSV_EXPORT_MAX_RANGE_DAYS', async () => {
+    process.env.CSV_EXPORT_MAX_RANGE_DAYS = '7';
+
+    const res = await request(app)
+      .get('/admin/remittances/export?from=2026-01-01T00:00:00Z&to=2026-01-20T00:00:00Z')
+      .set('x-api-key', adminKey)
+      .expect(400);
+
+    expect(res.body.error.code).toBe('INVALID_DATE_RANGE');
+  });
+
+  it('accepts a range within the maximum', async () => {
+    const connect = vi.fn().mockResolvedValue({
+      query: vi.fn().mockResolvedValue({ rows: [] }),
+      release: vi.fn(),
+    });
+    (mockPool as { connect: unknown }).connect = connect;
+
+    const res = await request(app)
+      .get('/admin/remittances/export?from=2026-01-01T00:00:00Z&to=2026-01-10T00:00:00Z')
+      .set('x-api-key', adminKey)
+      .expect(200);
+
+    expect(res.text).toContain('id,sender,recipient');
+  });
+});
+
 describe('Admin Webhook DLQ Endpoints', () => {
   const adminKey = 'test-admin-key-12345';
 

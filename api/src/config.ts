@@ -65,6 +65,8 @@ export class CurrencyConfigLoader {
   private config: CurrencyConfig | null = null;
   private configPath: string;
   private envOverrides: Currency[] = [];
+  /** #1878 — ISO-8601 timestamp of the last successful load. */
+  private loadedAt: string | null = null;
 
   constructor(configPath?: string) {
     this.configPath = configPath || process.env.CURRENCY_CONFIG_PATH || './config/currencies.json';
@@ -97,6 +99,7 @@ export class CurrencyConfigLoader {
       this.checkDuplicateAliases(mergedConfig);
 
       this.config = mergedConfig;
+      this.loadedAt = new Date().toISOString();
       console.log(`✓ Currency configuration loaded successfully: ${mergedConfig.currencies.length} currencies`);
       
       return mergedConfig;
@@ -243,6 +246,17 @@ export class CurrencyConfigLoader {
   }
 
   /**
+   * #1878 — ISO-8601 timestamp of the last successful configuration load.
+   * Stable between reloads, so it can be used as a cache validator.
+   */
+  public getLoadedAt(): string {
+    if (!this.config || !this.loadedAt) {
+      throw new Error('Configuration not loaded. Call load() first.');
+    }
+    return this.loadedAt;
+  }
+
+  /**
    * Get all currencies
    */
   public getCurrencies(): Currency[] {
@@ -299,6 +313,7 @@ export class CurrencyConfigLoader {
   public reload(): CurrencyConfig {
     this.config = null;
     this.envOverrides = [];
+    this.loadedAt = null;
     return this.load();
   }
 }
@@ -316,4 +331,20 @@ export function getCurrencyConfigLoader(): CurrencyConfigLoader {
 export function initializeCurrencyConfig(): void {
   const loader = getCurrencyConfigLoader();
   loader.load();
+}
+
+/**
+ * #1878 — Cache-Control max-age (seconds) for the currencies and limits
+ * endpoints. Configurable via `CURRENCY_CACHE_MAX_AGE`; defaults to 300.
+ */
+export function getCurrencyCacheMaxAge(): number {
+  const raw = process.env.CURRENCY_CACHE_MAX_AGE;
+  if (raw === undefined || raw.trim() === '') {
+    return 300;
+  }
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return 300;
+  }
+  return parsed;
 }

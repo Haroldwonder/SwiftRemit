@@ -2,6 +2,7 @@
  * Tests for agent registration and management endpoints (Issue #880).
  *
  * POST /api/agents
+ * GET  /api/agents
  * GET  /api/agents/:id
  * PUT  /api/agents/:id/payout-address
  */
@@ -61,6 +62,38 @@ describe('POST /api/agents', () => {
       .send({ stellar_address: VALID_ADDRESS, name: 'Agent' });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('MISSING_FIELD');
+  });
+
+  it('returns 400 FIELD_TOO_LONG when name exceeds 100 characters', async () => {
+    process.env.ADMIN_API_KEY = ADMIN_KEY;
+    const app = createApp();
+    const res = await request(app)
+      .post('/api/agents')
+      .set('x-api-key', ADMIN_KEY)
+      .send({ stellar_address: VALID_ADDRESS, payout_address: 'addr1', name: 'a'.repeat(101) });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('FIELD_TOO_LONG');
+  });
+
+  it('returns 400 FIELD_TOO_LONG when payout_address exceeds 256 characters', async () => {
+    process.env.ADMIN_API_KEY = ADMIN_KEY;
+    const app = createApp();
+    const res = await request(app)
+      .post('/api/agents')
+      .set('x-api-key', ADMIN_KEY)
+      .send({ stellar_address: VALID_ADDRESS, payout_address: 'a'.repeat(257), name: 'Agent' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('FIELD_TOO_LONG');
+  });
+
+  it('accepts name of exactly 100 characters and payout_address of exactly 256 characters', async () => {
+    process.env.ADMIN_API_KEY = ADMIN_KEY;
+    const app = createApp();
+    const res = await request(app)
+      .post('/api/agents')
+      .set('x-api-key', ADMIN_KEY)
+      .send({ stellar_address: VALID_ADDRESS, payout_address: 'a'.repeat(256), name: 'a'.repeat(100) });
+    expect(res.status).toBe(201);
   });
 
   it('creates agent with status pending', async () => {
@@ -124,6 +157,93 @@ describe('GET /api/agents/:id', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.data.name).toBe('Bob');
     expect(res.body.data.payout_address).toBe('iban456');
+  });
+});
+
+describe('GET /api/agents', () => {
+  const ADDRESS_2 = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+  const ADDRESS_3 = 'GCCD6AJOYZCUAQLX32ZJRWCGYRXJE5RON3FYO44PNEMXHUIO4UGK6BXL';
+
+  beforeEach(() => {
+    agentStore.clear();
+    useTestJwtSecret();
+  });
+
+  async function seed(app: ReturnType<typeof createApp>) {
+    process.env.ADMIN_API_KEY = ADMIN_KEY;
+    for (const [address, name] of [
+      [VALID_ADDRESS, 'Alice'],
+      [ADDRESS_2, 'Bob'],
+      [ADDRESS_3, 'Carol'],
+    ]) {
+      await request(app)
+        .post('/api/agents')
+        .set('x-api-key', ADMIN_KEY)
+        .send({ stellar_address: address, payout_address: `payout-${name}`, name });
+    }
+  }
+
+  it('returns 401 without authentication', async () => {
+    const app = createApp();
+    const res = await request(app).get('/api/agents');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 for non-admin callers', async () => {
+    const app = createApp();
+    const res = await request(app).get('/api/agents').set('Authorization', bearer('user-1'));
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('FORBIDDEN');
+  });
+
+  it('lists agents with a cursor envelope and no payout_address', async () => {
+    const app = createApp();
+    await seed(app);
+
+    const res = await request(app)
+      .get('/api/agents?limit=2')
+      .set('Authorization', bearer('admin-1', { role: 'admin' }));
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toHaveLength(2);
+    expect(res.body.has_more).toBe(true);
+    expect(res.body.page_size).toBe(2);
+    expect(typeof res.body.next_cursor).toBe('string');
+    expect(res.body.data[0].payout_address).toBeUndefined();
+
+    const next = await request(app)
+      .get(`/api/agents?limit=2&cursor=${res.body.next_cursor}`)
+      .set('Authorization', bearer('admin-1', { role: 'admin' }));
+    expect(next.status).toBe(200);
+    expect(next.body.data).toHaveLength(1);
+    expect(next.body.has_more).toBe(false);
+    expect(next.body.next_cursor).toBeNull();
+  });
+
+  it('filters by status', async () => {
+    const app = createApp();
+    await seed(app);
+
+    const res = await request(app)
+      .get('/api/agents?status=active')
+      .set('Authorization', bearer('admin-1', { role: 'admin' }));
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(0);
+
+    const pending = await request(app)
+      .get('/api/agents?status=pending')
+      .set('Authorization', bearer('admin-1', { role: 'admin' }));
+    expect(pending.status).toBe(200);
+    expect(pending.body.data).toHaveLength(3);
+  });
+
+  it('returns 400 for an invalid status', async () => {
+    const app = createApp();
+    const res = await request(app)
+      .get('/api/agents?status=bogus')
+      .set('Authorization', bearer('admin-1', { role: 'admin' }));
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('INVALID_STATUS');
   });
 });
 

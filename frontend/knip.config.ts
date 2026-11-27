@@ -1,7 +1,7 @@
 import type { KnipConfig } from 'knip';
 
 const config: KnipConfig = {
-  entry: ['src/main.jsx', 'src/App.jsx'],
+  entry: ['src/main.tsx', 'src/App.tsx'],
   project: ['src/**/*.{ts,tsx,js,jsx}'],
   ignore: [
     'src/**/*.stories.{ts,tsx}',

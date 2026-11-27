@@ -42,6 +42,60 @@ fn test_withdraw_integrator_fees_success() {
     assert_eq!(token::Client::new(&env, &token.address).balance(&to), 500);
 }
 
+/// #1622: the platform and integrator shares of a remittance fee must sum to
+/// exactly `remittance.fee`, and the contract must stay solvent: its token
+/// balance must cover escrow liabilities plus all withdrawable fees.
+#[test]
+fn test_integrator_share_not_double_counted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract, token) = setup(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let integrator = Address::generate(&env);
+    contract.register_agent(&agent, &None);
+    token.mint(&sender, &10_000);
+
+    let amount = 10_000i128;
+    let id = contract.create_remittance(
+        &sender,
+        &agent,
+        &amount,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &Some(integrator.clone()),
+    );
+
+    let remittance = env.as_contract(&contract.address, || {
+        crate::storage::get_remittance(&env, id).unwrap()
+    });
+    let fee = remittance.fee;
+    let integrator_share = fee / 10;
+    let platform_share = fee - integrator_share;
+
+    contract.confirm_payout(&agent, &id, &None, &None);
+
+    let (accumulated, integrator_balance) = env.as_contract(&contract.address, || {
+        (
+            crate::storage::get_accumulated_fees_for_token(&env, &token.address),
+            crate::storage::get_integrator_balance_for_token(&env, &integrator, &token.address),
+        )
+    });
+
+    assert_eq!(integrator_balance, integrator_share);
+    assert_eq!(accumulated, platform_share);
+    assert_eq!(accumulated + integrator_balance, fee);
+
+    // Solvency: no escrow liabilities remain, and the contract holds at least
+    // every withdrawable fee.
+    let contract_balance = token::Client::new(&env, &token.address).balance(&contract.address);
+    assert!(contract_balance >= accumulated + integrator_balance);
+}
+
 /// #1672: withdrawing to the contract's own address must be rejected and leave
 /// the integrator balance untouched.
 #[test]

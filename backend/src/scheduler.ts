@@ -22,10 +22,16 @@ import { TravelRuleService } from './aml/travel-rule';
 import { RetentionService } from './aml/retention';
 import { purgeExpiredPersonalData } from './privacy/retention-service';
 import { createLogger } from './correlation-id';
+import { readPositiveInt, readCronSchedule } from './env-guard';
 import { DeviceTokenService } from './device-token-service';
 import crypto from 'crypto';
 
 const logger = createLogger('scheduler');
+
+// All cron expressions are evaluated in this timezone so daily jobs do not
+// depend on the host/container local time or DST transitions.
+const CRON_TIMEZONE = process.env.CRON_TIMEZONE || 'UTC';
+const cronOptions = { timezone: CRON_TIMEZONE };
 
 const verifier = new AssetVerifier();
 const kycService = new KycService();
@@ -37,6 +43,70 @@ const dlqProcessor = new WebhookDlqProcessor(pool);
 const deviceTokenService = new DeviceTokenService(pool);
 const webhookRetryDispatcher = new WebhookDispatcher(new PostgresWebhookStore(pool));
 
+type CronTask = ReturnType<typeof cron.schedule>;
+
+// References to every scheduled task so graceful shutdown can stop them.
+const scheduledTasks: CronTask[] = [];
+// In-flight job promises, so shutdown can wait for running jobs to finish.
+const runningJobs = new Set<Promise<unknown>>();
+
+/**
+ * Resolve a job's cron expression from its environment variable, defaulting to
+ * the historical hard-coded value. `off` disables the job; an invalid
+ * expression throws so startup fails fast.
+ */
+function cronSchedule(name: string, defaultValue: string): string | null {
+  return readCronSchedule(name, defaultValue, (expression) => cron.validate(expression));
+}
+
+function schedule(name: string, expression: string, job: () => Promise<void>): CronTask {
+  const task = cron.schedule(expression, cronOptions, () => {
+    const running = job().catch((err) => {
+      logger.error('Background job failed', { name, expression, err });
+    });
+    runningJobs.add(running);
+    void running.finally(() => runningJobs.delete(running));
+  });
+  scheduledTasks.push(task);
+  return task;
+}
+
+/**
+ * Stop every cron task started by startBackgroundJobs() and wait (bounded by
+ * `timeoutMs`) for jobs that are already running to finish.
+ */
+export async function stopBackgroundJobs(timeoutMs = 30000): Promise<void> {
+  for (const task of scheduledTasks) {
+    try {
+      task.stop();
+    } catch (err) {
+      logger.error('Failed to stop background job task', { err });
+    }
+  }
+  scheduledTasks.length = 0;
+
+  if (runningJobs.size === 0) return;
+
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+
+  const result = await Promise.race([
+    Promise.allSettled([...runningJobs]).then(() => 'done' as const),
+    timeout,
+  ]);
+  if (timer) clearTimeout(timer);
+
+  if (result === 'timeout') {
+    logger.warn('Timed out waiting for running background jobs to finish', {
+      timeoutMs,
+      pending: runningJobs.size,
+    });
+  }
+}
+
 export async function startBackgroundJobs() {
   // Initialize KYC service
   await kycService.initialize();
@@ -44,8 +114,33 @@ export async function startBackgroundJobs() {
   // Initialize SEP-24 service
   await sep24Service.initialize();
 
+  // Resolve every schedule up front so an invalid expression fails startup
+  // before any job is registered.
+  const schedules = {
+    revalidateStaleAssets: cronSchedule('CRON_REVALIDATE_STALE_ASSETS', '0 */6 * * *'),
+    pollKycStatuses: cronSchedule('CRON_POLL_KYC_STATUSES', '*/30 * * * *'),
+    pollSep24Transactions: cronSchedule('CRON_POLL_SEP24_TRANSACTIONS', '*/2 * * * *'),
+    extendContractStorageTtl: cronSchedule('CRON_EXTEND_CONTRACT_STORAGE_TTL', '0 0 * * *'),
+    notifyKycExpiries: cronSchedule('CRON_NOTIFY_KYC_EXPIRIES', '0 8 * * *'),
+    checkAnchorHealth: cronSchedule('CRON_CHECK_ANCHOR_HEALTH', '*/5 * * * *'),
+    retryPendingWebhookDeliveries: cronSchedule('CRON_RETRY_PENDING_WEBHOOK_DELIVERIES', '*/2 * * * *'),
+    pruneDeadPushTokens: cronSchedule('CRON_PRUNE_DEAD_PUSH_TOKENS', '*/15 * * * *'),
+    retireWebhookSecrets: cronSchedule('CRON_RETIRE_WEBHOOK_SECRETS', '0 * * * *'),
+    amlPeriodicRescreening: cronSchedule('CRON_AML_PERIODIC_RESCREENING', '15 * * * *'),
+    amlTravelRuleTransmit: cronSchedule('CRON_AML_TRAVEL_RULE_TRANSMIT', '*/10 * * * *'),
+    amlDataRetention: cronSchedule('CRON_AML_DATA_RETENTION', '30 3 * * *'),
+    privacyDataPurge: cronSchedule('CRON_PRIVACY_DATA_PURGE', '45 3 * * *'),
+  };
+
+  const disabled = Object.entries(schedules)
+    .filter(([, expression]) => expression === null)
+    .map(([name]) => name);
+  if (disabled.length > 0) {
+    logger.info('Background jobs disabled via environment', { disabled });
+  }
+
   // Run every 6 hours
-  cron.schedule('0 */6 * * *', async () => {
+  if (schedules.revalidateStaleAssets) schedule('revalidate-stale-assets', schedules.revalidateStaleAssets, async () => {
     const ran = await withAdvisoryLock(pool, 'revalidate-stale-assets', async () => {
       await tracedJob('revalidate-stale-assets', () =>
         runTracked(pool, 'revalidate-stale-assets', revalidateStaleAssets)
@@ -55,7 +150,7 @@ export async function startBackgroundJobs() {
   });
 
   // Run KYC polling every 30 minutes
-  cron.schedule('*/30 * * * *', async () => {
+  if (schedules.pollKycStatuses) schedule('poll-kyc-statuses', schedules.pollKycStatuses, async () => {
     const ran = await withAdvisoryLock(pool, 'poll-kyc-statuses', async () => {
       await tracedJob('poll-kyc-statuses', () =>
         runTracked(pool, 'poll-kyc-statuses', pollKycStatuses)
@@ -65,7 +160,7 @@ export async function startBackgroundJobs() {
   });
 
   // Run SEP-24 transaction polling every 2 minutes
-  cron.schedule('*/2 * * * *', async () => {
+  if (schedules.pollSep24Transactions) schedule('poll-sep24-transactions', schedules.pollSep24Transactions, async () => {
     const ran = await withAdvisoryLock(pool, 'poll-sep24-transactions', async () => {
       await tracedJob('poll-sep24-transactions', () =>
         runTracked(pool, 'poll-sep24-transactions', pollSep24Transactions)
@@ -75,7 +170,7 @@ export async function startBackgroundJobs() {
   });
 
   // Extend contract storage TTLs daily to prevent data loss
-  cron.schedule('0 0 * * *', async () => {
+  if (schedules.extendContractStorageTtl) schedule('extend-contract-storage-ttl', schedules.extendContractStorageTtl, async () => {
     const ran = await withAdvisoryLock(pool, 'extend-contract-storage-ttl', async () => {
       await tracedJob('extend-contract-storage-ttl', () =>
         runTracked(pool, 'extend-contract-storage-ttl', extendContractStorageTtl)
@@ -85,7 +180,7 @@ export async function startBackgroundJobs() {
   });
 
   // Send KYC expiry warnings daily at 08:00 UTC
-  cron.schedule('0 8 * * *', async () => {
+  if (schedules.notifyKycExpiries) schedule('notify-kyc-expiries', schedules.notifyKycExpiries, async () => {
     const ran = await withAdvisoryLock(pool, 'notify-kyc-expiries', async () => {
       await tracedJob('notify-kyc-expiries', () =>
         runTracked(pool, 'notify-kyc-expiries', notifyKycExpiries)
@@ -95,7 +190,7 @@ export async function startBackgroundJobs() {
   });
 
   // Run anchor health checks every 5 minutes
-  cron.schedule('*/5 * * * *', async () => {
+  if (schedules.checkAnchorHealth) schedule('check-anchor-health', schedules.checkAnchorHealth, async () => {
     const ran = await withAdvisoryLock(pool, 'check-anchor-health', async () => {
       await tracedJob('check-anchor-health', () =>
         runTracked(pool, 'check-anchor-health', checkAnchorHealth)
@@ -108,7 +203,7 @@ export async function startBackgroundJobs() {
   // wall-clock retry budget (WEBHOOK_INLINE_MAX_WALL_CLOCK_MS) was exhausted,
   // so a slow/down subscriber no longer needs its retries to happen inline
   // inside the request that triggered dispatch().
-  cron.schedule('*/2 * * * *', async () => {
+  if (schedules.retryPendingWebhookDeliveries) schedule('retry-pending-webhook-deliveries', schedules.retryPendingWebhookDeliveries, async () => {
     const ran = await withAdvisoryLock(pool, 'retry-pending-webhook-deliveries', async () => {
       await tracedJob('retry-pending-webhook-deliveries', () =>
         runTracked(pool, 'retry-pending-webhook-deliveries', retryPendingWebhookDeliveries)
@@ -118,7 +213,7 @@ export async function startBackgroundJobs() {
   });
 
   // Poll Expo delivery receipts and prune permanently-dead push tokens every 15 minutes
-  cron.schedule('*/15 * * * *', async () => {
+  if (schedules.pruneDeadPushTokens) schedule('prune-dead-push-tokens', schedules.pruneDeadPushTokens, async () => {
     const ran = await withAdvisoryLock(pool, 'prune-dead-push-tokens', async () => {
       await tracedJob('prune-dead-push-tokens', () =>
         runTracked(pool, 'prune-dead-push-tokens', pruneDeadPushTokens)
@@ -128,7 +223,7 @@ export async function startBackgroundJobs() {
   });
 
   // Retire expired webhook secrets hourly
-  cron.schedule('0 * * * *', async () => {
+  if (schedules.retireWebhookSecrets) schedule('retire-webhook-secrets', schedules.retireWebhookSecrets, async () => {
     const ran = await withAdvisoryLock(pool, 'retire-webhook-secrets', async () => {
       await tracedJob('retire-webhook-secrets', () =>
         runTracked(pool, 'retire-webhook-secrets', retireWebhookSecrets)
@@ -141,7 +236,7 @@ export async function startBackgroundJobs() {
 
   // Rescreen subjects whose periodic sanctions/PEP screening is due — hourly,
   // so a newly published list designation is picked up the same day.
-  cron.schedule('15 * * * *', async () => {
+  if (schedules.amlPeriodicRescreening) schedule('aml-periodic-rescreening', schedules.amlPeriodicRescreening, async () => {
     const ran = await withAdvisoryLock(pool, 'aml-periodic-rescreening', async () => {
       await tracedJob('aml-periodic-rescreening', () =>
         runTracked(pool, 'aml-periodic-rescreening', runPeriodicRescreening)
@@ -151,7 +246,7 @@ export async function startBackgroundJobs() {
   });
 
   // Retry pending / failed travel-rule transmissions every 10 minutes.
-  cron.schedule('*/10 * * * *', async () => {
+  if (schedules.amlTravelRuleTransmit) schedule('aml-travel-rule-transmit', schedules.amlTravelRuleTransmit, async () => {
     const ran = await withAdvisoryLock(pool, 'aml-travel-rule-transmit', async () => {
       await tracedJob('aml-travel-rule-transmit', () =>
         runTracked(pool, 'aml-travel-rule-transmit', transmitTravelRulePending)
@@ -161,7 +256,7 @@ export async function startBackgroundJobs() {
   });
 
   // Enforce the data-retention schedule nightly at 03:30 UTC.
-  cron.schedule('30 3 * * *', async () => {
+  if (schedules.amlDataRetention) schedule('aml-data-retention', schedules.amlDataRetention, async () => {
     const ran = await withAdvisoryLock(pool, 'aml-data-retention', async () => {
       await tracedJob('aml-data-retention', () =>
         runTracked(pool, 'aml-data-retention', enforceDataRetention)
@@ -175,14 +270,14 @@ export async function startBackgroundJobs() {
   // call that itself never received a live pool, so audit-log IP
   // anonymization, transient KYC upload purge, and revoked-consent purge
   // never executed in any environment.
-  cron.schedule('45 3 * * *', async () => {
+  schedule('45 3 * * *', async () => {
     const ran = await withAdvisoryLock(pool, 'privacy-data-purge', async () => {
       await runTracked(pool, 'privacy-data-purge', purgeExpiredData);
     });
     if (!ran) console.log('privacy-data-purge: skipped (another instance holds the lock)');
   });
 
-  console.log('Background jobs scheduled');
+  console.log(`Background jobs scheduled (cron timezone: ${CRON_TIMEZONE})`);
 }
 
 // ─── AML/CTF job bodies (SR-112) ────────────────────────────────────────────
@@ -190,7 +285,7 @@ export async function startBackgroundJobs() {
 async function runPeriodicRescreening() {
   const service = new SanctionsScreeningService(pool);
   const summary = await service.runPeriodicRescreening(
-    parseInt(process.env.AML_RESCREEN_BATCH_SIZE || '200', 10),
+    readPositiveInt('AML_RESCREEN_BATCH_SIZE', 200),
   );
   console.log(
     `aml-periodic-rescreening: screened=${summary.screened} hits=${summary.hits} errors=${summary.errors}`,
@@ -200,7 +295,7 @@ async function runPeriodicRescreening() {
 async function transmitTravelRulePending() {
   const service = new TravelRuleService(pool);
   const summary = await service.transmitPending(
-    parseInt(process.env.TRAVEL_RULE_BATCH_SIZE || '100', 10),
+    readPositiveInt('TRAVEL_RULE_BATCH_SIZE', 100),
   );
   console.log(
     `aml-travel-rule-transmit: transmitted=${summary.transmitted} failed=${summary.failed}`,
@@ -236,7 +331,7 @@ async function purgeExpiredData() {
 
 async function revalidateStaleAssets() {
   try {
-    const hoursOld = parseInt(process.env.VERIFICATION_INTERVAL_HOURS || '24');
+    const hoursOld = readPositiveInt('VERIFICATION_INTERVAL_HOURS', 24);
     const staleAssets = await getStaleAssets(hoursOld);
 
     logger.info(`Found ${staleAssets.length} assets to revalidate`);

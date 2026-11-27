@@ -55,6 +55,7 @@ import type {
   PendingOperation,
   ContractConfig,
   KycApprovalEntry,
+  ProofData,
 } from "./types.js";
 import { parseContractError, SwiftRemitError, ErrorCode, TransactionTimeoutError } from "./errors.js";
 import { withRetry, withRetryPolicy } from "./retry.js";
@@ -69,6 +70,7 @@ import {
   i128ToScVal,
   optionToScVal,
   bytesNToScVal,
+  proofDataToScVal,
   stringToScVal,
   parseProposal,
   validateAmount,
@@ -1248,15 +1250,22 @@ export class SwiftRemitClient {
     return BigInt(scValToNative(val) as number);
   }
 
-  /** Confirm partial payout (agent only). */
+  /**
+   * Confirm partial payout (agent only).
+   *
+   * `proof` is required when the remittance's settlement config has
+   * `require_proof = true`; the contract rejects the call otherwise.
+   */
   async confirmPartialPayout(
     agent: string,
     remittanceId: bigint,
-    amount: bigint
+    amount: bigint,
+    proof?: ProofData
   ): Promise<Transaction> {
     return this.prepareTransaction(agent, "confirm_partial_payout", [
       u64ToScVal(remittanceId),
       i128ToScVal(amount),
+      optionToScVal(proof ? proofDataToScVal(proof) : undefined),
     ]);
   }
 
@@ -1492,19 +1501,9 @@ export class SwiftRemitClient {
 
   // ─── Blacklist ───────────────────────────────────────────────────────────────
 
-  /** Blacklists a user, preventing them from transacting. Requires admin. */
-  async blacklistUser(admin: string, user: string): Promise<Transaction> {
-    return this.prepareTransaction(admin, "blacklist_user", [addressToScVal(user)]);
-  }
-
-  /** Removes a user from the blacklist. Requires admin. */
-  async removeFromBlacklist(admin: string, user: string): Promise<Transaction> {
-    return this.prepareTransaction(admin, "remove_from_blacklist", [addressToScVal(user)]);
-  }
-
-  /** Sets a user's blacklist status directly. Requires admin. */
-  async setUserBlacklisted(admin: string, user: string, blacklisted: boolean): Promise<Transaction> {
-    return this.prepareTransaction(admin, "set_user_blacklisted", [
+  /** Sets a user's blacklist status. Requires admin. */
+  async setBlacklistStatus(admin: string, user: string, blacklisted: boolean): Promise<Transaction> {
+    return this.prepareTransaction(admin, "set_blacklist_status", [
       addressToScVal(user),
       boolToScVal(blacklisted),
     ]);
@@ -2080,14 +2079,6 @@ export class SwiftRemitClient {
     return this.prepareTransaction(agent, "confirm_batch_payout", [
       addressToScVal(agent),
       xdr.ScVal.scvVec(remittanceIds.map((id) => u64ToScVal(id))),
-    ]);
-  }
-
-  /** Force-finalizes a remittance. Requires admin. */
-  async finalizeRemittance(caller: string, remittanceId: bigint): Promise<Transaction> {
-    return this.prepareTransaction(caller, "finalize_remittance", [
-      addressToScVal(caller),
-      u64ToScVal(remittanceId),
     ]);
   }
 

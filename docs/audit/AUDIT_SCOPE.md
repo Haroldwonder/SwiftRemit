@@ -86,7 +86,6 @@ All `pub fn` entries in the `#[contractimpl] impl SwiftRemitContract` block in `
 | `raise_dispute` | Dispute window enforcement |
 | `resolve_dispute` | Fund routing to sender vs. agent |
 | `confirm_partial_payout` | Partial disbursement arithmetic, auto-complete logic |
-| `finalize_remittance` | Authorization boundary |
 
 ### 3.2 Escrow
 
@@ -289,6 +288,7 @@ The following were documented in the production readiness report dated 2026-03-2
 | `fuzz_validate_amount.rs` | Arbitrary amount values |
 | `fuzz_validate_corridor.rs` | Arbitrary corridor fee config inputs |
 | `fuzz_validate_recipient_hash.rs` | Arbitrary recipient hash byte sequences |
+| `fuzz_compute_net_settlements.rs` | Arbitrary remittance sets (parties, amounts, fees, statuses) |
 
 ### 6.4 Benchmark Suite (`benches/`)
 
