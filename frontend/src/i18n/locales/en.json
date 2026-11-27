@@ -39,6 +39,11 @@
       "5": "Confirm transaction"
     },
     "amount": "Amount",
+    "balance": {
+      "available": "Balance: {{balance}} {{asset}}",
+      "max": "Max",
+      "loading": "Loading balance..."
+    },
     "asset": "Asset",
     "chooseAsset": "Choose an asset",
     "recipient": "Recipient",
@@ -63,6 +68,7 @@
       "amountInvalid": "Amount must be greater than zero.",
       "amountFormat": "Enter a plain number with up to 7 decimal places (e.g. 25.50).",
       "amountTooLarge": "Amount is too large.",
+      "insufficientBalance": "Amount exceeds your balance of {{balance}} {{asset}}.",
       "assetRequired": "Please select an asset.",
       "recipientInvalid": "Recipient must be a valid Stellar public key.",
       "incomplete": "Transaction details are incomplete.",

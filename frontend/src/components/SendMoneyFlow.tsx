@@ -8,7 +8,7 @@ import { useIdempotency } from '../utils/useIdempotency';
 import { useTxPolling } from '../utils/useTxPolling';
 import { usePolling } from '../utils/usePolling';
 import type { PollResult } from '../utils/useTxPolling';
-import { parseAmount, stroopsToAmount } from '../utils/amount';
+import { parseAmount, stroopsToAmount, STROOPS_PER_UNIT } from '../utils/amount';
 
 type FlowStep = 1 | 2 | 3 | 4 | 5;
 
@@ -102,6 +102,26 @@ function resolveAsset(assetCode: string): StellarSdk.Asset {
   return new StellarSdk.Asset(assetCode, issuer);
 }
 
+/**
+ * Fetches the wallet's balance of `assetCode` from Horizon, in stroops.
+ * Returns null when the account does not hold the asset (no trustline).
+ */
+async function fetchAssetBalance(
+  publicKey: string,
+  assetCode: string,
+  network: 'TESTNET' | 'PUBLIC'
+): Promise<bigint | null> {
+  const server = new StellarSdk.Horizon.Server(HORIZON_URLS[network]);
+  const account = await server.loadAccount(publicKey);
+  const balance = account.balances.find((entry) =>
+    assetCode === 'XLM'
+      ? entry.asset_type === 'native'
+      : 'asset_code' in entry && entry.asset_code === assetCode
+  );
+  if (!balance) return null;
+  return BigInt(Math.round(Number(balance.balance) * Number(STROOPS_PER_UNIT)));
+}
+
 async function buildAndSubmitTransaction(
   payload: ConfirmPayload,
   senderPublicKey: string,
@@ -187,6 +207,9 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   const [fxExpired, setFxExpired] = useState(false);
   /** Status message shown during post-submission polling. */
   const [pollingStatus, setPollingStatus] = useState<string | null>(null);
+  /** Connected wallet's balance of the selected asset, in stroops (null = unknown). */
+  const [balanceStroops, setBalanceStroops] = useState<bigint | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
 
   // Idempotency key for the current pending submission
   const currentIdempotencyKey = useRef<string | null>(null);
@@ -236,6 +259,22 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
     return () => { cancelled = true; };
   }, [asset, destinationCountry, getDailyLimitStatus, senderAddress]);
 
+  // Fetch the connected wallet's balance of the selected asset
+  useEffect(() => {
+    const wallet = senderAddress || senderPublicKey;
+    if (!wallet || !asset) {
+      setBalanceStroops(null);
+      return;
+    }
+    let cancelled = false;
+    setBalanceLoading(true);
+    fetchAssetBalance(wallet, asset, network)
+      .then((stroops) => { if (!cancelled) setBalanceStroops(stroops); })
+      .catch(() => { if (!cancelled) setBalanceStroops(null); })
+      .finally(() => { if (!cancelled) setBalanceLoading(false); });
+    return () => { cancelled = true; };
+  }, [asset, network, senderAddress, senderPublicKey]);
+
   // Record when the FX rate was fetched (entering review step)
   useEffect(() => {
     if (step === 4 || step === 5) {
@@ -257,6 +296,9 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
     { intervalMs: 1000, enabled: (step === 4 || step === 5) && fxFetchedAt !== null, backoffFactor: 1 },
   );
 
+  const exceedsBalance = (stroops: bigint): boolean =>
+    balanceStroops !== null && stroops > balanceStroops;
+
   const validateCurrentStep = (): string | null => {
     if (step === 1) {
       if (!amountResult.ok) {
@@ -270,6 +312,12 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
           default:
             return t('sendMoney.errors.amountInvalid');
         }
+      }
+      if (exceedsBalance(amountResult.stroops)) {
+        return t('sendMoney.errors.insufficientBalance', {
+          balance: stroopsToAmount(balanceStroops as bigint),
+          asset,
+        });
       }
     }
 
@@ -305,6 +353,14 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
   const confirmTransfer = async () => {
     if (!amountResult.ok || !asset || !recipient) {
       setError(t('sendMoney.errors.incomplete'));
+      return;
+    }
+
+    if (exceedsBalance(amountResult.stroops)) {
+      setError(t('sendMoney.errors.insufficientBalance', {
+        balance: stroopsToAmount(balanceStroops as bigint),
+        asset,
+      }));
       return;
     }
 
@@ -408,6 +464,29 @@ export const SendMoneyFlow: React.FC<SendMoneyFlowProps> = ({
               placeholder="0.00"
             />
           </label>
+          {balanceLoading && (
+            <p className="flow-balance" aria-live="polite">
+              {t('sendMoney.balance.loading')}
+            </p>
+          )}
+          {!balanceLoading && balanceStroops !== null && (
+            <p className="flow-balance" aria-live="polite">
+              <span>
+                {t('sendMoney.balance.available', {
+                  balance: stroopsToAmount(balanceStroops),
+                  asset,
+                })}
+              </span>
+              <button
+                type="button"
+                className="flow-button muted flow-max-button"
+                onClick={() => setAmount(stroopsToAmount(balanceStroops))}
+                disabled={balanceStroops <= 0n}
+              >
+                {t('sendMoney.balance.max')}
+              </button>
+            </p>
+          )}
         </>
       );
     }
