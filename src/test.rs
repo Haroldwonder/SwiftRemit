@@ -1030,6 +1030,47 @@ contract.register_agent(&agent, &None);
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #11)")]
+fn test_partial_payout_with_past_expiry() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    env.mock_all_auths();
+    token.mint(&sender, &10000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.initialize(&admin, &token.address, &250, &0, &0, &admin);
+    contract.register_agent(&agent, &None);
+
+    // Set expiry to 1 hour in the past
+    env.ledger().with_mut(|li| li.timestamp = 10000);
+    let current_time = env.ledger().timestamp();
+    let expiry_time = current_time.saturating_sub(3600);
+
+    let remittance_id = contract.create_remittance(
+        &sender,
+        &agent,
+        &1000,
+        &Some(expiry_time),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    // #1627: Partial payouts must reject expired remittances like confirm_payout.
+    contract.authorize_remittance(&admin);
+    contract.confirm_partial_payout(&remittance_id, &400);
+}
+
+#[test]
 fn test_settlement_without_expiry() {
     let env = Env::default();
     env.mock_all_auths();
@@ -3047,8 +3088,16 @@ contract.register_agent(&sender_b, &None);
 
     // Create batch settlement entries
     let mut entries = Vec::new(&env);
-    entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
-    entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
+    entries.push_back(crate::BatchSettlementEntry {
+        remittance_id: id1,
+        proof: None,
+        recipient_details_hash: None,
+    });
+    entries.push_back(crate::BatchSettlementEntry {
+        remittance_id: id2,
+        proof: None,
+        recipient_details_hash: None,
+    });
 
     // Execute batch settlement with netting
     let result = contract.batch_settle_with_netting(&admin, &entries);
@@ -3098,8 +3147,16 @@ contract.register_agent(&sender_b, &None);
     let id2 = contract.create_remittance(&sender_b);
 
     let mut entries = Vec::new(&env);
-    entries.push_back(crate::BatchSettlementEntry { remittance_id: id1 });
-    entries.push_back(crate::BatchSettlementEntry { remittance_id: id2 });
+    entries.push_back(crate::BatchSettlementEntry {
+        remittance_id: id1,
+        proof: None,
+        recipient_details_hash: None,
+    });
+    entries.push_back(crate::BatchSettlementEntry {
+        remittance_id: id2,
+        proof: None,
+        recipient_details_hash: None,
+    });
 
     let result = contract.batch_settle_with_netting(&admin, &entries);
 
@@ -6014,7 +6071,7 @@ fn test_execute_transaction_user_blacklisted() {
     contract.register_agent(&agent, &None);
 
     // Blacklist user
-    contract.set_user_blacklisted(&user, &true);
+    contract.set_blacklist_status(&user, &true);
 
     // Set up KYC
     let expiry = env.ledger().timestamp() + 31536000;
@@ -6075,7 +6132,7 @@ fn test_execute_transaction_kyc_expired() {
 }
 
 #[test]
-fn test_set_user_blacklisted() {
+fn test_set_blacklist_status() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -6091,11 +6148,11 @@ fn test_set_user_blacklisted() {
     assert!(!contract.is_user_blacklisted(&user));
 
     // Blacklist user
-    contract.set_user_blacklisted(&user, &true);
+    contract.set_blacklist_status(&user, &true);
     assert!(contract.is_user_blacklisted(&user));
 
     // Remove from blacklist
-    contract.set_user_blacklisted(&user, &false);
+    contract.set_blacklist_status(&user, &false);
     assert!(!contract.is_user_blacklisted(&user));
 }
 
@@ -6279,7 +6336,7 @@ fn test_execute_transaction_user_blacklisted() {
     contract.set_kyc_approved(&user, &true, &expiry);
 
     // Blacklist user
-    contract.set_user_blacklisted(&user, &true);
+    contract.set_blacklist_status(&user, &true);
 
     // Should fail
     contract.execute_transaction(&user, &agent, &1000, &None);
@@ -6335,11 +6392,11 @@ fn test_user_blacklist_management() {
     assert!(!contract.is_user_blacklisted(&user));
 
     // Blacklist user
-    contract.set_user_blacklisted(&user, &true);
+    contract.set_blacklist_status(&user, &true);
     assert!(contract.is_user_blacklisted(&user));
 
     // Remove from blacklist
-    contract.set_user_blacklisted(&user, &false);
+    contract.set_blacklist_status(&user, &false);
     assert!(!contract.is_user_blacklisted(&user));
 }
 
@@ -6806,6 +6863,40 @@ fn test_settlement_config_validation() {
     assert_eq!(
         result.unwrap_err().unwrap(),
         crate::errors::ContractError::InvalidOracleAddress
+    );
+}
+
+/// #1637 — create_remittance without an explicit token and without an
+/// initialized USDC token returns NotInitialized instead of panicking.
+#[test]
+fn test_create_remittance_uninitialized_usdc_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let token_admin = Address::generate(&env);
+    let token = create_token_contract(&env, &token_admin);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+
+    token.mint(&sender, &10_000);
+
+    let contract = create_swiftremit_contract(&env);
+    contract.register_agent(&agent, &None);
+
+    let result = contract.try_create_remittance(
+        &sender,
+        &agent,
+        &1_000,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        crate::errors::ContractError::NotInitialized
     );
 }
 

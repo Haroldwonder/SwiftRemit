@@ -341,6 +341,43 @@ fn test_resolve_dispute_agent_wins_net_amount_to_agent() {
     assert_eq!(contract_after, 25);
 }
 
+#[test]
+fn test_resolve_dispute_agent_wins_sends_protocol_fee_to_treasury() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let token = create_token(&env, &admin);
+    token.mint(&sender, &10_000);
+
+    let contract = make_contract(&env);
+    // fee_bps=250 (2.5%), protocol_fee=100 bps (1%)
+    contract.initialize(&admin, &token.address, &250u32, &0u64, &100u32, &treasury);
+    contract.register_agent(&agent, &None);
+
+    let id = contract.create_remittance(
+        &sender, &agent, &1_000i128, &None, &None, &None, &None, &None, &None,
+    );
+    contract.mark_failed(&id);
+    contract.raise_dispute(&id, &evidence_hash(&env));
+
+    let agent_before = balance(&env, &token, &agent);
+    let treasury_before = balance(&env, &token, &treasury);
+    let fees_before = contract.get_accumulated_fees().unwrap();
+
+    contract.resolve_dispute(&id, &false);
+
+    // Agent receives amount - platform fee - protocol fee = 1000 - 25 - 10 = 965
+    assert_eq!(balance(&env, &token, &agent) - agent_before, 965);
+    // #1631: the protocol fee reaches the treasury instead of accumulated_fees.
+    assert_eq!(balance(&env, &token, &treasury) - treasury_before, 10);
+    assert_eq!(contract.get_accumulated_fees().unwrap() - fees_before, 25);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // resolve_dispute — error conditions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -550,7 +587,8 @@ fn test_resolve_dispute_agent_wins_updates_agent_stats() {
         stats_before.failed_settlements
     );
     assert_eq!(stats_after.disputes, stats_before.disputes + 1);
-    assert_eq!(stats_after.success_rate_bps, 10_000);
+    // 1 success out of 2 attempts (#1647).
+    assert_eq!(stats_after.success_rate_bps, 5000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

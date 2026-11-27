@@ -172,18 +172,18 @@ pub fn calculate_fees_with_breakdown(
         return Err(ContractError::InvalidAmount);
     }
 
-    // Determine which strategy and protocol fee to use
-    let (strategy, protocol_fee_bps, corridor_id) = if let Some(c) = corridor {
+    // Determine which protocol fee and corridor id to use
+    let (protocol_fee_bps, corridor_id) = if let Some(c) = corridor {
         let protocol_bps = c
             .protocol_fee_bps
             .unwrap_or_else(|| get_protocol_fee_bps(env));
         let id = format_corridor_id(env, &c.from_country, &c.to_country);
-        (c.strategy.clone(), protocol_bps, Some(id))
+        (protocol_bps, Some(id))
     } else {
-        (get_fee_strategy(env), get_protocol_fee_bps(env), None)
+        (get_protocol_fee_bps(env), None)
     };
 
-    let effective_strategy = get_effective_fee_strategy_for_strategy(env, &strategy, token)?;
+    let effective_strategy = resolve_corridor_strategy(env, corridor, token)?;
 
     // Calculate platform fee
     let platform_fee = calculate_fee_by_strategy(amount, &effective_strategy)?;
@@ -289,6 +289,20 @@ pub fn breakdown_from_platform_fee(
     breakdown_from_quoted_fees(amount, platform_fee, protocol_fee)
 }
 
+/// Builds a fee breakdown around the platform fee and protocol fee quoted at
+/// creation time.
+///
+/// Settlement paths must honour the quote rather than re-price, so they pass the
+/// stored `remittance.protocol_fee` here instead of recomputing it from the
+/// current `protocol_fee_bps` configuration.
+pub fn breakdown_from_quoted_platform_fee(
+    amount: i128,
+    platform_fee: i128,
+    protocol_fee: i128,
+) -> Result<FeeBreakdown, ContractError> {
+    breakdown_from_quoted_fees(amount, platform_fee, protocol_fee)
+}
+
 /// Calculates complete fee breakdown for a sender using rolling volume discounts.
 pub fn calculate_fees_with_breakdown_for_sender(
     env: &Env,
@@ -301,18 +315,18 @@ pub fn calculate_fees_with_breakdown_for_sender(
         return Err(ContractError::InvalidAmount);
     }
 
-    // Determine which strategy and protocol fee to use
-    let (strategy, protocol_fee_bps, corridor_id) = if let Some(c) = corridor {
+    // Determine which protocol fee and corridor id to use
+    let (protocol_fee_bps, corridor_id) = if let Some(c) = corridor {
         let protocol_bps = c
             .protocol_fee_bps
             .unwrap_or_else(|| get_protocol_fee_bps(env));
         let id = format_corridor_id(env, &c.from_country, &c.to_country);
-        (c.strategy.clone(), protocol_bps, Some(id))
+        (protocol_bps, Some(id))
     } else {
-        (get_fee_strategy(env), get_protocol_fee_bps(env), None)
+        (get_protocol_fee_bps(env), None)
     };
 
-    let effective_strategy = get_effective_fee_strategy_for_strategy(env, &strategy, token)?;
+    let effective_strategy = resolve_corridor_strategy(env, corridor, token)?;
     let prior_volume = storage::get_sender_rolling_volume(env, sender, env.ledger().timestamp());
     let total_volume = prior_volume
         .checked_add(amount)
@@ -386,7 +400,7 @@ fn get_effective_fee_strategy(
     get_effective_fee_strategy_for_strategy(env, &strategy, token)
 }
 
-fn get_effective_fee_strategy_for_strategy(
+pub fn get_effective_fee_strategy_for_strategy(
     env: &Env,
     strategy: &FeeStrategy,
     token: Option<&Address>,
@@ -417,6 +431,23 @@ fn get_effective_fee_strategy_for_strategy(
     }
 }
 
+/// Resolves the effective fee strategy for a corridor.
+///
+/// A corridor's own strategy wins; `FeeStrategy::Corridor` (or a missing
+/// corridor) falls back to the globally configured strategy. Token-specific
+/// overrides are applied on top, exactly as in [`calculate_fees_with_breakdown`].
+pub fn resolve_corridor_strategy(
+    env: &Env,
+    corridor: Option<&FeeCorridor>,
+    token: Option<&Address>,
+) -> Result<FeeStrategy, ContractError> {
+    let strategy = match corridor {
+        Some(c) if c.strategy != FeeStrategy::Corridor => c.strategy.clone(),
+        _ => get_fee_strategy(env),
+    };
+    get_effective_fee_strategy_for_strategy(env, &strategy, token)
+}
+
 /// Calculates fee based on the specified strategy.
 ///
 /// # Arguments
@@ -428,7 +459,10 @@ fn get_effective_fee_strategy_for_strategy(
 ///
 /// * `Ok(i128)` - Calculated fee
 /// * `Err(ContractError::Overflow)` - Arithmetic overflow
-fn calculate_fee_by_strategy(amount: i128, strategy: &FeeStrategy) -> Result<i128, ContractError> {
+pub fn calculate_fee_by_strategy(
+    amount: i128,
+    strategy: &FeeStrategy,
+) -> Result<i128, ContractError> {
     match strategy {
         FeeStrategy::Percentage(fee_bps) => {
             // Fee = amount * fee_bps / 10000, with a minimum of MIN_FEE stroop
@@ -480,7 +514,10 @@ fn calculate_fee_by_strategy(amount: i128, strategy: &FeeStrategy) -> Result<i12
 ///
 /// * `Ok(i128)` - Calculated protocol fee
 /// * `Err(ContractError::Overflow)` - Arithmetic overflow
-fn calculate_protocol_fee(amount: i128, protocol_fee_bps: u32) -> Result<i128, ContractError> {
+pub fn calculate_protocol_fee(
+    amount: i128,
+    protocol_fee_bps: u32,
+) -> Result<i128, ContractError> {
     if protocol_fee_bps == 0 {
         return Ok(0);
     }
@@ -503,7 +540,7 @@ fn calculate_protocol_fee(amount: i128, protocol_fee_bps: u32) -> Result<i128, C
 /// # Returns
 ///
 /// Formatted corridor ID (e.g., "US-MX")
-fn format_corridor_id(env: &Env, from: &String, to: &String) -> String {
+pub(crate) fn format_corridor_id(env: &Env, from: &String, to: &String) -> String {
     let from_len = from.len() as usize;
     let to_len = to.len() as usize;
     let total = from_len + 1 + to_len;

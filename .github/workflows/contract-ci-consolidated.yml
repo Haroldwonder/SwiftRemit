@@ -7,6 +7,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
+      - 'abi/**'
       - '.github/workflows/contract-ci*.yml'
       - '.github/actions/setup-rust/**'
   pull_request:
@@ -16,6 +17,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
+      - 'abi/**'
       - '.github/workflows/contract-ci*.yml'
       - '.github/actions/setup-rust/**'
 
@@ -56,6 +58,15 @@ jobs:
       - uses: ./.github/actions/setup-rust
       - run: cargo test --verbose
       - run: cargo test --features legacy-tests --verbose
+
+  error-abi:
+    name: ContractError ABI discriminants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+      - run: cargo test --test-threads=1 error_abi_discriminants -- --nocapture
+      - run: cargo test contract_error_ -- --nocapture
 
   build-wasm:
     name: cargo build (wasm32)

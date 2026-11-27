@@ -1,4 +1,4 @@
-//! Regression tests for the corridor volume cap (#1697).
+//! Regression tests for the corridor volume cap (#1646).
 //!
 //! The cap must be enforced cumulatively across rolling windows: once the
 //! cumulative volume in a window reaches the configured cap, further
@@ -17,40 +17,41 @@ fn corridor_volume_cap_enforced_across_multiple_windows() {
 
     let admin = Address::generate(&env);
     let token = Address::generate(&env);
-    let corridor = Symbol::new(&env, "USD_NGN");
+    let currency = String::from_str(&env, "USD");
+    let country = String::from_str(&env, "NGN");
 
-    // Cap of 100 units per window.
+    // Cap of 100 units per 1-hour window.
     let cap: i128 = 100;
+    let window_seconds: u64 = 3600;
     client.initialize(&admin, &token);
-    client.set_corridor_volume_cap(&admin, &corridor, &cap);
+    client.set_corridor_volume_cap(&admin, &currency, &country, &cap, &window_seconds);
 
     // Window 1: fill the cap exactly, then assert the next settlement fails.
-    client.record_corridor_volume(&corridor, &60);
-    client.record_corridor_volume(&corridor, &40);
-    assert_eq!(client.get_corridor_volume(&corridor), cap);
+    client.record_corridor_volume(&admin, &currency, &country, &60);
+    client.record_corridor_volume(&admin, &currency, &country, &40);
+    assert_eq!(client.get_corridor_volume(&currency, &country), cap);
 
-    let over_cap = client.try_record_corridor_volume(&corridor, &1);
+    let over_cap = client.try_record_corridor_volume(&admin, &currency, &country, &1);
     assert!(over_cap.is_err(), "cap must reject volume beyond limit in window 1");
 
-    // Window 2: cap resets, but must again be enforced cumulatively.
-    client.advance_corridor_window(&corridor);
-    assert_eq!(client.get_corridor_volume(&corridor), 0);
+    // Window 2: the window advances naturally with ledger time; the cap must
+    // reset and then be enforced cumulatively again.
+    env.ledger().set_timestamp(env.ledger().timestamp() + window_seconds);
+    assert_eq!(client.get_corridor_volume(&currency, &country), cap);
 
-    client.record_corridor_volume(&corridor, &70);
-    client.record_corridor_volume(&corridor, &30);
-    assert_eq!(client.get_corridor_volume(&corridor), cap);
+    client.record_corridor_volume(&admin, &currency, &country, &70);
+    client.record_corridor_volume(&admin, &currency, &country, &30);
+    assert_eq!(client.get_corridor_volume(&currency, &country), cap);
 
-    let over_cap_w2 = client.try_record_corridor_volume(&corridor, &1);
+    let over_cap_w2 = client.try_record_corridor_volume(&admin, &currency, &country, &1);
     assert!(over_cap_w2.is_err(), "cap must reject volume beyond limit in window 2");
 
     // Window 3: same cumulative enforcement must hold.
-    client.advance_corridor_window(&corridor);
-    assert_eq!(client.get_corridor_volume(&corridor), 0);
+    env.ledger().set_timestamp(env.ledger().timestamp() + window_seconds);
+    client.record_corridor_volume(&admin, &currency, &country, &50);
+    client.record_corridor_volume(&admin, &currency, &country, &50);
+    assert_eq!(client.get_corridor_volume(&currency, &country), cap);
 
-    client.record_corridor_volume(&corridor, &50);
-    client.record_corridor_volume(&corridor, &50);
-    assert_eq!(client.get_corridor_volume(&corridor), cap);
-
-    let over_cap_w3 = client.try_record_corridor_volume(&corridor, &1);
+    let over_cap_w3 = client.try_record_corridor_volume(&admin, &currency, &country, &1);
     assert!(over_cap_w3.is_err(), "cap must reject volume beyond limit in window 3");
 }

@@ -16,6 +16,8 @@ export interface EnvRequirement {
   hint: string;
   /** Skip the check when this predicate returns true (e.g. managed elsewhere). */
   skipIf?: () => boolean;
+  /** When set, the value must be a positive integer (e.g. batch sizes). */
+  positiveInt?: boolean;
 }
 
 /**
@@ -41,6 +43,53 @@ const PLACEHOLDER_PATTERNS: RegExp[] = [
 export function isPlaceholder(value: string | undefined): boolean {
   if (value === undefined) return false;
   return PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+/** True when `value` is a base-10 integer greater than zero. */
+export function isPositiveInt(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return false;
+  return Number(trimmed) > 0;
+}
+
+/**
+ * Read a positive-integer environment variable, falling back to `defaultValue`
+ * when unset. Throws at startup on anything that is not a positive integer so a
+ * typo cannot silently disable or mis-size a scheduled job.
+ */
+export function readPositiveInt(name: string, defaultValue: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return defaultValue;
+  if (!isPositiveInt(raw)) {
+    throw new Error(
+      `${name} must be a positive integer, got ${JSON.stringify(raw)} — expected e.g. ${defaultValue}`,
+    );
+  }
+  return Number(raw.trim());
+}
+
+/**
+ * Read a cron-schedule environment variable, falling back to `defaultValue`
+ * when unset. `off` (case-insensitive) disables the job and returns `null`.
+ * Any other value must be a valid cron expression, otherwise startup fails so a
+ * typo cannot silently disable or mis-schedule a background job.
+ */
+export function readCronSchedule(
+  name: string,
+  defaultValue: string,
+  validate: (expression: string) => boolean,
+): string | null {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return defaultValue;
+  const value = raw.trim();
+  if (value.toLowerCase() === 'off') return null;
+  if (!validate(value)) {
+    throw new Error(
+      `${name} must be a valid cron expression or "off", got ${JSON.stringify(raw)} — expected e.g. ${defaultValue}`,
+    );
+  }
+  return value;
 }
 
 const BACKEND_REQUIREMENTS: EnvRequirement[] = [
@@ -82,6 +131,24 @@ const BACKEND_REQUIREMENTS: EnvRequirement[] = [
     hint: 'the admin Stellar secret key (S...)',
     skipIf: () => process.env.SECRETS_MANAGER_ENABLED === 'true',
   },
+  {
+    name: 'AML_RESCREEN_BATCH_SIZE',
+    requiredIn: 'always',
+    hint: 'a positive integer (default 200)',
+    positiveInt: true,
+  },
+  {
+    name: 'TRAVEL_RULE_BATCH_SIZE',
+    requiredIn: 'always',
+    hint: 'a positive integer (default 100)',
+    positiveInt: true,
+  },
+  {
+    name: 'VERIFICATION_INTERVAL_HOURS',
+    requiredIn: 'always',
+    hint: 'a positive integer (default 24)',
+    positiveInt: true,
+  },
 ];
 
 export interface EnvGuardResult {
@@ -110,6 +177,8 @@ export function evaluateEnv(
       problem = 'is not set';
     } else if (isPlaceholder(value)) {
       problem = `still holds the .env.example placeholder ${JSON.stringify(value)}`;
+    } else if (req.positiveInt && !isPositiveInt(value)) {
+      problem = `must be a positive integer, got ${JSON.stringify(value)}`;
     }
 
     if (!problem) continue;
