@@ -134,6 +134,22 @@ export interface SubmitOptions {
   maxWaitMs?: number;
 }
 
+/** Configuration for automatic remittance ID pagination. */
+export interface RemittanceIteratorOptions {
+  /** IDs requested per page, 1–100; defaults to 50. */
+  pageSize?: number;
+  /** Account used for read-only Soroban simulation; defaults to sender/agent. */
+  sourceAddress?: string;
+}
+
+function validateIteratorPageSize(options: RemittanceIteratorOptions): bigint {
+  const size = options.pageSize ?? 50;
+  if (!Number.isSafeInteger(size) || size < 1 || size > 100) {
+    throw new RangeError("pageSize must be an integer between 1 and 100");
+  }
+  return BigInt(size);
+}
+
 function shouldAllowHttp(rpcUrl: string): boolean {
   let parsedUrl: URL;
 
@@ -545,6 +561,25 @@ export class SwiftRemitClient {
       ]
     );
     return (scValToNative(val) as number[]).map(BigInt);
+  }
+
+  /**
+   * Iterate remittance IDs by sender until the next page is empty.
+   * The sender is used as the simulation source unless options.sourceAddress is specified.
+   */
+  async *iterateRemittancesBySender(
+    sender: string,
+    options: RemittanceIteratorOptions = {}
+  ): AsyncGenerator<bigint, void, unknown> {
+    const pageSize = validateIteratorPageSize(options);
+    const sourceAddress = options.sourceAddress ?? sender;
+    let offset = 0n;
+    while (true) {
+      const page = await this.getRemittancesBySender(sourceAddress, sender, offset, pageSize);
+      if (page.length === 0) return;
+      for (const id of page) yield id;
+      offset += BigInt(page.length);
+    }
   }
 
   /**
@@ -1501,9 +1536,27 @@ export class SwiftRemitClient {
 
   // ─── Blacklist ───────────────────────────────────────────────────────────────
 
-  /** Sets a user's blacklist status. Requires admin. */
+  /** @deprecated Use {@link setBlacklistStatus} instead. */
+  async blacklistUser(admin: string, user: string): Promise<Transaction> {
+    return this.prepareTransaction(admin, "blacklist_user", [addressToScVal(user)]);
+  }
+
+  /** Set blacklist status through the non-deprecated contract method. Admin only. */
   async setBlacklistStatus(admin: string, user: string, blacklisted: boolean): Promise<Transaction> {
     return this.prepareTransaction(admin, "set_blacklist_status", [
+      addressToScVal(user),
+      boolToScVal(blacklisted),
+    ]);
+  }
+
+  /** @deprecated Use {@link setBlacklistStatus} instead. */
+  async removeFromBlacklist(admin: string, user: string): Promise<Transaction> {
+    return this.prepareTransaction(admin, "remove_from_blacklist", [addressToScVal(user)]);
+  }
+
+  /** @deprecated Use {@link setBlacklistStatus} instead. */
+  async setUserBlacklisted(admin: string, user: string, blacklisted: boolean): Promise<Transaction> {
+    return this.prepareTransaction(admin, "set_user_blacklisted", [
       addressToScVal(user),
       boolToScVal(blacklisted),
     ]);
@@ -1527,8 +1580,8 @@ export class SwiftRemitClient {
   }
 
   /** Returns whether `user` has non-expired KYC approval. */
-  async isKycApproved(sourceAddress: string, user: string): Promise<boolean> {
-    const val = await this.simulateCall(sourceAddress, "is_kyc_approved", [addressToScVal(user)]);
+  async isKycApproved(sourceAddress: string, user?: string): Promise<boolean> {
+    const val = await this.simulateCall(sourceAddress, "is_kyc_approved", [addressToScVal(user ?? sourceAddress)]);
     return Boolean(scValToNative(val));
   }
 
@@ -1971,6 +2024,22 @@ export class SwiftRemitClient {
       u64ToScVal(limit),
     ]);
     return (scValToNative(val) as number[]).map((id) => BigInt(id));
+  }
+
+  /** Iterate remittance IDs by agent, stopping when the next page is empty. */
+  async *iterateRemittancesByAgent(
+    agent: string,
+    options: RemittanceIteratorOptions = {}
+  ): AsyncGenerator<bigint, void, unknown> {
+    const pageSize = validateIteratorPageSize(options);
+    const sourceAddress = options.sourceAddress ?? agent;
+    let offset = 0n;
+    while (true) {
+      const page = await this.getRemittancesByAgent(sourceAddress, agent, offset, pageSize);
+      if (page.length === 0) return;
+      for (const id of page) yield id;
+      offset += BigInt(page.length);
+    }
   }
 
   /** Returns the minimum agent reputation score required for new agent registration. */
