@@ -36,7 +36,9 @@
     "release": "changeset publish",
     "publish:npm": "npm run build && npm publish --access public --provenance",
     "docs": "typedoc src/index.ts --out docs --plugin typedoc-plugin-markdown",
-    "docs:serve": "http-server docs -p 8080 -o"
+    "docs:serve": "http-server docs -p 8080 -o",
+    "gen:errors": "node ../scripts/gen-sdk-errors.mjs",
+    "check:errors": "node ../scripts/gen-sdk-errors.mjs --check"
   },
   "size-limit": [
     {
