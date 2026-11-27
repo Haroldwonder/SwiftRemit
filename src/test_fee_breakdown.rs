@@ -327,7 +327,45 @@ fn test_fee_breakdown_with_corridor_identifier() {
     assert_eq!(breakdown.amount, 10000);
     assert_eq!(breakdown.platform_fee, 250);
     assert_eq!(breakdown.net_amount, 9750);
-    assert!(breakdown.corridor.is_some());
+    assert_eq!(
+        breakdown.corridor,
+        Some(String::from_str(&env, "US-MX"))
+    );
+}
+
+#[test]
+fn test_fee_breakdown_corridor_identifier_differs_by_destination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (token, token_admin) = create_token_contract(&env, &admin);
+    token_admin.mint(&sender, &100000);
+
+    let contract_id = env.register_contract(None, SwiftRemitContract);
+    let client = SwiftRemitContractClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &token.address, &250, &0, &0, &treasury);
+    client.register_agent(&agent, &None);
+
+    let from_country = String::from_str(&env, "US");
+    let amount = 10000i128;
+
+    let to_mx = String::from_str(&env, "MX");
+    let to_ng = String::from_str(&env, "NG");
+
+    let breakdown_mx =
+        client.get_fee_breakdown(&amount, &Some(from_country.clone()), &Some(to_mx.clone()));
+    let breakdown_ng =
+        client.get_fee_breakdown(&amount, &Some(from_country.clone()), &Some(to_ng.clone()));
+
+    assert_eq!(breakdown_mx.corridor, Some(String::from_str(&env, "US-MX")));
+    assert_eq!(breakdown_ng.corridor, Some(String::from_str(&env, "US-NG")));
+    assert_ne!(breakdown_mx.corridor, breakdown_ng.corridor);
 }
 
 #[test]

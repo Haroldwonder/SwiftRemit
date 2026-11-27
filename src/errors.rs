@@ -340,4 +340,10 @@ pub enum ContractError {
     /// the SEP-41 interface (e.g. `decimals()` / `symbol()`) fails, meaning
     /// the address is not a valid token contract.
     TokenNotSep41 = 86,
+
+    /// Batch settlement entries use more than one token denomination.
+    ///
+    /// Netting is only meaningful when every remittance in the batch is
+    /// denominated in the same token (#1620).
+    MixedTokenBatch = 87,
 }

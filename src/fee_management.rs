@@ -21,7 +21,7 @@
 use soroban_sdk::{token, Address, Env};
 
 use crate::{
-    emit_fees_flushed, get_accumulated_fees, get_treasury, set_accumulated_fees, ContractError,
+    emit_fees_flushed, get_accumulated_fees, get_treasury, ContractError,
 };
 
 /// Maximum allowed accumulated fees threshold.
@@ -64,7 +64,11 @@ pub const MAX_FEES: i128 = i128::MAX / 20; // ~5% of i128::MAX
 /// let total = get_accumulated_fees(&env)?;
 /// // If total was near MAX_FEES, flush happens automatically
 /// ```
-pub fn safe_add_accumulated_fee(env: &Env, new_fee: i128) -> Result<(), ContractError> {
+pub fn safe_add_accumulated_fee(
+    env: &Env,
+    token: &Address,
+    new_fee: i128,
+) -> Result<(), ContractError> {
     // Edge case: reject negative fees
     if new_fee < 0 {
         return Err(ContractError::InvalidAmount);
@@ -75,8 +79,8 @@ pub fn safe_add_accumulated_fee(env: &Env, new_fee: i128) -> Result<(), Contract
         return Ok(());
     }
 
-    // Get current accumulated fees
-    let current_fees = get_accumulated_fees(env)?;
+    // Get current accumulated fees for this token (#1621)
+    let current_fees = crate::storage::get_accumulated_fees_for_token(env, token);
 
     // Perform checked addition to detect overflow when combining fees.
     let new_total = current_fees
@@ -87,7 +91,7 @@ pub fn safe_add_accumulated_fee(env: &Env, new_fee: i128) -> Result<(), Contract
     // and store only the incoming fee as the new accumulated total.
     if new_total > MAX_FEES {
         if current_fees != 0 {
-            trigger_flush(env, current_fees)?;
+            trigger_flush(env, token, current_fees)?;
         }
 
         // Reject fees that alone exceed MAX_FEES because they cannot be safely stored.
@@ -95,10 +99,10 @@ pub fn safe_add_accumulated_fee(env: &Env, new_fee: i128) -> Result<(), Contract
             return Err(ContractError::Overflow);
         }
 
-        set_accumulated_fees(env, new_fee);
+        crate::storage::set_accumulated_fees_for_token(env, token, new_fee);
     } else {
         // Normal case: update accumulated fees safely.
-        set_accumulated_fees(env, new_total);
+        crate::storage::set_accumulated_fees_for_token(env, token, new_total);
     }
 
     Ok(())
@@ -167,7 +171,11 @@ pub fn would_trigger_flush(env: &Env, new_fee: i128) -> bool {
 ///     trigger_flush(&env, current_fees)?;
 /// }
 /// ```
-pub fn trigger_flush(env: &Env, fees_to_flush: i128) -> Result<(), ContractError> {
+pub fn trigger_flush(
+    env: &Env,
+    token: &Address,
+    fees_to_flush: i128,
+) -> Result<(), ContractError> {
     // Edge case: zero fees to flush is a no-op
     if fees_to_flush == 0 {
         return Ok(());
@@ -181,10 +189,8 @@ pub fn trigger_flush(env: &Env, fees_to_flush: i128) -> Result<(), ContractError
     // Get treasury address for fee transfer
     let treasury = get_treasury(env)?;
 
-    // Get USDC token contract
-    // Note: This assumes USDC is the fee token; adjust if different token used
-    let usdc_token = crate::get_usdc_token(env)?;
-    let token_client = token::Client::new(env, &usdc_token);
+    // #1621: flush in the token the fees were accrued in.
+    let token_client = token::Client::new(env, token);
 
     // Transfer accumulated fees to treasury
     token_client.transfer(
@@ -193,11 +199,11 @@ pub fn trigger_flush(env: &Env, fees_to_flush: i128) -> Result<(), ContractError
         &fees_to_flush,
     );
 
-    // Reset the stored accumulated fees after successful flush.
-    set_accumulated_fees(env, 0);
+    // Reset the stored accumulated fees for this token after successful flush.
+    crate::storage::set_accumulated_fees_for_token(env, token, 0);
 
     // Emit event logging the flush
-    emit_fees_flushed(env, treasury, usdc_token, fees_to_flush);
+    emit_fees_flushed(env, treasury, token.clone(), fees_to_flush);
 
     Ok(())
 }

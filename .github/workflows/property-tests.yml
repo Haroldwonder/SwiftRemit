@@ -64,6 +64,9 @@ jobs:
       - name: Run state machine property tests
         run: cargo test test_state_machine_property -- --nocapture
 
+      - name: Run escrow lifecycle property tests
+        run: cargo test --features legacy-tests test_escrow_lifecycle_property -- --nocapture
+
   # ── Rust proptest idempotency conflict detection ────────────────────────────
   rust-idempotency-property-tests:
     name: Rust Idempotency Property Tests (conflict detection)

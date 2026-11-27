@@ -140,7 +140,12 @@ enum DataKey {
     // === Fee Tracking ===
     // Keys for managing platform fees
     /// Total accumulated platform fees awaiting withdrawal (instance storage)
+    /// Legacy single-token counter (#1621). Kept for migration reads only; new
+    /// accrual uses `AccumulatedFees(token)`.
     AccumulatedFees,
+
+    /// Per-token accumulated platform fees awaiting withdrawal (persistent storage) (#1621)
+    AccumulatedFeesByToken(Address),
 
     /// Integrator fee in basis points (instance storage)
     IntegratorFeeBps,
@@ -151,7 +156,11 @@ enum DataKey {
     AccumulatedIntegratorFees,
 
     /// Per-integrator accrued fee balance (persistent storage) (#1263)
+    /// Legacy single-token balance; new accrual uses `IntegratorBalanceByToken`.
     IntegratorBalance(Address),
+
+    /// Per-integrator, per-token accrued fee balance (persistent storage) (#1621)
+    IntegratorBalanceByToken(Address, Address),
 
     /// Optional integrator address recorded at remittance creation (#1263)
     RemittanceIntegrator(u64),
@@ -385,6 +394,12 @@ enum DataKey {
     // === In-Flight Volume ===
     /// Total value of remittances currently in the Processing state (instance storage).
     TotalProcessingVolume,
+
+    // === Escrow Aggregates (#1855) ===
+    /// Total value of escrows currently in the `Pending` state (instance storage).
+    PendingEscrowVolume,
+    /// Number of escrows currently in the `Pending` state (instance storage).
+    PendingEscrowCount,
 
     // === Expiry Sweeps ===
     /// Maximum number of remittances that may be expired in one batch (instance storage).
@@ -751,6 +766,35 @@ pub fn get_accumulated_fees(env: &Env) -> Result<i128, ContractError> {
         .unwrap_or(0))
 }
 
+/// Sets the accumulated platform fees for a specific token (#1621).
+pub fn set_accumulated_fees_for_token(env: &Env, token: &Address, fees: i128) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::AccumulatedFeesByToken(token.clone()), &fees);
+}
+
+/// Retrieves the accumulated platform fees for a specific token (#1621).
+///
+/// Returns `0` if no fees have accrued for `token` yet.
+pub fn get_accumulated_fees_for_token(env: &Env, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AccumulatedFeesByToken(token.clone()))
+        .unwrap_or(0)
+}
+
+/// Adds `amount` to the per-token accumulated platform fees (#1621).
+pub fn add_accumulated_fees_for_token(
+    env: &Env,
+    token: &Address,
+    amount: i128,
+) -> Result<i128, ContractError> {
+    let current = get_accumulated_fees_for_token(env, token);
+    let updated = current.checked_add(amount).ok_or(ContractError::Overflow)?;
+    set_accumulated_fees_for_token(env, token, updated);
+    Ok(updated)
+}
+
 pub fn set_accumulated_integrator_fees(env: &Env, fees: i128) {
     env.storage()
         .instance()
@@ -788,6 +832,43 @@ pub fn clear_integrator_balance(env: &Env, integrator: &Address) {
     env.storage()
         .persistent()
         .set(&DataKey::IntegratorBalance(integrator.clone()), &0i128);
+}
+
+// ── Per-integrator, per-token balance (#1621) ─────────────────────────────────
+
+/// Returns the accrued fee balance for an integrator in a specific token.
+pub fn get_integrator_balance_for_token(env: &Env, integrator: &Address, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::IntegratorBalanceByToken(
+            integrator.clone(),
+            token.clone(),
+        ))
+        .unwrap_or(0)
+}
+
+/// Adds `amount` to the integrator's accrued balance for `token`.
+pub fn add_integrator_balance_for_token(
+    env: &Env,
+    integrator: &Address,
+    token: &Address,
+    amount: i128,
+) -> Result<i128, ContractError> {
+    let current = get_integrator_balance_for_token(env, integrator, token);
+    let updated = current.checked_add(amount).ok_or(ContractError::Overflow)?;
+    env.storage().persistent().set(
+        &DataKey::IntegratorBalanceByToken(integrator.clone(), token.clone()),
+        &updated,
+    );
+    Ok(updated)
+}
+
+/// Resets the integrator's accrued balance for `token` to zero.
+pub fn clear_integrator_balance_for_token(env: &Env, integrator: &Address, token: &Address) {
+    env.storage().persistent().set(
+        &DataKey::IntegratorBalanceByToken(integrator.clone(), token.clone()),
+        &0i128,
+    );
 }
 
 /// Stores the integrator address for a remittance (set at creation time).
@@ -1580,22 +1661,47 @@ pub fn set_agent_stats(env: &Env, agent: &Address, stats: &AgentStats) {
         .set(&DataKey::AgentStats(agent.clone()), stats);
 }
 
+/// Number of settlement attempts: successes plus failures.
+///
+/// `total_settlements` only counts successful settlements, so failures must be
+/// added to obtain the denominator for success ratios (#1647).
+pub fn settlement_attempts(stats: &AgentStats) -> u32 {
+    stats
+        .total_settlements
+        .saturating_add(stats.failed_settlements)
+}
+
+/// Success rate in basis points (0–10000) over all settlement attempts.
+///
+/// An agent with no attempts yet is treated as 100% (10000 bps).
+pub fn compute_success_rate_bps(stats: &AgentStats) -> u32 {
+    let attempts = settlement_attempts(stats);
+    if attempts == 0 {
+        return 10000;
+    }
+    stats
+        .total_settlements
+        .saturating_mul(10000)
+        .checked_div(attempts)
+        .unwrap_or(0)
+}
+
 pub fn compute_agent_reputation(stats: &AgentStats) -> u32 {
-    let total = stats.total_settlements;
-    let successful = total.saturating_sub(stats.failed_settlements);
-    let success_score = if total == 0 {
+    let attempts = settlement_attempts(stats);
+    let success_score = if attempts == 0 {
         100
     } else {
-        successful
+        stats
+            .total_settlements
             .saturating_mul(100)
-            .checked_div(total)
+            .checked_div(attempts)
             .unwrap_or(0)
     };
 
-    let avg_time = if total == 0 {
+    let avg_time = if stats.total_settlements == 0 {
         0
     } else {
-        stats.total_settlement_time / (total as u64)
+        stats.total_settlement_time / (stats.total_settlements as u64)
     };
     let time_score: u32 = if avg_time <= 3600 {
         100
@@ -1648,6 +1754,53 @@ pub fn set_escrow(env: &Env, transfer_id: u64, escrow: &crate::Escrow) {
     env.storage()
         .persistent()
         .set(&DataKey::Escrow(transfer_id), escrow);
+}
+
+// === Pending Escrow Aggregates (#1855) ===
+
+/// Returns the total value of escrows currently in the `Pending` state.
+pub fn get_pending_escrow_volume(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingEscrowVolume)
+        .unwrap_or(0)
+}
+
+/// Returns the number of escrows currently in the `Pending` state.
+pub fn get_pending_escrow_count(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::PendingEscrowCount)
+        .unwrap_or(0)
+}
+
+/// Records a newly created pending escrow in the aggregate counters.
+pub fn add_pending_escrow(env: &Env, amount: i128) -> Result<(), ContractError> {
+    let volume = get_pending_escrow_volume(env)
+        .checked_add(amount)
+        .ok_or(ContractError::Overflow)?;
+    let count = get_pending_escrow_count(env)
+        .checked_add(1)
+        .ok_or(ContractError::Overflow)?;
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowVolume, &volume);
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowCount, &count);
+    Ok(())
+}
+
+/// Removes a settled (released or refunded) escrow from the aggregate counters.
+pub fn remove_pending_escrow(env: &Env, amount: i128) {
+    let volume = get_pending_escrow_volume(env).saturating_sub(amount);
+    let count = get_pending_escrow_count(env).saturating_sub(1);
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowVolume, &volume);
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingEscrowCount, &count);
 }
 
 // === Escrow Per-User Indexes (#1845) ===
@@ -2323,7 +2476,12 @@ pub fn check_and_increment_corridor_volume(
     let window_end = cap.window_start.saturating_add(cap.window_seconds);
 
     let current_volume = if now >= window_end {
-        // Window has elapsed — reset the accumulator.
+        // Window has elapsed — reset the accumulator and persist the new window
+        // start so the cap keeps being enforced in subsequent windows instead of
+        // degrading to a per-transaction cap.
+        let mut updated_cap = cap.clone();
+        updated_cap.window_start = now;
+        set_corridor_volume_cap(env, currency, country, &updated_cap);
         0i128
     } else {
         get_corridor_volume_accumulated(env, currency, country)
@@ -2345,6 +2503,22 @@ pub fn check_and_increment_corridor_volume(
         );
 
     Ok(())
+}
+
+/// Resets the corridor volume accumulator and starts a new window at `now`.
+///
+/// Used by the admin/test entrypoints to advance the window explicitly.
+pub fn reset_corridor_volume_window(env: &Env, currency: &String, country: &String) {
+    if let Some(mut cap) = get_corridor_volume_cap(env, currency, country) {
+        cap.window_start = env.ledger().timestamp();
+        set_corridor_volume_cap(env, currency, country, &cap);
+    }
+    env.storage()
+        .persistent()
+        .set(
+            &DataKey::CorridorVolumeAccumulated(currency.clone(), country.clone()),
+            &0i128,
+        );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

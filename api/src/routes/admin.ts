@@ -6,7 +6,7 @@ import { AdminConfirmationService, HighRiskOperation } from '../admin-confirmati
 import axios from 'axios';
 import { createRateLimitMiddleware } from '../middleware/rateLimitHeaders';
 import { requireAdmin } from '../middleware/auth.js';
-import { sendInternalError } from '../middleware/errorHandler';
+import { sendInternalError, getCorrelationId } from '../middleware/errorHandler';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,23 @@ const CSV_EXPORT_CURSOR = 'swiftremit_remittance_export_cursor';
 
 /** Number of rows pulled from the export cursor per round-trip. */
 const CSV_EXPORT_BATCH_SIZE = 500;
+
+/** Default maximum span (in days) allowed for a CSV export date range. */
+const DEFAULT_CSV_EXPORT_MAX_RANGE_DAYS = 366;
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Resolve the maximum allowed export range in days from
+ * CSV_EXPORT_MAX_RANGE_DAYS, falling back to the default when unset/invalid.
+ */
+function getCsvExportMaxRangeDays(): number {
+  const raw = process.env.CSV_EXPORT_MAX_RANGE_DAYS;
+  if (!raw || raw.trim() === '') return DEFAULT_CSV_EXPORT_MAX_RANGE_DAYS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_CSV_EXPORT_MAX_RANGE_DAYS;
+  return Math.floor(parsed);
+}
 
 /**
  * Optional WASM hash allowlist.  When WASM_HASH_ALLOWLIST is set in the
@@ -216,15 +233,100 @@ export interface FeeBreakdownData {
   time_series: FeeTimeSeries[];
 }
 
+/** Supported time-series bucket sizes for the fee breakdown. */
+const FEE_INTERVALS = ['daily', 'weekly', 'monthly'] as const;
+type FeeInterval = (typeof FEE_INTERVALS)[number];
+
+const FEE_TRUNCMAP: Record<FeeInterval, string> = {
+  daily: 'day',
+  weekly: 'week',
+  monthly: 'month',
+};
+
+/** Default look-back window for the fee time series (days). */
+const FEE_DEFAULT_RANGE_DAYS = 30;
+
+/** Event types that represent fees being collected into the platform balance. */
+const FEE_COLLECTED_EVENTS = ['remittance_created', 'remittance_completed', 'fee_collected'];
+
+/** Event types that represent fees being withdrawn from the platform balance. */
+const FEE_WITHDRAWN_EVENTS = ['fee_withdrawn', 'fees_withdrawn', 'withdrawal'];
+
+function toAmount(value: unknown): number {
+  const n = typeof value === 'number' ? value : parseFloat(String(value ?? '0'));
+  return Number.isFinite(n) ? n : 0;
+}
+
 /**
- * Stub: in production this queries the contract via RPC and/or the event DB.
+ * Aggregate accumulated platform/integrator fees and build a time series from
+ * the indexed contract_events table.
+ *
+ * Platform fees are read from the `platform_fee` column (falling back to the
+ * `fee` column for events indexed before the fee-breakdown migration), and the
+ * integrator is taken from `raw_data->>'integrator'` (falling back to the
+ * remittance actor). Pending withdrawal is the difference between collected
+ * and withdrawn fees.
  */
-function fetchFeeBreakdown(): FeeBreakdownData {
+async function fetchFeeBreakdown(
+  pool: Pool,
+  interval: FeeInterval,
+  fromDate: Date,
+  toDate: Date,
+): Promise<FeeBreakdownData> {
+  const collected = FEE_COLLECTED_EVENTS;
+  const withdrawn = FEE_WITHDRAWN_EVENTS;
+
+  const totalsResult = await pool.query<{
+    total_collected: string | null;
+    total_withdrawn: string | null;
+  }>(
+    `SELECT
+       SUM(COALESCE(platform_fee, fee, 0)) FILTER (WHERE event_type = ANY($1::text[])) AS total_collected,
+       SUM(COALESCE(platform_fee, fee, 0)) FILTER (WHERE event_type = ANY($2::text[])) AS total_withdrawn
+     FROM contract_events
+     WHERE timestamp BETWEEN $3 AND $4`,
+    [collected, withdrawn, fromDate.toISOString(), toDate.toISOString()],
+  );
+
+  const totalCollected = toAmount(totalsResult.rows[0]?.total_collected);
+  const totalWithdrawn = toAmount(totalsResult.rows[0]?.total_withdrawn);
+
+  const integratorResult = await pool.query<{ integrator: string | null; accumulated_fees: string | null }>(
+    `SELECT
+       COALESCE(raw_data->>'integrator', raw_data->>'integrator_address', actor, 'platform') AS integrator,
+       SUM(COALESCE(platform_fee, fee, 0)) AS accumulated_fees
+     FROM contract_events
+     WHERE event_type = ANY($1::text[])
+       AND timestamp BETWEEN $2 AND $3
+     GROUP BY 1
+     ORDER BY accumulated_fees DESC`,
+    [collected, fromDate.toISOString(), toDate.toISOString()],
+  );
+
+  const seriesResult = await pool.query<{ bucket: Date | string; amount: string | null }>(
+    `SELECT
+       date_trunc($1, timestamp) AS bucket,
+       SUM(COALESCE(platform_fee, fee, 0)) AS amount
+     FROM contract_events
+     WHERE event_type = ANY($2::text[])
+       AND timestamp BETWEEN $3 AND $4
+     GROUP BY 1
+     ORDER BY 1 ASC`,
+    [FEE_TRUNCMAP[interval], collected, fromDate.toISOString(), toDate.toISOString()],
+  );
+
   return {
-    total_accumulated_fees: 0,
-    pending_withdrawal: 0,
-    integrator_breakdown: [],
-    time_series: [],
+    total_accumulated_fees: totalCollected,
+    pending_withdrawal: Math.max(totalCollected - totalWithdrawn, 0),
+    integrator_breakdown: integratorResult.rows.map((row) => ({
+      integrator: row.integrator ?? 'platform',
+      accumulated_fees: toAmount(row.accumulated_fees),
+    })),
+    time_series: seriesResult.rows.map((row) => ({
+      period: interval,
+      label: new Date(row.bucket).toISOString().slice(0, 10),
+      amount: toAmount(row.amount),
+    })),
   };
 }
 
@@ -360,7 +462,7 @@ function escapeCsvField(field: string | number | null | undefined): string {
   return str;
 }
 
-async function* streamRemittancesCsv(
+export async function* streamRemittancesCsv(
   pool: Pool,
   fromDate?: Date,
   toDate?: Date,
@@ -510,6 +612,11 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
    *           text/csv:
    *             schema:
    *               type: string
+   *       400:
+   *         description: >
+   *           Invalid query parameters. `INVALID_DATE_RANGE` is returned when
+   *           `from` is not before `to`, or when the range exceeds the
+   *           configured maximum (CSV_EXPORT_MAX_RANGE_DAYS, default 366 days).
    *       401:
    *         description: Unauthorized
    */
@@ -537,11 +644,26 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
       }
     }
 
+    if (fromDate && toDate) {
+      if (fromDate.getTime() >= toDate.getTime()) {
+        return sendError(res, 400, "'from' must be before 'to'", 'INVALID_DATE_RANGE');
+      }
+      const maxRangeDays = getCsvExportMaxRangeDays();
+      const rangeDays = (toDate.getTime() - fromDate.getTime()) / MS_PER_DAY;
+      if (rangeDays > maxRangeDays) {
+        return sendError(
+          res,
+          400,
+          `Date range must not exceed ${maxRangeDays} days`,
+          'INVALID_DATE_RANGE'
+        );
+      }
+    }
+
     if (status && !['Pending', 'Processing', 'Completed', 'Cancelled', 'Failed', 'Disputed'].includes(status)) {
       return sendError(res, 400, 'Invalid status', 'INVALID_STATUS');
     }
 
-    const dbUrl = process.env.DATABASE_URL;
     if (!pool) {
       return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
     }
@@ -551,16 +673,44 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
     // intentional — we borrow a single connection rather than opening a fresh
     // TCP+TLS session.  The connection is released in streamRemittancesCsv's
     // finally block once the stream completes or the client disconnects.
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="remittances-${new Date().toISOString()}.csv"`);
+    const correlationId = getCorrelationId(req);
+    let headersSent = false;
 
     try {
       const generator = streamRemittancesCsv(pool, fromDate, toDate, status);
       for await (const chunk of generator) {
+        if (!headersSent) {
+          res.setHeader('Content-Type', 'text/csv');
+          res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="remittances-${new Date().toISOString()}.csv"`
+          );
+          headersSent = true;
+        }
         res.write(chunk);
       }
-    } finally {
       res.end();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      console.error(`[${correlationId}] CSV export stream failed:`, message, stack);
+
+      if (!headersSent && !res.headersSent) {
+        // Nothing written yet: a clean 500 JSON error is still possible.
+        res.status(500).json({
+          error: {
+            code: 'CSV_EXPORT_FAILED',
+            message: 'Failed to export remittances',
+            correlation_id: correlationId,
+          },
+        });
+        return;
+      }
+
+      // Mid-stream failure: the client already received a 200 + partial body.
+      // Destroy the socket so the truncated download visibly fails instead of
+      // looking like a complete, successful export.
+      res.destroy();
     }
   });
 
@@ -577,24 +727,74 @@ export function createAdminRouter(sharedPool: Pool | null = null): Router {
    *       - Admin
    *     security:
    *       - ApiKeyAuth: []
+   *     parameters:
+   *       - name: interval
+   *         in: query
+   *         required: false
+   *         description: Time-series bucket size
+   *         schema:
+   *           type: string
+   *           enum: [daily, weekly, monthly]
+   *           default: daily
+   *       - name: from
+   *         in: query
+   *         required: false
+   *         description: Start of the aggregation window (ISO 8601, defaults to 30 days before `to`)
+   *         schema:
+   *           type: string
+   *       - name: to
+   *         in: query
+   *         required: false
+   *         description: End of the aggregation window (ISO 8601, defaults to now)
+   *         schema:
+   *           type: string
    *     responses:
    *       200:
    *         description: Fee breakdown data
    *       401:
    *         description: Unauthorized
+   *       503:
+   *         description: Database not configured
    */
-  router.get('/fees', (req: Request, res: Response) => {
+  router.get('/fees', async (req: Request, res: Response) => {
     if (!isAdminAuthorized(req)) {
       return sendError(res, 401, 'Admin authentication required', 'UNAUTHORIZED');
     }
 
-    const data = fetchFeeBreakdown();
+    if (!pool) {
+      return sendError(res, 503, 'Database not configured', 'DB_UNAVAILABLE');
+    }
 
-    return res.json({
-      success: true,
-      data,
-      timestamp: timestamp(),
-    });
+    const intervalParam = typeof req.query.interval === 'string' ? req.query.interval : 'daily';
+    if (!FEE_INTERVALS.includes(intervalParam as FeeInterval)) {
+      return sendError(
+        res,
+        400,
+        `interval must be one of: ${FEE_INTERVALS.join(', ')}`,
+        'INVALID_INTERVAL',
+      );
+    }
+
+    const toDate = req.query.to ? new Date(String(req.query.to)) : new Date();
+    const fromDate = req.query.from
+      ? new Date(String(req.query.from))
+      : new Date(toDate.getTime() - FEE_DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      return sendError(res, 400, 'from/to must be valid ISO 8601 dates', 'INVALID_DATE_RANGE');
+    }
+
+    try {
+      const data = await fetchFeeBreakdown(pool, intervalParam as FeeInterval, fromDate, toDate);
+
+      return res.json({
+        success: true,
+        data,
+        timestamp: timestamp(),
+      });
+    } catch (err) {
+      return sendInternalError(res, err, 'FEE_BREAKDOWN_FAILED');
+    }
   });
 
   /**
