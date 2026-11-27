@@ -341,9 +341,9 @@ pub enum ContractError {
     /// the address is not a valid token contract.
     TokenNotSep41 = 86,
 
-    /// Remittance expiry timestamp is not in the future.
+    /// `mark_failed` was called without a reason code or evidence hash.
     ///
-    /// Returned when a create path is given an `expiry` that is less than or
-    /// equal to the current ledger timestamp (#1633).
-    InvalidExpiry = 87,
+    /// Agents must justify a failure so the sender can evaluate whether to
+    /// dispute it (#1624).
+    MissingFailureReason = 87,
 }
