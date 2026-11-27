@@ -33,19 +33,22 @@ const {
   dbAuditLog,
   dbContractEvents,
   dbLedgerSequences,
+  dbAgents,
   resetAll,
 } = vi.hoisted(() => {
   const dbTransactions: Record<string, { transaction_id: string; status: string; external_transaction_id: string | null }> = {};
   const dbAuditLog: Array<Record<string, unknown>> = [];
   const dbContractEvents: Array<Record<string, unknown>> = [];
   const dbLedgerSequences: number[] = [];
+  const dbAgents: Record<string, { address: string; is_active: boolean }> = {};
   const resetAll = () => {
     Object.keys(dbTransactions).forEach((k) => delete dbTransactions[k]);
     dbAuditLog.length = 0;
     dbContractEvents.length = 0;
     dbLedgerSequences.length = 0;
+    Object.keys(dbAgents).forEach((k) => delete dbAgents[k]);
   };
-  return { dbTransactions, dbAuditLog, dbContractEvents, dbLedgerSequences, resetAll };
+  return { dbTransactions, dbAuditLog, dbContractEvents, dbLedgerSequences, dbAgents, resetAll };
 });
 
 // ---------------------------------------------------------------------------
@@ -153,6 +156,30 @@ function makePool(overrideQuery?: (sql: string, params?: unknown[]) => any): Poo
         rows: dbLedgerSequences.map((s) => ({ ledger_sequence: s })),
         rowCount: dbLedgerSequences.length,
       };
+    }
+
+    // Agent events SELECT
+    if (/from contract_events/i.test(sql) && /agent_registered/i.test(sql)) {
+      const rows = dbContractEvents
+        .filter((e) => e.event_type === 'agent_registered' || e.event_type === 'agent_removed')
+        .map((e) => ({
+          event_type: e.event_type,
+          actor: e.actor ?? null,
+          ledger_sequence: e.ledger_sequence ?? null,
+          timestamp: e.timestamp ?? new Date(),
+        }));
+      return { rows, rowCount: rows.length };
+    }
+
+    // UPDATE agents is_active
+    if (/update agents/i.test(sql)) {
+      const isActive = params?.[0] as boolean;
+      const address = params?.[1] as string;
+      if (dbAgents[address]) {
+        dbAgents[address].is_active = isActive;
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
     }
 
     return { rows: [], rowCount: 0 };

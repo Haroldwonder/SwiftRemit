@@ -23,6 +23,15 @@ npm run build
 npm start
 ```
 
+## Background Jobs
+
+`src/scheduler.ts` registers the recurring jobs (asset revalidation, KYC/SEP-24
+polling, webhook retries, AML/CTF and privacy retention). Every cron expression
+is evaluated in the timezone given by the `CRON_TIMEZONE` environment variable
+(an IANA name such as `UTC` or `America/New_York`), which defaults to `UTC`.
+Set it explicitly if you want daily jobs to run in another zone; leaving it
+unset keeps schedules independent of the host/container local time and DST.
+
 ## Webhooks
 
 SwiftRemit provides a webhook system for real-time notifications about remittance status changes.

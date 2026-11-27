@@ -221,6 +221,70 @@ fn test_admin_count_stays_consistent_and_last_admin_cannot_be_removed() {
 }
 
 #[test]
+fn test_propose_admin_rejects_existing_admin() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let second_admin = Address::generate(&env);
+    init(&env, &client, &admin);
+    client.add_admin(&admin, &second_admin);
+    assert_eq!(client.get_admin_count(), 2u32);
+
+    let result = client.try_propose_admin(&second_admin);
+    assert_eq!(result, Err(Ok(ContractError::AdminAlreadyExists)));
+    assert_eq!(client.get_admin_count(), 2u32);
+}
+
+#[test]
+fn test_accept_admin_preserves_admin_count_on_transfer() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let second_admin = Address::generate(&env);
+    let successor = Address::generate(&env);
+    init(&env, &client, &admin);
+    client.add_admin(&admin, &second_admin);
+
+    client.propose_admin(&successor);
+    client.accept_admin();
+
+    assert!(!client.is_admin(&admin));
+    assert!(client.is_admin(&second_admin));
+    assert!(client.is_admin(&successor));
+    assert_eq!(client.get_admin_count(), 2u32);
+}
+
+#[test]
+fn test_accept_admin_recomputes_count_when_successor_is_already_admin() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let second_admin = Address::generate(&env);
+    let successor = Address::generate(&env);
+    init(&env, &client, &admin);
+    client.add_admin(&admin, &second_admin);
+
+    // The proposal is created while the successor is not an admin, but the
+    // successor is added by another admin path before the transfer is accepted.
+    client.propose_admin(&successor);
+    client.add_admin(&admin, &successor);
+    assert_eq!(client.get_admin_count(), 3u32);
+
+    client.accept_admin();
+
+    assert!(!client.is_admin(&admin));
+    assert!(client.is_admin(&second_admin));
+    assert!(client.is_admin(&successor));
+    assert_eq!(client.get_admin_count(), 2u32);
+
+    // The stale count previously allowed removing the real last admin.
+    client.remove_admin(&second_admin, &successor);
+    assert_eq!(client.get_admin_count(), 1u32);
+    assert_eq!(
+        client.try_remove_admin(&second_admin, &second_admin),
+        Err(Ok(ContractError::CannotRemoveLastAdmin))
+    );
+    assert!(client.is_admin(&second_admin));
+}
+
+#[test]
 fn test_cannot_remove_last_admin() {
     let (env, client) = setup();
     let admin = Address::generate(&env);

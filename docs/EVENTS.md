@@ -76,7 +76,7 @@ documentation pass (see SR-007's task list, which is docs-only).
 | --- | --- | --- |
 | `emit_agent_registered` | `("agent", "register")` | `agent, caller, kyc_hash` |
 | `emit_agent_removed` | `("agent", "removed")` | `agent, caller` |
-| `emit_agent_suspended` | `("agent", "suspnded")` | `agent, reputation, min_threshold` |
+| `emit_agent_suspended` | `("agent", "suspnded")` | `agent, reputation, min_threshold` — emitted from the successful `mark_failed` / `raise_dispute` paths when reputation drops below the minimum (#1636); also observable via `is_agent_suspended(agent)` |
 | `emit_agent_cap_set` | `("agent_cap_set",)` — **no envelope** | `agent, cap, caller` |
 | `emit_user_blacklisted` | `("blacklist", "added")` | `user, caller` |
 | `emit_user_removed_from_blacklist` | `("blacklist", "removed")` | `user, caller` |

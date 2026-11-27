@@ -30,6 +30,8 @@ export default defineConfig({
         'src/**/*.stories.{ts,tsx}',
         'src/setupTests.ts',
         'src/main.tsx',
+        'src/main.ts',
+        'src/counter.ts',
       ],
     },
   },

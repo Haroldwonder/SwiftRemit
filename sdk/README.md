@@ -581,7 +581,7 @@ A React Native wrapper is available in `sdk/react-native/`. It wraps the core Ty
 
 - A `SwiftRemitSigner` interface so any wallet (expo-secure-store, react-native-keychain, WalletConnect) can be plugged in without changing call sites.
 - `SwiftRemitRNClient` — extends `SwiftRemitClient` with a `submitSigned(tx)` method that signs via the injected signer.
-- React hooks: `useCreateRemittance`, `useNetworkToggle`.
+- React hooks: `useMutation`, `useCreateRemittance`, `useRemittanceQuery`, `useNetworkToggle`.
 
 ### Installation
 
@@ -658,5 +658,48 @@ function SendScreen({ client }) {
       {error && <Text>{error.message}</Text>}
     </>
   );
+}
+```
+
+### Querying a remittance
+
+`useRemittanceQuery` fetches once on mount and, with `pollMs`, keeps polling
+until the remittance reaches a terminal status (`Completed`, `Cancelled`,
+`Failed`, `Disputed`).
+
+```tsx
+import { useRemittanceQuery } from '@swiftremit/react-native-sdk';
+
+function StatusScreen({ client, address, remittanceId }) {
+  const { remittance, loading, error, refetch } = useRemittanceQuery(
+    client,
+    address,
+    remittanceId,
+    { pollMs: 3000 }
+  );
+
+  if (loading && !remittance) return <Text>Loading…</Text>;
+  if (error) return <Text>{error.message}</Text>;
+  return <Text>{remittance?.status}</Text>;
+}
+```
+
+### Wrapping other write methods
+
+`useMutation(fn)` owns the loading/error state and the mounted-ref guard, so a
+new write hook only describes the operation:
+
+```tsx
+import { useCallback } from 'react';
+import { useMutation } from '@swiftremit/react-native-sdk';
+
+function useConfirmPayout(client) {
+  const { mutate, loading, error } = useMutation(
+    useCallback(
+      async (params) => client.submitSigned(await client.confirmPayout(params)),
+      [client]
+    )
+  );
+  return { confirmPayout: mutate, loading, error };
 }
 ```

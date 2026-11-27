@@ -383,8 +383,6 @@ fn dispatch_action(
             }
             storage::set_admin_role(env, addr, true);
             assign_role(env, addr, &Role::Admin);
-            let count = storage::get_admin_count(env);
-            storage::set_admin_count(env, count + 1);
             add_admin_to_list(env, addr);
             emit_governance_admin_added(env, addr.clone(), proposal_id);
         }
@@ -396,7 +394,6 @@ fn dispatch_action(
             }
             storage::set_admin_role(env, addr, false);
             remove_role(env, addr, &Role::Admin);
-            storage::set_admin_count(env, count - 1);
             remove_admin_from_list(env, addr);
             // Keep legacy admin key aligned
             if let Ok(legacy) = storage::get_admin(env) {

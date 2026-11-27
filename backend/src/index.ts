@@ -6,7 +6,7 @@ import app from './api';
 import { FxRateWebSocketServer } from './fx-rate-websocket';
 import { initDatabase, getPool, closePool } from './database';
 import { migrate } from './migrate';
-import { startBackgroundJobs } from './scheduler';
+import { startBackgroundJobs, stopBackgroundJobs } from './scheduler';
 import { WebhookHandler } from './webhook-handler';
 import { KycService } from './kyc-service';
 import { createWebhookVerificationMiddleware } from './webhook-middleware';
@@ -17,12 +17,15 @@ import { PostgresWebhookStore } from './webhooks/store';
 import { patchConsoleForProduction } from './console-shim';
 import { getSecretsManager, getDatabaseUrl, getAdminSecretKey, getContractId, getEncryptionKey, initializeSecretRotation } from './secrets-manager';
 import { assertEnvConfigured } from './env-guard';
+import { createLogger } from './correlation-id';
 
 dotenv.config();
 // Fail fast on missing / placeholder configuration (SR-102) before anything
 // tries to use it.
 assertEnvConfigured();
 patchConsoleForProduction();
+
+const logger = createLogger('index');
 
 const PORT = process.env.PORT || 3000;
 const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? '30000', 10);
@@ -47,7 +50,7 @@ async function loadSecrets(): Promise<void> {
   const isProduction = process.env.NODE_ENV === 'production';
 
   if (isProduction && !process.env.AWS_REGION) {
-    console.error(
+    logger.error(
       '[secrets] FATAL: NODE_ENV=production but AWS_REGION is not set. ' +
         'The secrets manager cannot reach AWS Secrets Manager. ' +
         'Set AWS_REGION (and optionally SECRETS_MANAGER_ENABLED=true) before starting.',
@@ -77,7 +80,7 @@ async function loadSecrets(): Promise<void> {
 
   // JWT_SECRET is used via getJwtSecret() at call sites; no env write needed.
 
-  console.log('[secrets] All required secrets loaded successfully');
+  logger.info('[secrets] All required secrets loaded successfully');
 }
 
 async function start() {
@@ -90,17 +93,17 @@ async function start() {
 
     // Initialize database
     await initDatabase();
-    console.log('Database initialized');
+    logger.info('Database initialized');
 
     // Run pending migrations automatically on startup
     const pool = getPool();
     await migrate(pool);
-    console.log('Migrations applied');
+    logger.info('Migrations applied');
 
     // Initialize KYC service
     const kycService = new KycService();
     await kycService.initialize();
-    console.log('KYC service initialized');
+    logger.info('KYC service initialized');
 
     // Apply HMAC verification middleware to all /webhooks routes
     const webhookVerification = createWebhookVerificationMiddleware({
@@ -119,7 +122,7 @@ async function start() {
     webhookHandler = new WebhookHandler(pool);
     webhookHandler.setupRoutes(app);
     webhookHandler.setupHealthCheck(app);
-    console.log('Webhook endpoints configured');
+    logger.info('Webhook endpoints configured');
 
     // Wire the remittance event emitter's optional collaborators. Both were
     // previously left unset in production, so RemittanceEventEmitter's
@@ -128,7 +131,7 @@ async function start() {
     // routes/remittance.ts fired.
     remittanceEventEmitter.setWebhookService(new WebhookService(new PostgresWebhookStore(pool)));
     remittanceEventEmitter.setNotificationService(new NotificationService(pool));
-    console.log('Remittance notification and webhook fan-out wired');
+    logger.info('Remittance notification and webhook fan-out wired');
 
     // Start background jobs
     startBackgroundJobs();
@@ -136,7 +139,7 @@ async function start() {
     // Start on-chain reconciler (Feature C) — compares DB state to contract every 5 min
     const { startReconcilerSchedule } = await import('./reconciler');
     startReconcilerSchedule(pool);
-    console.log('On-chain reconciler scheduled');
+    logger.info('On-chain reconciler scheduled');
 
     // Start API server via http.Server so we can call server.close()
     const server = http.createServer(app);
@@ -145,17 +148,17 @@ async function start() {
     const fxRateWss = new FxRateWebSocketServer(server);
 
     server.listen(PORT, () => {
-      console.log(`SwiftRemit Verification Service running on port ${PORT}`);
-      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`FX rate WebSocket available at ws://...:${PORT}/ws/fx-rates`);
+      logger.info('SwiftRemit Verification Service running', { port: PORT });
+      logger.info('Environment configured', { environment: process.env.NODE_ENV || 'development' });
+      logger.info('FX rate WebSocket available', { path: '/ws/fx-rates', port: PORT });
     });
 
     // Graceful shutdown
     async function shutdown(signal: string): Promise<void> {
-      console.log(`\n${signal} received — starting graceful shutdown…`);
+      logger.info('Signal received — starting graceful shutdown', { signal });
 
       server.close(() => {
-        console.log('HTTP server closed (no new connections accepted)');
+        logger.info('HTTP server closed (no new connections accepted)', { signal });
       });
 
       if (webhookHandler) {
@@ -167,21 +170,29 @@ async function start() {
 
       fxRateWss.close();
 
+      // Stop background cron jobs and wait (bounded) for running jobs to finish
+      try {
+        await stopBackgroundJobs(SHUTDOWN_TIMEOUT_MS);
+        console.log('Background jobs stopped');
+      } catch (err) {
+        console.error('Error stopping background jobs:', err);
+      }
+
       // Stop reconciler schedule cleanly
       try {
         const { stopReconcilerSchedule } = await import('./reconciler');
         stopReconcilerSchedule();
-        console.log('On-chain reconciler stopped');
+        logger.info('On-chain reconciler stopped', { signal });
       } catch { /* non-fatal */ }
 
       try {
         await closePool();
-        console.log('PostgreSQL pool closed');
+        logger.info('PostgreSQL pool closed', { signal });
       } catch (err) {
-        console.error('Error closing PostgreSQL pool:', err);
+        logger.error('Error closing PostgreSQL pool', err, { signal });
       }
 
-      console.log('Graceful shutdown complete. Exiting.');
+      logger.info('Graceful shutdown complete. Exiting.', { signal });
       process.exit(0);
     }
 
@@ -189,7 +200,7 @@ async function start() {
     process.once('SIGINT', () => shutdown('SIGINT'));
 
   } catch (error) {
-    console.error('Failed to start server:', error);
+    logger.error('Failed to start server', error);
     process.exit(1);
   }
 }

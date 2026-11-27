@@ -33,6 +33,9 @@ Added `batch_create_remittances` function with the following features:
 - **Batch Size Limit**: Maximum 100 entries per batch (MAX_BATCH_SIZE)
 - **Comprehensive Validation**: Each entry is validated individually
 - **Daily Limit Enforcement**: Each entry checks daily send limits
+- **Abuse Protection (#1638)**: The `Transfer` sliding-window rate limit is charged
+  by the number of entries in the batch, and the `Transfer` cooldown is enforced
+  and recorded, matching `create_remittance`
 
 #### Function Signature:
 ```rust
