@@ -1,4 +1,4 @@
-.PHONY: build test clean deploy install optimize check fmt setup check-licenses helm-lint
+.PHONY: build test test-all clean deploy install optimize check fmt setup check-licenses helm-lint
 
 # Default target
 all: build test
@@ -43,6 +43,12 @@ test:
 	@echo "Running tests..."
 	cargo test
 	@echo "✅ Tests passed"
+
+# Run Rust and all npm workspace tests
+test-all:
+	@echo "Running Rust and all npm workspace tests..."
+	cargo test
+	npm test --workspaces --if-present
 
 # Run tests with output
 test-verbose:
@@ -207,7 +213,8 @@ help:
 	@echo "  make install        - Install dependencies"
 	@echo "  make build          - Build the contract"
 	@echo "  make optimize       - Optimize the WASM binary"
-	@echo "  make test           - Run tests"
+	@echo "  make test           - Run Rust tests"
+	@echo "  make test-all       - Run Rust and npm workspace tests"
 	@echo "  make test-verbose   - Run tests with output"
 	@echo "  make check          - Check code without building"
 	@echo "  make fmt            - Format code"

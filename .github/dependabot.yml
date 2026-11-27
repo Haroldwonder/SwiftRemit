@@ -53,3 +53,36 @@ updates:
       interval: weekly
       day: monday
       time: "08:00"
+
+  - package-ecosystem: docker
+    directory: "/api"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    groups:
+      docker-images:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: "/backend"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    groups:
+      docker-images:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: "/docker"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    groups:
+      docker-images:
+        patterns:
+          - "*"

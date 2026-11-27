@@ -1,3 +1,4 @@
+import { useThemedStyles } from '../theme';
 /**
  * TransactionHistoryScreen — SR-187
  *
@@ -65,6 +66,7 @@ const FILTER_OPTIONS: { key: StatusFilter; label: string }[] = [
 ];
 
 export default function TransactionHistoryScreen() {
+  const styles = useThemedStyles(baseStyles);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   const [remittances, setRemittances] = useState<Remittance[]>([]);
@@ -279,7 +281,7 @@ export default function TransactionHistoryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   card: {

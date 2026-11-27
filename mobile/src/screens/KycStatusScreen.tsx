@@ -1,3 +1,4 @@
+import { useThemedStyles } from '../theme';
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -92,6 +93,7 @@ async function resolveAnchorId(wallet: string): Promise<string> {
 }
 
 export default function KycStatusScreen() {
+  const styles = useThemedStyles(baseStyles);
   const [status, setStatus] = useState<KycStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -189,7 +191,7 @@ export default function KycStatusScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   content: { padding: 24 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },

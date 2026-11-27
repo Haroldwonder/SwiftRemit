@@ -1,3 +1,4 @@
+import { useThemedStyles } from '../theme';
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -28,6 +29,7 @@ const STATUS_STEPS: RemittanceStatus[] = [
 ];
 
 export default function TransactionDetailScreen() {
+  const styles = useThemedStyles(baseStyles);
   const route = useRoute<RouteProp<Record<string, DetailRouteParams>, string>>();
   const { remittanceId } = route.params;
   const [remittance, setRemittance] = useState<Remittance | null>(null);
@@ -315,6 +317,7 @@ export default function TransactionDetailScreen() {
 }
 
 function Row({ label, value, multiline }: { label: string; value: string; multiline?: boolean }) {
+  const styles = useThemedStyles(baseStyles);
   return (
     <View style={[styles.rowContainer, multiline && styles.rowContainerMultiline]}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -330,6 +333,7 @@ function ReceiptView({
   receipt: Receipt;
   onOpenProofOfPayout: (url?: string) => Promise<void>;
 }) {
+  const styles = useThemedStyles(baseStyles);
   return (
     <ScrollView style={styles.receiptView} contentContainerStyle={styles.receiptContent}>
       <View style={styles.receiptSection}>
@@ -367,7 +371,7 @@ function ReceiptView({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   content: { padding: 24, paddingBottom: 40 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
