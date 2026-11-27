@@ -140,7 +140,12 @@ enum DataKey {
     // === Fee Tracking ===
     // Keys for managing platform fees
     /// Total accumulated platform fees awaiting withdrawal (instance storage)
+    /// Legacy single-token counter (#1621). Kept for migration reads only; new
+    /// accrual uses `AccumulatedFees(token)`.
     AccumulatedFees,
+
+    /// Per-token accumulated platform fees awaiting withdrawal (persistent storage) (#1621)
+    AccumulatedFeesByToken(Address),
 
     /// Integrator fee in basis points (instance storage)
     IntegratorFeeBps,
@@ -151,7 +156,11 @@ enum DataKey {
     AccumulatedIntegratorFees,
 
     /// Per-integrator accrued fee balance (persistent storage) (#1263)
+    /// Legacy single-token balance; new accrual uses `IntegratorBalanceByToken`.
     IntegratorBalance(Address),
+
+    /// Per-integrator, per-token accrued fee balance (persistent storage) (#1621)
+    IntegratorBalanceByToken(Address, Address),
 
     /// Optional integrator address recorded at remittance creation (#1263)
     RemittanceIntegrator(u64),
@@ -751,6 +760,35 @@ pub fn get_accumulated_fees(env: &Env) -> Result<i128, ContractError> {
         .unwrap_or(0))
 }
 
+/// Sets the accumulated platform fees for a specific token (#1621).
+pub fn set_accumulated_fees_for_token(env: &Env, token: &Address, fees: i128) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::AccumulatedFeesByToken(token.clone()), &fees);
+}
+
+/// Retrieves the accumulated platform fees for a specific token (#1621).
+///
+/// Returns `0` if no fees have accrued for `token` yet.
+pub fn get_accumulated_fees_for_token(env: &Env, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AccumulatedFeesByToken(token.clone()))
+        .unwrap_or(0)
+}
+
+/// Adds `amount` to the per-token accumulated platform fees (#1621).
+pub fn add_accumulated_fees_for_token(
+    env: &Env,
+    token: &Address,
+    amount: i128,
+) -> Result<i128, ContractError> {
+    let current = get_accumulated_fees_for_token(env, token);
+    let updated = current.checked_add(amount).ok_or(ContractError::Overflow)?;
+    set_accumulated_fees_for_token(env, token, updated);
+    Ok(updated)
+}
+
 pub fn set_accumulated_integrator_fees(env: &Env, fees: i128) {
     env.storage()
         .instance()
@@ -788,6 +826,43 @@ pub fn clear_integrator_balance(env: &Env, integrator: &Address) {
     env.storage()
         .persistent()
         .set(&DataKey::IntegratorBalance(integrator.clone()), &0i128);
+}
+
+// ── Per-integrator, per-token balance (#1621) ─────────────────────────────────
+
+/// Returns the accrued fee balance for an integrator in a specific token.
+pub fn get_integrator_balance_for_token(env: &Env, integrator: &Address, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::IntegratorBalanceByToken(
+            integrator.clone(),
+            token.clone(),
+        ))
+        .unwrap_or(0)
+}
+
+/// Adds `amount` to the integrator's accrued balance for `token`.
+pub fn add_integrator_balance_for_token(
+    env: &Env,
+    integrator: &Address,
+    token: &Address,
+    amount: i128,
+) -> Result<i128, ContractError> {
+    let current = get_integrator_balance_for_token(env, integrator, token);
+    let updated = current.checked_add(amount).ok_or(ContractError::Overflow)?;
+    env.storage().persistent().set(
+        &DataKey::IntegratorBalanceByToken(integrator.clone(), token.clone()),
+        &updated,
+    );
+    Ok(updated)
+}
+
+/// Resets the integrator's accrued balance for `token` to zero.
+pub fn clear_integrator_balance_for_token(env: &Env, integrator: &Address, token: &Address) {
+    env.storage().persistent().set(
+        &DataKey::IntegratorBalanceByToken(integrator.clone(), token.clone()),
+        &0i128,
+    );
 }
 
 /// Stores the integrator address for a remittance (set at creation time).
