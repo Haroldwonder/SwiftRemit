@@ -4251,6 +4251,11 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// - `window_seconds`: Time window in seconds
     /// - `enabled`: Whether rate limiting is enabled
     ///
+    /// # Errors
+    /// - `InvalidRateLimitConfig` — when `enabled` is true and `max_requests`
+    ///   or `window_seconds` is zero, or `window_seconds` exceeds
+    ///   `MAX_RATE_LIMIT_WINDOW_SECONDS` (1 day).
+    ///
     /// # Example
     /// ```ignore
     /// // Set rate limit to 50 requests per 30 seconds
@@ -4264,6 +4269,14 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
         enabled: bool,
     ) -> Result<(), ContractError> {
         require_admin(&env, &caller)?;
+
+        if enabled
+            && (max_requests == 0
+                || window_seconds == 0
+                || window_seconds > crate::config::MAX_RATE_LIMIT_WINDOW_SECONDS)
+        {
+            return Err(ContractError::InvalidRateLimitConfig);
+        }
 
         let config = RateLimitConfig {
             max_requests,
@@ -4306,7 +4319,10 @@ pub fn cancel_admin_proposal(env: Env) -> Result<(), ContractError> {
     /// limits. Mitigates the storage-growth griefing vector where an attacker
     /// spins up many addresses to inflate contract storage cheaply.
     pub fn cleanup_rate_limit_entries(env: Env, address: Address) {
-        crate::rate_limit::cleanup_stale_entries(&env, &address, crate::config::RATE_LIMIT_WINDOW_SECONDS);
+        let window_seconds = crate::rate_limit::get_rate_limit_config(&env)
+            .map(|config| config.window_seconds)
+            .unwrap_or(crate::config::DEFAULT_RATE_LIMIT_WINDOW_SECONDS);
+        crate::rate_limit::cleanup_stale_entries(&env, &address, window_seconds);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

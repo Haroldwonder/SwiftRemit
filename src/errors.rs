@@ -341,9 +341,10 @@ pub enum ContractError {
     /// the address is not a valid token contract.
     TokenNotSep41 = 86,
 
-    /// Batch settlement entries use more than one token denomination.
+    /// Rate limit configuration is invalid.
     ///
-    /// Netting is only meaningful when every remittance in the batch is
-    /// denominated in the same token (#1620).
-    MixedTokenBatch = 87,
+    /// Returned by `update_rate_limit_config` when rate limiting is enabled
+    /// but `max_requests` or `window_seconds` is zero, or when
+    /// `window_seconds` exceeds the maximum permitted window.
+    InvalidRateLimitConfig = 87,
 }

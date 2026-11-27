@@ -585,9 +585,9 @@ impl ErrorHandler {
                 ErrorCategory::Validation,
                 ErrorSeverity::Medium,
             ),
-            ContractError::MissingFailureReason => (
+            ContractError::InvalidRateLimitConfig => (
                 87,
-                SorobanString::from_str(env, "mark_failed requires a reason code or evidence hash"),
+                SorobanString::from_str(env, "Invalid rate limit configuration"),
                 ErrorCategory::Validation,
                 ErrorSeverity::Medium,
             ),
