@@ -173,6 +173,22 @@ pub const MAX_KYC_BATCH_SIZE: u32 = 50;
 /// Maximum page size accepted by the full-record remittance views (#1853).
 pub const MAX_REMITTANCE_PAGE_SIZE: u32 = 100;
 
+/// Emits `agent_suspended` when `agent`'s reputation is below the configured
+/// minimum threshold (#1636).
+///
+/// Must only be called from a state-changing path that returns `Ok`, so the
+/// event is not rolled back with the transaction.
+fn emit_agent_suspended_if_below_min(env: &Env, agent: &Address) {
+    let min_rep = storage::get_min_agent_reputation(env);
+    if min_rep == 0 {
+        return;
+    }
+    let rep = storage::compute_agent_reputation(&storage::get_agent_stats(env, agent));
+    if rep < min_rep {
+        events::emit_agent_suspended(env, agent.clone(), rep, min_rep);
+    }
+}
+
 fn enforce_daily_send_limit(
     env: &Env,
     sender: &Address,
@@ -671,14 +687,18 @@ impl SwiftRemitContract {
         // #1264: Block new escrow creation while the circuit-breaker is active.
         validate_not_paused(&env)?;
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
+        // #1633: Reject an expiry that is already in the past (or now).
+        validate_expiry(&env, expiry)?;
 
         // Enforce minimum agent reputation threshold (#591)
         let min_rep = storage::get_min_agent_reputation(&env);
         if min_rep > 0 {
             let rep = storage::compute_agent_reputation(&storage::get_agent_stats(&env, &agent));
             if rep < min_rep {
-                // #833: emit agent_suspended event so off-chain monitors can react
-                events::emit_agent_suspended(&env, agent.clone(), rep, min_rep);
+                // #1636: do not emit here — this path returns Err and the event
+                // would be rolled back. Suspension is emitted from the successful
+                // state-changing paths (mark_failed / raise_dispute) and is
+                // observable via `is_agent_suspended`.
                 return Err(ContractError::BelowMinReputation);
             }
         }
@@ -701,11 +721,21 @@ impl SwiftRemitContract {
 
         sender.require_auth();
 
-        // Replay existing requests before enforcing or recording any usage limits.
+        // #1634: Replay existing requests immediately after auth, before any limit
+        // state (rate limit, daily limit, corridor volume) is enforced or mutated.
         if let Some(ref key) = idempotency_key {
             if let Some(record) = storage::get_idempotency_record(&env, key) {
-                let request_hash =
-                    hashing::compute_request_hash(&env, &sender, &agent, amount, expiry);
+                let request_hash = hashing::compute_request_hash(
+                    &env,
+                    &sender,
+                    &agent,
+                    amount,
+                    expiry,
+                    &token,
+                    &settlement_config,
+                    &recipient_hash,
+                    &integrator,
+                );
                 if request_hash != record.request_hash {
                     return Err(ContractError::IdempotencyConflict);
                 }
@@ -807,7 +837,17 @@ impl SwiftRemitContract {
 
         // Store idempotency record if key provided
         if let Some(key) = idempotency_key {
-            let request_hash = hashing::compute_request_hash(&env, &sender, &agent, amount, expiry);
+            let request_hash = hashing::compute_request_hash(
+                &env,
+                &sender,
+                &agent,
+                amount,
+                expiry,
+                &token,
+                &settlement_config,
+                &recipient_hash,
+                &integrator,
+            );
             let ttl = storage::get_idempotency_ttl(&env);
             let expires_at = env
                 .ledger()
@@ -929,13 +969,15 @@ impl SwiftRemitContract {
         // #1264: Block new corridor-remittance creation while the circuit-breaker is active.
         validate_not_paused(&env)?;
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
+        // #1633: Reject an expiry that is already in the past (or now).
+        validate_expiry(&env, expiry)?;
 
         // SR-128: Enforce minimum-agent-reputation gate (parity with create_remittance).
         let min_rep = storage::get_min_agent_reputation(&env);
         if min_rep > 0 {
             let rep = storage::compute_agent_reputation(&storage::get_agent_stats(&env, &agent));
             if rep < min_rep {
-                events::emit_agent_suspended(&env, agent.clone(), rep, min_rep);
+                // #1636: no event on an error path (it would be rolled back).
                 return Err(ContractError::BelowMinReputation);
             }
         }
@@ -1075,6 +1117,8 @@ impl SwiftRemitContract {
         for i in 0..batch_size {
             let entry = entries.get_unchecked(i);
             validate_create_remittance_request(&env, &sender, &entry.agent, entry.amount)?;
+            // #1633: Reject any entry whose expiry is already in the past (or now).
+            validate_expiry(&env, entry.expiry)?;
             total_amount = total_amount
                 .checked_add(entry.amount)
                 .ok_or(ContractError::Overflow)?;
@@ -1197,6 +1241,45 @@ impl SwiftRemitContract {
         Self::confirm_payout_inner(env, agent, remittance_id, proof, recipient_details_hash, true)
     }
 
+    /// Shared completion bookkeeping for every path that moves a remittance to
+    /// `Completed` (confirm_payout, confirm_partial_payout, resolve_dispute).
+    ///
+    /// Credits the integrator share of the platform fee (if one was recorded at
+    /// creation), moves the remittance volume from in-flight to completed,
+    /// transitions the status, persists the remittance, marks the settlement as
+    /// executed and removes the idempotency record so the key can be reused.
+    fn complete_remittance(
+        env: &Env,
+        remittance_id: u64,
+        remittance: &mut crate::types::Remittance,
+    ) -> Result<(), ContractError> {
+        // #1263: Accrue a portion of the platform fee to the integrator balance if one
+        // was recorded at creation time. We credit 10% of the platform fee (rounded down)
+        // to the integrator; the remaining 90% stays in the platform accumulated_fees pot.
+        if let Some(intg) = storage::get_remittance_integrator(env, remittance_id) {
+            let integrator_share = remittance.fee / 10; // 10% of platform fee
+            if integrator_share > 0 {
+                storage::add_integrator_balance(env, &intg, integrator_share);
+            }
+        }
+
+        // Update analytics: move volume from in-flight to completed
+        storage::sub_processing_volume(env, remittance.amount)?;
+        storage::add_completed_volume(env, remittance.amount)?;
+
+        // Update remittance status via validated transition
+        crate::transitions::transition_status(env, remittance, RemittanceStatus::Completed)?;
+        set_remittance(env, remittance_id, remittance);
+        set_settlement_hash(env, remittance_id);
+
+        // Cleanup: remove idempotency record on terminal state (Completed)
+        if let Some(idem_key) = storage::take_remittance_idempotency_key(env, remittance_id) {
+            storage::remove_idempotency_record(env, &idem_key);
+        }
+
+        Ok(())
+    }
+
     /// Internal implementation of confirm_payout.
     ///
     /// `check_abuse` controls whether the per-agent abuse-protection cooldown and
@@ -1226,7 +1309,7 @@ impl SwiftRemitContract {
 
         // #831: Pre-confirm lifecycle hook — validates sender eligibility and KYC
         // before any state mutation occurs.
-        transaction_controller::TransactionController::pre_confirm_validation(&env, &remittance)?;
+        Self::pre_confirm_checks(&env, &remittance)?;
 
         // #1501 / #1502 / #1497: Validate proof against settlement config if required.
         // Only remittances whose SettlementConfig has require_proof=true are
@@ -1266,10 +1349,7 @@ impl SwiftRemitContract {
         }
 
         // Validate that the assigned agent is registered and authenticated before any payout execution.
-        crate::storage::require_agent_authorized(&env, &remittance.agent)?;
-
-        // Require Settler role
-        require_role_settler(&env, &remittance.agent)?;
+        Self::authorize_settler(&env, &remittance)?;
 
         // Fix #379: Optimistic lock — atomically claim this settlement before any token
         // transfer. A second concurrent call will find the hash already set and fail with
@@ -1337,8 +1417,7 @@ impl SwiftRemitContract {
         // volume, because that discount is not reproducible from the amount alone.
         // #1671: the protocol fee is frozen at creation too, so a later change to
         // `protocol_fee_bps` cannot alter what this remittance pays out.
-        let fee_breakdown = fee_service::breakdown_from_platform_fee(
-            &env,
+        let fee_breakdown = fee_service::breakdown_from_quoted_platform_fee(
             remittance.amount,
             remittance.fee,
             remittance.protocol_fee,
@@ -1427,11 +1506,6 @@ impl SwiftRemitContract {
         );
 
         log_confirm_payout(&env, remittance_id, payout_amount);
-
-        // Cleanup: remove idempotency record on terminal state (Completed)
-        if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
-            storage::remove_idempotency_record(&env, &idem_key);
-        }
 
         Ok(())
     }
@@ -1565,6 +1639,9 @@ impl SwiftRemitContract {
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         emit_remittance_failed(&env, remittance_id, remittance.agent);
+        // #1636: emit suspension in this successful transaction when the agent's
+        // reputation has dropped below the configured minimum.
+        emit_agent_suspended_if_below_min(&env, &remittance.agent);
         Ok(())
     }
 
@@ -1601,6 +1678,9 @@ impl SwiftRemitContract {
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         emit_dispute_raised(&env, remittance_id, remittance.sender, evidence_hash);
+        // #1636: emit suspension in this successful transaction when the agent's
+        // reputation has dropped below the configured minimum.
+        emit_agent_suspended_if_below_min(&env, &remittance.agent);
         Ok(())
     }
 
@@ -1658,8 +1738,7 @@ impl SwiftRemitContract {
         } else {
             // Honour the fee quoted at creation rather than re-pricing, and pay
             // the agent only the part of their net entitlement not already sent.
-            let fee_breakdown = fee_service::breakdown_from_platform_fee(
-                &env,
+            let fee_breakdown = fee_service::breakdown_from_quoted_platform_fee(
                 remittance.amount,
                 remittance.fee,
                 remittance.protocol_fee,
@@ -1670,7 +1749,7 @@ impl SwiftRemitContract {
                 .min(escrow_remaining);
             token_client.transfer(&env.current_contract_address(), &remittance.agent, &owed);
 
-            // What is left of the escrow after paying the agent is the platform fee.
+            // What is left of the escrow after paying the agent is the retained fee.
             let retained = escrow_remaining
                 .checked_sub(owed)
                 .ok_or(ContractError::Underflow)?;
@@ -1680,9 +1759,25 @@ impl SwiftRemitContract {
             // SR-125: Route status mutation through the canonical state machine.
             crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
 
-            // #1674: An agent-favoured resolution counts as a completed settlement
-            // and moves the remittance volume into completed volume.
-            storage::add_completed_volume(&env, remittance.amount)?;
+            // #1631: Split the retained amount into the protocol fee (owed to the
+            // treasury) and the platform fee (accumulated for later withdrawal).
+            // The protocol fee is capped at what is actually retained so a partial
+            // payout can never over-draw the escrow.
+            let protocol_fee = fee_breakdown.protocol_fee.min(retained);
+            if protocol_fee > 0 {
+                let treasury = get_treasury(&env)?;
+                token_client.transfer(&env.current_contract_address(), &treasury, &protocol_fee);
+            }
+            let platform_fee = retained
+                .checked_sub(protocol_fee)
+                .ok_or(ContractError::Underflow)?;
+            if platform_fee > 0 {
+                crate::fee_management::safe_add_accumulated_fee(&env, platform_fee)?;
+            }
+            // SR-125 / #1630: completion bookkeeping (integrator accrual, volume
+            // accounting, status transition, settlement hash, idempotency cleanup)
+            // is shared with every other completion path.
+            Self::complete_remittance(&env, remittance_id, &mut remittance)?;
 
             let mut stats = crate::storage::get_agent_stats(&env, &remittance.agent);
             stats.total_settlements = stats.total_settlements.saturating_add(1);
@@ -1708,7 +1803,6 @@ impl SwiftRemitContract {
         }
         crate::storage::set_agent_stats(&env, &remittance.agent, &resolved_stats);
 
-        set_remittance(&env, remittance_id, &remittance);
         emit_dispute_resolved(&env, remittance_id, caller, in_favour_of_sender);
         Ok(())
     }
@@ -1787,8 +1881,12 @@ impl SwiftRemitContract {
     /// Remittances configured to require proof are rejected because this endpoint
     /// does not accept proof data.
     ///
+    /// # Errors
+    /// * `Err(ContractError::SettlementExpired)` - Current time exceeds expiry timestamp
+    ///
     /// # Authorization
     /// Requires authentication from the agent assigned to the remittance.
+    /// Requires Settler role.
     pub fn confirm_partial_payout(
         env: Env,
         remittance_id: u64,
@@ -1801,13 +1899,21 @@ impl SwiftRemitContract {
         validate_not_paused(&env)?;
 
         let mut remittance = get_remittance(&env, remittance_id)?;
-        crate::storage::require_agent_authorized(&env, &remittance.agent)?;
+        // #1628: share the Settler role check with confirm_payout_inner.
+        Self::authorize_settler(&env, &remittance)?;
+
+        // #1627: Reject partial payouts on expired remittances, matching confirm_payout.
+        crate::validation::validate_settlement_not_expired(&env, remittance.expiry)?;
 
         if remittance.status != RemittanceStatus::Pending
             && remittance.status != RemittanceStatus::Processing
         {
             return Err(ContractError::InvalidStatus);
         }
+
+        // #1628: share the KYC / eligibility pre-confirm validation with
+        // confirm_payout_inner, before any state mutation occurs.
+        Self::pre_confirm_checks(&env, &remittance)?;
 
         if let crate::MaybeSettlementConfig::Some(ref config) = remittance.settlement_config {
             if config.require_proof {
@@ -1823,8 +1929,7 @@ impl SwiftRemitContract {
         // would produce a different net_payout than what was escrowed if the
         // platform fee or strategy changed after creation, or if the original
         // remittance qualified for a sender-volume discount.
-        let fee_breakdown = fee_service::breakdown_from_platform_fee(
-            &env,
+        let fee_breakdown = fee_service::breakdown_from_quoted_platform_fee(
             remittance.amount,
             remittance.fee,
             remittance.protocol_fee,
@@ -1868,16 +1973,20 @@ impl SwiftRemitContract {
 
         // If fully disbursed, collect fee and complete
         if new_total >= net_payout {
+            // #1629: forward the protocol fee to treasury on completion, mirroring
+            // confirm_payout, so it is not stranded in the contract.
+            let protocol_fee = fee_breakdown.protocol_fee;
+            if protocol_fee > 0 {
+                let treasury = get_treasury(&env)?;
+                token_client.transfer(&env.current_contract_address(), &treasury, &protocol_fee);
+            }
+
             // Update accumulated fees with overflow protection and automatic flush
             safe_add_accumulated_fee(&env, &remittance.token, remittance.fee)?;
 
-            // Move volume from in-flight to completed
-            storage::sub_processing_volume(&env, remittance.amount)?;
-            storage::add_completed_volume(&env, remittance.amount)?;
-
-            crate::transitions::transition_status(&env, &mut remittance, RemittanceStatus::Completed)?;
-            set_remittance(&env, remittance_id, &remittance);
-            set_settlement_hash(&env, remittance_id);
+            // #1630: shared completion bookkeeping (integrator accrual, volume
+            // accounting, status transition, settlement hash, idempotency cleanup).
+            Self::complete_remittance(&env, remittance_id, &mut remittance)?;
 
             emit_remittance_completed(&env, remittance_id, remittance.sender, remittance.agent);
         } else {
@@ -1914,6 +2023,18 @@ impl SwiftRemitContract {
     pub fn get_agent_reputation(env: Env, agent: Address) -> u32 {
         let stats = crate::storage::get_agent_stats(&env, &agent);
         crate::storage::compute_agent_reputation(&stats)
+    }
+
+    /// Returns `true` when the agent's reputation is below the configured
+    /// minimum threshold, i.e. the agent is suspended from new remittances
+    /// (#1636). Monitors can poll this view instead of relying on an event.
+    pub fn is_agent_suspended(env: Env, agent: Address) -> bool {
+        let min_rep = storage::get_min_agent_reputation(&env);
+        if min_rep == 0 {
+            return false;
+        }
+        let stats = crate::storage::get_agent_stats(&env, &agent);
+        crate::storage::compute_agent_reputation(&stats) < min_rep
     }
 
     pub fn finalize_remittance(
@@ -2061,7 +2182,10 @@ impl SwiftRemitContract {
                 continue;
             }
 
-            let is_expired = match remittance.expiry {
+            // #1632: honour the stored `expires_at` (from remittance_expiry_window)
+            // as well as the optional settlement expiry.
+            let effective_expiry = effective_expiry(remittance.expiry, remittance.expires_at);
+            let is_expired = match effective_expiry {
                 Some(expiry) => now > expiry,
                 None => false,
             };
@@ -2111,6 +2235,16 @@ impl SwiftRemitContract {
             if let Some(idem_key) = storage::take_remittance_idempotency_key(&env, remittance_id) {
                 storage::remove_idempotency_record(&env, &idem_key);
             }
+
+            // #1632: report the expiry that was actually enforced.
+            emit_remittance_expired(
+                &env,
+                remittance_id,
+                remittance.sender.clone(),
+                usdc_token.clone(),
+                remittance.amount,
+                effective_expiry.unwrap_or(now),
+            );
 
             processed_ids.push_back(remittance_id);
         }
