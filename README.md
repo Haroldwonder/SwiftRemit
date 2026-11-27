@@ -167,6 +167,7 @@ The contract exposes 134 public functions from a single `#[contractimpl] impl Sw
 | `get_agent_kyc_hash(agent)` | Returns the stored KYC metadata hash for an agent, if any | none (public query) |
 | `get_agent_stats(agent)` | Returns full agent stats (settlements, failures, disputes, success rate) | none (public query) |
 | `get_agent_reputation(agent)` | Computes a reputation score from an agent's stats | none (public query) |
+| `is_agent_suspended(agent)` | Returns `true` when the agent's reputation is below the minimum threshold (suspended from new remittances) | none (public query) |
 | `set_agent_daily_cap(agent, cap)` | Sets a rolling 24h payout cap for an agent (0 = no cap) | admin only |
 | `get_agent_daily_cap(agent)` | Returns an agent's daily payout cap | none (public query) |
 | `set_min_agent_reputation(threshold)` | Sets the minimum reputation (0–100) an agent needs to receive new remittances | admin only |

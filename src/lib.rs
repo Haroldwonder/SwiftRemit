@@ -173,6 +173,22 @@ pub const MAX_KYC_BATCH_SIZE: u32 = 50;
 /// Maximum page size accepted by the full-record remittance views (#1853).
 pub const MAX_REMITTANCE_PAGE_SIZE: u32 = 100;
 
+/// Emits `agent_suspended` when `agent`'s reputation is below the configured
+/// minimum threshold (#1636).
+///
+/// Must only be called from a state-changing path that returns `Ok`, so the
+/// event is not rolled back with the transaction.
+fn emit_agent_suspended_if_below_min(env: &Env, agent: &Address) {
+    let min_rep = storage::get_min_agent_reputation(env);
+    if min_rep == 0 {
+        return;
+    }
+    let rep = storage::compute_agent_reputation(&storage::get_agent_stats(env, agent));
+    if rep < min_rep {
+        events::emit_agent_suspended(env, agent.clone(), rep, min_rep);
+    }
+}
+
 fn enforce_daily_send_limit(
     env: &Env,
     sender: &Address,
@@ -671,14 +687,18 @@ impl SwiftRemitContract {
         // #1264: Block new escrow creation while the circuit-breaker is active.
         validate_not_paused(&env)?;
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
+        // #1633: Reject an expiry that is already in the past (or now).
+        validate_expiry(&env, expiry)?;
 
         // Enforce minimum agent reputation threshold (#591)
         let min_rep = storage::get_min_agent_reputation(&env);
         if min_rep > 0 {
             let rep = storage::compute_agent_reputation(&storage::get_agent_stats(&env, &agent));
             if rep < min_rep {
-                // #833: emit agent_suspended event so off-chain monitors can react
-                events::emit_agent_suspended(&env, agent.clone(), rep, min_rep);
+                // #1636: do not emit here — this path returns Err and the event
+                // would be rolled back. Suspension is emitted from the successful
+                // state-changing paths (mark_failed / raise_dispute) and is
+                // observable via `is_agent_suspended`.
                 return Err(ContractError::BelowMinReputation);
             }
         }
@@ -701,11 +721,21 @@ impl SwiftRemitContract {
 
         sender.require_auth();
 
-        // Replay existing requests before enforcing or recording any usage limits.
+        // #1634: Replay existing requests immediately after auth, before any limit
+        // state (rate limit, daily limit, corridor volume) is enforced or mutated.
         if let Some(ref key) = idempotency_key {
             if let Some(record) = storage::get_idempotency_record(&env, key) {
-                let request_hash =
-                    hashing::compute_request_hash(&env, &sender, &agent, amount, expiry);
+                let request_hash = hashing::compute_request_hash(
+                    &env,
+                    &sender,
+                    &agent,
+                    amount,
+                    expiry,
+                    &token,
+                    &settlement_config,
+                    &recipient_hash,
+                    &integrator,
+                );
                 if request_hash != record.request_hash {
                     return Err(ContractError::IdempotencyConflict);
                 }
@@ -807,7 +837,17 @@ impl SwiftRemitContract {
 
         // Store idempotency record if key provided
         if let Some(key) = idempotency_key {
-            let request_hash = hashing::compute_request_hash(&env, &sender, &agent, amount, expiry);
+            let request_hash = hashing::compute_request_hash(
+                &env,
+                &sender,
+                &agent,
+                amount,
+                expiry,
+                &token,
+                &settlement_config,
+                &recipient_hash,
+                &integrator,
+            );
             let ttl = storage::get_idempotency_ttl(&env);
             let expires_at = env
                 .ledger()
@@ -929,13 +969,15 @@ impl SwiftRemitContract {
         // #1264: Block new corridor-remittance creation while the circuit-breaker is active.
         validate_not_paused(&env)?;
         validate_create_remittance_request(&env, &sender, &agent, amount)?;
+        // #1633: Reject an expiry that is already in the past (or now).
+        validate_expiry(&env, expiry)?;
 
         // SR-128: Enforce minimum-agent-reputation gate (parity with create_remittance).
         let min_rep = storage::get_min_agent_reputation(&env);
         if min_rep > 0 {
             let rep = storage::compute_agent_reputation(&storage::get_agent_stats(&env, &agent));
             if rep < min_rep {
-                events::emit_agent_suspended(&env, agent.clone(), rep, min_rep);
+                // #1636: no event on an error path (it would be rolled back).
                 return Err(ContractError::BelowMinReputation);
             }
         }
@@ -1075,6 +1117,8 @@ impl SwiftRemitContract {
         for i in 0..batch_size {
             let entry = entries.get_unchecked(i);
             validate_create_remittance_request(&env, &sender, &entry.agent, entry.amount)?;
+            // #1633: Reject any entry whose expiry is already in the past (or now).
+            validate_expiry(&env, entry.expiry)?;
             total_amount = total_amount
                 .checked_add(entry.amount)
                 .ok_or(ContractError::Overflow)?;
@@ -1568,6 +1612,9 @@ impl SwiftRemitContract {
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         emit_remittance_failed(&env, remittance_id, remittance.agent);
+        // #1636: emit suspension in this successful transaction when the agent's
+        // reputation has dropped below the configured minimum.
+        emit_agent_suspended_if_below_min(&env, &remittance.agent);
         Ok(())
     }
 
@@ -1604,6 +1651,9 @@ impl SwiftRemitContract {
         crate::storage::set_agent_stats(&env, &remittance.agent, &stats);
 
         emit_dispute_raised(&env, remittance_id, remittance.sender, evidence_hash);
+        // #1636: emit suspension in this successful transaction when the agent's
+        // reputation has dropped below the configured minimum.
+        emit_agent_suspended_if_below_min(&env, &remittance.agent);
         Ok(())
     }
 
@@ -1941,6 +1991,18 @@ impl SwiftRemitContract {
     pub fn get_agent_reputation(env: Env, agent: Address) -> u32 {
         let stats = crate::storage::get_agent_stats(&env, &agent);
         crate::storage::compute_agent_reputation(&stats)
+    }
+
+    /// Returns `true` when the agent's reputation is below the configured
+    /// minimum threshold, i.e. the agent is suspended from new remittances
+    /// (#1636). Monitors can poll this view instead of relying on an event.
+    pub fn is_agent_suspended(env: Env, agent: Address) -> bool {
+        let min_rep = storage::get_min_agent_reputation(&env);
+        if min_rep == 0 {
+            return false;
+        }
+        let stats = crate::storage::get_agent_stats(&env, &agent);
+        crate::storage::compute_agent_reputation(&stats) < min_rep
     }
 
     pub fn finalize_remittance(

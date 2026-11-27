@@ -157,6 +157,20 @@ pub fn validate_escrow_ttl(ttl: u64) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// Validates that an optional remittance expiry is strictly in the future.
+///
+/// `None` means "no expiry" and is always accepted. A timestamp less than or
+/// equal to the current ledger timestamp is rejected with
+/// [`ContractError::InvalidExpiry`] (#1633).
+pub fn validate_expiry(env: &Env, expiry: Option<u64>) -> Result<(), ContractError> {
+    if let Some(expiry) = expiry {
+        if expiry <= env.ledger().timestamp() {
+            return Err(ContractError::InvalidExpiry);
+        }
+    }
+    Ok(())
+}
+
 /// Comprehensive validation for create_remittance request.
 pub fn validate_create_remittance_request(
     env: &Env,
